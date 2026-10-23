@@ -124,8 +124,11 @@ def _approval_token_from_inputs(spec, inputs):
 def generated_key(g: Any) -> Dict[str, Any]:
     """What a custom transform's approval token hashes beside the files (in place of a spec): its code, selection and
     parameters and approved adaptive outcome — the same key as the window's ``Session._generated_key``."""
-    return {"generated_source": g.source, "select": g.select, "params": g.params,
-            "goal_contract": getattr(g, "goal_contract", None), "goal_bindings": getattr(g, "goal_bindings", {})}
+    key = {"generated_source": g.source, "select": g.select, "params": g.params,
+           "goal_contract": getattr(g, "goal_contract", None), "goal_bindings": getattr(g, "goal_bindings", {})}
+    if getattr(g, "unguarded", False):
+        key["unguarded"] = True                   # an Obliterate method's approval is never a guarded one's
+    return key
 
 
 def changed_since_preview(key: Dict[str, Any], files: Sequence[Path], token: str,

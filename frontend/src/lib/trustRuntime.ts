@@ -177,7 +177,9 @@ export const RUNTIME_CARDS: RuntimeCard[] = [
       "Claude writes one small Python program (an operation) after reading sample files. The app checks the program's " +
       "text (only whitelisted modules, no file, process or network calls), runs it on copies of the samples in a " +
       "separate Python process, and checks every result with the independent checker. It may change formatting only: " +
-      "no words, no new parts, no tracked changes. A failure goes back to Claude with the reason.",
+      "no words, no new parts, no tracked changes. A failure goes back to Claude with the reason. In Obliterate mode " +
+      "(its own card) it is offered whenever any method could make the change, may change anything Word stores, and " +
+      "a result whose only failures are its checks passes with them listed.",
     sent: "To the Anthropic API: the request, the sample files' XML and text that its tools read, and each failure's reason.",
     ai: conversationModel,
     bounds:
@@ -206,6 +208,27 @@ export const RUNTIME_CARDS: RuntimeCard[] = [
       `Counts toward the pause; the trials get at most ${F.recoveryAttemptsPerGroup} attempts per group of files, ` +
       "on copies only. The wording in Claude's proposed outcomes is treated as " +
       "approved on this path without a separate pick: read the plan before you approve it.",
+  },
+  {
+    covers: ["A26"],
+    title: "Obliterate mode: showing it, choosing it, leaving it",
+    you:
+      "Settings → Advanced → Show Obliterate mode, then Show it; then Obliterate in the top bar, tick the box under " +
+      "its warning and press Turn on Obliterate. Back to Default, another mode in the top bar, or hiding it again " +
+      "leaves it.",
+    runs:
+      "Showing it is kept in settings.json; being in it never is, so the next start opens in Safe or Default. While " +
+      "it is on, the conversation's gate stops tracing placed words to you (Claude may write wording; it is in the " +
+      "plan you approve), a custom method may change anything Word stores, and a copy that fails its check is " +
+      "delivered marked UNVERIFIED instead of being held back, with no recovery after it. Entering or leaving it " +
+      "voids the plan on screen.",
+    sent: "Nothing when you choose it. The conversation then sends what it sends in Default mode.",
+    ai: NONE,
+    bounds:
+      "Copies only; your originals are never written, and a source that changed while the work ran is never " +
+      `delivered over. A custom method still runs in its own process (${F.customMethodSeconds} s, ` +
+      `${F.customMethodMemoryMB} MB) under the import whitelist, and the independent checker still runs on every ` +
+      "copy; its results are kept beside it.",
   },
   {
     covers: ["A23", "A24", "A25"],
@@ -245,7 +268,9 @@ export const RUNTIME_CARDS: RuntimeCard[] = [
       `core (at most ${F.maxProcessWorkers}), each file edited and checked whole in one of them, and Word renders over ` +
       `up to ${F.wordInstances} instances side by side. A copy that passes goes to a new timestamped folder; one that fails is moved to failed ` +
       "and never delivered. Then, if any copy failed, the app looks at those files again on its own (recovery) and " +
-      "comes back with a question or a new plan — except after a Safe-mode button, whose copies get no recovery.",
+      "comes back with a question or a new plan — except after a Safe-mode button, whose copies get no recovery. In " +
+      "Obliterate mode a copy that fails its check is delivered anyway, marked UNVERIFIED with the checks it failed, " +
+      "and no recovery runs.",
     sent:
       "Nothing to make and check the copies. Recovery, if it runs, sends the failed files' names and full paths, their " +
       `profiles and overview, failure reasons, what its tools read, page images, and up to ${F.pastRepairCasesSent} matching ` +

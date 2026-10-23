@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { Settings } from "../types";
-import { getSettings, saveFastMode, saveSettings, saveTheme } from "../lib/api";
+import { getSettings, saveFastMode, saveSettings, saveShowObliterate, saveTheme } from "../lib/api";
 import { fastStatus, fastWords } from "../lib/fastMode";
 import { THEMES, applyTheme, resolveTheme } from "../lib/theme";
 import { ModalShell, primaryBtn, quietBtn } from "./ModalShell";
@@ -22,6 +22,8 @@ interface Props {
  * the price) and "Appearance" (the colour scheme, applied at once and kept for
  * the next start). Fast mode is the one model control: it changes how quickly
  * the same model answers, never what it is asked or how its plan is checked.
+ * "Advanced" shows or hides Obliterate mode in the top bar (a second click to
+ * show it; choosing the mode still shows its own warning every time).
  */
 export default function SettingsModal({ stepsPerPause, onClose, onSaved }: Props) {
   const [settings, setSettings] = useState<Settings | null>(null);
@@ -37,6 +39,9 @@ export default function SettingsModal({ stepsPerPause, onClose, onSaved }: Props
   const [confirmingFast, setConfirmingFast] = useState(false);
   const [fastSaving, setFastSaving] = useState(false);
   const [fastError, setFastError] = useState("");
+  const [confirmingShow, setConfirmingShow] = useState(false);
+  const [showSaving, setShowSaving] = useState(false);
+  const [showError, setShowError] = useState("");
 
   useEffect(() => {
     let alive = true;
@@ -106,6 +111,22 @@ export default function SettingsModal({ stepsPerPause, onClose, onSaved }: Props
       setFastError(failure instanceof Error ? failure.message : String(failure));
     } finally {
       setFastSaving(false);
+    }
+  };
+
+  const setShowObliterate = async (on: boolean) => {
+    if (showSaving) return;
+    setShowSaving(true);
+    setShowError("");
+    try {
+      const next = await saveShowObliterate(on);
+      setSettings(next);
+      setConfirmingShow(false);
+      onSaved();
+    } catch (failure) {
+      setShowError(failure instanceof Error ? failure.message : String(failure));
+    } finally {
+      setShowSaving(false);
     }
   };
 
@@ -244,6 +265,17 @@ export default function SettingsModal({ stepsPerPause, onClose, onSaved }: Props
             </p>
           )}
         </section>
+        {settings && settings.show_obliterate !== undefined && (
+          <AdvancedSection
+            on={!!settings.show_obliterate}
+            confirming={confirmingShow}
+            saving={showSaving}
+            error={showError}
+            onAsk={() => setConfirmingShow(true)}
+            onCancel={() => setConfirmingShow(false)}
+            onSet={(on) => void setShowObliterate(on)}
+          />
+        )}
       </div>
     </ModalShell>
   );
@@ -327,6 +359,77 @@ function FastSection({
         <p className={`mt-2 text-xs ${status.tone === "ok" ? "text-ok" : "text-warn"}`} role="status">
           {status.text}
         </p>
+      )}
+      {error && (
+        <p className="mt-2 text-xs text-err" role="alert">
+          {error}
+        </p>
+      )}
+    </section>
+  );
+}
+
+/**
+ * "Advanced": a switch that shows Obliterate mode in the top bar, off until the user turns it on. Showing it takes a
+ * second click; it only adds the choice — choosing the mode shows its warning each time. Hiding it leaves the mode.
+ */
+function AdvancedSection({
+  on,
+  confirming,
+  saving,
+  error,
+  onAsk,
+  onCancel,
+  onSet,
+}: {
+  on: boolean;
+  confirming: boolean;
+  saving: boolean;
+  error: string;
+  onAsk: () => void;
+  onCancel: () => void;
+  onSet: (on: boolean) => void;
+}) {
+  return (
+    <section className="border-t border-edge pt-4">
+      <h3 className="font-[family-name:var(--font-display)] text-sm font-semibold text-ink">Advanced</h3>
+      <div className="mt-2 flex items-center justify-between gap-3">
+        <span className="text-sm text-ink">Show Obliterate mode</span>
+        <button
+          type="button"
+          role="switch"
+          aria-checked={on}
+          aria-label="Show Obliterate mode"
+          disabled={saving}
+          onClick={() => (on ? onSet(false) : confirming ? onCancel() : onAsk())}
+          className={`relative h-5 w-9 flex-none rounded-full border transition-colors disabled:opacity-60 ${
+            on ? "border-err bg-err" : "border-edge bg-raised"
+          }`}
+        >
+          <span
+            aria-hidden
+            className={`absolute top-0.5 h-3.5 w-3.5 rounded-full transition-all ${
+              on ? "left-[1.1rem] bg-white" : "left-0.5 bg-ink-faint"
+            }`}
+          />
+        </button>
+      </div>
+      <p className="mt-0.5 text-xs text-ink-dim">
+        Adds a third mode to the top bar: the conversation without the guardrails that protect your documents’ content
+        (Claude may write wording and change anything Word stores, and a copy whose checks fail is delivered marked
+        UNVERIFIED). Copies only; your originals are never written. Choosing it shows its warning every time, and the
+        app never opens in it.
+      </p>
+      {confirming && !on && (
+        <div className="mt-3 flex flex-wrap items-center justify-end gap-2" role="group" aria-label="Confirm show Obliterate mode">
+          <span className="w-full text-xs text-ink-dim">Show Obliterate mode in the top bar?</span>
+          <button type="button" className={quietBtn} disabled={saving} onClick={onCancel}>
+            Keep it hidden
+          </button>
+          <button type="button" className={primaryBtn} disabled={saving} onClick={() => onSet(true)}>
+            {saving ? "Saving…" : "Show it"}
+          </button>
+        </div>
       )}
       {error && (
         <p className="mt-2 text-xs text-err" role="alert">

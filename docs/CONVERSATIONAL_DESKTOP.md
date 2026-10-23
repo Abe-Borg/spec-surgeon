@@ -84,6 +84,36 @@ Every change is plain and no word is placed.
 Typing is not possible in Safe mode, and the server refuses a message there; the conversation and its question cards
 belong to Default mode.
 
+## Obliterate mode (hidden)
+
+Most people never see it. Settings → **Advanced** → *Show Obliterate mode* (a second click, **Show it**) adds a third
+choice to the top bar's switch; turning the setting off removes it and leaves the mode. Choosing **Obliterate** opens
+its warning every time — what it grants, what it costs, what still holds — and **Turn on Obliterate** works only once
+the box under it is ticked. The mode is the conversation, as in Default, with a red strip above the box you type in
+(**Back to Default** leaves it) and the switch in the error colour. The window never opens in it: settings.json keeps
+Safe or Default, and a window closed in Obliterate opens in Default.
+
+What it lifts (`Session.unguarded`; CLAUDE.md, "Modes"):
+
+- **Wording.** The gate no longer traces placed words to the user's own (`compose_submission(unguarded=True)` skips
+  `_content_checks`). Claude may write wording itself and is told to put every word it will place in the plan the
+  user approves.
+- **Custom methods.** When no operation fits, the custom method is offered whenever any method could make the change,
+  and it may change anything Word stores: the writer's prompt drops the plain-formatting limits and `codegen` skips
+  `hard_limits`. A trial whose only failures are its checks — the verifier read the copy, the source did not move —
+  passes with them listed.
+- **Holding back.** A copy that fails a check is delivered to the run's `outputs/` instead of `failed/`, its record
+  kept with every failure and V9 saying *delivered UNVERIFIED*; a chain's step hands its copy on and the chain's copy
+  carries everything that failed. The copies list marks it **UNVERIFIED** with the checks it failed, and the done
+  message counts them. No recovery runs after a run in this mode; a document whose copy could not be made at all
+  goes on the to-do list as in Default.
+
+What holds, in every mode: copies only (the window never writes in place, and an unverified copy is never written
+back); the source guard (a source that moved is never delivered over); the sandbox, its import whitelist and its time
+and memory limits; the independent checker on every copy; built-in operations refusing what they cannot predict; and
+the governed outcome path, which is never unguarded. Entering or leaving the mode voids the plan on screen: what was
+planned under one set of rules is never created under the other (Continue plans the request again).
+
 ## The top bar
 
 The top bar follows Build-a-Spec's. Beside the title, a quiet line says what the conversation works on ("3
@@ -91,7 +121,7 @@ documents · 1 template · 1 picture · building on your copies"; files triage r
 1280 px wide and shortens with an ellipsis before anything else gives way. Then the in-app guide, one dialog with a
 tab strip:
 
-- **How to use** — the two modes, what each lets you control and what it costs, Safe mode in four steps, a Default
+- **How to use** — the modes (Obliterate's entry says it is hidden and how to show it), what each lets you control and what it costs, Safe mode in four steps, a Default
   first pass in eight steps, what a refused file means, and how spending, Stop now and the pause work.
 - **Workflows** — recipes for the usual jobs: a Safe-mode clean-up before issue, fonts across a set, headers and footers from a template, a logo, values
   from a sheet, an issue stamp, a mixed batch, one change after another, a file left untouched, stopped or paused work.
@@ -453,7 +483,7 @@ A PASS means the engine found exactly the predicted change and nothing else, not
 wanted. Automated page comparison and Claude's visual check are not human acceptance in Word; look at the
 pages, and open the copies.
 
-The window has two modes (Safe and Default, above), and there is no command line: it was removed on 2026-10-21 together with the
+The window has two modes (Safe and Default, above) and a hidden third (Obliterate), and there is no command line: it was removed on 2026-10-21 together with the
 features only it offered (the recipe library, office profiles, specification QA audits, project evidence, built-in
 workflows, campaign and recovery workspaces, evaluations).
 

@@ -387,7 +387,7 @@ class LayoutResult:
 
 def run_layouts(inputs: Sequence[str], plan: Dict[str, Any], out_dir: Path, *, renderer: str = "auto",
                 do_render: bool = True, progress=None, approved_inputs: Optional[Dict[str, Any]] = None,
-                worker_mode: Optional[str] = None) -> LayoutResult:
+                worker_mode: Optional[str] = None, deliver_unverified: bool = False) -> LayoutResult:
     """Run every layout's spec on its own files (``batch.run_batch`` under ``out_dir/layout-<id>``), copies only.
     Each layout batch delivers, records and reports exactly as a single-spec run does; a file no layout covers is an
     EXCEPTION here, untouched. ``approved_inputs`` are the preview's (``layout_inputs``): the run refuses when the
@@ -417,12 +417,13 @@ def run_layouts(inputs: Sequence[str], plan: Dict[str, Any], out_dir: Path, *, r
                 from .chain import run_chain
                 batch = run_chain([str(f) for f in own], own_spec, out_dir / f"layout-{layout['id']}",
                                   renderer=renderer, do_render=do_render, in_place=False, progress=log,
-                                  approved_inputs=current["layouts"].get(layout["id"]), worker_mode=worker_mode)
+                                  approved_inputs=current["layouts"].get(layout["id"]), worker_mode=worker_mode,
+                                  deliver_unverified=deliver_unverified)
             else:
                 batch = run_batch([str(f) for f in own], "edit-spec", {}, out_dir / f"layout-{layout['id']}",
                                   renderer=renderer, do_render=do_render, in_place=False, progress=log,
                                   spec=own_spec, approved_inputs=current["layouts"].get(layout["id"]),
-                                  worker_mode=worker_mode)
+                                  worker_mode=worker_mode, deliver_unverified=deliver_unverified)
             result.batches.append((layout, batch))
             for fr in batch.files:
                 by_source[str(fr.source)] = fr

@@ -161,6 +161,9 @@ class Session:
                                                   # preview and its run cover the others (``planned_files``)
     left_out_reasons: Dict[str, str] = field(default_factory=dict)   # str(resolved path) → why a Safe-mode button
                                                   # left it out (``body_match``); none: the user left it out
+    unguarded: bool = False                       # Obliterate mode (docs/PLAN-2026-10-23-modes.md M5): Claude may write
+                                                  # wording and unrestricted custom methods, and a copy that fails a
+                                                  # check is delivered marked unverified; set by DocumentTask.set_mode
     diagnostic_id: str = field(default_factory=diag.new_id, init=False, repr=False, compare=False)
 
     def _diagnostic_state(self) -> Dict[str, Any]:
@@ -331,7 +334,7 @@ class Session:
                                          work_dir=out / "chat", log=log, continuous_recovery=True,
                                          word_sources=self.replay_word_sources, input_files=self.inputs,
                                          history=list(history or []), fresh=list(fresh or []), context=context or "",
-                                         todo=list(todo or []))
+                                         todo=list(todo or []), unguarded=self.unguarded)
         try:
             turn = self.conversation.start()
         except Exception:
@@ -578,7 +581,7 @@ class Session:
         writer_dir = out / ("codegen" if attempt == 1 else f"codegen-{attempt:02d}")
         g = generate_op(request, proposal or "", samples, writer_dir, client=self.client, log=log, brief=brief,
                         approved_words=list(self.conversation.sources if self.conversation else [request]),
-                        )
+                        unguarded=self.unguarded)
         if not g.passed:
             raise TransformFailed("; ".join(g.errors or [f"attempt {a['attempt']}: {'; '.join(a['problems'][:2])}"
                 for a in g.attempts[-1:]]) or "no transform was submitted",
@@ -615,6 +618,7 @@ class Session:
         inputs = approval_inputs(key, files)
         token = _approval_token_from_inputs(key, inputs)
         trials = [trial(g.source, f, g.select, g.params, folder / f"{i:02d}",
+                        unguarded=getattr(g, "unguarded", False),
                         **({"goal_contract": g.goal_contract, "goal_binding": g.goal_bindings.get(str(f))}
                            if getattr(g, "goal_contract", None) is not None else {})) for i, f in enumerate(samples)]
         bad = [f"{t.source.name}: {'; '.join(t.problems[:2])}" for t in trials if not t.passed]
@@ -1003,7 +1007,8 @@ class Session:
         self.last_run_dir = out                   # set before the run: a run that stops still has its logs there
         approved_inputs = narrow_approval_inputs(getattr(self.preview, "token_inputs", None) or current_inputs, selected)
         batch = run_batch([str(f) for f in selected], "edit-spec", {}, out, renderer="auto", do_render=render,
-                          in_place=False, progress=log, spec=self.spec, approved_inputs=approved_inputs)
+                          in_place=False, progress=log, spec=self.spec, approved_inputs=approved_inputs,
+                          deliver_unverified=self.unguarded)
         self.last_run_dir, self.last_batch, self.last_trials = out, batch, None
         c = batch.counts()
         lines = [f"{len(batch.files)} file(s): PASS {c['PASS']}  FAIL {c['FAIL']}  EXCEPTION {c['EXCEPTION']}"]
@@ -1053,7 +1058,8 @@ class Session:
         approved = getattr(self.preview, "token_inputs", None)
         result = run_chain([str(f) for f in selected], self.spec, out, renderer="auto", do_render=render,
                            in_place=False, progress=log,
-                           approved_inputs=narrow_approval_inputs(approved, selected) if approved else approved)
+                           approved_inputs=narrow_approval_inputs(approved, selected) if approved else approved,
+                           deliver_unverified=self.unguarded)
         self.last_run_dir, self.last_batch, self.last_trials = out, result, None
         c = result.counts()
         lines = [f"{len(result.files)} file(s) through {len(result.stages)} step(s): PASS {c['PASS']}  FAIL {c['FAIL']}  "
@@ -1093,7 +1099,8 @@ class Session:
                    in_place=False, run_dir=str(out), set_aside=len(files) - len(selected))
         self.last_run_dir = out
         result = run_layouts([str(f) for f in selected], self.spec, out, renderer="auto", do_render=render,
-                             progress=log, approved_inputs=narrow_layout_inputs(self.preview.token_inputs, selected))
+                             progress=log, approved_inputs=narrow_layout_inputs(self.preview.token_inputs, selected),
+                             deliver_unverified=self.unguarded)
         self.last_run_dir, self.last_batch, self.last_trials = out, result, None
         c = result.counts()
         lines = [f"{len(result.files)} file(s) in {len(result.batches)} layout(s): PASS {c['PASS']}  FAIL {c['FAIL']}  "
@@ -1263,7 +1270,9 @@ def main(argv=None) -> int:
         session = Session()
         if settings.out_root:
             session.out_root = Path(settings.out_root)
-        task = DocumentTask(session, journal=config_dir() / "conversation.json", mode=settings.mode)
+        # a launch opens in Safe or Default (settings.MODES): Obliterate is never restored, only chosen again
+        task = DocumentTask(session, journal=config_dir() / "conversation.json", mode=settings.mode,
+                            obliterate_allowed=settings.show_obliterate)
         # Every start is clean: the last conversation is archived under conversations\, never reopened.
         try:
             archived = task.archive()

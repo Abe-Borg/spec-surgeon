@@ -265,6 +265,28 @@ export default function Chat({
           </p>
         </div>
       ) : (
+        <>
+        {mode === "obliterate" && (
+          <div
+            className="flex items-center gap-3 border-t border-err/50 bg-err/10 px-4 py-1.5 text-[11px] text-ink"
+            role="note"
+            aria-label="Obliterate mode"
+          >
+            <span className="min-w-0 flex-1">
+              <span className="font-semibold text-err">Obliterate mode.</span> Claude may write wording and change
+              anything Word stores; a copy whose checks fail is delivered marked UNVERIFIED. Copies only — your
+              originals are never written.
+            </span>
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => onMode("default")}
+              className="flex-none rounded-md border border-err/50 px-2 py-0.5 text-err transition-colors hover:bg-err/15 disabled:pointer-events-none disabled:opacity-60"
+            >
+              Back to Default
+            </button>
+          </div>
+        )}
         <Composer
           busy={busy}
           canSend={canSend}
@@ -274,6 +296,7 @@ export default function Chat({
           prefill={prefill}
           onDraftChange={onDraftChange}
         />
+        </>
       )}
     </section>
   );

@@ -14,6 +14,7 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useDialogFocus } from "../lib/dialogFocus";
 import { MODEL_NAME, TRUST_FACTS as F, grouped } from "../lib/trustFacts";
 import { NONE, RUNTIME_CARDS, type RuntimeCard } from "../lib/trustRuntime";
+import { OBLITERATE_GRANTS, OBLITERATE_KEPT } from "../lib/modes";
 import TrustDiagram from "./TrustDiagram";
 
 interface Props {
@@ -517,7 +518,7 @@ function Dossier() {
             [
               "Write a custom method",
               "Write one small Python operation when nothing built-in fits.",
-              `Formatting only, except under an outcome plan, where it may make exactly that plan’s changes, wording included. Checked as text (whitelisted modules, no file, process or network calls), run on copies in a separate process (${F.customMethodSeconds} s, ${F.customMethodMemoryMB} MB, writes only in its own folder), and every result must pass the independent checker (and, under an outcome plan, its check of the outcomes).`,
+              `Formatting only, except under an outcome plan, where it may make exactly that plan’s changes, wording included (in Obliterate mode, below: any change Word stores, its failed checks reported, not blocking). Checked as text (whitelisted modules, no file, process or network calls), run on copies in a separate process (${F.customMethodSeconds} s, ${F.customMethodMemoryMB} MB, writes only in its own folder), and every result must pass the independent checker (and, under an outcome plan, its check of the outcomes).`,
             ],
             [
               "Propose outcomes, try repairs (recovery)",
@@ -537,10 +538,19 @@ function Dossier() {
               "Open, write, move or delete any file on your computer. Its programs write only inside their own temporary folder.",
               "Reach the internet. It has no web search or fetch tool, and its programs’ network calls are blocked.",
               "Deliver a copy, or write over an original. Only your click delivers, and only copies.",
-              "Approve its own wording — except the outcome-plan path named above, whose wording you see in the plan.",
+              "Approve its own wording — except the outcome-plan path named above, and Obliterate mode (below), whose wording you see in the plan.",
               "Change your settings, your key or the app.",
             ]}
           />
+        </Note>
+        <Note title="Obliterate mode: what it lifts, and what it does not" tone="warn">
+          <P>
+            Hidden unless Settings → Advanced → Show Obliterate mode is on, and chosen only after its warning, every
+            time; the app never opens in it. Everything above holds in Safe and Default modes. In Obliterate mode:
+          </P>
+          <Bullets items={[...OBLITERATE_GRANTS]} />
+          <P>What still holds, in every mode:</P>
+          <Bullets items={[...OBLITERATE_KEPT]} />
         </Note>
       </Section>
 

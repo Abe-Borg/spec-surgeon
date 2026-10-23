@@ -4,6 +4,7 @@ import { memo } from "react";
 import type { Mode, View } from "../types";
 import { costPill } from "../lib/chat";
 import { HELP_TOPICS, sessionHeading, type HelpTopic } from "../lib/help";
+import { MODE_LABELS, MODE_TIPS } from "../lib/modes";
 import Tip from "./Tip";
 
 interface Props {
@@ -17,15 +18,6 @@ interface Props {
   onOpenHelp: (topic: HelpTopic) => void;
   onMode: (mode: Mode) => void;
 }
-
-/** What each mode grants and costs, in one line each (How to use says it in full). */
-export const MODE_TIPS: Record<Mode, string> = {
-  safe: "Safe mode: buttons for the common changes. No AI is used; every change is checked before you get a copy.",
-  default:
-    "Default mode: describe any change in your own words. An AI model plans it, you look at the previews and approve it; every change is checked.",
-};
-
-const MODE_LABELS: Record<Mode, string> = { safe: "Safe", default: "Default" };
 
 const ORIGIN_TIPS: Record<string, string> = {
   saved: "Connected with the key remembered securely on this computer.",
@@ -87,7 +79,13 @@ function Header({
               disabled={busy}
               onClick={() => view.mode !== mode && onMode(mode)}
               className={`rounded-md px-2.5 py-0.5 text-xs whitespace-nowrap transition-colors disabled:pointer-events-none ${
-                view.mode === mode ? "bg-accent text-on-accent" : "text-ink-dim hover:text-ink"
+                view.mode === mode
+                  ? mode === "obliterate"
+                    ? "bg-err text-white"
+                    : "bg-accent text-on-accent"
+                  : mode === "obliterate"
+                    ? "text-err hover:text-err"
+                    : "text-ink-dim hover:text-ink"
               }`}
             >
               {MODE_LABELS[mode]}

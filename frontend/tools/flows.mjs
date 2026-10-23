@@ -390,6 +390,56 @@ try {
   check("the hand-off switches to Default mode", (await modes.getByRole("button", { name: "Default" }).getAttribute("aria-pressed")) === "true");
   check("…with the document on the to-do list", await page.getByRole("button", { name: "Work on it now" }).isVisible());
 
+  // 17. Obliterate mode: hidden until Settings → Advanced shows it (a second click), its warning every time it is
+  // chosen (the box ticked before the button works), the top bar and the message box say so, Back to Default leaves
+  // it, and a copy delivered with a failed check carries the UNVERIFIED mark.
+  check("Obliterate is hidden at first", (await modes.getByRole("button", { name: "Obliterate" }).count()) === 0);
+  await page.getByRole("button", { name: "Settings" }).click();
+  const showSwitch = page.getByRole("switch", { name: "Show Obliterate mode" });
+  check("Settings → Advanced has the switch, off", (await showSwitch.getAttribute("aria-checked")) === "false");
+  await showSwitch.click();
+  const showIt = page.getByRole("button", { name: "Show it", exact: true });
+  check("showing it asks first", (await showIt.isVisible()) && (await showSwitch.getAttribute("aria-checked")) === "false");
+  await showIt.click();
+  await page.waitForFunction(() => document.querySelector("[role=switch][aria-label='Show Obliterate mode']")?.getAttribute("aria-checked") === "true");
+  await page.keyboard.press("Escape");
+  const obliterate = modes.getByRole("button", { name: "Obliterate" });
+  await obliterate.waitFor({ timeout: 5000 });
+  check("the top bar offers it once shown", await obliterate.isVisible());
+  await obliterate.click();
+  const warning = page.getByRole("dialog").filter({ hasText: "What it grants" });
+  await warning.waitFor({ timeout: 5000 });
+  const turnOn = warning.getByRole("button", { name: "Turn on Obliterate" });
+  check("its warning names what it grants, costs and keeps",
+    (await warning.getByText("What it costs").isVisible()) && (await warning.getByText("What still holds").isVisible()));
+  check("…and the button waits for the box", await turnOn.isDisabled());
+  await warning.getByRole("button", { name: "Stay in this mode" }).click();
+  check("Stay keeps the mode", (await modes.getByRole("button", { name: "Default" }).getAttribute("aria-pressed")) === "true");
+  await obliterate.click();
+  await warning.waitFor({ timeout: 5000 });
+  check("the warning shows again, unticked", (await turnOn.isDisabled()) && !(await warning.getByRole("checkbox").isChecked()));
+  await warning.getByRole("checkbox").check();
+  await turnOn.click();
+  const strip = page.getByRole("note", { name: "Obliterate mode" });
+  await strip.waitFor({ timeout: 5000 });
+  check("Obliterate is on: the switch and the message box say so",
+    (await obliterate.getAttribute("aria-pressed")) === "true" && (await page.getByText(/^Obliterate mode is on\./).isVisible()));
+  await strip.getByRole("button", { name: "Back to Default" }).click();
+  await page.getByText(/^Obliterate mode is off/).waitFor({ timeout: 5000 });
+  check("Back to Default leaves it", (await modes.getByRole("button", { name: "Default" }).getAttribute("aria-pressed")) === "true");
+  await scenario("obliterate-done");
+  await page.reload();
+  await page.getByText("Your edited copies").waitFor({ timeout: 5000 });
+  check("a copy delivered with a failed check is marked UNVERIFIED",
+    (await page.getByText("UNVERIFIED", { exact: true }).count()) === 1 &&
+      (await page.getByText("UNVERIFIED — V2 (Text preservation) failed. Check it in Word before you use it.").isVisible()));
+  await page.getByRole("button", { name: "Settings" }).click();
+  await showSwitch.click();
+  await page.waitForFunction(() => document.querySelector("[role=switch][aria-label='Show Obliterate mode']")?.getAttribute("aria-checked") === "false");
+  await page.keyboard.press("Escape");
+  await page.getByLabel("Describe a change or answer a question").waitFor({ timeout: 5000 });
+  check("hiding it again leaves the mode", (await modes.getByRole("button", { name: "Obliterate" }).count()) === 0);
+
   check("no page errors", errors.length === 0, errors.join(" | ").slice(0, 300));
   await browser.close();
 } catch (failure) {

@@ -2,6 +2,7 @@ import { memo, useEffect, useRef } from "react";
 import type { Attachment, View } from "../types";
 import type { Mark, Reviews } from "../lib/review";
 import { planHasContent, runFolder } from "../lib/workbench";
+import { unverifiedLine } from "../lib/modes";
 import DocumentsTray from "./DocumentsTray";
 import Markdown from "./Markdown";
 import PaperCard from "./PaperCard";
@@ -240,7 +241,11 @@ function Workbench({
           <div ref={resultsRef} className="scroll-mt-6">
           <PaperCard
             title="Your edited copies"
-            subtitle="Each copy was checked against the plan, word for word. Click one to open it in Word; your originals stay intact."
+            subtitle={
+              view.results.some((r) => (r.unverified ?? []).length > 0)
+                ? "Each copy was checked against the plan. A copy marked UNVERIFIED failed a check and was delivered anyway (Obliterate mode): check it in Word before you use it. Your originals stay intact."
+                : "Each copy was checked against the plan, word for word. Click one to open it in Word; your originals stay intact."
+            }
             aside={
               folder ? (
                 <Tip tip={`Open the folder with these copies: ${folder}`}>
@@ -272,7 +277,18 @@ function Workbench({
                       <path d="M14 3v5h5" />
                     </svg>
                     <span className="truncate">{result.name || result.output.split(/[\\/]/).pop()}</span>
+                    {(result.unverified ?? []).length > 0 && (
+                      <span
+                        className="ml-auto flex-none rounded-full border border-err/50 bg-err/10 px-2 py-0.5 text-[10px] font-semibold tracking-wide text-err"
+                        title={unverifiedLine(result.unverified)}
+                      >
+                        UNVERIFIED
+                      </span>
+                    )}
                   </button>
+                  {(result.unverified ?? []).length > 0 && (
+                    <p className="pb-2 pl-6 text-[11px] leading-snug text-err">{unverifiedLine(result.unverified)}</p>
+                  )}
                 </li>
               ))}
             </ul>

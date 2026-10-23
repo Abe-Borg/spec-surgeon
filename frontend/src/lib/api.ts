@@ -114,9 +114,10 @@ export async function newConversation(): Promise<View> {
   return normalizeView(await post<unknown>("/api/new-conversation"));
 }
 
-/** Safe or Default (docs/WEB_API.md, `POST /api/mode`); kept in settings.json for the next start. */
-export async function setMode(mode: Mode): Promise<View> {
-  return normalizeView(await post<unknown>("/api/mode", { mode }));
+/** Safe, Default or Obliterate (docs/WEB_API.md, `POST /api/mode`). Safe or Default is kept in settings.json for the
+ *  next start; Obliterate never is, and needs `acknowledged`: the user confirmed its warning this time. */
+export async function setMode(mode: Mode, acknowledged = false): Promise<View> {
+  return normalizeView(await post<unknown>("/api/mode", acknowledged ? { mode, acknowledged } : { mode }));
 }
 
 /** Safe mode's "Try these in Default mode": the documents the last button left untouched go on the to-do list. */
@@ -184,6 +185,11 @@ export async function saveSettings(apiKey: string, remember: boolean): Promise<S
 /** Keep a colour scheme (src/lib/theme.ts) in settings.json for the next start. */
 export async function saveTheme(theme: string): Promise<Settings> {
   return post<Settings>("/api/settings", { theme });
+}
+
+/** Settings → Advanced: show or hide Obliterate mode in the top bar; hiding it leaves the mode. */
+export async function saveShowObliterate(on: boolean): Promise<Settings> {
+  return post<Settings>("/api/settings", { show_obliterate: on });
 }
 
 /** Turn Claude's fast mode on or off: the next AI step uses it, and settings.json keeps it for the next start. */

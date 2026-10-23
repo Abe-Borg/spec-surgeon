@@ -11,7 +11,9 @@ the API key (Windows Credential Manager, ``credentials``), the safety-relevant s
 off at every start), the conversation with Claude and any acknowledgement of Claude's visual check (both belong to one
 preview, never to the next start). ``theme`` is one of ``THEMES``, the window's colour schemes; any other value (a
 v0.4.x file's ``"dark"``) reads as the first. ``fast_mode`` is Claude's fast mode (Settings → "Fast responses"), off
-until the user turns it on; the window applies it to every call from its start (``llm.set_fast_mode``). Not settings
+until the user turns it on; the window applies it to every call from its start (``llm.set_fast_mode``).
+``show_obliterate`` only makes Obliterate mode a choice in the top bar (Settings → Advanced); being IN Obliterate mode
+is never stored — ``mode`` is Safe or Default, and a window left in Obliterate opens in Default. Not settings
 at all (since the GUI rework after v0.4.1): the automatic update check (once a day, always;
 ``SPEC_SURGEON_NO_UPDATE_CHECK`` is the only off switch). Keys an older ``settings.json`` still holds for it
 (``native_style``, ``auto_check_updates``) are ignored.
@@ -115,6 +117,8 @@ class Settings:
     theme: str = THEMES[0]                        # the window's colour scheme, one of THEMES
     mode: str = MODES[0]                          # the mode the window opens in, one of MODES (the last one used)
     fast_mode: bool = False                       # Claude's fast mode (llm.set_fast_mode): faster answers, twice the price
+    show_obliterate: bool = False                 # Settings → Advanced: the top bar offers Obliterate mode (its warning
+                                                  # each time; the mode itself is never kept: see MODES)
     last_update_check: float = 0.0                # epoch seconds of the last automatic attempt (success or not)
     skipped_version: str = ""
     pending_update: Dict[str, Any] = field(default_factory=dict)   # {"version", "log", "started"} while installing
