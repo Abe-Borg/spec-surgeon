@@ -148,6 +148,7 @@ class WindowState:
         self.job: Optional[Dict[str, Any]] = None       # the running job's clock, for the watch (``job_status``)
         self.watch = WindowWatch(job_status=self.job_status)
         self._last_view: Optional[Dict[str, Any]] = None
+        llm.set_fast_mode(settings.fast_mode)          # the user's choice, for every call from the window's start
         self.key_origin = "environment" if os.environ.get(credentials.ENV) else "none"
         if self.key_origin == "none":
             saved = credentials.load()
@@ -568,7 +569,8 @@ def create_app(state: WindowState, *, dev: bool = False) -> FastAPI:
     def get_settings():
         return {"key_present": state.task.session.claude_ready(), "origin": state.key_origin,
                 "can_remember": credentials.available(), "out_root": str(state.task.session.out_root),
-                "logs_dir": str(logs_dir()), "steps_per_pause": STEPS_PER_PAUSE, "theme": state.settings.theme}
+                "logs_dir": str(logs_dir()), "steps_per_pause": STEPS_PER_PAUSE, "theme": state.settings.theme,
+                "fast_mode": state.settings.fast_mode, "fast": fast_offer()}
 
     @app.post("/api/settings")
     async def set_settings(request: Request):
@@ -577,6 +579,13 @@ def create_app(state: WindowState, *, dev: bool = False) -> FastAPI:
             if body["theme"] not in THEMES:
                 return error("There is no such colour scheme.")
             state.settings.theme = body["theme"]
+            state.save_settings()
+        if "fast_mode" in body:
+            if not isinstance(body["fast_mode"], bool):
+                return error("Fast responses is on or off.")
+            # The next AI step uses it; one already running finishes at the speed it started with.
+            state.settings.fast_mode = body["fast_mode"]
+            llm.set_fast_mode(body["fast_mode"])
             state.save_settings()
         key = str(body.get("api_key") or "").strip()
         remember = bool(body.get("remember"))
@@ -590,6 +599,18 @@ def create_app(state: WindowState, *, dev: bool = False) -> FastAPI:
                 except Exception:  # noqa: BLE001
                     return error("The key is set for this session but could not be saved securely.")
         return get_settings()
+
+    def fast_offer() -> Dict[str, Any]:
+        """What Settings says about fast mode, from the code's own tables: the model the calls use, whether Anthropic
+        serves it fast, the standard and fast prices per million tokens (input, output), the speed-up, and why the API
+        refused fast mode for this key, if it did."""
+        model = llm.DEFAULT_MODEL
+        standard, fast = llm.PRICES.get(model), llm.FAST_PRICES.get(model)
+        return {"model": model, "available": fast is not None, "speedup": llm.FAST_SPEEDUP,
+                "price_factor": llm.FAST_PRICE_FACTOR,
+                "standard_usd_per_mtok": list(standard[:2]) if standard else None,
+                "fast_usd_per_mtok": list(fast[:2]) if fast else None,
+                "refused": llm.fast_unavailable()}
 
     @app.get("/api/about")
     def about_info():

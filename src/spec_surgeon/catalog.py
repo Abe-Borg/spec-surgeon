@@ -550,6 +550,9 @@ COMMON_ASSUMPTIONS: Dict[str, List[str]] = {
         "refused rather than copied into every spec",
         "caps_fills shows the named fills in capitals by formatting (w:caps on the filled text); each file's letters "
         "stay as it types them; a slot the template shows in small capitals, or sets in a symbol font, is refused",
+        "a spec binding's typed wording is the user's own words for that one document's slot (title case like the "
+        "template, say), placed exactly as approved and pinned to the document's bytes; every document the spec "
+        "covers gets its own, and the copy is untracked",
     ],
     # ---- built-in batch 6 (docs/BUILTIN_OPS_BATCH6_DESIGN.md §2) ----
     "remove_footnotes": [
@@ -852,11 +855,16 @@ def editspec_json_schema() -> Dict[str, Any]:
                 "required": ["file", "md5", "slots"], "properties": {
                     "file": {"type": "string", "description": "Absolute source path from inspection"},
                     "md5": {"type": "string", "pattern": "^[0-9a-f]{32}$"},
-                    "slots": {"type": "object", "minProperties": 1, "additionalProperties": {
-                        "type": "object", "additionalProperties": False, "required": ["value", "part", "paragraph"],
-                        "properties": {"value": {"type": "string", "minLength": 1},
-                                       "part": {"type": "string", "minLength": 1},
-                                       "paragraph": {"type": "integer", "minimum": 0}}}}}}},
+                    "slots": {"type": "object", "minProperties": 1, "additionalProperties": {"oneOf": [
+                        {"type": "object", "additionalProperties": False, "required": ["value", "part", "paragraph"],
+                         "description": "quoted from the file: its exact text at that paragraph",
+                         "properties": {"value": {"type": "string", "minLength": 1},
+                                        "part": {"type": "string", "minLength": 1},
+                                        "paragraph": {"type": "integer", "minimum": 0}}},
+                        {"type": "object", "additionalProperties": False, "required": ["typed"],
+                         "description": "the user's own wording for this file's slot, placed as typed (it must be "
+                                        "their words: typed or picked); every document the spec covers gets one",
+                         "properties": {"typed": {"type": "string", "minLength": 1}}}]}}}}},
         },
     }
 

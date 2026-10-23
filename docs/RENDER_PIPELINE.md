@@ -6,7 +6,17 @@ preview had rendered, source and output both.
 
 Rules:
 
-1. **One Word instance per batch.** `render.word_worker.run_word_batch(files, out_dir)` spawns ONE worker process
+0. **Several Word instances side by side.** (2026-10-22) `word_com.render_pdfs` calls
+   `render.word_worker.run_word_batches`, which shares a batch over up to `WORD_INSTANCES` (3) runs of
+   `run_word_batch` at once, each its own spawned worker and private Word with its own per-file deadlines: at most
+   one instance per two cores, one more only per `FILES_PER_INSTANCE` (2) files, and `SPEC_SURGEON_WORD_INSTANCES`
+   replaces the 3 (1 renders every file in one instance, as rule 1 says). A share whose Word cannot start while
+   another's did is tried once more, alone, after the others finish; only when no share's Word starts is the backend
+   unavailable. Ownership stays provable side by side: each instance is found by a caption only it carries, and the
+   new-process fallback adopts a Word only when exactly one started. Tests: `tests/test_render_word_batch.py` (the fake
+   worker behind real spawned processes: shares merged in order, a stuck file in one share, a share that cannot
+   start). Needs the owner's machine: a Word batch with several instances, timings against one.
+1. **One Word instance per share.** `render.word_worker.run_word_batch(files, out_dir)` spawns ONE worker process
    that starts ONE private Word instance (DispatchEx, never Dispatch), renders every file (open read-only → export
    PDF → close), and quits. Per-file failures are reported per file; the batch goes on. The deadline is per file,
    enforced by the parent (a stuck file ends the worker; the parent then renders the remaining files in a new

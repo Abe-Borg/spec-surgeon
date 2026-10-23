@@ -10,9 +10,11 @@ Plain JSON: the user can see and delete the file, and the updater reads it witho
 the API key (Windows Credential Manager, ``credentials``), the safety-relevant switch (write back over the originals —
 off at every start), the conversation with Claude and any acknowledgement of Claude's visual check (both belong to one
 preview, never to the next start). ``theme`` is one of ``THEMES``, the window's colour schemes; any other value (a
-v0.4.x file's ``"dark"``) reads as the first. Not settings at all (since the GUI rework after v0.4.1): the automatic
-update check (once a day, always; ``SPEC_SURGEON_NO_UPDATE_CHECK`` is the only off switch). Keys an older
-``settings.json`` still holds for it (``native_style``, ``auto_check_updates``) are ignored.
+v0.4.x file's ``"dark"``) reads as the first. ``fast_mode`` is Claude's fast mode (Settings → "Fast responses"), off
+until the user turns it on; the window applies it to every call from its start (``llm.set_fast_mode``). Not settings
+at all (since the GUI rework after v0.4.1): the automatic update check (once a day, always;
+``SPEC_SURGEON_NO_UPDATE_CHECK`` is the only off switch). Keys an older ``settings.json`` still holds for it
+(``native_style``, ``auto_check_updates``) are ignored.
 """
 from __future__ import annotations
 
@@ -112,6 +114,7 @@ class Settings:
     log_open: bool = False
     theme: str = THEMES[0]                        # the window's colour scheme, one of THEMES
     mode: str = MODES[0]                          # the mode the window opens in, one of MODES (the last one used)
+    fast_mode: bool = False                       # Claude's fast mode (llm.set_fast_mode): faster answers, twice the price
     last_update_check: float = 0.0                # epoch seconds of the last automatic attempt (success or not)
     skipped_version: str = ""
     pending_update: Dict[str, Any] = field(default_factory=dict)   # {"version", "log", "started"} while installing

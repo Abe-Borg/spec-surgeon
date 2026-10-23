@@ -35,6 +35,7 @@ AUTO_STEPS = 6          # internal steps the coordinator takes on its own after 
 STAGES = ("empty", "question", "preview", "done", "budget", "resume")
 MODES = ("safe", "default")     # Safe: the buttons, no AI call; Default: the conversation (docs/PLAN-2026-10-23-modes.md)
 START_OVER = "Start over from the originals"   # the reply (a chip, a button) that drops the working copies
+LEFT_OUT_REASON = "You asked to leave it out of this request; it stays as it is."
 WORK_TODO = "Work on the documents I set aside"  # the reply (a chip, typed) that begins the pass over the to-do list
 CONVERSATION_EFFORT = "medium"   # the model's own default: fewer tool rounds per turn than high, measured by the owner
 RECOVERY_EFFORT = "high"         # the hard path keeps the depth
@@ -673,7 +674,9 @@ class DocumentTask:
         cost = self._budget.spent_usd
         text = ("an amount the price table cannot estimate" if cost is None else
                 "less than $0.01" if cost < 0.005 else f"about ${cost:.2f}")
-        return {"usd": cost, "text": text, "calls": self._budget.calls}
+        # ``fast``: the next AI step will ask for fast mode and be priced at the fast table (llm.FAST_PRICES) — the
+        # setting is on, the model is served fast, and Anthropic has not refused fast mode for this key
+        return {"usd": cost, "text": text, "calls": self._budget.calls, "fast": llm.fast_for(llm.DEFAULT_MODEL)}
 
     def _ready_to_talk(self):
         self.session.files(outcome=False)  # reject missing attachments before consuming an answer
@@ -823,10 +826,21 @@ class DocumentTask:
         self._revision += 1
         self.save()
 
-    def _left_after_run(self, request: str) -> List[Dict[str, str]]:
-        """The documents a model-free run did not give a copy, with the reason the engine recorded."""
-        last = self.session.last_batch
+    def _refused_by_preview(self, preview, request: str) -> List[Dict[str, str]]:
+        """The documents a button's preview refused, with their reasons: Create does not run them (``Session.
+        _without_refused``), so the run's own results never name them."""
         out: List[Dict[str, str]] = []
+        for item in getattr(getattr(preview, "batch_plan", None), "exceptions", []) or []:
+            origin = str(self.origin_of(Path(item.source)))
+            out.append({"path": origin, "name": Path(origin).name,
+                        "reason": str((item.exception or {}).get("reason", "")), "request": request})
+        return out
+
+    def _left_after_run(self, request: str, refused: Sequence[Dict[str, str]] = ()) -> List[Dict[str, str]]:
+        """The documents a model-free run did not give a copy, with the reason the engine recorded: those its preview
+        refused (never run), then those the run set aside or that failed a check."""
+        last = self.session.last_batch
+        out: List[Dict[str, str]] = list(refused)
         for item in getattr(last, "files", []) or []:
             if item.status == "PASS":
                 continue
@@ -834,7 +848,8 @@ class DocumentTask:
             reason = exc.get("reason") or ("A check failed on the edited copy, so it was not delivered; the run's "
                                            "DIAGNOSTICS.md says which.")
             origin = str(self.origin_of(Path(item.source)))
-            out.append({"path": origin, "name": Path(origin).name, "reason": str(reason), "request": request})
+            if all(e["path"] != origin for e in out):
+                out.append({"path": origin, "name": Path(origin).name, "reason": str(reason), "request": request})
         return out
 
     def template_info(self) -> Dict[str, Any]:
@@ -927,6 +942,7 @@ class DocumentTask:
         return _fingerprint({"revision": self._revision, "stage": self.stage,
                              "documents": s.documents, "template": s.template, "inputs": s.inputs, "spec": s.spec,
                              "todo": sorted(self.todo), "focus": sorted(self.focus["documents"]) if self.focus else None,
+                             "left_out": [str(p) for p in s.left_out],
                              "preview": outcome.token,
                              "visual_findings": visual.to_dict() if visual else None,
                              "warnings": getattr(preview, "warnings", [])})
@@ -936,7 +952,7 @@ class DocumentTask:
         documents in the plan means the page is out of date, and is refused, never guessed."""
         if not hold:
             return []
-        files = self.session.files()
+        files = self.session.planned_files()
         held: List[Path] = []
         for value in hold:
             path = Path(str(value)).resolve()
@@ -1018,7 +1034,9 @@ class DocumentTask:
                              "copies first.")
         remaining = None
         if held:
-            remaining = [f for f in s.files() if f not in held]
+            # the files the preview refused never run (Session._without_refused): a user who sets aside every
+            # previewed document has set aside everything there is to create
+            remaining = [f for f in s.runnable_files() if f not in held]
             seen = [c["summary"] for g in self._groups() for c in g["changes"]]   # the plan the user looked at
             for path in held:
                 self._set_aside(path, seen)
@@ -1033,13 +1051,14 @@ class DocumentTask:
             s.acknowledge_review(outcome.token)
         model_free = s.model_free
         request = self.decisions[0] if self.decisions else ""
+        refused = self._refused_by_preview(outcome.preview, request) if model_free else []
         log("Creating and checking your edited copies…")
         s.run(False, self.render, log, only=remaining)
         self._collect_results()
         self._emit({"type": "results", "results": self._results_view()})
         if model_free:
             # a Safe-mode button: no recovery (an AI call); what it left untouched is offered to Default mode
-            self.left_untouched = self._left_after_run(request)
+            self.left_untouched = self._left_after_run(request, refused)
         elif s.last_batch is not None and any(f.status != "PASS" for f in s.last_batch.files):
             log("Checking the files that still need work…")
             conversation = s.conversation
@@ -1176,14 +1195,21 @@ class DocumentTask:
                           for layout in s.spec.get("layouts") or []] or [1])
         else:
             stages = len(s.spec.get("stages") or []) if is_chain(s.spec) else 1
-        preview = s.outcome().preview
-        set_aside = []
-        for item in getattr(getattr(preview, "batch_plan", None), "exceptions", []) or []:
-            exc = item.exception or {}
-            set_aside.append({"name": Path(item.source).name, "reason": exc.get("reason", "")})
+        set_aside = self._left_untouched(s.outcome().preview)
         return {"groups": groups,
                 "targets": review_display.recovery_targets(s.recovery) if s.recovery else review_display.spec_bindings(s.spec),
                 "set_aside": set_aside, "stages": stages if groups else 0}
+
+    def _left_untouched(self, preview) -> List[Dict[str, str]]:
+        """Left untouched beside a preview: the documents the user left out of the request (no plan covers them),
+        then those the plan refused, each with its reason."""
+        if preview is None:
+            return []
+        items = [{"name": Path(path).name, "reason": LEFT_OUT_REASON} for path in self.session.left_out]
+        for item in getattr(getattr(preview, "batch_plan", None), "exceptions", []) or []:
+            exc = item.exception or {}
+            items.append({"name": Path(item.source).name, "reason": exc.get("reason", "")})
+        return items
 
     def _delivered(self) -> List[Path]:
         """The documents whose copies a partial save during recovery already delivered: their pages and findings leave
@@ -1267,12 +1293,8 @@ class DocumentTask:
         if samples and not any(sample.images for sample in samples):
             warnings.append("Page appearance was not checked: a rendered preview is unavailable. "
                             "Check the edited copies in Word before using them.")
-        set_aside = []
+        set_aside = self._left_untouched(preview)
         batch_plan = getattr(preview, "batch_plan", None)
-        for item in getattr(batch_plan, "exceptions", []) or []:
-            exc = item.exception or {}
-            set_aside.append({"name": Path(item.source).name, "reason": exc.get("reason", ""),
-                              "path": str(self.origin_of(Path(item.source)))})
         labels = {"preview": "Create edited copies", "resume": "Continue", "budget": "Continue"}
         if self.mode == "safe":
             labels = {k: v for k, v in labels.items() if k == "preview"}   # Safe mode continues no conversation

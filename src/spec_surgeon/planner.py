@@ -247,18 +247,27 @@ def plan_file(path: Path, spec: Dict[str, Any]) -> FilePlan:
     return fp
 
 
+# Planning is a fraction of a file's run (no apply, no verify): a batch is shared over worker processes for its plans
+# only from this many files, where the workers' start costs less than it saves (batch.map_files).
+PLAN_PROCESS_MIN_FILES = 12
+
+
 def plan_batch(inputs: Sequence[str], spec: Dict[str, Any]) -> BatchPlan:
-    """Plan ``spec`` on every input file (dry). Raises SpecError for an unusable spec before reading any file."""
-    from .batch import expand_inputs
+    """Plan ``spec`` on every input file (dry), in the inputs' order; a large batch's files are planned side by side
+    in worker processes (``batch.map_files``), each exactly as alone. Raises SpecError for an unusable spec before
+    reading any file."""
+    from .batch import expand_inputs, map_files
     validate_spec(spec)
     t0 = time.perf_counter()
     files = expand_inputs(inputs)
     templates = spec_templates(spec)
     bp = BatchPlan(spec=spec)
+    planned = []
     for f in files:
         if is_template_file(f, templates):
             bp.skipped.append(str(f))
-            continue
-        bp.files.append(plan_file(f, spec))
+        else:
+            planned.append(f)
+    bp.files = map_files(plan_file, [(f, spec) for f in planned], min_files=PLAN_PROCESS_MIN_FILES)
     bp.seconds = time.perf_counter() - t0
     return bp

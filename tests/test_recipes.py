@@ -170,7 +170,7 @@ def test_dirty_documents_plan_or_are_left_untouched_with_a_reason_never_half_edi
     task.attach(files)
     view = task.perform("recipe", recipe="title_property", inputs={"pattern": "SECTION {number} - {title}"})
     assert view["stage"] == "preview"
-    untouched = {Path(i["path"]).name for i in view["set_aside"]}
+    untouched = {i["name"] for i in view["set_aside"]}
     assert "dirty-empty_body.docx" in untouched                # no SECTION line to read: set aside, with its reason
     assert all(i["reason"] for i in view["set_aside"])
     task.perform("primary", token=view["token"])
@@ -354,7 +354,7 @@ def test_a_dirty_rich_file_refused_by_the_template_is_left_untouched_not_guessed
     task.attach([rich, plain])
     task.attach([template], template=True)
     view = task.perform("recipe", recipe="headers_footers_template", inputs={"slots": {"ISSUED FOR PERMIT": "BID"}})
-    reasons = {Path(i["path"]).name: i["reason"] for i in view["set_aside"]}
+    reasons = {i["name"]: i["reason"] for i in view["set_aside"]}
     assert "rich.docx" in reasons and "odd" in reasons["rich.docx"].lower()   # the even/odd pages setting differs
 
 

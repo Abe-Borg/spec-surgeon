@@ -2,7 +2,8 @@
 
 ``run_word`` runs one action (the accept/reject oracle) in one spawned worker with one deadline;
 ``run_word_batch`` renders a whole batch in one spawned worker that starts ONE private Word instance and
-renders every file in turn, the parent holding a deadline per file. No process-name or process-tree kill
+renders every file in turn, the parent holding a deadline per file; ``run_word_batches`` splits a batch over up to
+``word_instances`` such workers that render side by side, each with its own private Word. No process-name or process-tree kill
 is used. A Windows process handle is retained only after DispatchEx yields a newly created Word PID (the
 instance's own main window, found by a caption only it carries, or else the one Word process started since) and
 its creation time matches. If ownership cannot be established, a timeout still stops our Python worker;
@@ -10,6 +11,7 @@ Word is left alone and the missing cleanup evidence is reported.
 """
 from __future__ import annotations
 
+import contextvars
 import json
 import math
 import multiprocessing
@@ -18,6 +20,7 @@ import os
 import shutil
 import tempfile
 import time
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional, Union
@@ -27,6 +30,12 @@ from .. import diagnostics as diag
 DEFAULT_TIMEOUT = 120.0
 MAX_RESULT_BYTES = 64 * 1024 * 1024
 POLL_SECONDS = 0.25
+# Private Word instances that render one batch side by side (``run_word_batches``): at most WORD_INSTANCES (the
+# environment variable SPEC_SURGEON_WORD_INSTANCES replaces it; 1 renders every file in one instance, one by one),
+# at most one per two cores, and one more only for every FILES_PER_INSTANCE files, since starting Word takes seconds.
+WORD_INSTANCES = 3
+WORD_INSTANCES_ENV = "SPEC_SURGEON_WORD_INSTANCES"
+FILES_PER_INSTANCE = 2
 # HRESULTs that say the Word process itself is gone (crashed, killed) rather than that a file was refused: every
 # later file would fail the same way, so the worker stops and the parent renders the rest in a fresh instance.
 INSTANCE_LOST_HRESULTS = frozenset({
@@ -427,6 +436,56 @@ def run_word_batch(files, out_dir, timeout_per_file=None) -> WordBatchResult:
             break
         remaining = got.remaining
     return batch
+
+
+def word_instances(file_count: int) -> int:
+    """How many private Word instances render ``file_count`` files side by side (see ``WORD_INSTANCES``)."""
+    try:
+        limit = int(os.environ.get(WORD_INSTANCES_ENV) or WORD_INSTANCES)
+    except ValueError:
+        limit = WORD_INSTANCES
+    cores = max(1, (os.cpu_count() or 2) // 2)
+    return max(1, min(limit, cores, math.ceil(file_count / FILES_PER_INSTANCE)))
+
+
+def run_word_batches(files, out_dir, timeout_per_file=None, instances: Optional[int] = None) -> WordBatchResult:
+    """``run_word_batch`` over ``instances`` (default ``word_instances``) shares of ``files``, side by side: each
+    share has its own spawned worker, its own private Word and its own per-file deadlines, exactly as one batch has.
+    The results are merged. A share whose Word could not start while another's did gets one more try, in one
+    instance, after the others finish (a busy machine may refuse a second Word at once); only when no share's Word
+    started at all is the merged result a ``start_error``."""
+    files = [Path(f) for f in files]
+    count = instances or word_instances(len(files))
+    if count <= 1 or len(files) <= 1:
+        return run_word_batch(files, out_dir, timeout_per_file)
+    shares = [files[i::count] for i in range(count)]
+    with diag.span("render.word_instances", instances=count, file_count=len(files)):
+        with ThreadPoolExecutor(max_workers=count, thread_name_prefix="SpecSurgeon-Word") as pool:
+            # each share in its own copy of the caller's context (diagnostics correlation), never one copy in two
+            futures = [pool.submit(contextvars.copy_context().run, run_word_batch, share, out_dir, timeout_per_file)
+                       for share in shares]
+            parts = [f.result() for f in futures]
+    merged = WordBatchResult()
+    for part in parts:
+        merged.results.update(part.results)
+        merged.seconds.update(part.seconds)
+        merged.workers += part.workers
+        if merged.version == WordBatchResult.version:
+            merged.version = part.version
+    started = [part for part in parts if part.start_error is None]
+    if not started:
+        merged.start_error = parts[0].start_error
+        return merged
+    retry = [f for part in parts if part.start_error is not None for f in part.results]
+    if retry:
+        diag.event("render.word_instance_retry", level="warning", file_count=len(retry),
+                   reason=str(next(p.start_error for p in parts if p.start_error is not None)))
+        again = run_word_batch(retry, out_dir, timeout_per_file)
+        merged.results.update(again.results)
+        merged.seconds.update(again.seconds)
+        merged.workers += again.workers
+    merged.results = {f: merged.results[f] for f in files if f in merged.results}     # the caller's order
+    return merged
 
 
 def _run_batch_worker(files: List[Path], out_dir: Path, seconds: float, batch: WordBatchResult) -> _WorkerOutcome:

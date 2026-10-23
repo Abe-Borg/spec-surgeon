@@ -47,6 +47,7 @@ function Header({
   const safe = view.mode === "safe";
   const ready = !!view.connection?.ready;
   const calls = view.cost?.calls ?? 0;
+  const fast = !!view.cost?.fast;
   // The context line steps aside for the update pill: both only fit from 1280 px, and not together.
   const heading = updatePill ? "" : sessionHeading(view);
 
@@ -118,11 +119,15 @@ function Header({
           </span>
         )}
         <span
-          title={`Estimated spending in this conversation — an estimate from a built-in price table, never a bill. ${calls} AI ${calls === 1 ? "step" : "steps"} so far.`}
+          title={
+            `Estimated spending in this conversation — an estimate from a built-in price table, never a bill. ${calls} AI ${calls === 1 ? "step" : "steps"} so far.` +
+            (fast ? " Fast responses is in effect (Settings): AI steps are priced at the fast rate." : "")
+          }
           className="rounded-full border border-edge bg-raised px-3 py-1 text-xs whitespace-nowrap text-ink-dim tabular-nums"
         >
           {costPill(view.cost)}
           <span className="ml-1 hidden text-ink-faint xl:inline">this conversation</span>
+          {fast && <span className="ml-1.5 font-medium text-accent">Fast</span>}
         </span>
         <button
           type="button"

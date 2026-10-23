@@ -256,8 +256,9 @@ class Preview:
         for binding in spec.get("bindings", []):
             out.append(f"FILLS — {Path(binding['file']).name}:")
             for name, evidence in binding["slots"].items():
-                out.append(f"   {name}: {evidence['value']!r} ({evidence['part']}, "
-                           f"paragraph {evidence['paragraph'] + 1})")
+                out.append(f"   {name}: {evidence['typed']!r} (the user's wording for this file)" if "typed" in evidence
+                           else f"   {name}: {evidence['value']!r} ({evidence['part']}, "
+                                f"paragraph {evidence['paragraph'] + 1})")
         out.append("")
         out.append(self.batch_plan.to_text(per_file=False))
         out.append("\nSAMPLES (applied and verified in memory; sources untouched):")
@@ -533,12 +534,58 @@ def make_preview(spec: Dict[str, Any], inputs: Sequence[str], out_dir: Path, ren
         return result
 
 
+def _preview_sample(source: str, spec: Dict[str, Any], output: str, approved_md5: str,
+                    context: Optional[Dict[str, Any]] = None, events: Optional[str] = None) -> Dict[str, Any]:
+    """One sample of ``make_preview``: read, open, plan, apply, write ``output``, verify — here, or in a spawned worker
+    (``batch.map_files``), where ``events`` is its own journal and ``context`` the preview's correlation. Plain data
+    back: ``passed``, ``checks``, ``record`` (the verification record as a dict), ``exception``, ``output`` (set once
+    the copy was being written) and ``changed`` (the bytes read are not the ones the approval token was made for)."""
+    from . import diagnostics as diag
+    if events is not None:
+        with diag.scope(Path(events), **(context or {})):
+            return _preview_sample(source, spec, output, approved_md5)
+    from .verify import run_suite
+    f = Path(source)
+    r: Dict[str, Any] = {"passed": None, "checks": {}, "record": None, "exception": None, "output": None,
+                         "changed": False}
+    with diag.scope(source=str(f)), diag.span("preview.sample"):
+        stage, data = "open", None
+        try:
+            with diag.span("preview.sample.read"):
+                data = f.read_bytes()
+            if hashlib.md5(data).hexdigest() != approved_md5:
+                r["changed"] = True
+            with diag.span("preview.sample.open"):
+                pkg = DocxPackage(data, name=str(f))
+            stage = "plan"
+            with diag.span("preview.sample.plan"):
+                plan, frags = plan_spec(pkg, spec, fingerprint(pkg)["pattern_id"])
+            stage = "apply"
+            with diag.span("preview.sample.apply"):
+                out = apply_spec(pkg, frags).output_bytes()
+            stage = "write"
+            r["output"] = output
+            with diag.span("preview.sample.write", output=output, size=len(out)):
+                Path(output).parent.mkdir(parents=True, exist_ok=True)
+                Path(output).write_bytes(out)
+            stage = "verify"
+            with diag.span("preview.sample.verify"):
+                rec = run_suite(pkg.data, out, plan.to_dict(), str(f), output)
+            r.update(passed=rec.passed, checks={c.id: c.status for c in rec.checks}, record=rec.to_dict())
+        except Exception as e:  # noqa: BLE001 — a refusal, or the engine's own failure: the sample's record
+            r["exception"] = diag.exception_record(e, stage, data)
+            diag.event("preview.sample_failed", level="error", source=str(f), stage=stage, exception=r["exception"])
+        diag.event("preview.sample_finished", source=str(f), passed=r["passed"], exception=r["exception"],
+                   checks=r["checks"])
+    return r
+
+
 def _make_preview(spec: Dict[str, Any], inputs: Sequence[str], out_dir: Path, renderer: str,
                   do_render: bool) -> Preview:
     from . import diagnostics as diag
-    from .batch import check_inputs_outside, expand_inputs, output_names
+    from .batch import PROCESS_MIN_FILES, check_inputs_outside, expand_inputs, map_files, output_names, worker_plan
     from .editspec import is_template_file, spec_input_files, spec_templates, validate_spec
-    from .verify import run_suite
+    from .verify.suite import VerificationRecord
     from .input_snapshots import changed_inputs
     spec = copy.deepcopy(spec)
     validate_spec(spec)
@@ -580,46 +627,30 @@ def _make_preview(spec: Dict[str, Any], inputs: Sequence[str], out_dir: Path, re
         # names unique across the samples (two folders can each hold a "Spec.docx"): one sample's output never
         # overwrites another's, so each before/after picture and the visual check pair a source with its own output
         names = output_names(picks)
-        for f in picks:
-            with diag.scope(source=str(f)), diag.span("preview.sample"):
-                sv = SampleView(source=f)
-                stage, data = "open", None
-                try:
-                    with diag.span("preview.sample.read"):
-                        data = Path(f).read_bytes()
-                    if hashlib.md5(data).hexdigest() != token_inputs["files"][str(Path(f).resolve())][2]:
-                        input_changed = True
-                    with diag.span("preview.sample.open"):
-                        pkg = DocxPackage(data, name=str(f))
-                    stage = "plan"
-                    with diag.span("preview.sample.plan"):
-                        plan, frags = plan_spec(pkg, execution_spec, fingerprint(pkg)["pattern_id"])
-                    stage = "apply"
-                    with diag.span("preview.sample.apply"):
-                        out = apply_spec(pkg, frags).output_bytes()
-                    stage = "write"
-                    sv.output = out_dir / "samples" / names[str(f)]
-                    with diag.span("preview.sample.write", output=str(sv.output), size=len(out)):
-                        sv.output.parent.mkdir(parents=True, exist_ok=True)
-                        sv.output.write_bytes(out)
-                    stage = "verify"
-                    with diag.span("preview.sample.verify"):
-                        rec = run_suite(pkg.data, out, plan.to_dict(), str(f), str(sv.output))
-                    sv.passed = rec.passed
-                    sv.checks = {c.id: c.status for c in rec.checks}
-                    _log_verification(log, f.name, rec)
-                except Exception as e:  # noqa: BLE001 — a refusal, or the engine's own failure: the sample's record
-                    sv.exception = diag.exception_record(e, stage, data)
-                    diag.event("preview.sample_failed", level="error", source=str(f), stage=stage,
-                               exception=sv.exception)
-                    log.detail(f"sample {f.name}: EXCEPTION [{sv.exception['code']}] at {stage}: {sv.exception['reason']}")
-                    if sv.exception.get("traceback") and sv.exception.get("kind") != "refusal":
-                        log.block(sv.exception["traceback"])
-                pv.samples.append(sv)
-                input_changed = (input_changed or changed_since_preview(spec, planned, token, token_inputs) is not None
-                                 or bool(changed_inputs(snapshots)))
-                diag.event("preview.sample_finished", source=str(f), passed=sv.passed,
-                           exception=sv.exception, checks=sv.checks)
+        # The samples side by side in worker processes when there are enough of them (batch.map_files), each with its
+        # own events file; one or two run here, in the preview's own journal.
+        shared = len(picks) >= PROCESS_MIN_FILES and worker_plan(None, 0, len(picks))[0] == "process"
+        done = map_files(_preview_sample, [
+            (str(f), execution_spec, str(out_dir / "samples" / names[str(f)]),
+             token_inputs["files"][str(Path(f).resolve())][2],
+             {**diag.context(), "source": str(f)} if shared else None,
+             str(diag.trace_path(out_dir, names[str(f)]).with_suffix(".events.jsonl")) if shared else None)
+            for f in picks])
+        for f, r in zip(picks, done):
+            sv = SampleView(source=f, passed=r["passed"], checks=r["checks"], exception=r["exception"])
+            if r["output"]:
+                sv.output = Path(r["output"])
+            input_changed = input_changed or r["changed"]
+            if r["record"] is not None:
+                _log_verification(log, f.name, VerificationRecord.from_dict(r["record"]))
+            if sv.exception is not None:
+                log.detail(f"sample {f.name}: EXCEPTION [{sv.exception['code']}] at {sv.exception.get('stage')}: "
+                           f"{sv.exception['reason']}")
+                if sv.exception.get("traceback") and sv.exception.get("kind") != "refusal":
+                    log.block(sv.exception["traceback"])
+            pv.samples.append(sv)
+        input_changed = (input_changed or changed_since_preview(spec, planned, token, token_inputs) is not None
+                         or bool(changed_inputs(snapshots)))
         pv.renderer = render_samples(pv.samples, out_dir, renderer, do_render, pv.warnings, log=log)
         if input_changed or changed_since_preview(spec, planned, token, token_inputs) is not None or changed_inputs(snapshots):
             pv.token = ""  # an observed mismatch cannot become approved by restoring an earlier file later

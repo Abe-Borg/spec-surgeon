@@ -38,7 +38,6 @@ import multiprocessing
 import os
 import shutil
 import stat
-import sys
 import time
 import traceback
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
@@ -46,7 +45,7 @@ from concurrent.futures.process import BrokenProcessPool
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
+from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple, Union
 
 from . import __version__, guard
 from . import diagnostics as diag
@@ -285,6 +284,40 @@ def clear_delivery_folders(out_dir: Path) -> None:
 
 # ---- worker (runs in a subprocess) ------------------------------------------------------------------
 
+# How a batch's files are transformed and verified (``worker_plan``). The window's runs use ``auto``: a batch of
+# PROCESS_MIN_FILES or more files is shared over spawned worker processes, one per core up to MAX_PROCESS_WORKERS; each
+# file's acquire, plan, apply and verify run whole in one worker, exactly as they run inline, so a file's result does
+# not depend on which worker had it. Fewer files run inline, where a worker's start would cost more than it saves.
+# ``thread``, ``serial`` and ``process`` ask for one kind explicitly. (tests/conftest.py sets ``thread``: a test's
+# patches never reach a spawned worker.)
+WORKER_MODES = ("auto", "thread", "serial", "process")
+DEFAULT_WORKER_MODE = "auto"
+PROCESS_MIN_FILES = 3
+MAX_PROCESS_WORKERS = 8
+
+
+def worker_plan(worker_mode: Optional[str], workers: int, file_count: int) -> Tuple[str, int]:
+    """(mode, workers) for a batch of ``file_count`` files; ``worker_mode`` None is ``DEFAULT_WORKER_MODE``.
+
+    ``auto``: processes for PROCESS_MIN_FILES files or more (unless ``workers`` is 1), else ``serial``. ``thread``: one
+    worker unless ``workers`` asks for more — plan, apply and verify are Python holding the GIL, so threads run them
+    one at a time anyway (measured on eight 53-page sections: eight threads took 19% longer than one and 2.7x the
+    memory). ``serial``: one, inline. ``process``: ``workers``, or one per core up to MAX_PROCESS_WORKERS. The packaged
+    app runs processes too: the launcher calls ``freeze_support`` first, and the "access violations at worker spawn"
+    its crash log once held were handled first-chance exceptions inside CreateProcess, now kept out of it
+    (``diagnostics.com_quiet``)."""
+    mode = worker_mode or DEFAULT_WORKER_MODE
+    if mode not in WORKER_MODES:
+        raise ValueError("worker_mode must be auto, thread, serial or process")
+    if mode == "auto":
+        mode = "process" if file_count >= PROCESS_MIN_FILES and workers != 1 else "serial"
+    if mode == "thread" and not workers:
+        workers = 1
+    if mode == "serial":
+        workers = 1
+    return mode, workers or max(1, min(os.cpu_count() or 2, file_count, MAX_PROCESS_WORKERS))
+
+
 def _in_pool_worker() -> bool:
     return multiprocessing.parent_process() is not None
 
@@ -294,8 +327,32 @@ def _process_pool(workers: int) -> ProcessPoolExecutor:
 
     The Windows frozen launcher calls freeze_support before opening UI. Using an
     explicit context also keeps retries from inheriting a threaded native (window) state.
+    The pool starts its processes as work is submitted: submit inside ``diagnostics.com_quiet``.
     """
     return ProcessPoolExecutor(max_workers=workers, mp_context=multiprocessing.get_context("spawn"))
+
+
+def map_files(fn: Callable[..., Any], calls: Sequence[Tuple[Any, ...]], min_files: int = PROCESS_MIN_FILES) -> List[Any]:
+    """``[fn(*args) for args in calls]``, in order: shared over spawned worker processes when ``worker_plan`` would
+    share a batch of that many files and there are at least ``min_files`` of them, else in this process. ``fn`` is a
+    module-level function whose arguments and result are plain data. A call whose worker stopped abruptly (the pool
+    broke) is made again here, as it would have been without the pool."""
+    mode, workers = worker_plan(None, 0, len(calls))
+    if mode != "process" or workers <= 1 or len(calls) < min_files:
+        return [fn(*args) for args in calls]
+    with diag.span("worker.map", function=getattr(fn, "__name__", "?"), calls=len(calls), workers=workers):
+        with _process_pool(workers) as ex:
+            with diag.com_quiet():          # the pool starts its processes here; see diagnostics.com_quiet
+                futures = [ex.submit(fn, *args) for args in calls]
+            out = []
+            for future, args in zip(futures, calls):
+                try:
+                    out.append(future.result())
+                except BrokenProcessPool as e:
+                    diag.event("worker.map_inline", level="warning", function=getattr(fn, "__name__", "?"),
+                               reason=str(e))
+                    out.append(fn(*args))
+            return out
 
 
 def _when(mtime_ns: int) -> str:
@@ -506,8 +563,10 @@ def _run_alone(path: Path, job_name: str, params: Dict[str, Any], out_dir: Path,
                reason="the original process pool stopped abruptly; isolate the file in a fresh process")
     try:
         with _process_pool(1) as ex:
-            return ex.submit(_process_one, str(path), job_name, params, str(out_dir), out_name, spec, 2,
-                             refuse, diag.context()).result()
+            with diag.com_quiet():
+                future = ex.submit(_process_one, str(path), job_name, params, str(out_dir), out_name, spec, 2,
+                                   refuse, diag.context())
+            return future.result()
     except BrokenProcessPool as e:
         return _worker_died(path, out_dir, out_name, e)
     except Exception as e:  # noqa: BLE001
@@ -706,7 +765,7 @@ def run_batch(inputs: Sequence[str], job_name: str, params: Dict[str, Any], out_
               progress=None, spec: Optional[Dict[str, Any]] = None, *, goal_contract=None, goal_bindings=None,
               approved_inputs=None, _input_snapshots=None, _public_spec=None,
               _source_identities=None, _source_refusals=None, enforce_goals: bool = False,
-              worker_mode: str = "thread") -> BatchResult:
+              worker_mode: Optional[str] = None) -> BatchResult:
     """Run a batch with correlation, including validation before creating a results folder.
 
     Outcome data is advisory unless an explicit profile or governed caller opts into ``enforce_goals``.
@@ -729,7 +788,7 @@ def _run_batch(inputs: Sequence[str], job_name: str, params: Dict[str, Any], out
                progress, spec: Optional[Dict[str, Any]], goal_contract=None, goal_bindings=None,
                inherited_inputs=(), public_spec=None, approved_inputs=None,
                inherited_sources=None, inherited_refusals=None, enforce_goals=False,
-               worker_mode="thread") -> BatchResult:
+               worker_mode=None) -> BatchResult:
     """Run an EditSpec (``spec``) over the inputs; ``job_name`` is only a label in the records.
 
     Everything the run does goes to ``<out>/logs/run.log`` (``progress`` gets the same progress lines), each file's
@@ -737,8 +796,8 @@ def _run_batch(inputs: Sequence[str], job_name: str, params: Dict[str, Any], out
     ``DIAGNOSTICS.md``. When the batch itself fails, run.log ends with the stage and the traceback (and DIAGNOSTICS.md
     says what was known) before the exception propagates."""
     out_dir = Path(out_dir)
-    if worker_mode not in {"thread", "serial", "process"}:
-        raise ValueError("worker_mode must be thread, serial or process")
+    if (worker_mode or DEFAULT_WORKER_MODE) not in WORKER_MODES:
+        raise ValueError("worker_mode must be auto, thread, serial or process")
     reported_spec = spec if public_spec is None else public_spec
     if approved_inputs is not None:
         digest = hashlib.sha256(json.dumps(reported_spec, sort_keys=True, ensure_ascii=False).encode("utf-8")).hexdigest()[:16]
@@ -852,22 +911,11 @@ def _file_done(f: Path, r: Dict[str, Any], log: "diag.RunLog") -> None:
 
 def _transform_and_verify(batch: BatchResult, files: List[Path], job_name: str, params: Dict[str, Any],
                           out_dir: Path, workers: int, spec: Optional[Dict[str, Any]], log: "diag.RunLog",
-                          source_identities=None, source_refusals=None, *, worker_mode="thread") -> None:
-    """1-2. acquire, fingerprint, plan, apply, verify — in parallel; a worker that dies costs only its own file."""
+                          source_identities=None, source_refusals=None, *, worker_mode=None) -> None:
+    """1-2. acquire, fingerprint, plan, apply, verify — in parallel (``worker_plan``); a worker that dies costs only
+    its own file."""
     t_start = time.perf_counter()
-    # Frozen Windows processes triggered access violations during spawn on live runs.
-    # Threads also avoid paying spawn costs for small batches; processes require an explicit choice.
-    if worker_mode == "process" and getattr(sys, "frozen", False):
-        worker_mode = "thread"
-        log("Process workers are unavailable in the packaged app; using threads.")
-    # Plan, apply and verify are Python holding the GIL: threads run them one at a time anyway. Measured on eight
-    # 53-page sections, eight threads took 19% longer than one and 2.7x the memory, so threads default to one;
-    # an explicit count is still honored, and rendering keeps its own parallel workers.
-    if worker_mode == "thread" and not workers:
-        workers = 1
-    workers = workers or max(1, min(os.cpu_count() or 2, len(files), 8))
-    if worker_mode == "serial":
-        workers = 1
+    worker_mode, workers = worker_plan(worker_mode, workers, len(files))
     results: Dict[str, Dict[str, Any]] = {}
     log(f"{len(files)} file(s); transform+verify with {workers} {worker_mode} worker(s)"
         + (f"; skipped the spec's template file(s) {[Path(x).name for x in batch.skipped]}" if batch.skipped else ""))
@@ -888,8 +936,9 @@ def _transform_and_verify(batch: BatchResult, files: List[Path], job_name: str, 
     else:
         broken: List[Path] = []
         with (_process_pool(workers) if worker_mode == "process" else ThreadPoolExecutor(max_workers=workers)) as ex:
-            futs = {ex.submit(_process_one, str(f), job_name, params, str(out_dir), out_names[str(f)], spec, 1,
-                              refused.get(str(f)), diag.context()): f for f in files}
+            with diag.com_quiet():          # the pool starts its processes here; see diagnostics.com_quiet
+                futs = {ex.submit(_process_one, str(f), job_name, params, str(out_dir), out_names[str(f)], spec, 1,
+                                  refused.get(str(f)), diag.context()): f for f in files}
             for fut in as_completed(futs):
                 f = futs[fut]
                 try:

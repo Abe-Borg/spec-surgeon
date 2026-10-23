@@ -86,5 +86,13 @@ def _hermetic(request, tmp_path_factory, monkeypatch):
         monkeypatch.setattr(llm, "_sdk_credentials", _no_sdk_profile)
         # One scripted failure is one failure: a test of the automatic re-send (tests/test_llm.py) turns it back on.
         monkeypatch.setattr(llm, "RETRIES", 0)
+        # Fast mode is the user's setting, off by default; a test that turns it on (or that a refusal latches off)
+        # leaves no trace in the next.
+        monkeypatch.setattr(llm, "FAST_MODE", False)
+        monkeypatch.setattr(llm, "_fast_unavailable", None)
     except ImportError:
         pass
+    # The window's batches share their files over spawned worker processes (batch.DEFAULT_WORKER_MODE "auto"); a
+    # test's patches never reach a spawned worker, so the suite runs them in this process unless a test asks.
+    from spec_surgeon import batch
+    monkeypatch.setattr(batch, "DEFAULT_WORKER_MODE", "thread")

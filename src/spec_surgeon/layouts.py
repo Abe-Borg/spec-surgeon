@@ -387,7 +387,7 @@ class LayoutResult:
 
 def run_layouts(inputs: Sequence[str], plan: Dict[str, Any], out_dir: Path, *, renderer: str = "auto",
                 do_render: bool = True, progress=None, approved_inputs: Optional[Dict[str, Any]] = None,
-                worker_mode: str = "thread") -> LayoutResult:
+                worker_mode: Optional[str] = None) -> LayoutResult:
     """Run every layout's spec on its own files (``batch.run_batch`` under ``out_dir/layout-<id>``), copies only.
     Each layout batch delivers, records and reports exactly as a single-spec run does; a file no layout covers is an
     EXCEPTION here, untouched. ``approved_inputs`` are the preview's (``layout_inputs``): the run refuses when the

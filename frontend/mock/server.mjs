@@ -364,7 +364,7 @@ const SCENARIOS = {
 };
 
 let view = emptyView();
-let settings = { key_present: true, origin: "saved", can_remember: true, out_root: "C:/Users/abe/AppData/Local/Spec Surgeon/runs", logs_dir: "C:/Users/abe/AppData/Roaming/Spec Surgeon/logs", theme: "clay" };
+let settings = { key_present: true, origin: "saved", can_remember: true, out_root: "C:/Users/abe/AppData/Local/Spec Surgeon/runs", logs_dir: "C:/Users/abe/AppData/Roaming/Spec Surgeon/logs", theme: "clay", fast_mode: false, fast: { model: "claude-opus-5-5", available: true, speedup: 2.5, price_factor: 2, standard_usd_per_mtok: [4, 20], fast_usd_per_mtok: [8, 40], refused: null } };
 const THEMES = ["clay", "blueprint", "graphite", "carbon", "linen"];
 let running = null; // { stop: boolean }
 let downloadTimer = null;
@@ -539,7 +539,7 @@ function startStream(res) {
 }
 
 function spend(usd, calls) {
-  view.cost = { usd: Math.round((view.cost.usd + usd) * 100) / 100, text: "", calls: view.cost.calls + calls };
+  view.cost = { usd: Math.round((view.cost.usd + usd) * 100) / 100, text: "", calls: view.cost.calls + calls, fast: settings.fast_mode };
   view.cost.text = view.cost.usd < 0.005 ? "less than $0.01" : `about $${view.cost.usd.toFixed(2)}`;
   return view.cost;
 }
@@ -646,7 +646,7 @@ async function recipeJob(res, recipe) {
   view.plan = {
     groups: [{ id: "", label: "", count: docs.length, files: [], changes: [{ title: recipe.label, summary: recipe.summary, details: [] }], assumptions: [] }],
     targets: [],
-    set_aside: aside ? [{ name: aside.name, path: aside.path, reason: "Editing is restricted in this file (Review → Restrict Editing); remove the restriction in Word, then run again." }] : [],
+    set_aside: aside ? [{ name: aside.name, reason: "Editing is restricted in this file (Review → Restrict Editing); remove the restriction in Word, then run again." }] : [],
     stages: 1,
   };
   await s.emit({ type: "plan", plan: view.plan });
@@ -754,7 +754,13 @@ async function primaryJob(res, token, hold = []) {
     view.messages.push(msg("app", "Stopped. The copies that were already verified are kept."));
     return s.end();
   }
-  const asideByButton = view.mode === "safe" ? (view.plan?.set_aside ?? []).filter((x) => x.path) : [];
+  // A button's run: the documents its plan set aside, found by name among the attachments (the view names them only).
+  const asideByButton = view.mode === "safe"
+    ? (view.plan?.set_aside ?? []).flatMap((x) => {
+        const a = view.attachments.find((d) => d.kind === "document" && d.name === x.name);
+        return a ? [{ path: a.path, name: x.name, reason: x.reason }] : [];
+      })
+    : [];
   const fresh = results().filter((r) => running.some((a) => a.path === r.source) && !asideByButton.some((x) => x.path === r.source));
   if (view.mode === "safe") {
     // A button's run: the app's own note, no AI words; what it left untouched waits beside the copies.
@@ -1037,6 +1043,12 @@ async function handle(req, res) {
       if ("theme" in body) {
         if (!THEMES.includes(body.theme)) return json(res, 400, { error: "There is no such colour scheme." });
         settings = { ...settings, theme: body.theme };
+        if (!("api_key" in body)) return json(res, 200, settings);
+      }
+      if ("fast_mode" in body) {
+        if (typeof body.fast_mode !== "boolean") return json(res, 400, { error: "Fast responses is on or off." });
+        settings = { ...settings, fast_mode: body.fast_mode };
+        view.cost = { ...view.cost, fast: body.fast_mode };
         if (!("api_key" in body)) return json(res, 200, settings);
       }
       const key = String(body.api_key || "");

@@ -69,16 +69,39 @@ prefix before writing an updated checkpoint.
 
 ## Desktop-safe workers
 
-Ordinary transforms and verification use threads by default (`run_batch`'s
-`worker_mode`), with single-worker and `worker_mode="serial"` execution inline.
-Thread mode runs one worker unless `workers=N` asks for more: the work holds the
-GIL, and on eight 53-page sections eight threads took 19% longer than one and 2.7
-times the memory. Rendering keeps its own parallel workers. `worker_mode="process"`
-explicitly opts into spawned processes in an unfrozen Python installation. The packaged app
-always substitutes threads for a requested process pool, avoiding the worker-spawn
-access violations observed in the live Windows runs. Isolated retries remain part
-of the explicit process mode. The frozen Windows launcher still calls
-`multiprocessing.freeze_support()` before UI startup for other isolated workers.
+`run_batch`'s `worker_mode` (`batch.worker_plan`) defaults to `auto`
+(`batch.DEFAULT_WORKER_MODE`), what the window's runs use: a batch of three or more
+files (`PROCESS_MIN_FILES`) is shared over spawned worker processes, one per core
+up to eight (`MAX_PROCESS_WORKERS`); fewer files run inline, where starting a worker
+costs more than it saves. Each file's acquire, plan, apply and verify run whole in
+one worker, exactly as inline, so a file's result does not depend on which worker had
+it (`tests/test_runtime_reliability.py` compares every output byte and check with an
+inline run). `thread` runs one worker unless `workers=N` asks for more: the work holds
+the GIL, and on eight 53-page sections eight threads took 19% longer than one and 2.7
+times the memory. `serial` runs inline; `process` asks for processes outright. The
+test suite runs `thread` (`tests/conftest.py`): a test's patches never reach a
+spawned worker. Measured on eight 50-page sections on four cores (rendering off): a
+run 4.6 s inline, 1.6 s in `auto`.
+
+`batch.map_files` gives the same sharing to work that is not a run: the preview plans
+a batch of twelve or more files (`planner.PLAN_PROCESS_MIN_FILES`; planning alone is a
+fraction of a file's run) and checks three or more samples (`preview._preview_sample`,
+each sample's events in its own journal) side by side, with the same results as
+inline; a preview of eight samples went from 4.8 s to 2.2 s. A call whose worker
+stopped abruptly is made again in the app's process.
+
+The packaged app runs processes too. It once swapped processes for threads because
+its crash log held "Windows fatal exception: access violation" at every worker
+spawn (B3 of the 1.0 live runs); W2 (2026-10-22) showed those are handled
+first-chance exceptions inside CreateProcess, every worker running to its end, and
+paused the crash log around the Word worker's start. `diagnostics.com_quiet` now
+counts the threads inside it (the first pauses the crash log, the last resumes it),
+and the pools submit their work inside it, since a spawn-context pool starts its
+processes on submit. The frozen Windows launcher calls
+`multiprocessing.freeze_support()` before anything else, so a worker never opens a
+window or takes the app mutex; the installed-app smoke test runs a real two-worker
+batch and a map from the frozen executable. Isolated retries of a file whose worker
+died remain part of process mode.
 
 ## Word COM deadlines
 

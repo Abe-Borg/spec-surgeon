@@ -409,6 +409,58 @@ def test_a_clean_exit_says_so_in_the_app_log(monkeypatch, job):
             h.close()
 
 
+@pytest.mark.parametrize("entry", ["run", "sys.exit(main())"])
+def test_nothing_outlives_the_window_once_main_returns(entry):
+    """Once ``main`` returns (the window closed, the job ended, everything written), ``run`` ends the process at
+    once with main's exit code. A thread that is not the app's — pywebview's .NET and WebView2 layer, a library's
+    idle worker — never keeps it alive; Python's own teardown, the planted defect, waits for it forever."""
+    import subprocess
+    import sys
+    code = ("import threading\n"
+            "from spec_surgeon import gui\n"
+            "threading.Thread(target=threading.Event().wait, name='not-ours').start()\n"
+            "gui.main = lambda argv=None: 3\n"
+            + ("gui.run()\n" if entry == "run" else "import sys\nsys.exit(gui.main())\n"))
+    if entry == "run":
+        r = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=60)
+        assert r.returncode == 3, r.stderr
+    else:
+        with pytest.raises(subprocess.TimeoutExpired):
+            subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=5)
+
+
+def test_run_flushes_the_logs_before_the_process_ends(monkeypatch):
+    """``run`` hands main's code to ``os._exit`` only after ``logging.shutdown`` has flushed the app log and the
+    event journal (``os._exit`` flushes nothing)."""
+    import logging
+    from spec_surgeon import gui
+    order = []
+    monkeypatch.setattr(gui, "main", lambda argv=None: order.append("main") or 0)
+    monkeypatch.setattr(logging, "shutdown", lambda: order.append("logs flushed"))
+
+    class Exited(BaseException):
+        pass
+
+    def exit_now(code):
+        order.append(("exit", code))
+        raise Exited
+    monkeypatch.setattr(gui.os, "_exit", exit_now)
+    with pytest.raises(Exited):
+        gui.run()
+    assert order == ["main", "logs flushed", ("exit", 0)]
+
+
+def test_every_entry_point_of_the_window_goes_through_run():
+    """``spec-surgeon-gui``, ``python -m spec_surgeon`` and the Windows app's launcher all start the window with
+    ``run``, so each ends its process when the window has closed."""
+    root = Path(__file__).resolve().parents[1]
+    assert 'spec-surgeon-gui = "spec_surgeon.gui:run"' in (root / "pyproject.toml").read_text(encoding="utf-8")
+    main_module = (root / "src" / "spec_surgeon" / "__main__.py").read_text(encoding="utf-8")
+    assert "from .gui import run" in main_module and "    run()" in main_module and "main()" not in main_module
+    launcher = (root / "packaging" / "windows" / "gui_entry.py").read_text(encoding="utf-8")
+    assert "from spec_surgeon.gui import run" in launcher and "    run()" in launcher and "main()" not in launcher
+
+
 @pytest.mark.parametrize("crashed", [False, True])
 def test_every_start_is_clean_and_the_last_conversation_is_archived(monkeypatch, crashed):
     """The window never reopens the last conversation: at start its journal moves under ``conversations/`` (kept,
@@ -599,8 +651,12 @@ def test_a_layout_run_whose_only_set_aside_document_had_no_layout_has_nothing_to
     s = Session(documents=docs, out_root=tmp_path / "out", visual_check=False)
     s._set_outcome(spec=plan, source="test")
     s.make_preview(False, quiet)
+    uncovered = {f.source for f in s.preview.batch_plan.exceptions}
+    assert len(uncovered) == 1
     s.run(False, False, quiet)
-    assert s.last_batch.counts() == {"PASS": 2, "FAIL": 0, "EXCEPTION": 1, "PENDING": 0}
+    # the document no layout covers was listed under Left untouched: Create leaves it as it is (never run, #91)
+    assert s.last_batch.counts() == {"PASS": 2, "FAIL": 0, "EXCEPTION": 0, "PENDING": 0}
+    assert not uncovered & {f.source for f in s.last_batch.files}
     calls = []
     _stub_recovery(monkeypatch, calls)
     assert s.resolve_remaining(quiet).startswith("Nothing to resolve")

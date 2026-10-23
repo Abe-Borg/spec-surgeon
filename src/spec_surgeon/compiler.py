@@ -212,6 +212,11 @@ TOOLS = INSPECTION_TOOLS + [
          "suggested_replies": {"type": "array", "items": {"type": "string"}, "maxItems": 5,
                                "description": "up to five short next requests the user could tap, in their own "
                                               "voice; never words to be placed in the documents"},
+         "leave_out": {"type": "array", "items": {"type": "string"},
+                       "description": "labels from THE BATCH of the documents the user asked to leave out of this "
+                                      "request (\"leave out 20\", \"not 23 for now\"): the plan, its preview and its "
+                                      "copies cover the others, these stay exactly as they are and the window lists "
+                                      "them under Left untouched. Only documents the user named; never all of them"},
          "custom_transform": {"type": "string", "enum": ["possible", "outside_limits"],
                               "description": "for an unsupported spec only: could a one-off custom transform do it "
                                              "within the catalog's custom_transform_limits?"},
@@ -470,6 +475,14 @@ gives; never retype it yourself. "Show the title in capitals like the template /
 ["SECTION_TITLE"] (the slot names) on the same apply_header_footer_template: one step, w:caps on the filled text, no \
 letter retyped. The preview's FILLS IN ANOTHER CASE THAN THE TEMPLATE names each file whose fill will look different; \
 for a header/footer the template op does not write, set_properties run.caps on that paragraph (scope headers/footers).
+- "Match the template's capitalization" where the template shows a slot in title case ("Specification Name") and the \
+files type their titles in capitals: Word shows capitals and small capitals through formatting, never title case, so \
+title case is wording. Draft each document's value in the template's case from its own title and offer the drafts as \
+ONE ask_user choice whose wording lists them on one line ("01 — Wet-Pipe Sprinkler Systems · 02 — Packaged Water \
+Chillers · …"), saying they are your drafts and asking about the doubtful ones ("and" or "And", a hyphen the title \
+lacks). Once the user picks it or types their own, submit bindings with {typed} for each document (exactly the \
+approved words), mode untracked: one plan for the whole batch, never one per document. Never change a letter's case \
+without that approval.
 - THE BATCH opens with the overview: every file side by side (its section number and title as the reference fills \
 read them, how its title shows, each header/footer it displays, its File Properties title) and flags naming the files \
 that differ from most — a title or header/footer line shown in other capitals, a header/footer line missing or extra, \
@@ -495,11 +508,12 @@ structural pattern and fills the shared allowance; do not copy a small sample co
 that layout encodes the section title, PART headings and article titles (style ids, or typed markers such as "2.01"). \
 Documents from different projects are built differently: PR1 articles in one, Heading 2 in another, Normal paragraphs \
 with typed numbers in a third. When one spec cannot say the request for every pattern, do not write a union selector \
-and do not leave files out: submit spec as {"summary": …, "layouts": [{"id": "A", "label": "<how the user would \
-recognise these documents, e.g. 'styled, PR1 articles'>", "pattern_ids": [...], "spec": <a complete EditSpec for \
-those documents, with its own concrete selectors and required counts>}, …]}. Every pattern of THE BATCH belongs to \
-exactly one layout; a pattern you cannot plan is an ask_user question, never a silent omission. Each layout's spec is \
-checked on its own documents only. Ask once per layout, never per file. One layout is an ordinary spec: submit it plain.
+and do not leave files out unasked: submit spec as {"summary": …, "layouts": [{"id": "A", "label": "<how the user \
+would recognise these documents, e.g. 'styled, PR1 articles'>", "pattern_ids": [...], "spec": <a complete EditSpec \
+for those documents, with its own concrete selectors and required counts>}, …]}. Every pattern of THE BATCH belongs \
+to exactly one layout (a pattern whose documents the user left out needs none); a pattern you cannot plan is an \
+ask_user question, never a silent omission. Each layout's spec is checked on its own documents only. Ask once per \
+layout, never per file. One layout is an ordinary spec: submit it plain.
 - Finish each turn by calling submit_editspec once with the whole spec, or ask_user. Write your reply to the user as \
 plain text in the SAME turn, before the call: what will change and where, in their words, one short paragraph; the \
 app shows your text above the plan it compiles. Ops that must take effect in a stated order may also be submitted \
@@ -529,6 +543,13 @@ results, not a procedure: get them exactly what they asked for with as little of
   documents; those are ask_user choices with wording.
 - Never ask the user to choose a method, to split a request, or to do anything in steps; the app composes ordered
   steps itself and runs them as one plan.
+- One plan covers every attached document unless the user leaves some out. "Leave out 20", "not 23 for now", "skip
+  the Michigan one": submit the plan for the others with leave_out naming those documents (their labels in THE
+  BATCH). They are not planned, previewed or changed, the window lists them under Left untouched, and the next
+  request covers them again unless the user leaves them out again. Never leave out a document the user did not name,
+  and never ask the user to remove documents, start another conversation or set anything up to leave one out.
+- A document the plan refuses (the preview's LEFT UNTOUCHED, with the reason) is not part of the plan. Name it in your
+  next reply with its reason in plain words and what would let it take part, or offer to leave it out.
 - A template does not authorize copying unrelated project identity or technical content. Distinguish appearance,
   structure and wording when the request is ambiguous. If requirements conflict, say so and offer achievable
   alternatives. An unsupported capability is a limitation of the app, not a reason to ask the user to rephrase an
@@ -598,9 +619,12 @@ def system_prompt(chat: bool = False) -> str:
             "Font shorthand sets ascii/hAnsi/cs; eastAsia requires east_asia:true. Whole-document font changes "
             "include used list-label fonts, preserving symbol fonts; numbering_levels:false opts out. "
             "Optional bindings: [{file: absolute source path, md5: source digest, slots: {slot_name: "
-            "{value: exact source substring, part: package member, paragraph: zero-based index}}}]. "
-            "Use inspected per-file bindings for titles/numbers; preserve the exact source case and spacing. "
-            "Bindings override slot_fills fallback rules and require exact source evidence. "
+            "{value: exact source substring, part: package member, paragraph: zero-based index} | "
+            "{typed: the user's own wording for this document}}}]. "
+            "Use inspected per-file bindings for titles/numbers; a quoted value keeps the exact source case and "
+            "spacing and requires exact source evidence. Typed wording is the user's (typed or picked), placed as "
+            "approved; give every document the spec covers its own (mode untracked). "
+            "Bindings override slot_fills fallback rules. "
             "Custom transform limits:\n"
             + json.dumps(op_catalog(examples=False)["custom_transform_limits"], ensure_ascii=False))
 
@@ -659,6 +683,11 @@ def placed_words(spec: Dict[str, Any]) -> List[str]:
     for layout in (spec.get("layouts") or []) if isinstance(spec.get("layouts"), list) else []:
         if isinstance(layout, dict) and isinstance(layout.get("spec"), dict):
             out += placed_words(layout["spec"])
+    # a binding's typed wording: the user's own words for one file's slot (quoted values are the file's own)
+    for binding in spec.get("bindings") or [] if isinstance(spec.get("bindings"), list) else []:
+        slots = binding.get("slots") if isinstance(binding, dict) and isinstance(binding.get("slots"), dict) else {}
+        out += [slot["typed"] for slot in slots.values()
+                if isinstance(slot, dict) and isinstance(slot.get("typed"), str) and slot["typed"]]
     for o in spec.get("ops") or []:
         if not isinstance(o, dict):
             continue
@@ -1160,7 +1189,62 @@ class _Batch:
         """A table or picture listed beside the documents — only a listed one (inputs.read)."""
         return read_input(path, self.inputs, sheet, rows)
 
-def _dry_errors(spec: Dict[str, Any], batch: _Batch, patterns: Optional[Sequence[str]] = None) -> List[str]:
+def resolve_leave_out(raw: Any, batch: _Batch) -> Tuple[List[Path], List[str]]:
+    """The documents a submission leaves out of the request at the user's word (``leave_out``: labels THE BATCH
+    shows), as the batch's paths, and the errors that refuse it: not a list of labels, a label THE BATCH does not
+    list, or every document (nothing would be planned)."""
+    if raw is None or raw == []:
+        return [], []
+    if not isinstance(raw, list) or not all(isinstance(x, str) and x.strip() for x in raw):
+        return [], ["[leave-out] leave_out must be a list of file labels from THE BATCH"]
+    paths: List[Path] = []
+    errs: List[str] = []
+    for label in raw:
+        path = batch.files.get(label.strip())
+        if path is None:
+            errs.append(f"[leave-out] leave_out names {label!r}, which THE BATCH does not list; use its labels "
+                        f"({', '.join(sorted(batch.files)[:12])}{', …' if len(batch.files) > 12 else ''})")
+        elif path not in paths:
+            paths.append(path)
+    if not errs and len(paths) >= len(batch.files):
+        errs.append("[leave-out] leave_out names every document, so nothing would be planned; ask the user which "
+                    "documents to plan")
+    return paths, errs
+
+
+def _left_out_keys(leave_out: Sequence[Path]) -> set:
+    return {str(Path(p).resolve()) for p in leave_out or ()}
+
+
+def _kept_paths(batch: _Batch, pat: Dict[str, Any], out: set) -> List[Path]:
+    """A pattern's files without those left out of the request."""
+    return [f for f in batch.pattern_paths(pat) if str(Path(f).resolve()) not in out]
+
+
+def _typed_coverage(spec: Dict[str, Any], batch: _Batch, patterns: Optional[Sequence[str]], out: set) -> List[str]:
+    """Typed wording (a binding's ``typed``: the user's own words for one file's slot) is all or nothing: a file with
+    it places words and runs untracked, a file without it would plan as a formatting change under a spec that says
+    otherwise and be refused. Every document the spec covers (its layout's patterns, nothing left out) needs its own
+    wording for the same slots, or the user leaves it out."""
+    from .editspec import chain_specs
+    bindings = [b for own in chain_specs(spec) for b in own.get("bindings", [])]
+    typed = {name for b in bindings for name, slot in b["slots"].items() if "typed" in slot}
+    if not typed:
+        return []
+    given = {str(Path(b["file"]).resolve()): {n for n, slot in b["slots"].items() if "typed" in slot}
+             for b in bindings}
+    missing = [batch.label(f) for pat in batch.prof["patterns"]
+               if patterns is None or pat["pattern_id"] in patterns
+               for f in _kept_paths(batch, pat, out) if not typed <= given.get(str(Path(f).resolve()), set())]
+    if not missing:
+        return []
+    return [f"[bindings] typed wording for {sorted(typed)} is given for some documents but not for "
+            f"{', '.join(missing[:12])}{', …' if len(missing) > 12 else ''}: give each document its own wording "
+            f"(the user's), or leave those documents out (leave_out)"]
+
+
+def _dry_errors(spec: Dict[str, Any], batch: _Batch, patterns: Optional[Sequence[str]] = None,
+                leave_out: Sequence[Path] = ()) -> List[str]:
     """Spec-level failures of a dry plan on one file per pattern.
 
     True schema/contract mistakes (FATAL_SPEC_CODES) always reject the spec. Every other refusal is treated as
@@ -1168,30 +1252,39 @@ def _dry_errors(spec: Dict[str, Any], batch: _Batch, patterns: Optional[Sequence
     the batch plan cleanly — in a mixed batch where at least one pattern plans cleanly, minority pattern refusals
     are left for the preview and set-aside sieve rather than blocking Pass 1. A spec that plans on no file at all
     is rejected with every file's refusal, so the model can fix the spec instead of the batch setting every file
-    aside; a batch with no files is rejected outright.
+    aside; a batch with no files is rejected outright. The files the user left out of the request (``leave_out``) are
+    not planned: a pattern whose files are all left out is not judged, and a binding for a left-out file is refused.
     """
     # Every per-file literal is checked, even when another file of the same pattern plans successfully.
     from .editspec import chain_specs
     from .ops.slots import extract_fill
     planner = _planner_for(spec)
     allowed = {str(path.resolve()): path for path in batch.files.values()}
+    out = _left_out_keys(leave_out)
     for binding in [b for own in chain_specs(spec) for b in own.get("bindings", [])]:
         identity = str(Path(binding["file"]).resolve())
         if identity not in allowed:
             return [f"[binding-source] bound file {binding['file']!r} is outside this batch"]
+        if identity in out:
+            return [f"[leave-out] {batch.label(allowed[identity])} is left out of this request; drop its binding"]
         path = allowed[identity]
         try:
             batch.check_source_pin(path)
             pkg = DocxPackage.from_path(path)
             for name, slot in binding["slots"].items():
-                extract_fill(pkg, name, {"rule": "binding", "source_md5": binding["md5"], **slot})
+                extract_fill(pkg, name, {"rule": "typed", "value": slot["typed"], "source_md5": binding["md5"]}
+                             if "typed" in slot else {"rule": "binding", "source_md5": binding["md5"], **slot})
         except Exception as exc:  # noqa: BLE001 — unreadable bound sources are compile refusals too
             return [f"[binding-source] {batch.label(path)}: {exc}"]
+    typed_errs = _typed_coverage(spec, batch, patterns, out)
+    if typed_errs:
+        return typed_errs
     if not batch.representatives():
         return ["the batch has no .docx files to plan on"]
     fatal_errs: List[str] = []
     pattern_errs: List[str] = []
     planned_ok = 0
+    all_left_out = 0
     for pat in batch.prof["patterns"]:
         if patterns is not None and pat["pattern_id"] not in patterns:
             continue                              # a layout's spec is judged on its own documents only
@@ -1200,7 +1293,11 @@ def _dry_errors(spec: Dict[str, Any], batch: _Batch, patterns: Optional[Sequence
         # structure — try the pattern's other files before saying no file of it plans.
         tried: List[str] = []
         planned = False
-        for f in batch.pattern_paths(pat):
+        kept = _kept_paths(batch, pat, out)
+        if not kept:
+            all_left_out += 1                     # every file of this pattern is left out: nothing of it is planned
+            continue
+        for f in kept:
             try:
                 pkg = DocxPackage.from_path(f)
                 planner(pkg, fingerprint(pkg)["pattern_id"])
@@ -1222,12 +1319,16 @@ def _dry_errors(spec: Dict[str, Any], batch: _Batch, patterns: Optional[Sequence
                                             if len(tried) > 1 else ""))
     if fatal_errs:
         return fatal_errs
+    if planned_ok == 0 and all_left_out and not pattern_errs:
+        return ["[leave-out] every document this spec covers is left out of the request; drop it (a layout of "
+                "left-out documents only is not needed)"]
     if planned_ok == 0:
         return [PLANS_ON_NONE] + pattern_errs
     return []
 
 
-def _check_layouts(spec: Dict[str, Any], batch: _Batch, sources: Sequence[str]) -> Tuple[Dict[str, Any], List[str]]:
+def _check_layouts(spec: Dict[str, Any], batch: _Batch, sources: Sequence[str],
+                   leave_out: Sequence[Path] = ()) -> Tuple[Dict[str, Any], List[str]]:
     """A submission with ``layouts``: the plan is well formed, every pattern of THE BATCH belongs to exactly one
     layout (a pattern the model cannot plan is a question, never a silent omission), and each layout's spec passes
     every check a single spec passes — on that layout's documents alone. Returns ``(submission, errors)``: the
@@ -1248,13 +1349,16 @@ def _check_layouts(spec: Dict[str, Any], batch: _Batch, sources: Sequence[str]) 
                 return spec, [f"[layouts] layout {layout['id']!r} names pattern {pid}, which THE BATCH does not list; "
                               f"use the pattern_id values of THE BATCH"]
             covered[pid] = layout["id"]
-    missing = [pid for pid in known if pid not in covered]
+    out = _left_out_keys(leave_out)
+    # a pattern whose files the user left out of the request is planned by no layout, and needs none
+    missing = [pid for pid in known if pid not in covered and _kept_paths(batch, known[pid], out)]
     if missing:
         return spec, [f"[layouts] no layout covers pattern {pid} ({', '.join(known[pid]['files'][:3])}); add it to a "
                       f"layout, or ask the user when it cannot be planned" for pid in missing]
     composed = copy.deepcopy(spec)
     for i, layout in enumerate(plan["layouts"]):
-        outcome, errs = compose_submission(layout_spec(plan, layout), batch, sources, patterns=layout["pattern_ids"])
+        outcome, errs = compose_submission(layout_spec(plan, layout), batch, sources, patterns=layout["pattern_ids"],
+                                           leave_out=leave_out)
         if errs:
             return spec, [f"layout {layout['id']!r}: {e}" for e in errs]
         if is_chain(outcome) and not is_chain(layout["spec"]):
@@ -1348,7 +1452,8 @@ def _normalize_chain(spec: Dict[str, Any]) -> Dict[str, Any]:
     return out
 
 
-def _compose_conflicts(spec: Dict[str, Any], batch: _Batch, patterns: Optional[Sequence[str]]):
+def _compose_conflicts(spec: Dict[str, Any], batch: _Batch, patterns: Optional[Sequence[str]],
+                       leave_out: Sequence[Path] = ()):
     """The chain the engine composes from a spec whose ops overlap: the ops cut into ordered steps on every pattern's
     representative, the cuts merged so every file takes the same steps. ``(chain, "")`` or ``(None, why)``."""
     from .chain import validate_chain
@@ -1359,7 +1464,7 @@ def _compose_conflicts(spec: Dict[str, Any], batch: _Batch, patterns: Optional[S
     for pat in batch.prof["patterns"]:
         if patterns is not None and pat["pattern_id"] not in patterns:
             continue
-        for f in batch.pattern_paths(pat):
+        for f in _kept_paths(batch, pat, _left_out_keys(leave_out)):
             try:
                 pkg = DocxPackage.from_path(f)
                 all_cuts.append(stage_cuts(pkg, spec))
@@ -1380,12 +1485,14 @@ def _compose_conflicts(spec: Dict[str, Any], batch: _Batch, patterns: Optional[S
 
 
 def compose_submission(spec: Any, batch: _Batch, sources: Sequence[str],
-                       patterns: Optional[Sequence[str]] = None) -> Tuple[Any, List[str]]:
+                       patterns: Optional[Sequence[str]] = None,
+                       leave_out: Sequence[Path] = ()) -> Tuple[Any, List[str]]:
     """``(outcome, errors)``: the submission as the engine will run it, and ``[]`` when it is acceptable (or is a
     clean question/unsupported outcome). The outcome is the spec itself, the model's own stages as a chain, or — when
     the spec's ops overlap (rule 5: never ordered by guess inside one plan) — the chain the app composes from them,
     each step planned and dry-run on the step before it. ``patterns`` limits the dry plan to those structure
-    patterns (a layout's own). A layout plan comes back with each layout's spec composed the same way."""
+    patterns (a layout's own); ``leave_out`` names the documents the user left out of the request, which nothing
+    plans. A layout plan comes back with each layout's spec composed the same way."""
     from .chain import validate_chain
     from .editspec import is_chain
     if not isinstance(spec, dict):
@@ -1398,7 +1505,7 @@ def compose_submission(spec: Any, batch: _Batch, sources: Sequence[str],
                           "never both: drop the stages or layouts, or drop the questions / unsupported"]
         return spec, []
     if isinstance(spec.get("layouts"), list):
-        return _check_layouts(spec, batch, sources)
+        return _check_layouts(spec, batch, sources, leave_out)
     if is_chain(spec):
         chain = _normalize_chain(spec)
         try:
@@ -1409,7 +1516,7 @@ def compose_submission(spec: Any, batch: _Batch, sources: Sequence[str],
             errs = _attached_checks(st["spec"], batch) or _content_checks(st["spec"], sources)
             if errs:
                 return spec, errs
-        return chain, _dry_errors(chain, batch, patterns)
+        return chain, _dry_errors(chain, batch, patterns, leave_out)
     try:
         validate_spec(spec)
     except SpecError as e:
@@ -1417,17 +1524,17 @@ def compose_submission(spec: Any, batch: _Batch, sources: Sequence[str],
     errs = _attached_checks(spec, batch) or _content_checks(spec, sources)
     if errs:
         return spec, errs
-    errs = _dry_errors(spec, batch, patterns)
+    errs = _dry_errors(spec, batch, patterns, leave_out)
     if not errs:
         return spec, []
     if not all("[conflict]" in e for e in errs):
         return spec, errs
-    chain, why = _compose_conflicts(spec, batch, patterns)
+    chain, why = _compose_conflicts(spec, batch, patterns, leave_out)
     if chain is None:
         return spec, errs + [f"(the app could not compose the overlapping ops into ordered steps: {why})"]
     diag.event("compiler.submission.composed", stages=len(chain["stages"]),
                ops=[[o.get("op") for o in st["spec"]["ops"]] for st in chain["stages"]])
-    later = _dry_errors(chain, batch, patterns)
+    later = _dry_errors(chain, batch, patterns, leave_out)
     if later:
         return spec, errs + ["(the app composed the overlapping ops into ordered steps, but a step still refuses: "
                              + "; ".join(later) + ")"]
@@ -1435,10 +1542,10 @@ def compose_submission(spec: Any, batch: _Batch, sources: Sequence[str],
 
 
 def check_submission(spec: Any, batch: _Batch, sources: Sequence[str],
-                     patterns: Optional[Sequence[str]] = None) -> List[str]:
+                     patterns: Optional[Sequence[str]] = None, leave_out: Sequence[Path] = ()) -> List[str]:
     """[] when the spec is acceptable (or is a clean question/unsupported outcome); see ``compose_submission`` for
     the outcome the engine runs."""
-    return compose_submission(spec, batch, sources, patterns)[1]
+    return compose_submission(spec, batch, sources, patterns, leave_out)[1]
 
 
 def build_messages(request: str, batch: _Batch, answers: Sequence[str],

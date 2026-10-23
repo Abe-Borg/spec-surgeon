@@ -1,6 +1,14 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import type { Attachment, TodoItem } from "../types";
-import { kindTag, scopeTag, traySummary, trayTitle } from "../lib/workbench";
+import {
+  kindTag,
+  referencesTitle,
+  scopeTag,
+  sectionAttachments,
+  traySummary,
+  trayTitle,
+  type TraySection,
+} from "../lib/workbench";
 import { quietBtn } from "./ModalShell";
 import Tip from "./Tip";
 
@@ -44,15 +52,18 @@ function AttachmentCard({
   attachment,
   scope,
   busy,
+  showKind,
   onRemove,
 }: {
   attachment: Attachment;
   scope: "" | "To do" | "Working on";
   busy: boolean;
+  /** The kind tag (Picture, Table); the template's own section needs none. */
+  showKind: boolean;
   onRemove: (attachment: Attachment) => void;
 }) {
   const refused = attachment.state === "refused";
-  const tag = kindTag(attachment);
+  const tag = showKind ? kindTag(attachment) : "";
   return (
     <li
       className={`card-in flex gap-3 rounded-xl border px-3 py-2.5 ${
@@ -91,40 +102,42 @@ function AttachmentCard({
 }
 
 /**
- * The attachments: a collapsible section — its title line counts the
- * documents and, folded, sums them up in one line; open, each one is a card
- * with its name, a kind tag, a to-do or working-on tag and a way to remove it
- * (a refused one says why; triage's notes are not shown),
- * with three ways to add more. It folds by itself once a
- * plan or copies exist and opens on a click. Dropping a file anywhere in the
- * window works too (App owns the drop ring).
+ * One section of the tray with its own fold: a title line (with, folded, a
+ * one-line summary) and, open, a card per attachment and the button that adds
+ * more. It folds by itself once a plan or copies exist and opens on a click;
+ * once the user has opened or folded it, their choice stands.
  */
-export default function DocumentsTray({ attachments, todo, focus, busy, uploading, compact, onAdd, onRemove }: Props) {
-  const held = busy || uploading;
-  const holdTip = uploading ? "Reading the files you added…" : BUSY_TIP;
-  const hasTemplate = attachments.some((a) => a.kind === "template");
+function Section({
+  id,
+  title,
+  summary,
+  compact,
+  children,
+}: {
+  id: TraySection;
+  title: string;
+  summary: string;
+  compact: boolean;
+  children: ReactNode;
+}) {
   const [collapsed, setCollapsed] = useState(false);
-  // The tray folds by itself when a plan arrives; once the user has opened or
-  // folded it, their choice stands.
   const touched = useRef(false);
   useEffect(() => {
-    if (!touched.current) setCollapsed(compact && attachments.length > 0);
-  }, [compact, attachments.length]);
+    if (!touched.current) setCollapsed(compact);
+  }, [compact]);
   const toggle = () => {
     touched.current = true;
     setCollapsed((c) => !c);
   };
-  const scopeView = { todo, focus };
-  const summary = traySummary({ attachments, todo, focus });
-
+  const bodyId = `tray-${id}-body`;
   return (
-    <section aria-label="Your documents">
+    <section aria-label={title.split(" · ")[0]}>
       <button
         type="button"
         onClick={toggle}
         aria-expanded={!collapsed}
-        aria-controls="documents-tray-body"
-        title={collapsed ? "Show each document and the ways to add more" : "Fold the documents to one line"}
+        aria-controls={bodyId}
+        title={collapsed ? "Show each file and the way to add more" : "Fold this to one line"}
         className="group flex w-full items-baseline gap-2 rounded-lg text-left transition-colors hover:text-accent"
       >
         <span
@@ -134,57 +147,94 @@ export default function DocumentsTray({ attachments, todo, focus, busy, uploadin
           ▸
         </span>
         <h2 className="font-[family-name:var(--font-display)] text-base font-semibold text-ink group-hover:text-accent">
-          {trayTitle({ attachments })}
+          {title}
         </h2>
         {collapsed && summary && <span className="min-w-0 truncate text-[11px] text-ink-faint">{summary}</span>}
       </button>
-      {!collapsed && (
-        <div id="documents-tray-body">
-          {attachments.length > 0 && (
-            <ul className="mt-3 flex flex-col gap-2">
-              {attachments.map((attachment) => (
-                <AttachmentCard
-                  key={`${attachment.kind}:${attachment.path}`}
-                  attachment={attachment}
-                  scope={scopeTag(attachment, scopeView)}
-                  busy={held}
-                  onRemove={onRemove}
-                />
-              ))}
-            </ul>
-          )}
-          <div className="mt-3 flex flex-wrap items-center gap-2">
-            <Tip tip={held ? holdTip : "Attach one or more .docx files to edit"}>
-              <button type="button" className={quietBtn} disabled={held} onClick={() => onAdd("documents")}>
-                Add Word documents
-              </button>
-            </Tip>
-            <Tip
-              tip={
-                held
-                  ? holdTip
-                  : hasTemplate
-                    ? "Replaces the template; it is never part of the batch"
-                    : "One reference document to match; it is never part of the batch"
-              }
-            >
-              <button type="button" className={quietBtn} disabled={held} onClick={() => onAdd("template")}>
-                {hasTemplate ? "Replace the template" : "Add a template (optional)"}
-              </button>
-            </Tip>
-            <Tip tip={held ? holdTip : "A new logo, or a spreadsheet of values, for the edit to use"}>
-              <button type="button" className={quietBtn} disabled={held} onClick={() => onAdd("references")}>
-                Add a picture or table (optional)
-              </button>
-            </Tip>
-          </div>
-          {attachments.length === 0 && (
-            <p className="mt-3 text-[12px] text-ink-faint">
-              Or drop .docx files, pictures or spreadsheets anywhere in this window.
-            </p>
-          )}
-        </div>
-      )}
+      {!collapsed && <div id={bodyId}>{children}</div>}
     </section>
+  );
+}
+
+/**
+ * The attachments, in three sections that fold on their own: the Word
+ * documents, the template, and the pictures and tables. Each lists its files
+ * as cards with a name, a kind tag, a to-do or working-on tag and a way to
+ * remove it (a refused one says why; triage's notes are not shown), and has
+ * its own button to add more. Each folds by itself once a plan or copies
+ * exist and opens on a click. Dropping a file anywhere in the window works
+ * too (App owns the drop ring).
+ */
+export default function DocumentsTray({ attachments, todo, focus, busy, uploading, compact, onAdd, onRemove }: Props) {
+  const held = busy || uploading;
+  const holdTip = uploading ? "Reading the files you added…" : BUSY_TIP;
+  const hasTemplate = attachments.some((a) => a.kind === "template");
+  const view = { attachments, todo, focus };
+
+  const cards = (section: TraySection) => {
+    const listed = sectionAttachments(section, view);
+    if (listed.length === 0) return null;
+    return (
+      <ul className="mt-3 flex flex-col gap-2">
+        {listed.map((attachment) => (
+          <AttachmentCard
+            key={`${attachment.kind}:${attachment.path}`}
+            attachment={attachment}
+            scope={scopeTag(attachment, view)}
+            busy={held}
+            showKind={section !== "template"}
+            onRemove={onRemove}
+          />
+        ))}
+      </ul>
+    );
+  };
+
+  return (
+    <div className="flex flex-col gap-4" aria-label="Your attachments" role="group">
+      <Section id="documents" title={trayTitle(view)} summary={traySummary("documents", view)} compact={compact && attachments.length > 0}>
+        {cards("documents")}
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          <Tip tip={held ? holdTip : "Attach one or more .docx files to edit"}>
+            <button type="button" className={quietBtn} disabled={held} onClick={() => onAdd("documents")}>
+              Add Word documents
+            </button>
+          </Tip>
+        </div>
+        {attachments.length === 0 && (
+          <p className="mt-3 text-[12px] text-ink-faint">
+            Or drop .docx files, pictures or spreadsheets anywhere in this window.
+          </p>
+        )}
+      </Section>
+      <Section id="template" title="Template" summary={traySummary("template", view)} compact={compact}>
+        {cards("template")}
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          <Tip
+            tip={
+              held
+                ? holdTip
+                : hasTemplate
+                  ? "Replaces the template; it is never part of the batch"
+                  : "One reference document to match; it is never part of the batch"
+            }
+          >
+            <button type="button" className={quietBtn} disabled={held} onClick={() => onAdd("template")}>
+              {hasTemplate ? "Replace the template" : "Add a template (optional)"}
+            </button>
+          </Tip>
+        </div>
+      </Section>
+      <Section id="references" title={referencesTitle(view)} summary={traySummary("references", view)} compact={compact}>
+        {cards("references")}
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          <Tip tip={held ? holdTip : "A new logo, or a spreadsheet of values, for the edit to use"}>
+            <button type="button" className={quietBtn} disabled={held} onClick={() => onAdd("references")}>
+              Add a picture or table (optional)
+            </button>
+          </Tip>
+        </div>
+      </Section>
+    </div>
   );
 }

@@ -54,6 +54,9 @@ button lives in the chat pane;
 each preview carries a checkmark and an X: X'd documents are `hold` on the primary action (`Session.run(only=)` keeps
 every approved pin), wait on `DocumentTask.todo`, and the reply `WORK_TODO` begins a pass over them alone (`focus`, one
 request at a time); `applied` keeps the changes each copy carries, so the history the model hears is per document.
+Documents the user leaves out of a request (`submit_editspec.leave_out` → `Session.left_out`) are not planned,
+previewed or run (`planned_files`) and wait under Left untouched; a file the plan refuses does too, and the preview of
+the others stands (outcome planning starts only when no file plans or a sample fails its check).
 Delivered copies are the working set the next request builds on. There is no command line (removed 2026-10-21 with the
 library, workspaces, workflows, office profiles, spec QA audits, project evidence, evaluations and the named v0.1.0
 jobs). Details: `docs/CONVERSATIONAL_DESKTOP.md`.
@@ -68,14 +71,19 @@ jobs). Details: `docs/CONVERSATIONAL_DESKTOP.md`.
     residual identity check; each op family's kinds live in their own module, imported at its end), `reader.py`,
     `textcheck.py`, `edits.py`, `xsd.py`, `geometry.py`, `explain.py`.
   - `editspec.py` — load, validate, plan, merge, apply; composition (`stage_cuts`, `compose_chain`, `plan_chain`).
-  - `batch.py` (per-file pipeline, guarded delivery, records), `guard.py`, `chain.py`, `report.py`
+  - `batch.py` (per-file pipeline, guarded delivery, records; `worker_plan`/`map_files`: three or more files go to
+    spawned worker processes, each file whole in one, in the packaged app too — a test's patches never reach one,
+    so `tests/conftest.py` runs threads), `guard.py`, `chain.py`, `report.py`
     (`FAILURE_EXPLANATIONS`: every refusal code in plain words), `diagnostics.py`.
   - `catalog.py` (op catalog, `COMMON_ASSUMPTIONS`, `op_sheet`), `profile.py`, `planner.py`, `structure.py`, `triage.py`.
   - `compiler.py`, `conversation.py`, `llm.py`, `vision.py` — request → EditSpec. `llm.call` is the one call site: the
     system prompt carries its own 1-hour cache breakpoint, the history the automatic 5-minute one, and a `one_shot`
     call caches nothing after the system prompt; keep system prompts and tools byte-stable. No call runs at effort
     `max` (the owner's decision, 2026-10-22): `resources.EFFORTS` refuses it, the window's chat runs at medium and
-    every other call at high. `compiler.compose_submission` is the one gate a submission passes.
+    every other call at high. Fast mode (`speed="fast"`, Settings → Fast responses, `llm.set_fast_mode`) is the
+    user's choice, off by default: it changes speed and price (`FAST_PRICES`), never the model, effort or prompt; a
+    fast call the fast capacity cannot take is re-sent at standard speed. `compiler.compose_submission` is the one
+    gate a submission passes.
   - `preview.py`, `codegen.py` + `sandbox_runner.py` (custom transforms), `goals.py`, `goal_contracts.py`,
     `goal_operations.py` (reviewed outcome contracts), `recovery*.py`, `continuous_recovery.py`, `campaign_planner.py`
     (bounded investigation of set-aside files), `inventory.py` (the content digest that pins a file).

@@ -28,7 +28,7 @@ from datetime import datetime
 from functools import wraps
 from inspect import signature
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Sequence
 
 from . import diagnostics as diag
 from .settings import default_run_root
@@ -157,6 +157,8 @@ class Session:
                                                   # in plan order (a plan per layout recovers one layout at a time)
     outcome_source: str = ""                      # where the outcome came from: "compiled" (the conversation),
                                                   # "recipe" (a Safe-mode button: ``model_free``), "" (none, or a test)
+    left_out: List[Path] = field(default_factory=list)   # documents the user left out of the request: the plan, its
+                                                  # preview and its run cover the others (``planned_files``)
     diagnostic_id: str = field(default_factory=diag.new_id, init=False, repr=False, compare=False)
 
     def _diagnostic_state(self) -> Dict[str, Any]:
@@ -235,8 +237,15 @@ class Session:
 
     # ---- steps ----
     # ---- outcome: a spec XOR a custom transform, and what was previewed of it ----
+    def planned_files(self) -> List[Path]:
+        """The documents the outcome plans, previews and runs: ``files()`` without those the user left out of the
+        request (``left_out``). The conversation still knows every attached document; only the plan leaves these be."""
+        out = set(self.left_out)
+        return [f for f in self.files() if f not in out]
+
     @_session_action
-    def _set_outcome(self, spec: Optional[Dict[str, Any]] = None, generated: Any = None, source: str = "") -> None:
+    def _set_outcome(self, spec: Optional[Dict[str, Any]] = None, generated: Any = None, source: str = "",
+                     left_out: Sequence[Any] = ()) -> None:
         """The one place the session's outcome changes. A new outcome voids everything previewed or approved for the
         old one: a reply that turns a custom transform into a spec must never leave the transform runnable, and a reply
         that only asks a question must never leave the old spec's preview runnable. The outcome is a spec (or a plan
@@ -245,6 +254,7 @@ class Session:
             raise ValueError("a session runs either a spec or a custom transform, not both")
         self.spec, self.generated = spec, generated
         self.outcome_source = source if (spec is not None or generated is not None) else ""
+        self.left_out = [Path(p).resolve() for p in left_out]   # an outcome's own: what the user left out of it
         self.recovery = None
         self.recovery_checkpoint = None
         self.pending_layout_recovery = []
@@ -379,8 +389,11 @@ class Session:
             queued = len(c.notes)
             c.take_app_choice(chosen.id)          # queues "…carried it out; the outcome follows." for Claude
             proposal = (c.unsupported or {}).get("proposal") or chosen.detail
+            # the documents the user left out of the request stay out of the custom transform too
+            left_out = [Path(p).resolve() for p in getattr(self.turn, "leave_out", None) or []]
             try:
-                msg = self._codegen(c.request, proposal, self.files(), log, brief=c.brief(), render=render)
+                msg = self._codegen(c.request, proposal, [f for f in self.files() if f not in left_out], log,
+                                    brief=c.brief(), render=render, left_out=left_out)
                 gp = self.generated_preview
                 c.note(f"The one-off custom transform {self.generated.name!r} passed verification on the sample "
                    f"files; the user reviews its preview.\n" + (gp.to_text()[:4000] if gp is not None else ""),
@@ -440,7 +453,7 @@ class Session:
                    choice_count=len(getattr(turn, "choices", [])), has_spec=getattr(turn, "spec", None) is not None)
         self._save_chat()
         if turn.status == "ok":
-            self._set_outcome(spec=turn.spec, source="compiled")
+            self._set_outcome(spec=turn.spec, source="compiled", left_out=getattr(turn, "leave_out", None) or [])
             return "Compiled."
         if turn.status == "questions":
             return "Claude needs your answer — reply in the chat below, or pick one of its choices."
@@ -507,12 +520,13 @@ class Session:
 
     @_session_action
     def _codegen(self, request: str, proposal: str, files: List[Path], log: Log, brief: Optional[str] = None,
-                 render: bool = False) -> str:
+                 render: bool = False, left_out: Sequence[Path] = ()) -> str:
         from .preview import approval_token
         out = self._session_dir()
         key = {"request": _user_request(self.conversation) if self.conversation else request, "custom_transform": True}
         self.pending_custom_transform = {"request": request, "proposal": proposal, "files": files,
-            "brief": brief, "out": out, "key": key, "token": approval_token(key, files)}
+            "brief": brief, "out": out, "key": key, "token": approval_token(key, files),
+            "left_out": [str(p) for p in left_out]}
         return self.continue_custom_transform(log, render)
 
     @_session_action
@@ -521,7 +535,7 @@ class Session:
         if pending is None:
             raise ValueError("There is no custom transform awaiting preparation.")
         from .preview import approval_token
-        if approval_token(pending["key"], self.files()) != pending["token"]:
+        if approval_token(pending["key"], self._pending_files(pending)) != pending["token"]:
             raise ValueError("The original files changed; press Preview to prepare the transform again.")
         message = self._generate_custom(pending, log, render)
         if self.conversation is not None:
@@ -529,6 +543,11 @@ class Session:
                                    display="Custom transform prepared; review the resulting preview before Run.")
             self._save_chat()
         return message
+
+    def _pending_files(self, pending) -> List[Path]:
+        """The files a custom transform being prepared is for: the attached documents without those left out."""
+        out = {Path(p).resolve() for p in pending.get("left_out") or []}
+        return [f for f in self.files() if f not in out]
 
     def _generate_custom(self, pending, log: Log, render: bool) -> str:
         from .codegen import generate_op, pick_samples
@@ -566,7 +585,7 @@ class Session:
             token, inputs = "", {**inputs, "files": before["files"]}   # Run names what moved since it was tried
             log("A file changed while the custom transform was being written and tried — it runs only once Preview has "
                 "tried it again on the files as they are now:" + "".join(f"\n  • {w}" for w in moved))
-        self._show_generated(g, out, token, inputs, intent, render, log)
+        self._show_generated(g, out, token, inputs, intent, render, log, left_out=pending.get("left_out") or [])
         return (f"An AI-written transform ({g.name}) passed verification on {len(samples)} sample file(s). "
                 f"It is saved at {g.path} — Run writes edited copies only (never over your files)." +
                 ("\nA file changed while it was written: press Preview to try it again on the files as they are now."
@@ -593,12 +612,13 @@ class Session:
 
     @_session_action
     def _show_generated(self, g, out: Path, token: str, inputs: Dict[str, Any], intent: str, render: bool,
-                        log: Log) -> None:
+                        log: Log, left_out: Optional[Sequence[Any]] = None) -> None:
         """``g``, passed on the samples of the files ``token`` is of, becomes the session's outcome: its preview in
         ``out/preview`` (with Claude's visual check when rendering), then the approval token — set last, so a preview
         that stops leaves nothing runnable (Preview tries the transform again)."""
         from .preview import preview_generated
-        self._set_outcome(generated=g)
+        # a new transform takes the documents left out with it; one tried or previewed again keeps the outcome's own
+        self._set_outcome(generated=g, left_out=self.left_out if left_out is None else left_out)
         self.generated_intent = intent
         self.generated_preview = preview_generated(g, out / "preview", "auto", render)
         log(f"Preview log: {out / 'preview' / 'logs' / 'preview.log'}")
@@ -647,11 +667,11 @@ class Session:
         from .preview import approval_token, make_preview
         if self.pending_custom_transform is not None:
             pending = self.pending_custom_transform
-            pending["files"] = self.files()
+            pending["files"] = self._pending_files(pending)
             pending["token"] = approval_token(pending["key"], pending["files"])
             return self.continue_custom_transform(log, render)
         if self.generated is not None:
-            files = self.files()
+            files = self.planned_files()
             if approval_token(self._generated_key(self.generated), files) != self.generated_token:
                 self._prove_again(files, render, log)   # stale: Run would refuse forever — re-prove, then preview
             elif (self.generated_preview is None
@@ -662,7 +682,7 @@ class Session:
                 "AI-written transform verified. Review its preview before Run."
         if self.spec is None:
             raise ValueError("nothing to preview — describe the change first")
-        files = self.files()                      # the same filtered set Run checks and runs (no template files)
+        files = self.planned_files()              # the same set Run checks and runs (no template, nothing left out)
         out = self._session_dir()                 # beside the conversation's records
         from .editspec import is_chain
         from .layouts import is_layout_plan, make_layout_preview
@@ -689,8 +709,13 @@ class Session:
             self._visual_check(self.preview, self._intent(), out / "preview", log)
         self._note_preview()
         c = self.conversation
+        # A failed preview is one the plan cannot stand on: no file plans, or a sample fails its check. A file the plan
+        # refuses while others plan is set aside under Left untouched (docs/CONVERSATIONAL_DESKTOP.md) and the preview
+        # stands: the conversation hears why, the user decides. Outcome planning never takes the conversation over for
+        # one refused file (the 1.9.0 live run of 2026-10-22: one file's even-page footers voided a twelve-file preview).
+        bp = self.preview.batch_plan
         if c is not None and c.continuous_recovery and (
-                any(f.status == "exception" for f in self.preview.batch_plan.files)
+                len(bp.exceptions) == len(bp.files)
                 or any(not s.passed for s in self.preview.samples)):
             evidence = {"reason": self.preview.to_text(), "candidate": copy.deepcopy(self.spec)}
             self._set_outcome()
@@ -789,7 +814,7 @@ class Session:
         if self.generated is not None and not self.generated_token:
             from .preview import approval_inputs, explain_approval_change
             what = explain_approval_change(self.generated_inputs or {},
-                                          approval_inputs(self._generated_key(self.generated), self.files()))
+                                          approval_inputs(self._generated_key(self.generated), self.planned_files()))
             return ("a file changed since the AI-written transform was tested — press Preview again"
                     + "".join(f"\n  • {detail}" for detail in what))
         if self._current_review()[0] is None:
@@ -817,10 +842,41 @@ class Session:
         bp = pv.batch_plan
         total, planned = len(bp.files), len(bp.files) - len(bp.exceptions)
         flagged = len(pv.review.blocking()) if pv.review is not None else 0
-        self.conversation.note("THE PREVIEW OF YOUR SPEC:\n" + pv.to_text()[:6000],
+        # what Claude must not miss leads, ahead of the full text the note cuts: the files the plan refused (a chain's
+        # preview repeats its assumptions per stage, and pushed them out of the cut) and the blocking visual findings
+        lead = [f"{planned} of {total} file(s) plan cleanly."]
+        if self.left_out:
+            lead.append("LEFT OUT AT THE USER'S REQUEST (not planned, previewed or changed): "
+                        + ", ".join(self.conversation.batch.label(p) for p in self.left_out))
+        if bp.exceptions:
+            lead.append("LEFT UNTOUCHED (the plan refused these; the others are previewed — name each to the user "
+                        "with its reason and what would let it take part, or offer to leave it out):")
+            lead += [f"   {Path(f.source).name}: [{(f.exception or {}).get('code')}] "
+                     f"{(f.exception or {}).get('reason', '')}"[:400] for f in bp.exceptions[:20]]
+        for finding in (pv.review.blocking() if pv.review is not None else [])[:10]:
+            lead.append(f"BLOCKING VISUAL FINDING — {finding.get('file')}, page {finding.get('page')}: "
+                        f"{finding.get('text', '')}"[:400])
+        self.conversation.note("THE PREVIEW OF YOUR SPEC:\n" + "\n".join(lead) + "\n\n" + pv.to_text()[:6000],
                                display=f"Preview made: {planned} of {total} file(s) plan cleanly." +
                                        (f" Claude's visual check flagged {flagged} problem(s)." if flagged else ""))
         self._save_chat()
+
+    def runnable_files(self) -> List[Path]:
+        """What Create can run of the displayed plan: ``planned_files`` without the files its preview refused (while
+        another file planned) — the set the window counts the documents left to run in."""
+        files = self.planned_files()
+        kept = self._without_refused(files, None)
+        return files if kept is None else kept
+
+    def _without_refused(self, files: List[Path], only) -> Optional[List[Path]]:
+        """What Create runs of an approved spec: the files the preview's plan refused stay as they are — the window
+        listed them under Left untouched, not part of the plan — so they are never run, and so never sent on to
+        recovery, while another file planned (a plan that refused every file went to outcome planning instead)."""
+        bp = getattr(self.preview, "batch_plan", None)
+        refused = {Path(f.source).resolve() for f in getattr(bp, "exceptions", None) or []}
+        if not refused or len(refused) >= len(files):
+            return only
+        return [f for f in (files if only is None else only) if Path(f).resolve() not in refused]
 
     def _selected(self, files: List[Path], only) -> List[Path]:
         """The approved files that run: all of them, or ``only`` — each one among the approved files (the user set the
@@ -877,7 +933,7 @@ class Session:
         self.last_recovery = None
         if self.generated is not None:
             from .codegen import run_generated
-            files = self.files()
+            files = self.planned_files()
             key = self._generated_key(self.generated)
             current_inputs = approval_inputs(key, files)
             try:
@@ -906,7 +962,8 @@ class Session:
         if in_place:
             diag.event("session.approval.refused", level="warning", gate="delivery_mode", reason="copies_only")
             raise ValueError("Edited copies only; original files are never overwritten.")
-        files = self.files()
+        files = self.planned_files()
+        only = self._without_refused(files, only)
         from .editspec import is_chain
         from .layouts import is_layout_plan
         if is_layout_plan(self.spec):
@@ -1225,5 +1282,23 @@ def main(argv=None) -> int:
         return code
 
 
+def run(argv=None) -> None:
+    """The window's entry points (``spec-surgeon-gui``, ``python -m spec_surgeon``, the Windows app): ``main``, then
+    the process ends at once. By then the window is closed, the job (if one ran) has ended, the settings and the
+    journal are written and the crash marker is gone; the logs are flushed here. What Python's own teardown would
+    still wait on — a thread of pywebview's .NET and WebView2 layer, a library's idle worker — is nothing of ours,
+    and a process with no window must not stay behind for it (it holds the app mutex an update waits for)."""
+    code = main(argv)
+    import logging
+    logging.shutdown()                   # the app log and the event journal, flushed and closed
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            if stream is not None:
+                stream.flush()
+        except Exception:  # noqa: BLE001 — a closed or broken stream has nothing left to flush
+            pass
+    os._exit(code)
+
+
 if __name__ == "__main__":  # pragma: no cover
-    sys.exit(main())
+    run()

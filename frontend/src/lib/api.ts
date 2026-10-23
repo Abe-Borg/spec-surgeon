@@ -186,6 +186,11 @@ export async function saveTheme(theme: string): Promise<Settings> {
   return post<Settings>("/api/settings", { theme });
 }
 
+/** Turn Claude's fast mode on or off: the next AI step uses it, and settings.json keeps it for the next start. */
+export async function saveFastMode(on: boolean): Promise<Settings> {
+  return post<Settings>("/api/settings", { fast_mode: on });
+}
+
 export async function getAbout(): Promise<About> {
   return request<About>("/api/about");
 }

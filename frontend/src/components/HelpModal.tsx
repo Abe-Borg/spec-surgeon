@@ -306,7 +306,8 @@ function Workflows({ stepsPerPause }: { stepsPerPause: number }) {
         tagline="Left out with a reason, never delivered half-right."
         steps={[
           "When it arrives: a refused file is greyed out with the reason and the fix.",
-          "At plan time: a file whose result cannot be predicted is listed under Left untouched before anything runs.",
+          "When you ask: a document you leave out of a request (“leave out 20”) is not planned or changed, and is listed under Left untouched; the next request covers it again.",
+          "At plan time: a file whose result cannot be predicted is listed under Left untouched before anything runs, and the preview of the others stands; the assistant says why in its next reply.",
           "At delivery: a copy that fails a check is never delivered. Spec Surgeon looks at it again on its own and comes back with a question or a new plan, never a method for you to choose.",
           "While that question is open, Save N ready copies keeps the copies that already passed.",
         ]}
@@ -358,11 +359,15 @@ function HowItWorks() {
           },
           {
             t: "Pages rendered once",
-            d: "The before-and-after pages come from Microsoft Word when it is installed (a private, invisible copy, never your open Word), otherwise LibreOffice. Pages are kept by the document’s exact content, so creating the copies does not render again what the preview already rendered. Claude also looks at the pages; what it flags is advice for you to check.",
+            d: "The before-and-after pages come from Microsoft Word when it is installed (private, invisible copies, up to three side by side, never your open Word), otherwise LibreOffice. Pages are kept by the document’s exact content, so creating the copies does not render again what the preview already rendered. Claude also looks at the pages; what it flags is advice for you to check.",
+          },
+          {
+            t: "Many documents at once",
+            d: "Three or more documents are edited and checked side by side, one per core of your computer, each from start to finish on its own, so every copy and its check are exactly what they would be alone.",
           },
           {
             t: "One model, with room to think",
-            d: "Every AI step runs Claude Opus 5.5 with room for its full answer: the conversation, and the visual check and custom methods it runs, at medium effort; outcome planning and recovery at high. A plan usually takes one or two calls.",
+            d: "Every AI step runs Claude Opus 5.5 with room for its full answer: the conversation, and the visual check and custom methods it runs, at medium effort; outcome planning and recovery at high. A plan usually takes one or two calls. Settings → Fast responses, off until you turn it on, has the same model write up to 2.5 times faster at twice the price.",
           },
           {
             t: "A clean start every time",

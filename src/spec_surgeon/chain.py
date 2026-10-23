@@ -294,7 +294,7 @@ def _stop(cf: ChainFile, stage: int, status: str, code: str, reason: str, detail
 def run_chain(inputs: Sequence[str], chain: Dict[str, Any], out_dir: Path, workers: int = 0, renderer: str = "auto",
               do_render: bool = True, in_place: bool = False, progress=None, *,
               goal_contract=None, goal_bindings=None, approved_inputs=None, enforce_goals: bool = False,
-              worker_mode: str = "thread") -> ChainResult:
+              worker_mode: Optional[str] = None) -> ChainResult:
     """Execute approved recipe stages; enforce outcome data only for an explicit governed workflow."""
     with diag.scope(run_id=diag.context().get("run_id") or diag.new_id(), chain_id=diag.new_id()), \
             diag.span("chain", out_dir=str(out_dir), workers=workers, renderer=renderer,
@@ -308,7 +308,7 @@ def run_chain(inputs: Sequence[str], chain: Dict[str, Any], out_dir: Path, worke
 
 def _run_chain(inputs: Sequence[str], chain: Dict[str, Any], out_dir: Path, workers: int, renderer: str,
                do_render: bool, in_place: bool, progress, goal_contract=None, goal_bindings=None,
-               approved_inputs=None, enforce_goals=False, worker_mode="thread") -> ChainResult:
+               approved_inputs=None, enforce_goals=False, worker_mode=None) -> ChainResult:
     """Run every stage of ``chain`` in order, each a ``run_batch`` in ``<out>/stage-NN/`` on the files the stage
     before it verified (the pin above); then the chain's own report. Raises ``ChainError`` for an unusable chain and
     ``ValueError`` for inputs inside the results folder — both before anything is created. A stage's own failure (the

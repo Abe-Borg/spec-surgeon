@@ -4,9 +4,9 @@ Spec Surgeon is one window: a web page shown in a native window (Microsoft's Web
 the default browser when pywebview is not installed) and served by a local server on your computer — nothing
 leaves the machine but the model calls you ask for (the contract between the page and the server is
 `docs/WEB_API.md`). On the left is the conversation, with the one button above the box you type in. On the right
-are the Word documents you attached (a section that folds to one line once a plan exists; click its title to open
-it), optionally one reference template, any pictures or tables you attached for the edit to use, and the before/after
-pages. You add documents, describe the result, look at the pages, mark each preview with a green checkmark or a red
+are three sections, each with its own fold and its own button to add more: the Word documents you attached,
+optionally one reference template, and any pictures or tables you attached for the edit to use. Each folds to one line
+once a plan exists (click its title to open it); below them are the before/after pages. You add documents, describe the result, look at the pages, mark each preview with a green checkmark or a red
 X, and create edited copies. Nothing else is asked of you: no operations, methods or settings beyond an API key.
 That is Default mode. Safe mode, the other choice in the top bar, puts buttons for the common changes where the box
 you type in is, and calls no model at all ("Safe mode" below).
@@ -93,8 +93,8 @@ and if one of the documents is a copy of the template the window says so and ask
 **Add a picture or table (optional)**, or dropping one, attaches a file for the edit to use: a picture
 (`.png`, `.jpg`, `.jpeg`, `.gif`, `.bmp`), for example a new logo to put in place of the old one or a detail to
 insert, or a table (`.xlsx`, `.csv`, `.json`), for example a sheet of project names and numbers to fill in, or a
-schedule to place in the documents as a table. It is listed under the
-template by its name, tagged Picture or Table; one that
+schedule to place in the documents as a table. It is listed under
+Pictures and tables by its name, tagged Picture or Table; one that
 cannot be read or is larger than 20 MB is refused with the reason. Claude is told about each one (a picture's
 format and size, a table's sheets and columns) and can read the tables, but nothing beside your documents is
 ever looked for. A plan that uses one names it, and
@@ -231,9 +231,13 @@ their file and page. A finding it marks as blocking changes that card's title to
 button to **I reviewed the flagged pages — create copies**; that is a separate, explicit decision on the
 displayed preview.
 
-Rendering. Word renders a whole batch in one private, invisible instance (never your open Word), with a
-deadline per file: a file Word gets stuck on is reported as not rendered and the rest carry on in a fresh
-instance. LibreOffice keeps its user profiles under the app's config folder (`render-profiles`) instead of
+Rendering. Word renders a batch in up to three private, invisible instances side by side (one per two cores, one
+more per two files; never your open Word; `SPEC_SURGEON_WORD_INSTANCES=1` keeps it to one), each with a deadline per
+file: a file Word gets stuck on is reported as not rendered and the rest of its share carry on in a fresh
+instance. The engine's own work is shared the same way: a batch of three or more documents is edited and checked in
+the app's worker processes (one per core, at most eight; each document whole in one of them, so its copy and record
+are those it would have alone), and a preview plans twelve or more documents, and checks three or more samples, side
+by side (`docs/RUNTIME_RELIABILITY.md`, "Desktop-safe workers"). LibreOffice keeps its user profiles under the app's config folder (`render-profiles`) instead of
 creating one per run. Rendered pages are kept in a cache beside the session folders (`<output root>/.render-cache`,
 at most 2 GB, oldest first out), keyed by the document's exact bytes and the renderer's version: the run does not
 render again what the preview rendered, and a source you attach again unchanged is not rendered again either — a
@@ -267,11 +271,17 @@ Originals are never written; the window always creates copies. Each run's copies
 under the app's local data (`%LOCALAPPDATA%\Spec Surgeon\runs` on Windows), so earlier copies remain. **Your
 edited copies** lists them; click one to open it in Word.
 
-A file can be left out at three points, each time with one sentence that names the file and the reason:
+A file can be left out at four points, each time with one sentence that names the file and the reason:
 
 - At attach time, when triage refuses it (above).
+- When you ask: "leave out 20", "not 23 for now". The plan, its preview and its copies cover the other documents;
+  the ones you named are not planned or changed, are listed under **Left untouched** ("You asked to leave it out of
+  this request"), and come back with the next request unless you leave them out again.
 - At plan time, when the operation cannot predict its result on that file, or when no layout covers its
-  structure. These appear under **Left untouched** before anything runs; no paid investigation precedes them.
+  structure. These appear under **Left untouched** before anything runs; no paid investigation precedes them. The
+  preview of the other documents stands, and the assistant names each one with its reason in its next reply;
+  **Create edited copies** leaves them as they are (they are not run, so no recovery follows for them). Only a plan
+  that covers no file at all, or a sample that fails its check, sends the request on to outcome planning.
 - At delivery, when a file fails a verification check. It is never delivered. Spec Surgeon then checks it
   again internally (below).
 
@@ -301,16 +311,16 @@ you accept it.
 Typed requests need an Anthropic API key. **Settings** opens one dialog. **AI connection**: paste the key and
 tick **Remember securely on this computer** to keep it in Windows Credential Manager. **Appearance**: the window's
 colour scheme, one of Warm Clay (the default), Blueprint, Graphite & Teal, Carbon & Hi-Vis and Linen (the light
-one); a click recolours the window at once and `settings.json` keeps it, so the next start opens in it. Nothing
-else is configurable there. Without a key the composer keeps your draft, **Send** stays disabled and the footer
+one); a click recolours the window at once and `settings.json` keeps it, so the next start opens in it. **Fast
+responses**: Claude's fast mode, off until you turn it on (below). Nothing else is configurable there. Without a key the composer keeps your draft, **Send** stays disabled and the footer
 says "Connect your Anthropic API key in Settings to start."
 
 There is no spending limit. Every AI step (one call to Claude Opus 5.5, whether for the conversation, a
 custom method, the visual check or recovery) may write up to 128,000 tokens, the most the model writes. The
 conversation runs at medium reasoning effort (its sentences and plans are short and the operations' settings ride the
 cached prompt, so a plan is one or two calls), and so do the visual check and a custom method it runs inside a turn,
-because the conversation's budget sets the effort for every call inside it. The outcome planning after a preview that
-set files aside, and recovery (with the custom methods it tries), think at high: their own budget sits inside the
+because the conversation's budget sets the effort for every call inside it. The outcome planning when no ordinary plan
+fits (no operation for the request, a plan that covers no file, or a sample that fails its check), and recovery (with the custom methods it tries), think at high: their own budget sits inside the
 conversation's and wins. No step runs at max: `resources.EFFORTS` refuses it (the owner's decision, 2026-10-22). The
 instructions and the operations' settings (the same for every conversation) are cached for an hour, so the next
 request after a run, a start over or a changed attachment reads them instead of paying for them again; the
@@ -327,6 +337,19 @@ recovery critic) are not cached at all beyond the instructions. Three things kee
   conversation up where it stopped.
 - **A pause every 48 AI steps.** Work pauses with its progress saved and the button reads **Continue**;
   continuing allows 48 more and the conversation goes on where it stopped, with everything it had found.
+
+**Fast responses** (Settings) is the one way to trade money for time, and it is yours to choose: off until you turn
+it on, with both sides on screen first. On, every call to a model Anthropic serves fast (`llm.FAST_PRICES`) asks for
+its fast mode (`speed="fast"`): the same model at the same effort, writing its answer and its thinking up to 2.5
+times faster, at twice the price on every token (the cache discounts apply on top; Settings quotes the prices from the
+app's own table). Turning it on takes a second click on a button that names the price; one click turns it off;
+`settings.json` keeps the choice and the window applies it from its start (`llm.set_fast_mode`). It does not speed up
+the moment before Claude starts writing, nor anything done on your computer. When Anthropic's fast capacity is busy
+(a 429 or 529), the step is sent again at once at standard speed and price instead of waiting; if Anthropic refuses
+fast mode for your key, every step runs at standard speed until you turn the setting off and on, and Settings says
+why. While it is in effect (on, and not refused), the spending pill prices the calls served fast at the fast rates and says **Fast**, and a stopped
+fast call is estimated at 2.5 times the stopped-call rate. Switching it during a conversation costs one cache refill:
+the two speeds are cached separately.
 
 A call that fails for a passing reason (the service is overloaded or rate-limited, a server error, a dropped
 connection or a response cut off in transit) is sent again automatically, up to twice, after 5 and then 20

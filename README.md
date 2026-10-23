@@ -59,6 +59,7 @@ render checks are recorded as N/A with the reason.
 |---|---|
 | `SPEC_SURGEON_AUTHOR` | default tracked-change author (else the OS user name) |
 | `SPEC_SURGEON_SOFFICE` | path to `soffice` / `soffice.exe` |
+| `SPEC_SURGEON_WORD_INSTANCES` | how many private Word instances may render a batch side by side (default 3, at most one per two cores; `1` renders every file in one instance) |
 | `ANTHROPIC_API_KEY` | typed requests, Claude's visual check, custom transforms and recovery; or enter it in Settings |
 | `SPEC_SURGEON_MODEL` | the model every Claude call uses (default `claude-opus-5-5`) |
 | `SPEC_SURGEON_NO_UPDATE_CHECK` | any value: the window never checks for updates on its own |
@@ -107,9 +108,16 @@ and Settings.
    document and where; Spec Surgeon offers to change those too when you reply, and never does it unasked. A header or
    footer fill that will show in another case than the template's (a title typed "Identification for …" where the
    template shows "DOOR HARDWARE") is noted the same way; "show it in capitals like the template" makes it look so
-   through formatting, without retyping a letter.
+   through formatting, without retyping a letter. Word has no title-case look, so when the template shows its title
+   in title case ("Specification Name") and your files type theirs in capitals, matching it is wording: Spec Surgeon
+   drafts each document's title in the template's case as one choice you can pick or correct, and one plan then
+   puts each document's own approved title in its footer.
+   A file the plan cannot cover is listed under **Left untouched** with the reason, and the preview of the others
+   stands; the assistant names it in its next reply and says what would let it take part.
    Each preview carries a green checkmark (looks good) and a red X (needs more work: set it aside for after the
-   others).
+   others). To leave documents out of a request altogether, say so ("leave out 20, and 23 for now"): the plan covers
+   the others, the ones you named stay exactly as they are under **Left untouched**, and your next request covers
+   them again unless you leave them out again.
 6. **Create edited copies.** One button, in the conversation above the box you type in, approves the displayed plan.
    The engine applies it to every file you did not set aside, verifies each one independently, and lists the copies
    under **Your edited copies**; click one to open it in Word. Originals are never written. A file that fails a
@@ -161,7 +169,8 @@ beside your documents is ever looked for.
 
 For Default mode, connect an Anthropic API key once in **Settings**. There is no spending limit: every AI step runs Claude Opus 5.5
 with room for its full 128,000-token answer (the conversation, and the visual check and custom methods it runs inside
-a turn, at medium effort; the outcome planning after a preview that set files aside, and recovery, at high; no step at
+a turn, at medium effort; the outcome planning when no ordinary plan fits (no operation for the request, a plan that
+covers no file, or a sample that fails its check), and recovery, at high; no step at
 max; every operation's settings ride the cached prompt, so a plan is one or two calls; that prompt is cached for an
 hour, so a follow-up request reads it instead of paying for it again). Instead, the
 header shows the estimated spending as it accrues, **Stop now** cuts off the AI step that is running at once, and
@@ -169,8 +178,28 @@ work pauses after every 48 AI steps until you press **Continue**, which picks th
 passing reason (an overloaded service, a dropped connection) is sent again automatically. Every request needs
 the key: without one the window keeps your draft and asks you to connect one in Settings.
 
+**Settings → Fast responses** trades money for time. It is off until you turn it on, and Settings shows both sides
+before you do: Claude Opus 5.5 writes its answers (and its thinking) up to 2.5 times faster, the same model at the
+same effort, every plan checked, previewed and verified exactly as before; and every AI step costs twice as much ($8
+instead of $4 per million input tokens and $40 instead of $20 per million output tokens; the cache discounts apply
+on top). Turning it on takes a second click on a button that names the price; one click turns it off. It speeds up
+Claude's writing, not the moment before it starts and not the work on your computer. When Anthropic's fast capacity
+is busy, a step runs at standard speed and price at once instead of waiting; if Anthropic refuses fast mode for your
+key, every step runs at standard speed and Settings says why. While it is in effect, the spending estimate in the top
+bar is priced at the fast rates and says **Fast**. The choice is kept for the next start. Switching it during a
+conversation makes the next step re-read the conversation once without the cache discount (the two speeds are
+cached separately).
+
 **Settings → Appearance** picks the window's colour scheme: Warm Clay (the default), Blueprint, Graphite & Teal,
 Carbon & Hi-Vis or Linen (the light one). The window changes at once and opens in the scheme you chose from then on.
+
+**Many documents at once.** The work on your computer is shared over its cores. A batch of three or more documents is
+edited and checked in worker processes of the app, one per core (at most eight), each document from start to finish
+in one of them, so its copy and its verification record are exactly what they would be alone; a preview plans twelve
+or more documents, and checks three or more samples, the same way. Word renders the pages in up to three private,
+invisible instances side by side (one per two cores; never the Word you have open). On eight 50-page sections and
+four cores, creating the copies (before rendering) took 1.6 s instead of 4.6 s. The environment variable
+`SPEC_SURGEON_WORD_INSTANCES=1` keeps Word to one instance.
 
 **When something goes wrong.** **About → Save a diagnostic bundle** writes one zip (and shows it in Explorer) with
 everything a diagnosis reads: the app's log and its event journals, crash logs, its settings, your current and last

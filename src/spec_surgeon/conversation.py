@@ -123,6 +123,8 @@ class Turn:
     custom_transform: str = ""                    # "possible" | "outside_limits" | "" (unsupported turns)
     custom_transform_reason: str = ""
     chips: List[str] = field(default_factory=list)  # suggested replies the user may tap (plain text, no approval)
+    # the documents the user left out of this request (``leave_out``, absolute paths): the plan covers the others
+    leave_out: List[str] = field(default_factory=list)
 
     def needs_user(self) -> bool:
         return self.status in ("questions", "unsupported", "failed")
@@ -131,7 +133,8 @@ class Turn:
         return {"status": self.status, "message": self.message, "understanding": self.understanding,
                 "questions": self.questions, "choices": [c.to_dict() for c in self.choices], "spec": self.spec,
                 "errors": self.errors, "images": self.images, "custom_transform": self.custom_transform,
-                "custom_transform_reason": self.custom_transform_reason, "chips": list(self.chips)}
+                "custom_transform_reason": self.custom_transform_reason, "chips": list(self.chips),
+                "leave_out": list(self.leave_out)}
 
 
 @dataclass
@@ -685,9 +688,13 @@ class Conversation:
                         continue
                     spec = inp.get("spec")
                     outcome = spec
+                    # the documents the user left out of the request: nothing plans them, nothing judges the spec there
+                    left_out, errs = compiler.resolve_leave_out(inp.get("leave_out"), self.batch)
                     try:
                         with diag.span("conversation.submission.validate", tool_use_id=_bid(b), model_turn=self.calls) as record:
-                            outcome, errs = compiler.compose_submission(spec, self.batch, self.sources)
+                            if not errs:
+                                outcome, errs = compiler.compose_submission(spec, self.batch, self.sources,
+                                                                            leave_out=left_out)
                             record.update(accepted=not bool(errs), errors=errs,
                                           composed=bool(errs) is False and outcome is not spec)
                     except Exception as e:  # noqa: BLE001 — the call must be answered (rule 14): a spec the checks
@@ -706,7 +713,7 @@ class Conversation:
                         results[_bid(b)] = {"type": "tool_result", "tool_use_id": _bid(b), "is_error": True,
                                             "content": "REJECTED — fix and call submit_editspec again:\n- " + "\n- ".join(errs)}
                         continue
-                    accepted = (b, outcome, inp)
+                    accepted = (b, outcome, inp, left_out)
                     diag.event("conversation.submission.accepted", tool_use_id=_bid(b), model_turn=self.calls,
                                composed=outcome is not spec)
                     results[_bid(b)] = {"type": "tool_result", "tool_use_id": _bid(b), "content": ACCEPTED_RESULT}
@@ -729,7 +736,8 @@ class Conversation:
             if accepted is not None:
                 self.pending = ordered
                 self._record_results(ordered, pending=True)
-                return self._finish(self._spec_turn(accepted[1], accepted[2], rejections, images, said))
+                return self._finish(self._spec_turn(accepted[1], accepted[2], rejections, images, said,
+                                                    leave_out=accepted[3]))
             if stalled or rejected >= self.max_attempts:
                 why = (f"investigation stalled after {self.stall_repetitions} equivalent rejected candidates "
                        "without new evidence" if stalled else f"no spec after {rejected} rejected attempts")
@@ -802,7 +810,7 @@ class Conversation:
         return Turn("questions", message="\n\n".join(dict.fromkeys(messages)), understanding=" ".join(understanding),
                     questions=questions, choices=choices, errors=errors, images=images, chips=chips)
 
-    def _spec_turn(self, spec, inp, rejections, images, said: str = "") -> Turn:
+    def _spec_turn(self, spec, inp, rejections, images, said: str = "", leave_out=()) -> Turn:
         # The spec the app gets carries the USER's request, never the text Claude wrote in "request": the advisor and
         # the next pass (set_aside.json → retry) count it among the approved words. A copy — the history keeps the
         # tool call exactly as Claude made it. A chain (the app's composition of overlapping ops, or the model's own
@@ -822,16 +830,17 @@ class Conversation:
         # for a model that wrote neither); the summary is the record's.
         parts = [p for p in (said.strip(), str(inp.get("message") or "").strip()) if p]
         message = "\n\n".join(dict.fromkeys(parts)) or summary
+        left_out = [str(Path(p).resolve()) for p in leave_out]
         # a question or an unsupported outcome is answered before any plan the submission also carries could run
         # (compose_submission refuses the two together; this order is the second guard)
         if isinstance(spec.get("layouts"), list) and not (spec.get("unsupported") or spec.get("questions")):
             from .layouts import plan_from_submission
             plan = plan_from_submission(spec, self.request)
             return Turn("ok", message=message, understanding=summary, spec=plan, errors=errors, images=images,
-                        chips=chips)
+                        chips=chips, leave_out=left_out)
         if is_chain(spec) and not (spec.get("unsupported") or spec.get("questions")):
             return Turn("ok", message=message, understanding=summary, spec=spec, errors=errors, images=images,
-                        chips=chips)
+                        chips=chips, leave_out=left_out)
         if spec.get("unsupported"):
             self.unsupported = {"request": self.request, "unsupported": spec.get("unsupported"),
                                 "proposal": spec.get("proposal") or ""}
@@ -850,10 +859,11 @@ class Conversation:
                           "verification; this fallback limit alone does not establish that a new built-in is needed.")
             return Turn("unsupported", message=msg, understanding=summary, choices=choices, spec=spec,
                         errors=list(rejections), images=images, custom_transform=verdict,
-                        custom_transform_reason=reason)
+                        custom_transform_reason=reason, leave_out=left_out)
         if spec.get("questions"):
             errors = list(rejections)
             questions = _texts(spec["questions"], "spec's questions", errors) or ["(the model asked an empty question)"]
             return Turn("questions", understanding=summary, questions=questions, spec=spec, errors=errors,
                         images=images)
-        return Turn("ok", message=message, understanding=summary, spec=spec, errors=errors, images=images, chips=chips)
+        return Turn("ok", message=message, understanding=summary, spec=spec, errors=errors, images=images, chips=chips,
+                    leave_out=left_out)
