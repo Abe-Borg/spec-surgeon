@@ -151,8 +151,8 @@ copies remain. Every start of the app is a clean one: the last conversation is a
 
 ![The plan in the conversation and before/after pages, with one action](docs/conversation-preview.png)
 
-**Two modes.** The switch is in the top bar, beside the help topics, and the window opens in the mode you last used
-(Safe the first time).
+**Two modes, and a hidden third.** The switch is in the top bar, beside the help topics, and the window opens in the
+mode you last used (Safe the first time; never Obliterate).
 
 - **Safe — buttons, no AI.** What you control: the common changes, one button each — *Match headers and footers to
   template*, *Remove headers and footers*, *Add or remove a watermark*, *Swap the logo*, *Match body formatting to
@@ -181,6 +181,16 @@ copies remain. Every start of the app is a clean one: the last conversation is a
 - **Default — a conversation.** What you control: any change you can describe, from one word to whole tables,
   sections and pictures, on documents built in different ways. What it costs: an Anthropic API key and the AI's
   spending, and the AI can misread a request, so you read what it plans and look at the pages before you approve.
+- **Obliterate — the conversation without guardrails (hidden).** Off the switch until Settings → **Advanced** →
+  *Show Obliterate mode* is on, and chosen only after its warning, every time (tick *I understand*, then **Turn on
+  Obliterate**). What you control: Claude may write wording itself (it is in the plan you approve); when no operation
+  fits, Claude may write a custom method that changes anything Word stores, not only formatting; and a copy that fails
+  a check is delivered anyway, marked **UNVERIFIED** with the checks it failed, instead of being held back. What it
+  costs: no proof that the rest of the file is untouched, content can be lost or invented without a refusal, a copy
+  may need Word's repair, results can differ from run to run, and more AI spending. What still holds: copies only
+  (your originals are never written), a source that changed is never delivered over, the custom method's sandbox, and
+  the independent checks on every copy, their results kept beside it. **Back to Default** (or any other mode) leaves
+  it; the app never opens in it.
 
 On a batch from different projects, Safe mode's buttons work on every document they can change exactly and leave
 the rest untouched, each with the engine's reason — a template's section line it cannot find, an odd-and-even pages

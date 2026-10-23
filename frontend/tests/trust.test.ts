@@ -47,7 +47,7 @@ test("Level 1 has a lead and six to eight points, one of them on what runs witho
 });
 
 test("every runtime card answers the five rows, and says None. where no model runs", () => {
-  assert.ok(RUNTIME_CARDS.length >= 12 && RUNTIME_CARDS.length <= 24, `${RUNTIME_CARDS.length} cards`);
+  assert.ok(RUNTIME_CARDS.length >= 12 && RUNTIME_CARDS.length <= 25, `${RUNTIME_CARDS.length} cards`);
   for (const card of RUNTIME_CARDS) {
     for (const row of ["you", "runs", "sent", "ai", "bounds"] as const) {
       assert.ok(card[row] && card[row].trim().length > 3, `${card.title}: ${row}`);

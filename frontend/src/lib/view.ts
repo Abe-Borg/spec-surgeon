@@ -159,8 +159,8 @@ export function normalizeView(raw: unknown): View {
     working: obj(v.working, EMPTY_VIEW.working),
     budget: obj(v.budget, EMPTY_VIEW.budget),
     update: obj(v.update, EMPTY_VIEW.update),
-    mode: v.mode === "safe" ? "safe" : "default",
-    modes: list<string>(v.modes).filter((m): m is View["mode"] => m === "safe" || m === "default"),
+    mode: v.mode === "safe" || v.mode === "obliterate" ? v.mode : "default",
+    modes: list<string>(v.modes).filter((m): m is View["mode"] => m === "safe" || m === "default" || m === "obliterate"),
     template: obj(v.template, EMPTY_VIEW.template),
     left_untouched: list(v.left_untouched),
   };

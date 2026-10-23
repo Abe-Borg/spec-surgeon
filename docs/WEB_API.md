@@ -45,7 +45,7 @@ that ends a job is authoritative.
   "samples": [{"source": "…", "name": "21 13 13.docx", "images": ["/api/image?path=…"],
                "pages_before": 12, "pages_after": 12, "passed": true}],
   "warnings": ["…"], "blocking": false,
-  "results": [{"source": "…", "output": "…", "name": "21 13 13.docx"}],
+  "results": [{"source": "…", "output": "…", "name": "21 13 13.docx", "unverified": []}],
   "action": {"label": "Create edited copies", "token": "…", "kind": "approve | continue | save | none",
              "can_hold": true},
   "todo": [{"path": "C:/Specs/21 05 00.docx", "name": "21 05 00.docx", "why": "held | asked | refused | failed",
@@ -53,7 +53,7 @@ that ends a job is authoritative.
   "focus": [],
   "working": {"generation": 0, "from_originals": true, "can_start_over": false},
   "budget": {"paused": false, "steps_per_pause": 48},
-  "mode": "safe | default",
+  "mode": "safe | default | obliterate",
   "modes": ["safe", "default"],
   "template": {"kind": "none | prepared | reference | unusable", "typed_slots": ["ISSUED FOR PERMIT"], "reason": "",
                "body": {"roles": {"part": "PRT", "article": "ART"}, "styles": [{"id": "PRT", "name": "PRT"}],
@@ -83,6 +83,10 @@ Rules the page relies on:
   per role, the template's paragraph styles for the form's `roles` field, the page and font in words, and `problems`
   — non-empty, the button cannot be pressed, the first one says why). `left_untouched` lists what the last Safe-mode button's run gave no copy, with the engine's reason, until the
   next button or a hand-off; it is empty while a preview waits.
+- `modes` lists `obliterate` only while Settings → Advanced shows it (`show_obliterate`). In `obliterate` the page is
+  the conversation, as in `default`, with Obliterate's strip above the composer; the engine runs with
+  `Session.unguarded` (CLAUDE.md, "Modes"). `results[].unverified` names the checks a copy failed when it was
+  delivered anyway in that mode (`[]` for a verified copy); the page marks it UNVERIFIED.
 - `plan` is present whenever a plan exists (stages `preview` and `question` with a partial result); `stages` is the
   number of ordered steps the engine composed internally, never a procedure the user performs. The page shows only
   `set_aside` (the **Left untouched** card); `groups`, `targets` and `stages` tell it a plan exists but are not
@@ -135,7 +139,7 @@ Rules the page relies on:
 | POST | `/api/primary` | `{"token": "...", "hold"?: ["<sample source path>", …]}` — `hold` names the previewed documents marked with the red X: set aside on the to-do list, the others run; a path that is not one of the plan's documents is refused (400 for a malformed list, the job's `error` for an unknown path) | SSE stream |
 | GET | `/api/recipes` | | `{"recipes": [{"id", "label", "group", "summary", "needs": ["template" \| "picture"], "fields": [{"name", "kind": "text \| pairs \| choice \| check \| picture \| table \| slots", "label", "required", "default"?, "options"?, "help"?, "placeholder"?, "optional_choice"?}]}], "groups": [...]}` — Safe mode's buttons (`recipes.catalog()`), the same for the whole session |
 | POST | `/api/recipe` | `{"recipe": "<id>", "inputs": {<field name>: value}}` — a Safe-mode button and its form; a form that cannot be used, or a plan the gate refuses, is said in one `app` message and nothing is previewed; 400 for inputs that are not an object | SSE stream |
-| POST | `/api/mode` | `{"mode": "safe \| default"}` | the view; kept in settings.json; 400 for another mode |
+| POST | `/api/mode` | `{"mode": "safe \| default \| obliterate", "acknowledged"?: true}` — `obliterate` needs `show_obliterate` on and `acknowledged: true` (the user ticked its warning this time); entering or leaving it voids the plan | the view; Safe or Default is kept in settings.json, Obliterate never is (the next start opens in Default); 400 for another mode, a hidden Obliterate or a missing acknowledgement |
 | POST | `/api/handoff` | `{"paths": ["<left_untouched path>", …]}` — the documents go on the to-do list with the button's sentence as their request, and the mode becomes `default`; 400 for a path the last button did not leave untouched, or while a preview waits | the view |
 | POST | `/api/stop` | | `{"ok": true}` — the running model call is cut off; the stream then ends with `done` |
 | POST | `/api/put-back` | `{"path": "<a todo entry's path>"}` | the view (the document is off the to-do list and back among the documents the next request works on; during a pass it joins them when the pass ends; a plan on screen is void when the documents in scope change); 400 with `{"error"}` for a path not on the list, 409 while work runs |
@@ -143,8 +147,8 @@ Rules the page relies on:
 | POST | `/api/new-conversation` | | the view (archives the journal, starts empty) |
 | POST | `/api/open` | `{"path": "..."}` | opens a result in Word / a folder with the OS (`{"ok": true}`); 404 if gone |
 | GET | `/api/image` | `?path=…` | the PNG (only files under the app's run folders are served; else 404) |
-| GET | `/api/settings` | | `{"key_present": true, "origin": "saved", "can_remember": true, "out_root": "…", "logs_dir": "…", "steps_per_pause": 48, "theme": "clay", "fast_mode": false, "fast": {"model": "claude-opus-5-5", "available": true, "speedup": 2.5, "price_factor": 2, "standard_usd_per_mtok": [4.0, 20.0], "fast_usd_per_mtok": [8.0, 40.0], "refused": null}}` — `fast` is what Settings says about fast mode, from `llm.PRICES` / `llm.FAST_PRICES` for the model the calls use; `refused` is the API's reason when it refused fast mode for this key |
-| POST | `/api/settings` | `{"api_key": "sk-…", "remember": true}` and/or `{"theme": "linen"}` and/or `{"fast_mode": true}` | the settings; 400 with `{"error"}` (an unknown scheme, a `fast_mode` that is not a boolean). `theme` is one of `clay`, `blueprint`, `graphite`, `carbon`, `linen` and is saved to `settings.json` at once; `fast_mode` is saved too and applies from the next AI step (`llm.set_fast_mode`; a call already running keeps its speed) |
+| GET | `/api/settings` | | `{"key_present": true, "origin": "saved", "can_remember": true, "out_root": "…", "logs_dir": "…", "steps_per_pause": 48, "theme": "clay", "fast_mode": false, "show_obliterate": false, "fast": {"model": "claude-opus-5-5", "available": true, "speedup": 2.5, "price_factor": 2, "standard_usd_per_mtok": [4.0, 20.0], "fast_usd_per_mtok": [8.0, 40.0], "refused": null}}` — `fast` is what Settings says about fast mode, from `llm.PRICES` / `llm.FAST_PRICES` for the model the calls use; `refused` is the API's reason when it refused fast mode for this key |
+| POST | `/api/settings` | `{"api_key": "sk-…", "remember": true}` and/or `{"theme": "linen"}` and/or `{"fast_mode": true}` and/or `{"show_obliterate": true}` | the settings; 400 with `{"error"}` (an unknown scheme, a `fast_mode` or `show_obliterate` that is not a boolean). `show_obliterate` (Settings → Advanced) adds `obliterate` to the view's `modes` and is kept; turning it off while the window is in Obliterate leaves the mode for Default (409 while work runs). `theme` is one of `clay`, `blueprint`, `graphite`, `carbon`, `linen` and is saved to `settings.json` at once; `fast_mode` is saved too and applies from the next AI step (`llm.set_fast_mode`; a call already running keeps its speed) |
 | GET | `/api/about` | | `{"version", "name", "tagline", "license", "license_name", "license_summary": [...], "release_notes", "credits": [...], "copyright", "author", "email", "github", "linkedin", "model", "components": [{"name", "license", "url"}]}` — every value from `about.py` (and `model` from `llm.DEFAULT_MODEL`); `credits` is the same as plain lines |
 | GET | `/api/update` | | the `update` block |
 | POST | `/api/update/check` | | the `update` block (starts a background check) |

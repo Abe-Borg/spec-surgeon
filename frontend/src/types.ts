@@ -61,8 +61,9 @@ export interface Untouched {
   reason: string;
 }
 
-/** Safe: the buttons, no AI call. Default: the conversation (docs/PLAN-2026-10-23-modes.md). */
-export type Mode = "safe" | "default";
+/** Safe: the buttons, no AI call. Default: the conversation. Obliterate: the conversation without the guardrails that
+ *  protect a document's content, offered only when Settings → Advanced shows it (docs/PLAN-2026-10-23-modes.md). */
+export type Mode = "safe" | "default" | "obliterate";
 
 /** What kind of header/footer template the attached template is (`recipes.template_kind`). */
 export interface TemplateInfo {
@@ -146,6 +147,8 @@ export interface Result {
   source: string;
   output: string;
   name: string;
+  /** Obliterate mode: the checks this copy failed; it was delivered anyway. Empty for a verified copy. */
+  unverified?: string[];
 }
 
 /** Why a document waits on the to-do list: the red X on its preview, the user asked the assistant, the plan
@@ -296,6 +299,8 @@ export interface Settings {
   /** Claude's fast mode, kept in settings.json; off until the user turns it on. Absent from an older server. */
   fast_mode?: boolean;
   fast?: FastOffer;
+  /** Settings → Advanced: the top bar offers Obliterate mode. Absent from an older server. */
+  show_obliterate?: boolean;
 }
 
 /** What Settings says about fast mode, from the server's own price table (llm.PRICES / llm.FAST_PRICES): the model

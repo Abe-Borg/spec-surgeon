@@ -200,6 +200,10 @@ function samples() {
   }));
 }
 
+// document_task.OBLITERATE_ON / OBLITERATE_OFF
+const OBLITERATE_ON = "Obliterate mode is on. Claude may write wording and custom methods that change anything Word stores, and a copy whose checks fail is delivered marked UNVERIFIED instead of being held back. Copies only; your originals are never written. What was planned before is void.";
+const OBLITERATE_OFF = "Obliterate mode is off: every placed word is yours again, custom methods are formatting only, and a copy whose checks fail is held back. What was planned in Obliterate mode is void.";
+
 function results() {
   return DOCS.map((d) => ({ source: d.path, output: `${RUN_DIR}/${name(d.path)}`, name: name(d.path) }));
 }
@@ -339,6 +343,19 @@ const SCENARIOS = {
     );
     return v;
   },
+  /** Obliterate mode (shown in Settings → Advanced): three copies, one delivered UNVERIFIED with the check it failed. */
+  "obliterate-done": () => {
+    const v = SCENARIOS.done();
+    settings = { ...settings, show_obliterate: true };
+    v.mode = "obliterate";
+    v.modes = ["safe", "default", "obliterate"];
+    v.results = results().map((r, i) => (i === 1 ? { ...r, unverified: ["V2 (Text preservation)"] } : r));
+    v.messages = [
+      ...v.messages.slice(0, -1),
+      msg("app", "3 document copies are ready. You can open them, describe another change to make on top of them, or start over from the originals. 1 was delivered UNVERIFIED: a check failed, and each one's failed checks are beside it."),
+    ];
+    return v;
+  },
   todo: () => {
     const v = SCENARIOS.done();
     const aside = DOCS[1];
@@ -384,7 +401,7 @@ const SCENARIOS = {
 };
 
 let view = emptyView();
-let settings = { key_present: true, origin: "saved", can_remember: true, out_root: "C:/Users/abe/AppData/Local/Spec Surgeon/runs", logs_dir: "C:/Users/abe/AppData/Roaming/Spec Surgeon/logs", theme: "clay", fast_mode: false, fast: { model: "claude-opus-5-5", available: true, speedup: 2.5, price_factor: 2, standard_usd_per_mtok: [4, 20], fast_usd_per_mtok: [8, 40], refused: null } };
+let settings = { key_present: true, origin: "saved", can_remember: true, out_root: "C:/Users/abe/AppData/Local/Spec Surgeon/runs", logs_dir: "C:/Users/abe/AppData/Roaming/Spec Surgeon/logs", theme: "clay", fast_mode: false, show_obliterate: false, fast: { model: "claude-opus-5-5", available: true, speedup: 2.5, price_factor: 2, standard_usd_per_mtok: [4, 20], fast_usd_per_mtok: [8, 40], refused: null } };
 const THEMES = ["clay", "blueprint", "graphite", "carbon", "linen"];
 let running = null; // { stop: boolean }
 let downloadTimer = null;
@@ -970,9 +987,19 @@ async function handle(req, res) {
     case "POST /api/mode": {
       if (view.busy) return busyRefusal();
       const body = await readJson(req);
-      if (body.mode !== "safe" && body.mode !== "default") return json(res, 400, { error: "There is no such mode." });
+      if (!["safe", "default", "obliterate"].includes(body.mode)) return json(res, 400, { error: "There is no such mode." });
+      if (body.mode === "obliterate" && !settings.show_obliterate) return json(res, 400, { error: "Obliterate mode is hidden. Settings → Advanced shows it." });
+      if (body.mode === "obliterate" && body.acknowledged !== true) return json(res, 400, { error: "Read the Obliterate warning and confirm it first." });
+      const crossing = (view.mode === "obliterate") !== (body.mode === "obliterate");
       view.mode = body.mode;
-      if (body.mode === "default") view.connection = { ready: settings.key_present, origin: settings.origin };
+      if (body.mode !== "safe") view.connection = { ready: settings.key_present, origin: settings.origin };
+      if (crossing) {
+        view.messages.push(msg("app", body.mode === "obliterate" ? OBLITERATE_ON : OBLITERATE_OFF));
+        view.stage = view.stage === "preview" ? "idle" : view.stage;
+        view.plan = null;
+        view.samples = [];
+        view.action = { label: "", token: "", kind: "none", can_hold: false };
+      }
       return json(res, 200, view);
     }
     case "POST /api/handoff": {
@@ -1074,6 +1101,16 @@ async function handle(req, res) {
       if ("theme" in body) {
         if (!THEMES.includes(body.theme)) return json(res, 400, { error: "There is no such colour scheme." });
         settings = { ...settings, theme: body.theme };
+        if (!("api_key" in body)) return json(res, 200, settings);
+      }
+      if ("show_obliterate" in body) {
+        if (typeof body.show_obliterate !== "boolean") return json(res, 400, { error: "Show Obliterate mode is on or off." });
+        settings = { ...settings, show_obliterate: body.show_obliterate };
+        view.modes = body.show_obliterate ? ["safe", "default", "obliterate"] : ["safe", "default"];
+        if (!body.show_obliterate && view.mode === "obliterate") {
+          view.mode = "default";
+          view.messages.push(msg("app", OBLITERATE_OFF));
+        }
         if (!("api_key" in body)) return json(res, 200, settings);
       }
       if ("fast_mode" in body) {
