@@ -142,7 +142,8 @@ copies remain. Every start of the app is a clean one: the last conversation is a
 (Safe the first time).
 
 - **Safe — buttons, no AI.** What you control: the common changes, one button each — *Match headers and footers to
-  template*, *Remove headers and footers*, *Add or remove a watermark*, *Swap the logo*, *Match font to template*,
+  template*, *Remove headers and footers*, *Add or remove a watermark*, *Swap the logo*, *Match body formatting to
+  template*, *Match font to template*,
   *Find and replace* (typed pairs or an attached table; body, headers and footers), *Accept all tracked changes*,
   *Remove all comments*, *Remove highlighting*, *Remove hidden text*, *Remove empty paragraphs*, *Name files by
   section number and title*, *Set the document title property* and *Turn off Track Changes*. Each button has a short
@@ -153,6 +154,17 @@ copies remain. Every start of the app is a clean one: the last conversation is a
   placeholder's value is typed in the form) or an ordinary specification whose headers and footers show its own
   section number and title. No model is called — no plan, no visual check, no recovery — so it needs no API key and
   spends nothing.
+- **Match body formatting to template** (Safe mode) makes each document look like your template without touching a
+  word or a table. The form shows the template's style for each part of a section (the section number line, the
+  title, PART, articles, paragraphs and subparagraphs, END OF SECTION), read from the template and changeable. Each
+  document's outline takes those styles and the template's numbering, and every number keeps its value: a "1.01"
+  article shows as the template's "1.1", but a list that would renumber sets the document aside. An outline typed as
+  text converts when its numbers are the ones the list counts (a typo, a skip or a duplicate sets it aside). With its
+  boxes ticked (the default) it also sets the template's page size and margins (a document with a landscape page keeps
+  its pages), its body font, and lets the styles set paragraph spacing, indents and alignment — bold, italic and
+  underlined words stay. Documents built alike run as one plan and the rest are planned their own way; a document it
+  cannot read (no outline, typed and Word numbers mixed, an outline deeper than the template's, one of its styles
+  shared with paragraphs it does not restyle) is left untouched with the reason.
 - **Default — a conversation.** What you control: any change you can describe, from one word to whole tables,
   sections and pictures, on documents built in different ways. What it costs: an Anthropic API key and the AI's
   spending, and the AI can misread a request, so you read what it plans and look at the pages before you approve.

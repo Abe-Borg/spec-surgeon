@@ -220,6 +220,27 @@ class ChainFile:
     def record_stem(self) -> str:
         return Path(self.out_name or self.source.name).stem
 
+    @property
+    def exception(self) -> Optional[Dict[str, Any]]:
+        """The stop as one batch's ``FileResult`` carries it — a plan per layout mixes chain files and batch files in
+        one result (``layouts.run_layouts``), and its readers ask both the same way: ``code``, ``kind``, ``stage``,
+        ``reason``, ``details``; None unless the file stopped with an exception (a failed check is ``record``'s)."""
+        if self.status != "EXCEPTION":
+            return None
+        own = None
+        if self.stopped_at and 0 < self.stopped_at <= len(self.results) and self.results[self.stopped_at - 1]:
+            own = getattr(self.results[self.stopped_at - 1], "exception", None)
+        return {"code": self.code, "kind": (own or {}).get("kind", "refusal"), "stage": f"step {self.stopped_at}",
+                "reason": self.reason, "details": dict(self.details)}
+
+    @property
+    def record(self):
+        """The verification record of the last step the file reached (a failed check's names it), else None."""
+        for r in reversed(self.results):
+            if r is not None and getattr(r, "record", None) is not None:
+                return r.record
+        return None
+
     def to_dict(self):
         return {"source": str(self.source), "out_name": self.out_name, "pattern_id": self.pattern_id,
                 "stages": self.stage_status, "stopped_at": self.stopped_at, "status": self.status, "code": self.code,

@@ -14,7 +14,9 @@ noted; a numbered style's unnumbered paragraphs — ``numId`` 0 — are left alo
 (``{"<source level>": <scheme level>}``, default identity); ``direct_formatting``: ``keep`` (default) | ``clear``
 (apply_style's: clear_direct_formatting's DEFAULT rules on the paragraph, its runs and its mark); ``tracked`` (§14.1:
 plain — a whole-document conversion — unless asked), ``author``; ``allow_missing`` (default true: a file with no numbered
-paragraph to convert is a no-op with a note; false → ``not-found``).
+paragraph to convert is a no-op with a note; false → ``not-found``); ``counters``: ``flag`` (default: a converted
+paragraph whose counters change is flagged) | ``keep`` (refused instead, below). ``select``: ``include_tables`` (default
+true: a numbered paragraph in a table cell is converted like any; false → left out, and F7 then holds for it).
 
 Definitions (the verifier's own reading is verify/numberingconvert.py):
 
@@ -32,6 +34,11 @@ Definitions (the verifier's own reading is verify/numberingconvert.py):
   (``numbering-unsupported``); tracked when a converted paragraph's style chain holds a style the import REPLACES
   (``numbering_convert.replaced_in_chain``; ``tracked-format``, F14 — the replacement is never tracked, reject-all would
   give the old style back under the new numbered definition).
+* ``counters: "keep"`` (docs/PLAN-2026-10-23-modes.md E3): a converted paragraph whose predicted counters — the values
+  of its level and the levels above it — are not its source counters (``counter_shift``) is refused
+  (``numbering-mismatch``, naming the first ones: a renumbered article breaks "as specified in 1.3"); so is one whose
+  number the source or the prediction cannot evaluate (``numbering-unsupported``: that it keeps its number cannot be
+  shown) — the F8 and skipped-level conversions the default flags.
 * **Paragraphs left out keep their numbers** (F7): every counted paragraph NOT converted must show, predicted, what it
   showed (``shows``: unnumbered, else rendered text, suffix and issue) — else ``numbering-mismatch`` naming the first ones
   ("their list no longer counts the converted paragraphs; convert every level") — except a paragraph the destination
@@ -97,8 +104,9 @@ from .style_import import apply_import, check_template_unchanged, resolve_style
 from .textedit import RunText, run_text
 
 PARAM_KEYS = {"from", "level_map", "template", "levels", "existing", "direct_formatting", "tracked", "author",
-              "allow_missing"}
-USER_PARAMS = ("from", "level_map", "template", "levels", "existing", "direct_formatting", "tracked", "allow_missing")
+              "allow_missing", "counters"}
+USER_PARAMS = ("from", "level_map", "template", "levels", "existing", "direct_formatting", "tracked", "allow_missing",
+               "counters")
 REFLOW_REASON = "the paragraphs take the scheme's styles and list: numbers, indents and spacing change, text reflows"
 REVISION_IN_NUMPR = {W + "ins", W + "del", W + "moveFrom", W + "moveTo", W + "numberingChange"}
 
@@ -156,6 +164,22 @@ def skipped_both(x: lists.NumberedPar, y: Optional[lists.NumberedPar], lvl: int)
     own shape carried over as it is: Word and LibreOffice number it differently, before as after; converted, flagged."""
     return (y is not None and not x.evaluated and not y.evaluated and x.issue in LEVEL_KNOWN and y.issue == "skipped"
             and x.ilvl == lvl)
+
+
+def counter_shift(x: lists.NumberedPar, y: Optional[lists.NumberedPar]) -> bool:
+    """``counters: "keep"``: the converted paragraph's predicted counters are not its source counters (or either number
+    is not evaluated, or it is no longer numbered)."""
+    return y is None or not x.evaluated or not y.evaluated or tuple(y.counters) != tuple(x.counters)
+
+
+def in_table(p) -> bool:
+    """The paragraph stands in a table cell (any depth)."""
+    q = p.getparent()
+    while q is not None:
+        if q.tag == W + "tc":
+            return True
+        q = q.getparent()
+    return False
 
 
 def whole_list_chosen(x: lists.NumberedPar, src, chosen_at) -> bool:
@@ -253,8 +277,15 @@ class ConvertNumbering(Op):
                     "description": "w:pPrChange per paragraph (w:rPrChange per cleared run); default plain"},
         "author": {"type": "string"},
         "allow_missing": {"type": "boolean", "default": True,
-                          "description": "a file with nothing numbered to convert is a no-op (false: set aside)"}}}
-    select_schema = {"description": "none — the main document's numbered paragraphs ('from' says which)"}
+                          "description": "a file with nothing numbered to convert is a no-op (false: set aside)"},
+        "counters": {"type": "string", "enum": ["flag", "keep"], "default": "flag",
+                     "description": "flag: a converted paragraph whose number counts differently is flagged; keep: "
+                                    "the file is set aside instead (every number keeps its values)"}}}
+    select_schema = {"type": "object", "properties": {
+        "include_tables": {"type": "boolean", "default": True,
+                           "description": "numbered paragraphs in table cells too (false: left as they are; a cell "
+                                          "numbered by the converted list then sets the file aside)"}},
+        "description": "the main document's numbered paragraphs ('from' says which)"}
     verification_profile = {
         "V2": "zero text diffs", "V4": "tracked: +1 w:pPrChange per changed paragraph, +1 w:rPrChange per cleared run/mark",
         "V10": "converted_numbering: the scheme, the converted paragraphs, their levels and changes re-derived from the "
@@ -285,12 +316,21 @@ class ConvertNumbering(Op):
                       + mapped + " and loses its own list numbering, so your list numbers it")
         how = f", {tracked_words(params)}" if params.get("tracked") is True else ""
         first = prose.sentence(f"Convert the document's numbering to {scheme_phrase(params)}{how}: {source}")
-        return with_second_sentence(first, conversion_extras(params, "nothing numbered"))
+        extras = []
+        if (select or {}).get("include_tables") is False:
+            extras.append("numbered paragraphs in table cells are left as they are")
+        if params.get("counters") == "keep":
+            extras.append("a file where a converted paragraph's number would count differently is set aside")
+        return with_second_sentence(first, extras + conversion_extras(params, "nothing numbered"))
 
     def plan(self, pkg: DocxPackage, select: Dict[str, Any], params: Dict[str, Any]) -> PlanFragment:
-        if select:
-            raise JobException(f"convert_numbering takes no selector (got {sorted(select)}); 'from' says which "
-                               f"paragraphs", "bad-params")
+        select = dict(select or {})
+        if set(select) - {"include_tables"}:
+            raise JobException(f"convert_numbering takes only include_tables as a selector (got {sorted(select)}); "
+                               f"'from' says which paragraphs", "bad-params")
+        if "include_tables" in select and not isinstance(select["include_tables"], bool):
+            raise JobException("include_tables must be true or false", "bad-params")
+        tables = select.get("include_tables", True)
         unknown = set(params) - PARAM_KEYS
         if unknown:
             raise JobException(f"convert_numbering: unknown parameter(s) {sorted(unknown)}; known: {sorted(PARAM_KEYS)}",
@@ -302,6 +342,10 @@ class ConvertNumbering(Op):
         for k in ("tracked", "allow_missing"):
             if k in params and not isinstance(params[k], bool):
                 raise JobException(f"{k} must be true or false", "bad-params")
+        keep = params.get("counters", "flag")
+        if keep not in ("flag", "keep"):
+            raise JobException("counters must be 'flag' or 'keep'", "bad-params")
+        keep = keep == "keep"
         frm = clean_from(params.get("from", "main"), len(levels))
         level_map = clean_level_map(params.get("level_map"), len(levels))
         tracked = bool(params.get("tracked", False))
@@ -317,7 +361,7 @@ class ConvertNumbering(Op):
         src = lists.count(root, sheet, defs)
         by_index = {x.index: x for x in src}
         dest = destination(pkg, sheet, defs, src, levels, template, existing)
-        frag = self.fragment({}, {**params, "tracked": tracked, "author": author})
+        frag = self.fragment(select, {**params, "tracked": tracked, "author": author})
 
         # ---- which paragraphs, at which level ----
         chosen: List[Tuple[lists.NumberedPar, int]] = []
@@ -355,6 +399,12 @@ class ConvertNumbering(Op):
                     off += 1
             if off:
                 notes.append(f"{off} paragraph(s) of those styles carry no number (numbering off): left alone")
+        if not tables:
+            celled = [x for x, _ in chosen if in_table(pars[x.index])]
+            if celled:
+                chosen = [(x, k) for x, k in chosen if not in_table(pars[x.index])]
+                notes.append(f"{len(celled)} numbered paragraph(s) in table cells left as they are (include_tables: "
+                             f"false)")
 
         # ---- refusals and levels ----
         converted: List[Tuple[lists.NumberedPar, int]] = []
@@ -428,6 +478,25 @@ class ConvertNumbering(Op):
                                + " — their list no longer counts the converted paragraphs; convert every level of that "
                                  "list (from: \"main\", or every level's styles in from.styles)",
                                "numbering-mismatch", {"paragraphs": moved[:20]})
+        if keep:
+            # E3: every converted paragraph keeps its counters — the source's, predicted again in the scheme's list
+            unproven = [x.index for x, _ in converted if not x.evaluated or not pred_at[x.index].evaluated]
+            if unproven:
+                raise JobException(f"{main}: counters 'keep' — the number of {len(unproven)} converted paragraph(s) "
+                                   f"cannot be read with certainty before or after the conversion, so that it stays "
+                                   f"cannot be shown: "
+                                   + "; ".join(f"‘{shown(run_text(pars[i]), 40)}’" for i in unproven[:6])
+                                   + (" …" if len(unproven) > 6 else ""), "numbering-unsupported",
+                                   {"paragraphs": unproven[:20]})
+            shifted = [x for x, _ in converted if counter_shift(x, pred_at.get(x.index))]
+            if shifted:
+                raise JobException(f"{main}: counters 'keep' — {len(shifted)} converted paragraph(s) would count "
+                                   f"differently: "
+                                   + "; ".join(f"‘{shown(run_text(pars[x.index]), 40)}’ {x.text!r} → "
+                                               f"{pred_at[x.index].text!r}" for x in shifted[:6])
+                                   + (" …" if len(shifted) > 6 else "")
+                                   + " — a written reference such as 'as specified in 1.3' would point elsewhere",
+                                   "numbering-mismatch", {"paragraphs": [x.index for x in shifted[:20]]})
 
         # ---- the changes ----
         settings = ClearSettings() if direct == "clear" else None
@@ -480,7 +549,7 @@ class ConvertNumbering(Op):
         # ---- the record ----
         imp = dest.imp
         frag.property_assertions.append({
-            "kind": "converted_numbering", "part": main,
+            "kind": "converted_numbering", "part": main, "select": select,
             "params": {k: params[k] for k in USER_PARAMS if k in params},
             "template": dest.tpl.path if dest.tpl is not None else None,
             "template_md5": dest.tpl.md5 if dest.tpl is not None else None,

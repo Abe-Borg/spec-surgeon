@@ -107,9 +107,49 @@
    ]
   },
   {
+   "id": "body_formatting",
+   "label": "Match body formatting to template",
+   "group": "Fonts & formatting",
+   "summary": "Gives each document your template's outline styles and numbering, its page, its font, and lets the styles set paragraph spacing, indents and alignment. Words and tables stay as they are.",
+   "needs": [
+    "template"
+   ],
+   "fields": [
+    {
+     "name": "roles",
+     "kind": "roles",
+     "label": "Your template's style for each part of a section",
+     "required": false,
+     "help": "Read from your template; change any that is wrong."
+    },
+    {
+     "name": "page",
+     "kind": "check",
+     "label": "Page size and margins",
+     "required": false,
+     "default": true
+    },
+    {
+     "name": "font",
+     "kind": "check",
+     "label": "Font",
+     "required": false,
+     "default": true
+    },
+    {
+     "name": "clear",
+     "kind": "check",
+     "label": "Let the styles set paragraph spacing, indents and alignment",
+     "required": false,
+     "default": true,
+     "help": "Clears those three where a paragraph sets its own. Bold, italic and underlined words stay."
+    }
+   ]
+  },
+  {
    "id": "font_template",
    "label": "Match font to template",
-   "group": "Fonts",
+   "group": "Fonts & formatting",
    "summary": "Sets the text in your template's body font and size; headings, notes and other sizes keep theirs.",
    "needs": [
     "template"
@@ -331,7 +371,7 @@
  ],
  "groups": [
   "Headers & footers",
-  "Fonts",
+  "Fonts & formatting",
   "Text",
   "Clean up",
   "Files & properties"

@@ -44,6 +44,9 @@ export function availability(recipe: Recipe, view: Attached): Availability {
     if (recipe.id === "headers_footers_template" && view.template?.kind === "unusable") {
       return { ready: false, reason: view.template.reason || "This template has nothing to fill in." };
     }
+    if (recipe.id === "body_formatting" && view.template?.body?.problems?.length) {
+      return { ready: false, reason: view.template.body.problems[0] };
+    }
   }
   if (recipe.needs.includes("picture") && pictures(view).length === 0) {
     return { ready: false, reason: "Attach the new picture first." };
@@ -61,6 +64,9 @@ export function initialInputs(recipe: Recipe, view: Attached): RecipeInputs {
         break;
       case "slots":
         inputs[field.name] = Object.fromEntries((view.template?.typed_slots ?? []).map((slot) => [slot, ""]));
+        break;
+      case "roles":
+        inputs[field.name] = { ...(view.template?.body?.roles ?? {}) };
         break;
       case "check":
         inputs[field.name] = field.default === true;
@@ -93,6 +99,12 @@ export function refreshInputs(recipe: Recipe, current: RecipeInputs, view: Attac
       const typed = (value ?? {}) as Record<string, string>;
       const slots = out[field.name] as Record<string, string>;
       for (const slot of Object.keys(slots)) if (slot in typed) slots[slot] = typed[slot];
+    } else if (field.kind === "roles") {
+      // a choice stays while the template still has that style ("" — none — always does)
+      const chosen = (value ?? {}) as Record<string, string>;
+      const known = new Set((view.template?.body?.styles ?? []).map((s) => s.id));
+      const roles = out[field.name] as Record<string, string>;
+      for (const [role, style] of Object.entries(chosen)) if (style === "" || known.has(style)) roles[role] = style;
     } else if (field.kind === "picture" || field.kind === "table") {
       if (value && files.has(String(value))) out[field.name] = value;
     } else {

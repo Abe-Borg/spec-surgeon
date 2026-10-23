@@ -25,7 +25,8 @@ mode changes. A Default-mode preview approved after switching to Safe mode is cr
 step: what it leaves untouched waits beside the copies instead of going to recovery.
 
 In Safe mode the box you type in gives way to buttons, in groups: headers and footers (match to template, remove, a
-watermark, swap the logo), fonts (match to template), text (find and replace), clean up (accept all tracked changes,
+watermark, swap the logo), fonts and formatting (match body formatting to template, match font to template), text
+(find and replace), clean up (accept all tracked changes,
 remove comments, highlighting, hidden text or empty paragraphs) and files and properties (name the copies by section
 number and title, the document title property, Track Changes off). A button that cannot be pressed yet says why when
 the pointer rests on it (no documents, no template, no picture). Pressing one opens a short form — the words to find
@@ -55,6 +56,30 @@ placeholders) from an ordinary specification used as one without a model (`recip
 template's section number and title placeholders are filled from each document and its other placeholders are typed
 in the form; an ordinary specification gives each document its own number and title wherever its headers and footers
 show its own; a template with nothing to fill is refused at the button.
+
+**Match body formatting to template** (`template_roles.py`, `body_match.py`; docs/PLAN-2026-10-23-modes.md M3) plans
+each document on its own, in code. The form shows the template's style for each part of a section (the section
+number line, the title, PART, articles, paragraphs, subparagraphs, END OF SECTION: `template_roles.detect`, from
+`structure.role_summary` over the template), each changeable, and boxes for the page, the font and the paragraph
+spacing (all on). For each document, `body_match.plan_file` reads its own structure:
+
+- an outline Word numbers converts to the template's styles and list (`convert_numbering`: the main list, each role's
+  level mapped onto the template's, table cells left out, every number keeping its counters — "1.01" shows as
+  "1.1", a renumbering refuses); an outline typed as text converts by value (`convert_typed_numbers`, `match:
+  "counters"`); a mix of the two refuses;
+- the section number line, the title and END OF SECTION take the template's styles (`apply_style`), each only where
+  one selector finds exactly that paragraph;
+- the template's page size and margins (`set_page_setup`, every section, unless one is in another orientation), its
+  body font (the *Match font to template* operations), and the clearing of paragraph spacing, indents and alignment
+  outside tables (`clear_direct_formatting`, runs untouched);
+- a document whose own style has the id of a template role style and is used by paragraphs the plan does not
+  restyle is refused (the template's definition would change their look).
+
+Documents of one structure pattern whose plans agree run as one layout (the largest agreeing group; each other one
+is left out with why), and each layout's spec passes `compiler.compose_submission` on its own documents, which puts
+the overlapping operations in ordered steps. A document left out is listed beside the preview with its reason
+(`Session.left_out_reasons`) and, after the run, under **Left untouched by the last button**, ready for Default mode.
+Every change is plain and no word is placed.
 
 Typing is not possible in Safe mode, and the server refuses a message there; the conversation and its question cards
 belong to Default mode.

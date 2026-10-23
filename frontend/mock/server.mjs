@@ -59,7 +59,26 @@ const RUN_DIR = "C:/Users/abe/AppData/Local/Spec Surgeon/runs/20261020-143512/ou
 /** Safe mode's buttons, as the real server lists them: generated from ``recipes.catalog()`` and pinned to it by
  *  tests/test_recipes.py, so the mock never offers a button the app does not have. */
 const RECIPES = JSON.parse(readFileSync(resolve(HERE, "recipes.json"), "utf8"));
-const TEMPLATE_INFO = { kind: "prepared", typed_slots: ["ISSUED FOR PERMIT"], reason: "" };
+const TEMPLATE_INFO = {
+  kind: "prepared",
+  typed_slots: ["ISSUED FOR PERMIT"],
+  reason: "",
+  // what "Match body formatting to template" reads from it (template_roles.detect)
+  body: {
+    roles: { section_id: "SCT", section_title: "TTL", part: "PRT", article: "ART", paragraph: "PR1", subparagraph: "PR2",
+             end_of_section: "EOS" },
+    styles: [["ART", "ART"], ["EOS", "End of Section"], ["Normal", "Normal"], ["PR1", "PR1"], ["PR2", "PR2"],
+             ["PRT", "PRT"], ["SCT", "Section Number"], ["TTL", "Section Title"]].map(([id, name]) => ({ id, name })),
+    labels: { section_id: "Section number line", section_title: "Section title", part: "PART", article: "Article (1.1)",
+              paragraph: "Paragraph (A.)", subparagraph: "Subparagraph (1.)", subparagraph_2: "Subparagraph (a.)",
+              end_of_section: "END OF SECTION" },
+    order: ["section_id", "section_title", "part", "article", "paragraph", "subparagraph", "subparagraph_2",
+            "end_of_section"],
+    page: "8.5 × 11 in portrait, margins 1 in",
+    font: "Arial 10 pt",
+    problems: [],
+  },
+};
 const NO_TEMPLATE = { kind: "none", typed_slots: [], reason: "" };
 
 function name(path) {

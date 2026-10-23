@@ -124,6 +124,10 @@ try {
   await page.getByRole("button", { name: "Match headers and footers to template" }).click();
   await page.waitForTimeout(300);
   await shot(page, "safe-form");
+  await page.getByRole("button", { name: "All buttons" }).click();
+  await page.getByRole("button", { name: "Match body formatting to template" }).click();
+  await page.waitForTimeout(300);
+  await shot(page, "safe-body-form");
   await scenario("safe-done");
   await page.reload();
   await page.getByText("Left untouched by the last button").waitFor();
