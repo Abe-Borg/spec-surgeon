@@ -106,8 +106,12 @@ export default function Prompts({ questions, choices, chips, busy, onChoose, onS
               <button
                 type="button"
                 onClick={() => onChoose(choice)}
-                disabled={busy}
-                title={choice.detail || (choice.words.length ? "Picking this approves exactly the words beneath it" : "")}
+                disabled={busy || editing === choice.id}
+                title={
+                  editing === choice.id
+                    ? "You are editing its wording: press Use this wording below, or Cancel to pick the draft as offered"
+                    : choice.detail || (choice.words.length ? "Picking this approves exactly the words beneath it" : "")
+                }
                 style={stagger(index)}
                 className="prompt-chip-in w-full rounded-xl border border-edge bg-raised px-4 py-2.5 text-left text-sm text-ink transition-colors hover:border-accent/70 hover:bg-raised/80 disabled:pointer-events-none disabled:opacity-40"
               >

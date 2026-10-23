@@ -96,6 +96,8 @@ try {
   check("the wording box starts from Claude's draft",
     (await wordingBox.inputValue()) === "Riverside Medical Center — Issued for Construction, 20 October 2026");
   await wordingBox.fill("Riverside Medical Center — Issued for Permit");
+  check("the choice's own button cannot pick the hidden draft while it is being edited",
+    await page.getByRole("button", { name: /reword the footer/ }).isDisabled());
   await wordingBox.press("Shift+Enter");
   await wordingBox.type("second line");
   check("a line break cannot be sent", await page.getByRole("button", { name: "Use this wording" }).isDisabled());
