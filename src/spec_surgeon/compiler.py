@@ -82,6 +82,9 @@ FATAL_SPEC_CODES = {"spec", "spec-mode", "geometry", "conflict", "bad-params", "
 # EVERY non-fatal code as pattern-sensitive, so a refusal the ops add later can never slip through the gate.
 PATTERN_SENSITIVE_CODES = {"unfilled-slot", "expect", "not-found", "ambiguous"}
 SPEC_LEVEL_CODES = FATAL_SPEC_CODES | {"unfilled-slot", "expect"}
+# The first error of a spec that plans on no file of the batch (``_dry_errors``): every other line names a file's own
+# refusal. A Safe-mode button previews such a spec anyway, so each document's reason shows under Left untouched.
+PLANS_ON_NONE = "the spec plans cleanly on none of the batch's structure patterns:"
 
 INSPECTION_TOOLS = [
     {"name": "describe_op", "description": "Read an operation's verification rules, common assumptions and worked "
@@ -1220,7 +1223,7 @@ def _dry_errors(spec: Dict[str, Any], batch: _Batch, patterns: Optional[Sequence
     if fatal_errs:
         return fatal_errs
     if planned_ok == 0:
-        return ["the spec plans cleanly on none of the batch's structure patterns:"] + pattern_errs
+        return [PLANS_ON_NONE] + pattern_errs
     return []
 
 

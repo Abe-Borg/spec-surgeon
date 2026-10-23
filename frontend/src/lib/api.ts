@@ -1,7 +1,7 @@
 // Adapted from Build-a-Spec's frontend/src/lib/api.ts (copy-based reuse):
 // the fetch helpers and `streamChat`'s shape, against Spec Surgeon's own
 // contract (docs/WEB_API.md).
-import type { About, BundleSaved, JobEvent, Settings, Update, View } from "../types.ts";
+import type { About, BundleSaved, JobEvent, Mode, Recipe, RecipeInputs, Settings, Update, View } from "../types.ts";
 import type { Report } from "./diagnostics.ts";
 import {
   apiHeaders,
@@ -114,6 +114,22 @@ export async function newConversation(): Promise<View> {
   return normalizeView(await post<unknown>("/api/new-conversation"));
 }
 
+/** Safe or Default (docs/WEB_API.md, `POST /api/mode`); kept in settings.json for the next start. */
+export async function setMode(mode: Mode): Promise<View> {
+  return normalizeView(await post<unknown>("/api/mode", { mode }));
+}
+
+/** Safe mode's "Try these in Default mode": the documents the last button left untouched go on the to-do list. */
+export async function handOff(paths: string[]): Promise<View> {
+  return normalizeView(await post<unknown>("/api/handoff", { paths }));
+}
+
+/** The Safe-mode buttons (GET /api/recipes), fetched once. */
+export async function getRecipes(): Promise<Recipe[]> {
+  const answer = await request<{ recipes?: unknown }>("/api/recipes");
+  return Array.isArray(answer.recipes) ? (answer.recipes as Recipe[]) : [];
+}
+
 export async function openPath(path: string): Promise<void> {
   await post<unknown>("/api/open", { path });
 }
@@ -152,6 +168,8 @@ export const choose = (choiceId: string) => streamJob("/api/choose", { choice_id
  * the others get copies (docs/WEB_API.md). */
 export const primary = (token: string, hold: string[] = []) =>
   streamJob("/api/primary", hold.length > 0 ? { token, hold } : { token });
+/** A Safe-mode button and its form: the fixed spec is previewed, no AI call (docs/WEB_API.md). */
+export const recipe = (id: string, inputs: RecipeInputs) => streamJob("/api/recipe", { recipe: id, inputs });
 
 // --- Settings, about, updates, logs ---------------------------------------
 

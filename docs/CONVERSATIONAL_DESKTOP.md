@@ -8,12 +8,52 @@ are the Word documents you attached (a section that folds to one line once a pla
 it), optionally one reference template, any pictures or tables you attached for the edit to use, and the before/after
 pages. You add documents, describe the result, look at the pages, mark each preview with a green checkmark or a red
 X, and create edited copies. Nothing else is asked of you: no operations, methods or settings beyond an API key.
+That is Default mode. Safe mode, the other choice in the top bar, puts buttons for the common changes where the box
+you type in is, and calls no model at all ("Safe mode" below).
 Both panes render what the assistant writes as formatted text (lists, bold, links), in the chat and on the cards
 beside it alike.
 
 ![The conversation starts with Word documents, an optional template, and a request](conversation-start.png)
 
 ![The plan in the conversation and rendered before-and-after pages, followed by one action to create copies](conversation-preview.png)
+
+## Safe mode
+
+The top bar's **Safe | Default** switch chooses how a change is asked for; the window opens in the mode last used
+(Safe the first time, `Settings.mode`). Documents, copies, the to-do list and any preview stay as they are when the
+mode changes.
+
+In Safe mode the box you type in gives way to buttons, in groups: headers and footers (match to template, remove, a
+watermark, swap the logo), fonts (match to template), text (find and replace), clean up (accept all tracked changes,
+remove comments, highlighting, hidden text or empty paragraphs) and files and properties (name the copies by section
+number and title, the document title property, Track Changes off). A button that cannot be pressed yet says why when
+the pointer rests on it (no documents, no template, no picture). Pressing one opens a short form — the words to find
+and their replacements, the watermark's words, a template's values, a naming pattern — and **Preview**.
+
+What happens then is what happens to a plan in Default mode, with no model anywhere (`recipes.py`):
+
+- The button's plan is built in code from the form and the attachments, then passes the gate every plan passes
+  (`compiler.compose_submission`): its settings are checked, every file it reads must be one you attached, every
+  word it would place must be one you typed, and it is planned dry on the documents; overlapping operations are put
+  in order as always.
+- The preview plans every document, checks the samples and renders their pages. Claude's visual check is not run.
+- **Create edited copies** makes and checks every copy as always. A document the button could not change exactly is
+  not handed to recovery (an AI step): it is listed under **Left untouched by the last button** beside the copies,
+  with the engine's reason, and **Try these in Default mode** puts it on the to-do list and switches to Default
+  mode, where "Work on the documents I set aside" plans it with the button's sentence as its request.
+- The button's sentence (what you pressed and what you typed) is your line in the chat, and the change sentences of
+  its plan join the history the next request in either mode hears.
+
+Tracked changes are off in Safe mode unless the form's *Show my changes as tracked changes in Word* is ticked (find
+and replace, remove hidden text, remove empty paragraphs); every other button's change is plain formatting or never
+tracked, as in Default mode. The template buttons tell a prepared template (yellow-highlighted or `{{NAME}}`
+placeholders) from an ordinary specification used as one without a model (`recipes.template_kind`): a prepared
+template's section number and title placeholders are filled from each document and its other placeholders are typed
+in the form; an ordinary specification gives each document its own number and title wherever its headers and footers
+show its own; a template with nothing to fill is refused at the button.
+
+Typing is not possible in Safe mode, and the server refuses a message there; the conversation and its question cards
+belong to Default mode.
 
 ## The top bar
 
@@ -22,9 +62,9 @@ documents · 1 template · 1 picture · building on your copies"; files triage r
 1280 px wide and shortens with an ellipsis before anything else gives way. Then the in-app guide, one dialog with a
 tab strip:
 
-- **How to use** — a first pass in eight steps, what a refused file means, and how spending, Stop now and the
-  pause work.
-- **Workflows** — recipes for the usual jobs: fonts across a set, headers and footers from a template, a logo, values
+- **How to use** — the two modes, what each lets you control and what it costs, Safe mode in four steps, a Default
+  first pass in eight steps, what a refused file means, and how spending, Stop now and the pause work.
+- **Workflows** — recipes for the usual jobs: a Safe-mode clean-up before issue, fonts across a set, headers and footers from a template, a logo, values
   from a sheet, an issue stamp, a mixed batch, one change after another, a file left untouched, stopped or paused work.
 - **How it works** — the mechanics in plain words.
 - **Why trust it** — eight claims, each with the mechanism that makes it true, and **I'm not convinced — show me
@@ -361,7 +401,7 @@ A PASS means the engine found exactly the predicted change and nothing else, not
 wanted. Automated page comparison and Claude's visual check are not human acceptance in Word; look at the
 pages, and open the copies.
 
-The window has no other mode, and there is no command line: it was removed on 2026-10-21 together with the
+The window has two modes (Safe and Default, above), and there is no command line: it was removed on 2026-10-21 together with the
 features only it offered (the recipe library, office profiles, specification QA audits, project evidence, built-in
 workflows, campaign and recovery workspaces, evaluations).
 

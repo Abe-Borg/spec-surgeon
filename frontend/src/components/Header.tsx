@@ -1,7 +1,7 @@
 // Adapted from Build-a-Spec's frontend/src/components/Header.tsx (copy-based reuse): the title with its context
 // line, the help topics beside it, then the pills and the buttons on the right.
 import { memo } from "react";
-import type { View } from "../types";
+import type { Mode, View } from "../types";
 import { costPill } from "../lib/chat";
 import { HELP_TOPICS, sessionHeading, type HelpTopic } from "../lib/help";
 import Tip from "./Tip";
@@ -15,7 +15,17 @@ interface Props {
   onNewConversation: () => void;
   onOpenSettings: () => void;
   onOpenHelp: (topic: HelpTopic) => void;
+  onMode: (mode: Mode) => void;
 }
+
+/** What each mode grants and costs, in one line each (How to use says it in full). */
+export const MODE_TIPS: Record<Mode, string> = {
+  safe: "Safe mode: buttons for the common changes. No AI is used; every change is checked before you get a copy.",
+  default:
+    "Default mode: describe any change in your own words. An AI model plans it, you look at the previews and approve it; every change is checked.",
+};
+
+const MODE_LABELS: Record<Mode, string> = { safe: "Safe", default: "Default" };
 
 const ORIGIN_TIPS: Record<string, string> = {
   saved: "Connected with the key remembered securely on this computer.",
@@ -32,7 +42,9 @@ function Header({
   onNewConversation,
   onOpenSettings,
   onOpenHelp,
+  onMode,
 }: Props) {
+  const safe = view.mode === "safe";
   const ready = !!view.connection?.ready;
   const calls = view.cost?.calls ?? 0;
   // The context line steps aside for the update pill: both only fit from 1280 px, and not together.
@@ -64,6 +76,24 @@ function Header({
           </button>
         ))}
       </nav>
+      <span className="h-5 w-px flex-none bg-edge" aria-hidden="true" />
+      <div className="flex flex-none items-center rounded-lg border border-edge bg-raised p-0.5" role="group" aria-label="Mode">
+        {(view.modes ?? ["safe", "default"]).map((mode) => (
+          <Tip key={mode} tip={busy ? "Finish the current work first" : MODE_TIPS[mode]}>
+            <button
+              type="button"
+              aria-pressed={view.mode === mode}
+              disabled={busy}
+              onClick={() => view.mode !== mode && onMode(mode)}
+              className={`rounded-md px-2.5 py-0.5 text-xs whitespace-nowrap transition-colors disabled:pointer-events-none ${
+                view.mode === mode ? "bg-accent text-on-accent" : "text-ink-dim hover:text-ink"
+              }`}
+            >
+              {MODE_LABELS[mode]}
+            </button>
+          </Tip>
+        ))}
+      </div>
       <div className="flex-1" />
       <div className="flex flex-none items-center gap-2 lg:gap-3">
         {/* From 1280 px; below that About offers the same update. */}
@@ -97,11 +127,15 @@ function Header({
         <button
           type="button"
           onClick={onOpenSettings}
-          title={ORIGIN_TIPS[view.connection?.origin ?? "none"] ?? ORIGIN_TIPS.none}
+          title={
+            safe
+              ? "Safe mode makes no AI call, so it needs no API key. Default mode does; connect one in Settings."
+              : (ORIGIN_TIPS[view.connection?.origin ?? "none"] ?? ORIGIN_TIPS.none)
+          }
           className="flex items-center gap-2 rounded-full border border-edge bg-raised px-3 py-1 text-xs whitespace-nowrap text-ink-dim transition-colors hover:border-accent hover:text-accent"
         >
-          <span className={`h-2 w-2 rounded-full ${ready ? "bg-ok" : "bg-warn"}`} aria-hidden />
-          {ready ? "Connected" : "Connect your API key"}
+          <span className={`h-2 w-2 rounded-full ${safe ? "bg-ink-faint" : ready ? "bg-ok" : "bg-warn"}`} aria-hidden />
+          {safe ? "No AI in Safe mode" : ready ? "Connected" : "Connect your API key"}
         </button>
         <Tip
           tip={

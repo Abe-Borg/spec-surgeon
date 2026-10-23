@@ -52,7 +52,61 @@ export interface Target {
 export interface SetAside {
   name: string;
   reason: string;
+  /** The attached original (servers from Safe mode on). */
+  path?: string;
 }
+
+/** A document the last Safe-mode button left without a copy, and why; offered to Default mode. */
+export interface Untouched {
+  path: string;
+  name: string;
+  reason: string;
+}
+
+/** Safe: the buttons, no AI call. Default: the conversation (docs/PLAN-2026-10-23-modes.md). */
+export type Mode = "safe" | "default";
+
+/** What kind of header/footer template the attached template is (`recipes.template_kind`). */
+export interface TemplateInfo {
+  kind: "none" | "prepared" | "reference" | "unusable";
+  /** A prepared template's placeholders the user types a value for. */
+  typed_slots: string[];
+  reason: string;
+}
+
+export type RecipeFieldKind = "text" | "pairs" | "choice" | "check" | "picture" | "table" | "slots";
+
+export interface RecipeField {
+  name: string;
+  kind: RecipeFieldKind;
+  label: string;
+  required: boolean;
+  default?: string | boolean;
+  options?: { value: string; label: string }[];
+  help?: string;
+  placeholder?: string;
+  /** picture: the label of the choice that names no file ("Every picture in the headers"). */
+  optional_choice?: string;
+}
+
+/** One Safe-mode button (GET /api/recipes). */
+export interface Recipe {
+  id: string;
+  label: string;
+  group: string;
+  summary: string;
+  /** What must be attached first: "template", "picture". */
+  needs: string[];
+  fields: RecipeField[];
+}
+
+export interface FindReplacePair {
+  find: string;
+  replace: string;
+}
+
+/** A button's form as the page sends it: field name → its value. */
+export type RecipeInputs = Record<string, string | boolean | FindReplacePair[] | Record<string, string>>;
 
 export interface Plan {
   groups: PlanGroup[];
@@ -165,6 +219,13 @@ export interface View {
   working: Working;
   budget: Budget;
   update: Update;
+  /** The window's mode and the modes it offers. */
+  mode: Mode;
+  modes: Mode[];
+  /** The attached template, as a header/footer template. */
+  template: TemplateInfo;
+  /** What the last Safe-mode button left untouched (after its copies were created). */
+  left_untouched: Untouched[];
 }
 
 /** The kinds the `status` frame names; anything else renders as "Working…". */

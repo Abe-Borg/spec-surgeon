@@ -52,10 +52,53 @@ function HowToUse({ stepsPerPause }: { stepsPerPause: number }) {
   return (
     <div className="space-y-4">
       <Lead>
-        Spec Surgeon is a conversation about your Word specifications. You attach the documents, say what should
-        change in plain words, look at the before-and-after pages, and press one button for edited copies.
-        A typical first pass:
+        Spec Surgeon edits your Word specifications in batches. It has two modes; the switch is in the top bar, beside
+        these help topics. In both, you look at the before-and-after pages and press one button for edited copies, and
+        every copy is checked before you get it.
       </Lead>
+      <Guide title="Two modes" tagline="Choose by what you need to change.">
+        <Points
+          items={[
+            {
+              t: "Safe — buttons, no AI",
+              d: "What you control: the common changes, one button each — headers and footers from your template, the font from your template, find and replace, accepting tracked changes, removing comments, highlighting, hidden text or blank lines, removing headers and footers, a watermark, a logo, file names, the title property and the Track Changes setting. What it costs: only what the buttons do. A document a button cannot change exactly is left untouched with the reason, and can be handed to Default mode. No AI is used, so it needs no API key and spends nothing.",
+            },
+            {
+              t: "Default — a conversation",
+              d: "What you control: any change you can describe in your own words, from one word to whole tables, sections and pictures, on documents built in different ways. What it costs: an Anthropic API key and the AI’s spending, shown as it accrues in the top bar; and the AI can misread a request, so you read what it plans and look at the pages before you approve. The same checks guard every copy.",
+            },
+          ]}
+        />
+      </Guide>
+      <Steps
+        items={[
+          { t: "Safe mode: choose Safe in the top bar", d: "The buttons take the place of the message box. The window remembers the mode you last used." },
+          {
+            t: "Add your documents, and what a button needs",
+            d: (
+              <>
+                Drop <Tag>.docx</Tag> files anywhere in the window. The template buttons need <Tag>Add a template</Tag>;
+                swapping the logo needs the new picture; find and replace can read a table of pairs you attach.
+              </>
+            ),
+          },
+          {
+            t: "Pick a button, fill in its short form, press Preview",
+            d: "A button that cannot be used yet says why when you hover over it. Its form asks only for your words and choices: the words to find and their replacements, the watermark’s words, a template’s values. Tracked changes are off unless you tick the box.",
+          },
+          {
+            t: "Look at the pages, then create the copies",
+            d: (
+              <>
+                <Tag>Left untouched</Tag> names any document the change cannot be made on, and why. After the copies
+                are created, <Tag>Try these in Default mode</Tag> puts those documents on your to-do list in Default
+                mode. Press another button to change the copies further.
+              </>
+            ),
+          },
+        ]}
+      />
+      <Lead>Default mode, a typical first pass:</Lead>
       <Steps
         items={[
           {
@@ -165,8 +208,8 @@ function HowToUse({ stepsPerPause }: { stepsPerPause: number }) {
         />
       </Guide>
       <p className="text-xs text-ink-faint">
-        Every AI step runs inside work you started: a message, a choice, or the button. Checking a file when it arrives
-        makes no AI call. The app’s only request on its own is a once-a-day check for a new version, which carries
+        Every AI step runs inside work you started in Default mode: a message, a choice, or the button. Safe mode makes
+        no AI call at all, and checking a file when it arrives makes none either. The app’s only request on its own is a once-a-day check for a new version, which carries
         nothing about your documents.
       </p>
     </div>
@@ -180,6 +223,17 @@ function Workflows({ stepsPerPause }: { stepsPerPause: number }) {
         Every request ends the same way — a plan you can read, pages you can look at, one button. Pick the recipe that
         matches the job in front of you.
       </Lead>
+      <Recipe
+        title="Safe mode: clean up a set before issue"
+        tagline="One button at a time, each building on the last."
+        steps={[
+          "Choose Safe in the top bar and drop the whole set in. Add your template if the headers, footers or font should match it.",
+          "Accept all tracked changes, then Remove all comments, then Remove highlighting — each one previewed, then created.",
+          "Match headers and footers to template, then Match font to template.",
+          "Name files by section number and title last, so the copies carry their names.",
+          "A document a button left untouched keeps its reason beside the copies; Try these in Default mode hands it to the conversation.",
+        ]}
+      />
       <Recipe
         title="Change the fonts across a set"
         tagline="One property, every section, nothing else touched."
@@ -319,8 +373,8 @@ function HowItWorks() {
             d: "Settings → Appearance offers Warm Clay, Blueprint, Graphite & Teal, Carbon & Hi-Vis and Linen. The window changes at once and opens in your choice from then on.",
           },
           {
-            t: "One window, no modes",
-            d: "Everything here happens in the conversation. There is no other mode and nothing to run outside this window.",
+            t: "Two modes, one engine",
+            d: "A Safe-mode button builds its plan in code from your form, with no AI call; in Default mode Claude writes the plan from your words. Either plan is previewed, approved and checked by the same engine, and there is nothing to run outside this window.",
           },
         ]}
       />

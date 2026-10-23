@@ -1,5 +1,5 @@
 """The window's server: one ``DocumentTask`` behind a local HTTP API (docs/WEB_API.md), the page that drives it,
-and the job stream — ``send``, ``choose`` and ``primary`` run on a worker thread and stream what happens as
+and the job stream — ``send``, ``choose``, ``primary`` and ``recipe`` run on a worker thread and stream what happens as
 server-sent events until ``done`` or ``error``: the model's words, its activity, the plan, the previews and the
 copies arrive the moment they exist. The job thread carries the request's diagnostics context (session, action,
 span) with it, so a failure on the worker is journalled under the action that started it.
@@ -26,9 +26,9 @@ from fastapi import FastAPI, File, Form, Request, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
-from .. import __version__, about, credentials, llm
+from .. import __version__, about, credentials, llm, recipes
 from .. import diagnostics as diag
-from ..document_task import STEPS_PER_PAUSE, DocumentTask
+from ..document_task import MODES, STEPS_PER_PAUSE, DocumentTask
 from ..gui import Session
 from ..settings import THEMES, Settings, config_dir, data_dir, default_run_root, logs_dir, save_settings
 from .watch import WindowWatch
@@ -113,6 +113,8 @@ def job_started_line(action: str, values: Dict[str, Any]) -> str:
     elif action == "primary":
         hold = values.get("hold") or []
         what = "the primary action" + (f", {len(hold)} document(s) held back" if hold else "")
+    elif action == "recipe":
+        what = f"the Safe-mode button {diag.snip(values.get('recipe') or '?', 40)}"
     else:
         what = ""
     return f"Job {action} started" + (f" ({what})" if what else "")
@@ -186,14 +188,16 @@ class WindowState:
         messages = [{"id": f"m{i}", "role": m["role"], "text": m["text"], "at": m.get("at")}
                     for i, m in enumerate(raw["messages"])]
         plan = {"groups": raw["groups"], "targets": raw["targets"], "set_aside": raw["set_aside"],
-                "stages": raw.get("stages", 0)} if raw["groups"] else None
+                "stages": raw.get("stages", 0)} if raw["groups"] or raw["set_aside"] else None
         samples = [{"source": str(sv.source), "name": Path(sv.source).name,
                     "images": [self.image_url(p) for p in sv.images if Path(p).is_file()],
                     "pages_before": sv.pages_before, "pages_after": sv.pages_after, "passed": sv.passed}
                    for sv in raw["samples"]]
         results = [{"source": source, "output": output, "name": Path(output).name}
                    for source, output in raw["results"].items()]
-        return {"version": self.version, "busy": busy, "stage": stage,
+        return {"version": self.version, "busy": busy, "stage": stage, "mode": raw.get("mode", "default"),
+                "modes": list(MODES), "template": task.template_info(),
+                "left_untouched": [dict(e) for e in raw.get("left_untouched", [])],
                 "connection": {"ready": task.session.claude_ready(), "origin": self.key_origin},
                 "cost": task._cost(), "attachments": attachments, "messages": messages, "plan": plan,
                 "questions": list(raw["questions"]), "choices": list(raw["choices"]), "chips": list(raw["chips"]),
@@ -286,6 +290,7 @@ class WindowState:
                     terminal = {"type": "done", "state": self._payload(task.view(), busy=False)}
                 try:
                     self.settings.out_root = str(task.session.out_root)
+                    self.settings.mode = task.mode
                     save_settings(self.settings)
                     task.save()
                 except Exception:  # noqa: BLE001
@@ -317,11 +322,12 @@ class WindowState:
         task.archive()
         session = Session(out_root=task.session.out_root, client=task.session.client,
                           visual_check=task.session.visual_check)
-        self.task = DocumentTask(session, journal=task.journal, render=task.render)
+        self.task = DocumentTask(session, journal=task.journal, render=task.render, mode=task.mode)
         self.task.save()
 
     def save_settings(self) -> None:
         self.settings.out_root = str(self.task.session.out_root)
+        self.settings.mode = self.task.mode
         save_settings(self.settings)
         if not self.busy:
             self.task.save()
@@ -484,6 +490,45 @@ def create_app(state: WindowState, *, dev: bool = False) -> FastAPI:
         if not isinstance(hold, list) or not all(isinstance(p, str) for p in hold):
             return error("hold must list the documents to set aside, by path.")
         return stream("primary", token=str(body.get("token") or ""), hold=hold)
+
+    @app.get("/api/recipes")
+    def recipe_catalog():
+        return {"recipes": recipes.catalog(), "groups": list(recipes.GROUPS)}
+
+    @app.post("/api/recipe")
+    async def recipe(request: Request):
+        body = await request.json()
+        inputs = body.get("inputs") if isinstance(body, dict) else None
+        if inputs is not None and not isinstance(inputs, dict):
+            return error("The button's form could not be read.")
+        return stream("recipe", recipe=str(body.get("recipe") or ""), inputs=inputs or {})
+
+    @app.post("/api/mode")
+    async def set_mode(request: Request):
+        if state.busy:
+            return busy_error()
+        body = await request.json()
+        try:
+            state.task.set_mode(str(body.get("mode") or ""))
+        except ValueError as e:
+            return error(str(e))
+        state.save_settings()
+        return state.view()
+
+    @app.post("/api/handoff")
+    async def hand_off(request: Request):
+        if state.busy:
+            return busy_error()
+        body = await request.json()
+        paths = body.get("paths") if isinstance(body, dict) else None
+        if not isinstance(paths, list) or not paths or not all(isinstance(p, str) for p in paths):
+            return error("Name the documents to hand over, by path.")
+        try:
+            state.task.hand_off(paths)
+        except ValueError as e:
+            return error(str(e))
+        state.save_settings()
+        return state.view()
 
     @app.post("/api/stop")
     def stop():

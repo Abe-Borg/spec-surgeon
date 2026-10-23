@@ -202,6 +202,24 @@ export const RUNTIME_CARDS: RuntimeCard[] = [
       "approved on this path without a separate pick: read the plan before you approve it.",
   },
   {
+    covers: ["A22", "A23", "A24"],
+    title: "Safe mode: choosing a mode, pressing a button, handing documents over",
+    you:
+      "Choose Safe or Default in the top bar; in Safe mode, pick a button, fill in its form and press Preview; Try " +
+      "these in Default mode beside what a button left untouched.",
+    runs:
+      "Choosing a mode keeps it in settings.json for the next start. A button builds its plan in code from your form " +
+      "and your attachments; the plan passes the same gate as a conversation's (its settings, the files it reads, " +
+      "every word it would place traced to what you typed) and the ordinary preview runs, without Claude's visual " +
+      "check. Create edited copies then makes and checks the copies as always. Handing over puts those documents on " +
+      "your to-do list and switches to Default mode.",
+    sent: "Nothing. A button never reaches the network.",
+    ai: NONE,
+    bounds:
+      "The buttons and what they do are fixed in the app. A document a button cannot change exactly is left " +
+      "untouched with the reason; nothing an AI does follows, neither a visual check nor recovery.",
+  },
+  {
     covers: ["A7"],
     title: "Marking a preview",
     you: "The ✓ or ✗ on a document's preview.",
@@ -219,7 +237,7 @@ export const RUNTIME_CARDS: RuntimeCard[] = [
       "is refused. Every approved file is edited from its original, checked by the independent checker (its checks " +
       "V1–V10) and rendered. A copy that passes goes to a new timestamped folder; one that fails is moved to failed " +
       "and never delivered. Then, if any copy failed, the app looks at those files again on its own (recovery) and " +
-      "comes back with a question or a new plan.",
+      "comes back with a question or a new plan — except after a Safe-mode button, whose copies get no recovery.",
     sent:
       "Nothing to make and check the copies. Recovery, if it runs, sends the failed files' names and full paths, their " +
       `profiles and overview, failure reasons, what its tools read, page images, and up to ${F.pastRepairCasesSent} matching ` +

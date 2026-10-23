@@ -257,7 +257,8 @@ function Dossier() {
               named under “Where the edits come from”).
             </>,
             <>
-              <b className="text-ink">Nothing runs that you did not start, and every exception is named.</b> Every AI
+              <b className="text-ink">Nothing runs that you did not start, and every exception is named.</b> Safe
+              mode makes no AI call at all. In Default mode every AI
               step happens inside a message, a choice or a button press of yours, though one press can chain several
               steps (they are all listed under “What runs when you click”). Without a click the app only checks files as
               they arrive and asks GitHub for a new version at most once every {F.updateCheckHours} hours.
@@ -284,6 +285,11 @@ function Dossier() {
               "You",
               "Your request, your typed answers, and the exact wording of a choice you picked. Only these count as approved wording.",
               "Your bubbles in the chat. The conversation’s record keeps them as approved words, apart from everything Claude wrote.",
+            ],
+            [
+              "A Safe-mode button",
+              "A fixed plan the app builds in code from the form you filled in: the button's own operations and settings, and only the words you typed.",
+              "Your line in the chat names the button and what you typed; the plan's sentences are the operations' own.",
             ],
             [
               "Your files",
@@ -585,6 +591,7 @@ function Dossier() {
         <Bullets
           items={[
             "Checking each file when it arrives (opens, is a .docx, no document type declaration, has a paragraph; notes on typed numbers, tracked changes and more).",
+            "Safe mode, every button from its form to the copies.",
             "Every operation: planning the change from the original, applying it, and writing the package back with every untouched part byte-identical.",
             "Putting overlapping changes into ordered steps, in the order you asked for them.",
             "Grouping a mixed batch by layout.",
@@ -597,9 +604,9 @@ function Dossier() {
           ]}
         />
         <Note title="With the network disconnected" tone="ok">
-          You can still attach files and see their checks, open earlier copies and their records, read the logs and save a
-          bundle. You cannot plan a change: every request goes through Claude, and the window has no way to edit
-          without it.
+          You can still attach files and see their checks, use Safe mode's buttons from the preview to the copies, open
+          earlier copies and their records, read the logs and save a bundle. You cannot ask for a change in Default
+          mode: every request there goes through Claude.
         </Note>
       </Section>
 
