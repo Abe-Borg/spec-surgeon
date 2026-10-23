@@ -98,13 +98,16 @@ export const RUNTIME_CARDS: RuntimeCard[] = [
     runs:
       "The conversation asks Claude. Claude reads the documents through read-only tools (paragraph text, a part's " +
       "XML, styles, a header or footer, the template, an attached table, rendered pages) and either asks you a question " +
-      "or submits a plan. The app validates the plan: its operations and settings, every file it " +
+      "or submits a plan. At your word (“set this one aside for later”) it can also put documents on your to-do list: they " +
+      "leave this request and every later one until you work on them or put them back, and nothing in them changes. " +
+      "The app validates the plan: its operations and settings, every file it " +
       "names, every word it would place, and a dry run on representative files. A rejected plan goes back to Claude " +
       `with the reason. An accepted plan is turned into a preview automatically: up to ${F.autoSteps} internal steps ` +
       "per action (the preview, and when needed a custom method or an outcome plan; their own cards follow).",
     sent:
       `To the Anthropic API (${F.anthropicHost}, unless ${F.apiAddressEnv} is set): your request and earlier answers, what the copies already carry, ` +
-      "the file names, the full path of an attached template, picture or table, a profile of each kind of document " +
+      "the file names (and the names on your to-do list, with why each waits), the full path of an attached template, " +
+      "picture or table, a profile of each kind of document " +
       "(styles, headings, header and footer text, sample paragraphs), an overview of every document (its section " +
       "number and title, its header and footer lines, its File Properties title), and whatever Claude's tools read: " +
       "paragraph text, XML, table rows, and page images rendered on your computer.",
@@ -137,7 +140,8 @@ export const RUNTIME_CARDS: RuntimeCard[] = [
     you: "Nothing: it follows a plan the app accepted.",
     runs:
       "Every attached file is planned from its original: the engine works out exactly what will change, or sets the " +
-      "file aside with a reason under Left untouched. A document you asked to leave out of the request is not " +
+      "file aside with a reason under Left untouched (when you create the others' copies, it goes on your to-do list " +
+      "with that reason). A document you asked to leave out of the request is not " +
       `planned, and is named there too. Representative samples (${F.sampleFiles} files, or every file in a smaller batch; ` +
       "at least one per layout, so more when there are more layouts) are edited in memory and checked by the independent checker. Their before and after " +
       `pages are rendered by Microsoft Word (new, invisible instances, up to ${F.wordInstances} side by side, never the Word you have open) or, without ` +
@@ -194,7 +198,8 @@ export const RUNTIME_CARDS: RuntimeCard[] = [
       "Nothing beyond your request: when no ordinary plan fits (Claude finds no operation for it, the plan covers no " +
       "file, a sample fails its check, or every sample is refused), the app continues on its own. A file the plan " +
       "refuses while the others plan does not start it, nor does a sample a later step of the plan refuses: that " +
-      "file waits under Left untouched beside the preview of the others.",
+      "file waits under Left untouched beside the preview of the others, and goes on your to-do list when you " +
+      "create theirs.",
     runs:
       "Claude proposes the outcomes to reach (what should change, where, with what wording). The app checks the " +
       "proposal, carries it out without waiting for a pick, and tries methods on copies of your files: built-in " +
@@ -237,7 +242,7 @@ export const RUNTIME_CARDS: RuntimeCard[] = [
     bounds: "Only the page remembers the mark, until you press the button.",
   },
   {
-    covers: ["A8", "B9", "B13"],
+    covers: ["A8", "B9", "B13", "B18"],
     title: "Create edited copies",
     you: "Create edited copies (or “I reviewed the flagged pages — create copies”).",
     runs:
@@ -247,7 +252,9 @@ export const RUNTIME_CARDS: RuntimeCard[] = [
       `core (at most ${F.maxProcessWorkers}), each file edited and checked whole in one of them, and Word renders over ` +
       `up to ${F.wordInstances} instances side by side. A copy that passes goes to a new timestamped folder; one that fails is moved to failed ` +
       "and never delivered. Then, if any copy failed, the app looks at those files again on its own (recovery) and " +
-      "comes back with a question or a new plan — except after a Safe-mode button, whose copies get no recovery.",
+      "comes back with a question or a new plan — except after a Safe-mode button, whose copies get no recovery. A " +
+      "file the preview refused, or one whose copy failed with nothing to check it again, goes on your to-do list " +
+      "with the reason; a click that is refused moves nothing there.",
     sent:
       "Nothing to make and check the copies. Recovery, if it runs, sends the failed files' names and full paths, their " +
       `profiles and overview, failure reasons, what its tools read, page images, and up to ${F.pastRepairCasesSent} matching ` +
@@ -323,16 +330,25 @@ export const RUNTIME_CARDS: RuntimeCard[] = [
     bounds: "The window's server only serves PNG pictures from the run folder or the app's own folder.",
   },
   {
-    covers: ["A13", "A14", "A15"],
-    title: "Start over, New conversation, Work on the documents I set aside",
-    you: "Start over from the originals; New conversation; Work on the documents I set aside.",
+    covers: ["A13", "A14", "A15", "A26", "A27"],
+    title: "Start over, New conversation, and your to-do list",
+    you:
+      "Start over from the originals; New conversation; Work on the documents I set aside; Put back beside a document " +
+      "on the to-do list; Set the rest aside for later (offered while files are checked again, once the ready copies " +
+      "are saved).",
     runs:
-      "Start over makes your originals the working set again; the plan is void. New conversation archives this " +
-      "conversation in the conversations folder and starts an empty one. Working on the set-aside documents makes " +
-      "them the only documents in scope and repeats their request.",
+      "Start over makes your originals the working set again; the plan is void and the to-do list is cleared. New " +
+      "conversation archives this conversation in the conversations folder and starts an empty one. The to-do list " +
+      "holds the documents set aside, each with why: the ✗ on its preview, your word to the assistant, a plan or a " +
+      "Safe-mode button that could not be applied to it, or a copy that could not be made. Working on them makes them " +
+      "the only documents in scope and repeats the request they were set aside from; Claude is told why each one " +
+      "waited. Put back returns one to the other documents as it is. Set the rest aside puts what recovery has not " +
+      "fixed on the list and ends the request; the copies already saved stay as they are.",
     sent: "Nothing, until you send the next request.",
     ai: NONE,
-    bounds: "No copy and no original is deleted or changed.",
+    bounds:
+      "No copy and no original is deleted or changed. The to-do list is kept in the saved conversation; Start over " +
+      "clears it.",
   },
   {
     covers: ["A17", "A18", "A20"],

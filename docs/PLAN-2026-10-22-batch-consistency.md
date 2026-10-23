@@ -119,6 +119,15 @@ including the eight the owner had left out, and had 2 copies ready when the owne
 | P6 — short render paths | V7 is made whatever a document is called | The headers/footers-only copies of the outputs and templates are numbered (`000 headers-footers.docx`), never named after the document |
 | P7 — what a sample's PASS covers | The preview does not show PASS for a sample the run will fail on geometry | Open: the preview says its sample verdict is V1–V10 only, or runs V7 on the samples it renders |
 
+Added 2026-10-23 from the owner's request: "I want to be able to tell the llm to set certain files aside for later
+processing", and does the app put files that cannot be processed, or that the user set aside, somewhere to come back
+to. It did not: only the red X reached the to-do list, "leave out" lasted one request, and a file the plan refused or
+whose copy could not be made rejoined the next request unnoticed.
+
+| Item | Goal | Expected outcome |
+| --- | --- | --- |
+| S5 — the to-do list holds what waits | "Set 20 aside for later" is one sentence, and nothing that could not be processed is lost from view | The chat's `set_aside` tool puts the named documents on the to-do list at once (out of this request and every later one; the conversation goes on about the others); a file the plan refused goes there with its reason once the others run, a run failure no recovery takes too, and recovery's leftovers at "Set the rest aside for later" (offered once the ready copies are saved). Every entry says why (`held`, `asked`, `refused`, `failed`); the model hears the list at each request and why each document waited during a pass; Put back takes one off without a pass. The window shows the reasons and Put back; Help, docs and the trust surfaces say it |
+
 ## Acceptance
 
 Each item on fixtures: the flag or the change end to end (plan → merge → apply → `run_suite` passes for the op
@@ -185,3 +194,4 @@ specifications, templates included, refuses none for `xml-dtd`).
 | P5 — recovery's pace | planned | — | — |
 | P6 — short render paths | fixed; live run pending | claude/fervent-davinci-4mftse | 2026-10-23: `batch._render_and_compare` numbers the headers/footers-only copies. `tests/test_template.py::test_v7_copies_are_named_short_whatever_the_documents_name` (LibreOffice) with FAA's file name; the three-file V7 test still pairs each file with its own. Needs the owner's machine: FAA through a run with the template, its V7 made. |
 | P7 — what a sample's PASS covers | planned | — | — |
+| S5 — the to-do list holds what waits (owner's request, outside C1–C11) | implemented; live run pending | claude/admiring-cerf-bef9iw | 2026-10-23: engine in #95 (`compiler.SET_ASIDE_TOOL`/`resolve_set_aside`, `Conversation.set_aside`, `DocumentTask._take_set_aside`, `_refused_now`, `_bin_failed`, `set_rest_aside`, `put_back`, `POST /api/put-back`, `why`/`reason` in the journal and view); follow-up: the window (reasons on both to-do cards, Put back), Help, README, docs/CONVERSATIONAL_DESKTOP.md, docs/WEB_API.md, the trust cards (A23, A24, B18; T52, T53) and ledger. `tests/test_set_aside_bin.py` (15, the Put back route included), frontend unit tests (123) and `tools/flows.mjs` (95, two new for reasons and Put back). Needs the owner's machine: "set 20 aside for later" over a real batch, a refused file after Create, and Put back in the installed window. |

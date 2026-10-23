@@ -48,7 +48,8 @@ that ends a job is authoritative.
   "results": [{"source": "…", "output": "…", "name": "21 13 13.docx"}],
   "action": {"label": "Create edited copies", "token": "…", "kind": "approve | continue | save | none",
              "can_hold": true},
-  "todo": [{"path": "C:/Specs/21 05 00.docx", "name": "21 05 00.docx"}],
+  "todo": [{"path": "C:/Specs/21 05 00.docx", "name": "21 05 00.docx", "why": "held | asked | refused | failed",
+            "reason": "You marked its preview as needing more work."}],
   "focus": [],
   "working": {"generation": 0, "from_originals": true, "can_start_over": false},
   "budget": {"paused": false, "steps_per_pause": 48},
@@ -97,11 +98,19 @@ Rules the page relies on:
   (looks good) and a red X (needs more work). The page sends the X'd previews' `source` paths as `hold` with the
   primary action: those documents go on the to-do list and the others get their copies. It is false during a
   recovery's "Save N ready copies".
-- `todo` lists the documents set aside this way (attached originals), waiting; while it is non-empty and no pass is
-  under way, the page shows a to-do card whose button sends the reply "Work on the documents I set aside" (as a
-  chip). `focus` lists the documents of that pass while it runs: they are the only documents in scope, the plan is
-  made for them alone, and the pass ends when their copies are created. Documents on the to-do list are out of
-  scope until the pass begins; the server also offers the same reply in `chips` outside the question stage.
+- `todo` lists the documents waiting on the to-do list (attached originals), each with `why` and a `reason`
+  sentence the page shows as written: `held` (the red X above), `asked` (the user asked the assistant to set it aside,
+  its `set_aside` tool), `refused` (the plan could not be applied to it; it goes on the list once the others run) or
+  `failed` (its copy could not be made and nothing will check it again, or recovery had not fixed it when the user
+  set the rest aside). An older server sends neither field; the page reads that as the red X. While the list is
+  non-empty and no pass is under way, the page shows a to-do card whose button sends the reply "Work on the
+  documents I set aside" (as a chip), and the workbench lists them with a **Put back** beside each
+  (`POST /api/put-back`). `focus` lists the documents of that pass while it runs: they are the only documents in
+  scope, the plan is made for them alone, and the pass ends when their copies are created. Documents on the to-do
+  list are out of scope until the pass begins or they are put back; the server also offers the same reply in
+  `chips` outside the question stage.
+- During recovery (stage `question`), once every ready copy is saved, `chips` carries "Set the rest aside for later":
+  sent as a reply, it puts what recovery has not fixed on the to-do list and ends the request (no model call).
 - `results` lists the edited copies of the latest run; `working.generation` > 0 means the next request builds on
   those copies, and `can_start_over` shows the "Start over from the originals" chip.
 - `cost.fast` is true while fast mode is in effect (`llm.fast_for(llm.DEFAULT_MODEL)`: Settings → Fast responses
@@ -129,7 +138,8 @@ Rules the page relies on:
 | POST | `/api/mode` | `{"mode": "safe \| default"}` | the view; kept in settings.json; 400 for another mode |
 | POST | `/api/handoff` | `{"paths": ["<left_untouched path>", …]}` — the documents go on the to-do list with the button's sentence as their request, and the mode becomes `default`; 400 for a path the last button did not leave untouched, or while a preview waits | the view |
 | POST | `/api/stop` | | `{"ok": true}` — the running model call is cut off; the stream then ends with `done` |
-| POST | `/api/start-over` | | the view (the working set returns to the originals; the plan is void) |
+| POST | `/api/put-back` | `{"path": "<a todo entry's path>"}` | the view (the document is off the to-do list and back among the documents the next request works on; during a pass it joins them when the pass ends; a plan on screen is void when the documents in scope change); 400 with `{"error"}` for a path not on the list, 409 while work runs |
+| POST | `/api/start-over` | | the view (the working set returns to the originals; the plan is void; the to-do list is cleared) |
 | POST | `/api/new-conversation` | | the view (archives the journal, starts empty) |
 | POST | `/api/open` | `{"path": "..."}` | opens a result in Word / a folder with the OS (`{"ok": true}`); 404 if gone |
 | GET | `/api/image` | `?path=…` | the PNG (only files under the app's run folders are served; else 404) |

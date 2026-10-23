@@ -9,6 +9,7 @@ import type { Message, View } from "../src/types.ts";
 import {
   COMPOSER_NO_DOCUMENTS,
   COMPOSER_NO_KEY,
+  SET_ASIDE_REST,
   STARTERS,
   WORK_TODO,
   composerState,
@@ -178,12 +179,20 @@ test("the to-do card closes the transcript once copies are saved and documents w
   const done: Partial<View> = {
     stage: "done",
     messages: [message("u1", "user", "go"), message("a1", "app", "1 copy is ready.")],
-    todo: [{ path: "/b", name: "B.docx" }],
+    todo: [
+      { path: "/b", name: "B.docx", why: "held", reason: "You marked its preview as needing more work." },
+      { path: "/c", name: "C.docx", why: "refused", reason: "The plan could not be applied to it: no Heading 2." },
+    ],
   };
   const items = transcript(state(done));
   assert.deepEqual(items.map((i) => i.kind), ["message", "message", "todo"]);
   const card = items[2];
-  if (card.kind === "todo") assert.deepEqual(card.names, ["B.docx"]);
+  assert.ok(card.kind === "todo");
+  // every waiting document with why it waits, as the server words it
+  if (card.kind === "todo") assert.deepEqual(card.items.map((i) => [i.name, i.reason]), [
+    ["B.docx", "You marked its preview as needing more work."],
+    ["C.docx", "The plan could not be applied to it: no Heading 2."],
+  ]);
   assert.equal(todoFor(state({ ...done, focus: ["/b"] })), null);             // the pass is under way
   assert.equal(todoFor(state({ ...done, busy: true })), null);
   assert.equal(todoFor(state({ ...done, stage: "preview" })), null);
@@ -191,6 +200,7 @@ test("the to-do card closes the transcript once copies are saved and documents w
   assert.ok(todoFor(state({ ...done, stage: "resume" })));
   assert.equal(todoFor(state({ ...done, todo: [] })), null);
   assert.equal(WORK_TODO, "Work on the documents I set aside");               // the server's exact words
+  assert.equal(SET_ASIDE_REST, "Set the rest aside for later");
 });
 
 test("the live bubble takes the key of the message it becomes, and a sent message keeps its key", () => {

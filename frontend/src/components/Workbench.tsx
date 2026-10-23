@@ -22,6 +22,8 @@ interface Props {
   onRemove: (attachment: Attachment) => void;
   onOpen: (path: string) => void;
   onStartOver: () => void;
+  /** Takes a document off the to-do list, back among the documents the next request works on. */
+  onPutBack: (path: string) => void;
   onZoom: (src: string, title: string) => void;
   /** Safe mode's "Try these in Default mode" for what the last button left untouched. */
   onHandOff: (paths: string[]) => void;
@@ -87,6 +89,7 @@ function Workbench({
   onRemove,
   onOpen,
   onStartOver,
+  onPutBack,
   onZoom,
   onHandOff,
 }: Props) {
@@ -280,16 +283,34 @@ function Workbench({
           </div>
         )}
 
-        {todo.length > 0 && (view.focus ?? []).length === 0 && (
+        {todo.length > 0 && (
           <PaperCard
             title="Set aside for more work"
-            subtitle="These documents got no copy yet. The conversation offers to work on them; the other copies stay as they are."
+            subtitle={
+              (view.focus ?? []).length > 0
+                ? "These wait for a pass of their own, out of the plan you are working on now. Put one back to have it join the other documents when this pass ends."
+                : "These documents wait here, out of every plan, until you work on them (the conversation offers it) or put one back. Nothing in them is changed."
+            }
             tone="muted"
           >
             <ul className="divide-y divide-paper-edge">
               {todo.map((item) => (
-                <li key={item.path} className="py-2 text-sm text-paper-ink first:pt-0 last:pb-0" title={item.path}>
-                  {item.name}
+                <li key={item.path} className="flex items-start gap-3 py-2 first:pt-0 last:pb-0">
+                  <div className="min-w-0 flex-1" title={item.path}>
+                    <p className="truncate text-sm text-paper-ink">{item.name}</p>
+                    {item.reason && <p className="mt-0.5 text-xs leading-snug text-paper-dim">{item.reason}</p>}
+                  </div>
+                  <Tip tip={busy ? "Finish or stop the current work first" : "Back among the documents your next request works on, as it is"}>
+                    <button
+                      type="button"
+                      onClick={() => onPutBack(item.path)}
+                      disabled={busy}
+                      aria-label={`Put back ${item.name}`}
+                      className="shrink-0 text-xs text-accent underline decoration-accent/40 underline-offset-2 transition-colors hover:decoration-accent disabled:pointer-events-none disabled:opacity-50"
+                    >
+                      Put back
+                    </button>
+                  </Tip>
                 </li>
               ))}
             </ul>

@@ -510,6 +510,11 @@ function Dossier() {
               "Choices about the result only, never a choice of method; wording with invisible characters is refused; a tapped suggested reply is never wording.",
             ],
             [
+              "Set documents aside",
+              "Put documents you named on your to-do list, out of this request and every later one.",
+              "Only at your word, by the labels the app gave the documents; nothing in them changes; they come back only when you work on them or press Put back.",
+            ],
+            [
               "Submit a plan",
               "Propose the plan of operations.",
               "Checked before you see it: valid operations and settings, attached files only, every placed word traced to you, a dry run on representative files.",
