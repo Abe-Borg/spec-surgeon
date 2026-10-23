@@ -508,3 +508,27 @@ context epoch. `tests/test_vision.py`'s image-allowance test failed on that roll
 master's rollover test already did, and `tests/test_contexts.py` guards the headroom left (a conversation viewing two pages
 must stay in its first epoch: about 5,300 estimated tokens to spare). Whether to compact the catalog (the schema repeats every op's parameters; the worked examples are
 sent whole) or raise the allowance is left for Abraham.
+
+## Addendum (2026-10-23): three settings for matching a template (docs/PLAN-2026-10-23-modes.md E1, E3, G1)
+
+The "match body formatting to template" button (Safe mode) converts a whole batch to the template's numbering with no
+model and no question asked, so three cases the defaults flag or refuse need a setting of their own. Each has its V10
+twin and a planted-defect test.
+
+- **`convert_numbering` `select.include_tables`** (default true, today's behaviour): false leaves every numbered
+  paragraph in a table cell out of the conversion. F7 then holds for it like any paragraph left out: a cell numbered by
+  its own list keeps its number; a cell the converted list numbers would lose it, and the file is set aside.
+  Verifier: `_v_in_cell` (a `w:tc` ancestor) filters its own chosen paragraphs.
+- **`convert_numbering` `counters`**: `flag` (default) | `keep`. With `keep`, a converted paragraph whose predicted
+  counters are not its source counters refuses the file (`numbering-mismatch`, naming them: a renumbered article breaks
+  "as specified in 1.3"), and so does one whose number is not evaluated before or after (`numbering-unsupported`: that
+  it stays cannot be shown, which covers the F8 and skipped-level conversions the default flags). "1.01" → "1.1" keeps
+  its counters and converts. Verifier: the same comparison over its own count.
+- **`convert_typed_numbers` `match`**: `exact` (default) | `counters`. With `counters` the typed numbers are found by
+  a lenient pattern (a hyphen, en dash or em dash for one another; any digits for a decimal or decimalZero level), and
+  a converted paragraph meets §2.4's guarantee when its typed values (each `%j` read back as level j−1's counter: digits
+  as a number, letters as Word repeats them, a roman numeral only as Word writes it) are the predicted counters of the
+  levels they name. Every other counted paragraph still reads exactly as before, so a typo, skip or duplicate still
+  refuses. Each number the list shows otherwise than typed ("1.01" → "1.1", "PART 1 –" → "PART 1 -") is flagged.
+  Verifier: `v_lenient_pattern`, `v_typed_values` (values found by inverting its own `v_format_value`), and the
+  post-condition on the output by value for the converted paragraphs.

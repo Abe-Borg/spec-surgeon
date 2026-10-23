@@ -1579,7 +1579,7 @@ def _typed_paragraph(doc, runs, style=None):
     return p
 
 
-def build_typed(typo: bool = False, leading_tab: bool = False, spaces: bool = False) -> bytes:
+def build_typed(typo: bool = False, leading_tab: bool = False, spaces: bool = False, masterspec: bool = False) -> bytes:
     """A spec numbered by TYPED text (built-in batch 5, §2): every paragraph Normal, nothing numbered automatically; the
     numbers fit the example file's scheme (``build_scheme_example``: ``PART %1 -``, ``%1.%2``, ``%3.``, ``%4.``,
     ``%5.``). Found by text in the tests.
@@ -1595,16 +1595,20 @@ def build_typed(typo: bool = False, leading_tab: bool = False, spaces: bool = Fa
     note." (no typed number); "END OF SECTION 21 13 13".
 
     ``leading_tab``: the letter and number items start with whitespace — a tab before every "A."-level item, two spaces
-    before every "1."-level item. ``spaces``: every tab separator is a single space instead.
+    before every "1."-level item. ``spaces``: every tab separator is a single space instead. ``masterspec``: the
+    articles typed with a zero, "1.01", "1.02", "2.01" (its "01" in the second run), "2.02", "3.01", and every PART with
+    an en dash, "PART 1 – GENERAL" — the same values in another look than the example file's scheme.
     """
     sep = " " if spaces else "\t"
+    z = "0" if masterspec else ""
+    dash = "\u2013" if masterspec else "-"
     lead1 = "\t" if leading_tab else ""
     lead2 = "  " if leading_tab else ""
     doc = Document()
     doc.add_paragraph("SECTION 21 13 13")
     doc.add_paragraph("WET-PIPE SPRINKLER SYSTEMS")
-    _typed_paragraph(doc, ["PART 1 - GENERAL"])
-    _typed_paragraph(doc, ["1.1", sep, "SUMMARY"])
+    _typed_paragraph(doc, [f"PART 1 {dash} GENERAL"])
+    _typed_paragraph(doc, [f"1.{z}1", sep, "SUMMARY"])
     _typed_paragraph(doc, [lead1 + "A", f".{sep}Section includes wet-pipe sprinkler systems."])
     _typed_paragraph(doc, [f"{lead1}B.{sep}Related requirements:"])
     _typed_paragraph(doc, [f'{lead2}1.{sep}Division 21 Section "Common Work Results for Fire Suppression".'])
@@ -1612,20 +1616,20 @@ def build_typed(typo: bool = False, leading_tab: bool = False, spaces: bool = Fa
     _typed_paragraph(doc, [f"b.{sep}Supports."])
     _typed_paragraph(doc, [f'{lead2}2.{sep}Division 28 Section "Fire Detection and Alarm".'])
     _typed_paragraph(doc, [f"{lead1}C.  Submittals."])
-    _typed_paragraph(doc, [f"1.2{sep}REFERENCES"])
+    _typed_paragraph(doc, [f"1.{z}2{sep}REFERENCES"])
     _typed_paragraph(doc, [f"{lead1}A.{sep}NFPA 13."])
-    _typed_paragraph(doc, ["PART 2 - PRODUCTS"])
-    _typed_paragraph(doc, ["2.", f"1{sep}", "MANUFACTURERS"])
+    _typed_paragraph(doc, [f"PART 2 {dash} PRODUCTS"])
+    _typed_paragraph(doc, ["2.", f"{z}1{sep}", "MANUFACTURERS"])
     _typed_paragraph(doc, [f"{lead1}A.{sep}Tyco."])
     _typed_paragraph(doc, [f"{lead1}B.{sep}Viking."])
     _typed_paragraph(doc, [f"{lead1}{'B' if typo else 'C'}.{sep}Reliable."])
-    _typed_paragraph(doc, [f"2.2{sep}MATERIALS"])
+    _typed_paragraph(doc, [f"2.{z}2{sep}MATERIALS"])
     _typed_paragraph(doc, [f"{lead1}A.{sep}Steel pipe."])
     t = doc.add_table(rows=1, cols=2)
     t.cell(0, 0).paragraphs[0].add_run(f"1.{sep}Cell item.")
     t.cell(0, 1).paragraphs[0].add_run(f"2.{sep}Cell item two.")
-    _typed_paragraph(doc, ["PART 3 - EXECUTION"])
-    _typed_paragraph(doc, [f"3.1{sep}INSTALLATION"])
+    _typed_paragraph(doc, [f"PART 3 {dash} EXECUTION"])
+    _typed_paragraph(doc, [f"3.{z}1{sep}INSTALLATION"])
     _typed_paragraph(doc, [f"{lead1}A.{sep}Install per NFPA 13."])
     _typed_paragraph(doc, [f"{lead2}1.{sep}Hangers per NFPA 13."])
     doc.add_paragraph("Unnumbered closing note.")

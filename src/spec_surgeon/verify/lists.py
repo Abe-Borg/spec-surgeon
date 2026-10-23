@@ -37,7 +37,13 @@ here comes from ops/ (rule 1): the numbering part is read through ``reader.VPack
   was counted without — ``_v_skipped_below`` —, until a restart resets it: LibreOffice started that level then, Word
   starts it when it next comes; the counters are None);
 * the scheme (raises ValueError: the op must refuse ``scheme`` / ``bad-params``), the level patterns, typed numbers,
-  the visible line, the main abstractNum and the clean destination list.
+  the visible line, the main abstractNum and the clean destination list;
+* the LENIENT typed number (convert_typed_numbers ``match: "counters"``): each level's pattern with a literal ``-``,
+  ``–`` or ``—`` matching any of the three and every ``%j`` of a decimal or decimalZero level (any level when the level
+  is legal) matching ASCII digits; its values (``v_typed_values``): the token matched whole against the level's text
+  with one group per ``%j``, each group read back as the value whose ``v_format_value`` in level j−1's format gives
+  exactly those characters (digits: their number, leading zeros allowed) — a ``none`` level gives no value, two
+  readings of one level must agree, anything else is no value at all.
 
 API (verifier names are ``v_``-prefixed): ``VListDefs(root)`` / ``v_list_defs(pkg)`` (``.present``, ``.defined``,
 ``.problem``, ``.abstract_of``, ``.nums_of_abstract``, ``.level``, ``.levels_of``, ``.start_override``,
@@ -45,7 +51,8 @@ API (verifier names are ``v_``-prefixed): ``VListDefs(root)`` / ``v_list_defs(pk
 ``v_paragraph_numbering(p, styles, defs)``, ``v_style_numbering(sid, styles, defs)``, ``v_counted(p)``,
 ``v_count(root, styles, defs, override=None)`` → [``VNumbered``], ``v_format_value(fmt, n, text=None)``,
 ``v_resolve_scheme(levels, styles, defs)`` → ``VScheme``, ``v_level_pattern(scheme, k)``,
-``v_typed_number(run_text, scheme)`` → ``VTyped`` or None, ``v_main_abstract(pars)``,
+``v_typed_number(run_text, scheme, lenient=False)`` → ``VTyped`` or None, ``v_typed_values(token, scheme, k)`` → {level:
+value} or None, ``v_main_abstract(pars)``,
 ``v_visible_line(number, run_text, suff=None)``, ``v_list_is_clean(defs, num_id, pars)``,
 ``v_has_restart_rule(defs, num_id)``; ``V_SHARED`` / ``V_SKIPPED`` / ``V_START_OVERRIDE`` start the ``shared`` /
 ``skipped`` / ``start-override`` reasons; ``VNumbering.ambiguous``.
@@ -715,6 +722,75 @@ def _v_pattern(level_defs: Mapping[int, VLevel], k: int) -> str:
     return "".join(out)
 
 
+_V_DASHES = ("-", "\u2013", "\u2014")
+
+
+def _v_lenient_pieces(level_defs: Mapping[int, VLevel], k: int) -> List[Tuple[str, Any, str]]:
+    """Level k's text as (kind, level or char, regex) pieces of the lenient pattern; ValueError when there is none."""
+    lv = level_defs.get(k)
+    if lv is None or lv.text is None:
+        raise ValueError(f"level {k} is undefined or has no number text")
+    pieces: List[Tuple[str, Any, str]] = []
+    for kind, x in _v_placeholders(lv.text):
+        if kind == "lit":
+            pieces.append(("lit", x, "(?:" + "|".join(re.escape(d) for d in _V_DASHES) + ")" if x in _V_DASHES
+                           else re.escape(x)))
+            continue
+        ref = level_defs.get(x)
+        if ref is None or ref.unsupported is not None or (not lv.legal and ref.fmt == "bullet"):
+            raise ValueError(f"level {k}'s %{x + 1} cannot stand for a typed value")
+        fmt = "decimal" if lv.legal else ref.fmt
+        pieces.append(("lvl", x, "[0-9]+" if fmt in ("decimal", "decimalZero") else _V_PATTERN[fmt]))
+    return pieces
+
+
+def v_lenient_pattern(level_defs: Mapping[int, VLevel], k: int) -> str:
+    return "".join(rx for _, _, rx in _v_lenient_pieces(level_defs, k))
+
+
+_V_ROMAN_BACK: Dict[str, int] = {}
+
+
+def _v_value(fmt: str, s: str) -> Optional[int]:
+    """The value whose ``v_format_value`` in ``fmt`` is exactly ``s`` (digits: their number), else None."""
+    if fmt in ("decimal", "decimalZero"):
+        return int(s) if s and all(c in _V_DIGITS for c in s) else None
+    if fmt in ("upperLetter", "lowerLetter"):
+        if not s:
+            return None
+        n = 26 * (len(s) - 1) + "ABCDEFGHIJKLMNOPQRSTUVWXYZ".find(s[0].upper()) + 1
+        return n if n > 26 * (len(s) - 1) and v_format_value(fmt, n) == s else None
+    if fmt in ("upperRoman", "lowerRoman"):
+        if not _V_ROMAN_BACK:
+            _V_ROMAN_BACK.update({v_format_value("upperRoman", n): n for n in range(1, 4000)})
+        n = _V_ROMAN_BACK.get(s.upper())
+        return n if n is not None and v_format_value(fmt, n) == s else None
+    return None
+
+
+def v_typed_values(token: str, scheme: VScheme, k: int) -> Optional[Dict[int, int]]:
+    """The values a lenient typed number of level k shows, by the level each ``%j`` names (module docstring)."""
+    try:
+        pieces = _v_lenient_pieces(scheme.level_defs, k)
+    except ValueError:
+        return None
+    m = re.compile("".join(rx if kind == "lit" else "(" + rx + ")" for kind, _, rx in pieces)).fullmatch(token)
+    if m is None:
+        return None
+    legal = scheme.level_defs[k].legal
+    named = [x for kind, x, _ in pieces if kind == "lvl"]
+    values: Dict[int, int] = {}
+    for n, j in enumerate(named, start=1):
+        fmt = "decimal" if legal else scheme.level_defs[j].fmt
+        if fmt == "none":
+            continue
+        v = _v_value(fmt, m.group(n))
+        if v is None or (j in values and values[j] != v):
+            return None
+        values[j] = v
+    return values
+
+
 def v_level_pattern(scheme: VScheme, k: int) -> str:
     return scheme.levels[k].pattern
 
@@ -763,12 +839,14 @@ class VTyped(NamedTuple):
         return len(self.levels) > 1
 
 
-def v_typed_number(run_text: str, scheme: VScheme) -> Optional[VTyped]:
+def v_typed_number(run_text: str, scheme: VScheme, lenient: bool = False) -> Optional[VTyped]:
     """Spaces/tabs at the start, a non-empty match of one level's pattern, then spaces/tabs/NBSPs or the end — the regular
-    expression ``[ \\t]*(pattern)([ \\t\\xa0]+|end)`` matched at position 0 (its backtracking is part of the definition)."""
+    expression ``[ \\t]*(pattern)([ \\t\\xa0]+|end)`` matched at position 0 (its backtracking is part of the definition);
+    ``lenient``: each level's lenient pattern."""
     found = []
     for row in scheme.levels:
-        m = re.compile("[ \t]*(" + row.pattern + ")(?:[ \t\u00a0]+|\\Z)").match(run_text)
+        pattern = v_lenient_pattern(scheme.level_defs, row.ilvl) if lenient else row.pattern
+        m = re.compile("[ \t]*(" + pattern + ")(?:[ \t\u00a0]+|\\Z)").match(run_text)
         if m is not None and m.end(1) > m.start(1):
             found.append((row.ilvl, m))
     if not found:

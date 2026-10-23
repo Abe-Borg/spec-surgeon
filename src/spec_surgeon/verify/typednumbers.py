@@ -32,6 +32,11 @@ re-derives from the SOURCE:
 **Post-condition on the OUTPUT, over every counted paragraph of the main part**: its visible line (the rendered number
 by the verifier's own count of the output, its suffix, then the run text — whitespace runs collapsed, the ends stripped)
 equals the source's; and the output's numbers equal the prediction.
+
+``match: "counters"`` (``exact`` by default): the typed numbers are found with ``v_typed_number(…, lenient=True)``, and
+for a CONVERTED paragraph "reads the same" is its typed values (``v_typed_values``) equal to the counters the number
+(predicted, then counted in the output) holds at the levels they name, its number evaluated, and its run text after the
+prefix unchanged; every other counted paragraph keeps its exact visible line.
 """
 from __future__ import annotations
 
@@ -46,7 +51,7 @@ from .clearing import (V_DEFAULT_PRESERVE, check_cleared_ppr, check_cleared_rpr,
 from .edits import check_edited_paragraph, part_revision_ids, v_items, v_paragraph_text
 from .markup import v_toggle
 from .lists import VNumbered, v_count, v_counted, v_list_defs, v_paragraph_numbering, v_paragraph_style, \
-    v_typed_number
+    v_typed_number, v_typed_values
 from .numberingconvert import V_NUMPR_REVISIONS, v_destination, v_first_difference, v_row, v_visible
 from .template import _v_field_runs
 
@@ -216,6 +221,13 @@ def _v_cleared_copy(p, runs: List[Any], cleared: Dict[int, Set[str]]):
     return c
 
 
+def _v_counts_as_typed(values: Optional[Dict[int, int]], y: Optional[VNumbered]) -> bool:
+    """``match: "counters"``: the number holds the typed values at every level they name."""
+    if values is None or y is None or y.not_evaluated is not None or y.counters is None:
+        return False
+    return all(j < len(y.counters) and y.counters[j] == v for j, v in values.items())
+
+
 def _typed_numbers(ctx: Ctx, a: Dict[str, Any], errs: List[str]) -> str:
     tag = "typed_numbers"
     params = a.get("params") or {}
@@ -228,6 +240,10 @@ def _typed_numbers(ctx: Ctx, a: Dict[str, Any], errs: List[str]) -> str:
     tracked = bool(params["tracked"]) if "tracked" in params else True
     if tracked and direct == "clear":
         raise ValueError("a tracked conversion with direct_formatting 'clear' (the op must refuse: bad-params)")
+    match = params.get("match", "exact")
+    if match not in ("exact", "counters"):
+        raise ValueError(f"match {match!r} (the op must refuse: bad-params)")
+    lenient = match == "counters"
     pred = sel.get("paragraphs", "all")
     tables = bool(sel.get("include_tables", False))
     author = a.get("author")
@@ -261,7 +277,7 @@ def _typed_numbers(ctx: Ctx, a: Dict[str, Any], errs: List[str]) -> str:
             continue
         if not para_matches(pred, p, i, sv, ctx.src_styles):
             continue
-        tn = v_typed_number(texts[i], dest.scheme)
+        tn = v_typed_number(texts[i], dest.scheme, lenient)
         if tn is None:
             continue
         if tn.ambiguous:
@@ -312,7 +328,13 @@ def _typed_numbers(ctx: Ctx, a: Dict[str, Any], errs: List[str]) -> str:
     by_src = {x.index: x for x in src_count}
     by_pred = {y.index: y for y in predicted}
     ends = {i: tn.end for i, tn in found}
+    values = {i: v_typed_values(tn.token, dest.scheme, tn.level) for i, tn in found} if lenient else {}
     for i, p in enumerate(sv.pars):
+        if i in values:
+            if not _v_counts_as_typed(values[i], by_pred.get(i)):
+                raise ValueError(f"{main} paragraph {i}: the list does not count {found_token(found, i)!r} there "
+                                 f"(the op must refuse: numbering-mismatch)")
+            continue
         if v_counted(p) and v_visible(by_src.get(i), texts[i]) != v_visible(
                 by_pred.get(i), texts[i][ends[i]:] if i in ends else texts[i]):
             raise ValueError(f"{main} paragraph {i} would read {v_visible(by_pred.get(i), texts[i][ends.get(i, 0):])!r}, "
@@ -328,6 +350,13 @@ def _typed_numbers(ctx: Ctx, a: Dict[str, Any], errs: List[str]) -> str:
             differ.append(f"paragraph {i}: counted {v_counted(p)} → {v_counted(ov.pars[i])}")
             continue
         if not v_counted(p):
+            continue
+        if i in values:
+            rest_before = v_visible(None, texts[i][ends[i]:])
+            rest_after = v_visible(None, v_paragraph_text(ov.pars[i]))
+            if not _v_counts_as_typed(values[i], by_out.get(i)) or rest_before != rest_after:
+                differ.append(f"paragraph {i}: typed {found_token(found, i)!r}, the output's number "
+                              f"{getattr(by_out.get(i), 'text', None)!r} over {rest_after!r}")
             continue
         before = v_visible(by_src.get(i), texts[i])
         after = v_visible(by_out.get(i), v_paragraph_text(ov.pars[i]))
@@ -392,6 +421,10 @@ def _typed_numbers(ctx: Ctx, a: Dict[str, Any], errs: List[str]) -> str:
                     f"{(a.get('changed') or [])[:12]}")
     return (f"{tag}: {len(found)} typed number(s) → list {dest.scheme.num_id} ({', '.join(dest.sids)}); every counted "
             f"paragraph reads the same" + (" (tracked)" if tracked else " (untracked)"))
+
+
+def found_token(found: List[Tuple[int, Any]], i: int) -> str:
+    return next(tn.token for j, tn in found if j == i)
 
 
 TYPED_KINDS = {"typed_numbers": _typed_numbers}
