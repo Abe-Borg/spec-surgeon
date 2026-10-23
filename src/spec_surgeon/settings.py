@@ -99,6 +99,7 @@ def settings_path() -> Path:
 # The window's colour schemes, the first the default: the page's own list is frontend/src/lib/theme.ts, the colours
 # frontend/src/index.css (tests/test_settings.py keeps the three in step).
 THEMES = ("clay", "blueprint", "graphite", "carbon", "linen")
+MODES = ("safe", "default")     # the window's modes a launch may start in (docs/PLAN-2026-10-23-modes.md); Safe first
 
 
 @dataclass
@@ -112,6 +113,7 @@ class Settings:
     window_geometry: str = ""                     # hex of QWidget.saveGeometry()
     log_open: bool = False
     theme: str = THEMES[0]                        # the window's colour scheme, one of THEMES
+    mode: str = MODES[0]                          # the mode the window opens in, one of MODES (the last one used)
     fast_mode: bool = False                       # Claude's fast mode (llm.set_fast_mode): faster answers, twice the price
     last_update_check: float = 0.0                # epoch seconds of the last automatic attempt (success or not)
     skipped_version: str = ""
@@ -132,6 +134,8 @@ def _coerce(name: str, value: Any, default: Any) -> Any:
         return value if isinstance(value, int) and not isinstance(value, bool) else default
     if name == "theme":
         return value if value in THEMES else default
+    if name == "mode":
+        return value if value in MODES else default
     if isinstance(default, str):
         return value if isinstance(value, str) else default
     if name == "pending_update":

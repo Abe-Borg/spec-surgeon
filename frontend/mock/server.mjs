@@ -15,7 +15,7 @@
  * Mock-only routes (never in the real server): POST /mock/scenario {name}
  * sets the view to a canned scenario (empty, attached, question, preview,
  * layouts, done, todo, paused, update-available, update-ready, up-to-date,
- * no-key); POST /mock/reset; GET /mock/page-reports (what the page sent to
+ * no-key, safe, safe-done); POST /mock/reset; GET /mock/page-reports (what the page sent to
  * /api/diagnostics). A check for updates finds 1.7.0, except after
  * the up-to-date scenario, where it answers "You're up to date".
  *
@@ -56,6 +56,30 @@ const TEMPLATE = { path: "C:/Specs/Templates/Office master 2026.docx" };
 const PICTURE = { path: "C:/Specs/Riverside/logo-2026.png", notes: ["A PNG picture, 600 × 200 pixels, for the edit to use."] };
 
 const RUN_DIR = "C:/Users/abe/AppData/Local/Spec Surgeon/runs/20261020-143512/outputs";
+/** Safe mode's buttons, as the real server lists them: generated from ``recipes.catalog()`` and pinned to it by
+ *  tests/test_recipes.py, so the mock never offers a button the app does not have. */
+const RECIPES = JSON.parse(readFileSync(resolve(HERE, "recipes.json"), "utf8"));
+const TEMPLATE_INFO = {
+  kind: "prepared",
+  typed_slots: ["ISSUED FOR PERMIT"],
+  reason: "",
+  // what "Match body formatting to template" reads from it (template_roles.detect)
+  body: {
+    roles: { section_id: "SCT", section_title: "TTL", part: "PRT", article: "ART", paragraph: "PR1", subparagraph: "PR2",
+             end_of_section: "EOS" },
+    styles: [["ART", "ART"], ["EOS", "End of Section"], ["Normal", "Normal"], ["PR1", "PR1"], ["PR2", "PR2"],
+             ["PRT", "PRT"], ["SCT", "Section Number"], ["TTL", "Section Title"]].map(([id, name]) => ({ id, name })),
+    labels: { section_id: "Section number line", section_title: "Section title", part: "PART", article: "Article (1.1)",
+              paragraph: "Paragraph (A.)", subparagraph: "Subparagraph (1.)", subparagraph_2: "Subparagraph (a.)",
+              end_of_section: "END OF SECTION" },
+    order: ["section_id", "section_title", "part", "article", "paragraph", "subparagraph", "subparagraph_2",
+            "end_of_section"],
+    page: "8.5 × 11 in portrait, margins 1 in",
+    font: "Arial 10 pt",
+    problems: [],
+  },
+};
+const NO_TEMPLATE = { kind: "none", typed_slots: [], reason: "" };
 
 function name(path) {
   return path.split(/[\\/]/).pop();
@@ -212,6 +236,10 @@ function emptyView() {
     working: { generation: 0, from_originals: true, can_start_over: false },
     budget: { paused: false, steps_per_pause: 48 },
     update: { state: "none", version: "", notes: "", progress: 0, error: "" },
+    mode: "default",
+    modes: ["safe", "default"],
+    template: NO_TEMPLATE,
+    left_untouched: [],
   };
 }
 
@@ -228,6 +256,24 @@ const SCENARIOS = {
       attachment(TEMPLATE.path, "template"),
       attachment(PICTURE.path, "reference", PICTURE),
     ];
+    v.template = TEMPLATE_INFO;
+    return v;
+  },
+  /** Safe mode with the documents, the template and a picture attached: the buttons, no conversation. */
+  safe: () => {
+    const v = SCENARIOS.attached();
+    v.mode = "safe";
+    v.connection = { ready: false, origin: "none" };
+    return v;
+  },
+  /** A Safe-mode button ran: two copies, one document left untouched and offered to Default mode. */
+  "safe-done": () => {
+    const v = SCENARIOS.safe();
+    v.stage = "done";
+    v.messages = [msg("user", "Remove highlighting"), msg("app", "2 document copies are ready. Open them, press another button to change them further, or start over from the originals. Left untouched: 21 31 13 Electric-Drive, Centrifugal Fire Pumps.docx — each one's reason is beside the copies.")];
+    v.results = results().slice(0, 2);
+    v.working = { generation: 1, from_originals: false, can_start_over: true };
+    v.left_untouched = [{ path: DOCS[2].path, name: name(DOCS[2].path), reason: "Editing is restricted in this file (Review → Restrict Editing); remove the restriction in Word, then run again." }];
     return v;
   },
   question: () => {
@@ -602,6 +648,35 @@ async function planJob(res, userText, layouts = false) {
   s.end();
 }
 
+/** A Safe-mode button: no AI call, so no words stream — the checks, the plan and the pages, then the one button.
+ *  The last document is set aside with a reason, as the real engine does for one it cannot change exactly. */
+async function recipeJob(res, recipe) {
+  const s = startStream(res);
+  view.messages.push(msg("user", recipe.label));
+  view.plan = null;
+  view.samples = [];
+  view.warnings = [];
+  view.left_untouched = [];
+  view.action = { label: "", token: "", kind: "none" };
+  await s.emit({ type: "status", kind: "checking", text: "Checking the documents…" });
+  await s.emit({ type: "status", kind: "previewing", text: "" });
+  const docs = view.attachments.filter((a) => a.kind === "document" && a.state !== "refused");
+  const aside = docs.length > 1 ? docs[docs.length - 1] : null;
+  view.plan = {
+    groups: [{ id: "", label: "", count: docs.length, files: [], changes: [{ title: recipe.label, summary: recipe.summary, details: [] }], assumptions: [] }],
+    targets: [],
+    set_aside: aside ? [{ name: aside.name, reason: "Editing is restricted in this file (Review → Restrict Editing); remove the restriction in Word, then run again." }] : [],
+    stages: 1,
+  };
+  await s.emit({ type: "plan", plan: view.plan });
+  await s.emit({ type: "status", kind: "rendering", text: "" });
+  view.samples = samples();
+  await s.emit({ type: "samples", samples: view.samples, warnings: [], blocking: false });
+  view.stage = "preview";
+  view.action = { label: "Create edited copies", token: `tok-approve-${++seq}`, kind: "approve", can_hold: true };
+  s.end();
+}
+
 /** “Work on the documents I set aside”: the pass over the to-do list begins — those documents alone, the request
  *  they were set aside from, Continue to plan them again as before or a message saying what should differ. */
 async function todoJob(res, userText) {
@@ -698,7 +773,30 @@ async function primaryJob(res, token, hold = []) {
     view.messages.push(msg("app", "Stopped. The copies that were already verified are kept."));
     return s.end();
   }
-  const fresh = results().filter((r) => running.some((a) => a.path === r.source));
+  // A button's run: the documents its plan set aside, found by name among the attachments (the view names them only).
+  const asideByButton = view.mode === "safe"
+    ? (view.plan?.set_aside ?? []).flatMap((x) => {
+        const a = view.attachments.find((d) => d.kind === "document" && d.name === x.name);
+        return a ? [{ path: a.path, name: x.name, reason: x.reason }] : [];
+      })
+    : [];
+  const fresh = results().filter((r) => running.some((a) => a.path === r.source) && !asideByButton.some((x) => x.path === r.source));
+  if (view.mode === "safe") {
+    // A button's run: the app's own note, no AI words; what it left untouched waits beside the copies.
+    view.results = [...view.results.filter((r) => !fresh.some((f) => f.source === r.source)), ...fresh];
+    await s.emit({ type: "results", results: view.results });
+    view.left_untouched = asideByButton.map((x) => ({ path: x.path, name: x.name, reason: x.reason }));
+    const left = view.left_untouched.length ? ` Left untouched: ${view.left_untouched.map((x) => x.name).join(", ")} — each one's reason is beside the copies.` : "";
+    const done = msg("app", `${fresh.length} document ${fresh.length === 1 ? "copy is" : "copies are"} ready. Open them, press another button to change them further, or start over from the originals.${left}`);
+    view.messages.push(done);
+    await s.emit({ type: "message", message: done });
+    view.stage = "done";
+    view.plan = null;
+    view.samples = [];
+    view.action = { label: "", token: "", kind: "none", can_hold: false };
+    view.working = { generation: view.working.generation + 1, from_originals: false, can_start_over: true };
+    return s.end();
+  }
   view.results = [...view.results.filter((r) => !fresh.some((f) => f.source === r.source)), ...fresh];
   await s.emit({ type: "results", results: view.results });
   const note = msg("app", `${fresh.length} edited ${fresh.length === 1 ? "copy" : "copies"} created and verified`);
@@ -819,7 +917,10 @@ async function handle(req, res) {
       for (const p of paths) {
         if (!/\.(docx|png|jpe?g|gif|xlsx|csv|json)$/i.test(p)) return json(res, 400, { error: `${name(p)} is not a .docx; save it as a Word document first.` });
         const kind = body.template ? "template" : /\.docx$/i.test(p) ? "document" : "reference";
-        if (kind === "template") view.attachments = view.attachments.filter((a) => a.kind !== "template");
+        if (kind === "template") {
+          view.attachments = view.attachments.filter((a) => a.kind !== "template");
+          view.template = TEMPLATE_INFO;
+        }
         if (!view.attachments.some((a) => a.path === p)) view.attachments.push(attachment(p, kind, kind === "reference" ? PICTURE : {}));
       }
       voidPlan();
@@ -853,10 +954,45 @@ async function handle(req, res) {
       voidPlan();
       return json(res, 200, view);
     }
+    case "GET /api/recipes":
+      return json(res, 200, RECIPES);
+    case "POST /api/recipe": {
+      if (view.busy) return busyRefusal();
+      const body = await readJson(req);
+      const recipe = RECIPES.recipes.find((r) => r.id === body.recipe);
+      if (!recipe) return json(res, 400, { error: "There is no such button." });
+      if (view.mode !== "safe") return json(res, 400, { error: "The buttons are Safe mode's; switch to Safe mode to use them." });
+      return recipeJob(res, recipe);
+    }
+    case "POST /api/mode": {
+      if (view.busy) return busyRefusal();
+      const body = await readJson(req);
+      if (body.mode !== "safe" && body.mode !== "default") return json(res, 400, { error: "There is no such mode." });
+      view.mode = body.mode;
+      if (body.mode === "default") view.connection = { ready: settings.key_present, origin: settings.origin };
+      return json(res, 200, view);
+    }
+    case "POST /api/handoff": {
+      if (view.busy) return busyRefusal();
+      const body = await readJson(req);
+      const paths = Array.isArray(body.paths) ? body.paths : [];
+      const chosen = view.left_untouched.filter((x) => paths.includes(x.path));
+      if (!chosen.length || chosen.length !== paths.length) return json(res, 400, { error: "Those documents are not the ones the last button left untouched." });
+      for (const x of chosen) if (!view.todo.some((t) => t.path === x.path)) view.todo.push({ path: x.path, name: x.name });
+      view.left_untouched = view.left_untouched.filter((x) => !paths.includes(x.path));
+      view.mode = "default";
+      view.messages.push(msg("app", `Handed over to Default mode: ${chosen.map((x) => x.name).join(", ")}. Say “${WORK_TODO}” and tell me what should be different; the conversation plans them with an AI model.`));
+      return json(res, 200, view);
+    }
     case "POST /api/send": {
       if (view.busy) return busyRefusal();
       const body = await readJson(req);
       const text = String(body.text || "");
+      if (view.mode === "safe") {
+        // As the real server: the job runs and ends in an error, nothing recorded.
+        const job = startStream(res);
+        return job.fail("Safe mode has no conversation: press a button to make a change, or switch to Default mode to type a request.");
+      }
       const key = text.toLowerCase();
       if (key === WORK_TODO.toLowerCase() && view.todo.length) return todoJob(res, text);
       if (key.includes("question")) return questionJob(res, text);

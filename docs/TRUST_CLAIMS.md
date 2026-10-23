@@ -17,8 +17,11 @@ same day against `master` at 099ee91 (C2–C6, A1 and the licence change): every
 thread, timer, `/api` route and outside reference in the built page checked again; what changed is marked
 "(re-audit)". Updated 2026-10-22 after the 1.9.0 live run over test-set-2 (outcome planning's trigger in B8, the
 documents a request leaves out in B5, per-file wording in provenance); those lines say "(test-set-2)". Updated
-2026-10-23 after the 1.10.0 live run over test-set-3 (a sample a later step refuses no longer starts B8); that line
-also says "(test-set-3)". Paths are relative to `src/spec_surgeon/` unless they start with `frontend/`, `tests/` or `docs/`.
+2026-10-23 for Safe mode (`docs/PLAN-2026-10-23-modes.md`, M1): A23–A25, the A8/B6/B9 exceptions for a Safe-mode
+button, `mode` in settings.json, T40, T52 and T53; and for its "match body formatting to template" button (M3), A24's
+path and T52's test. Updated 2026-10-23 after the 1.10.0 live run over test-set-3 (a sample a later step refuses no
+longer starts B8); that line also says "(test-set-3)". Paths are relative to `src/spec_surgeon/` unless they start
+with `frontend/`, `tests/` or `docs/`.
 
 **Verification column:**
 - `facts` means `tests/test_trust_facts.py` pins the value to its source constant.
@@ -40,7 +43,7 @@ also says "(test-set-3)". Paths are relative to `src/spec_surgeon/` unless they 
 | A5 | Type a request or answer, then **Send** or Enter | `POST /api/send` → `DocumentTask._send` | conversation |
 | A6 | Pick a choice, type its number, or tap a suggested reply | `POST /api/choose` or `/api/send` (`chip`) | conversation |
 | A7 | Mark a preview ✓ / ✗ | page state only; ✗ is sent as `hold` with A8 | none |
-| A8 | **Create edited copies** (or **I reviewed the flagged pages — create copies**) | `POST /api/primary` → `DocumentTask._primary` → `Session.run` | none to make and check the copies; recovery afterwards if a copy fails |
+| A8 | **Create edited copies** (or **I reviewed the flagged pages — create copies**) | `POST /api/primary` → `DocumentTask._primary` → `Session.run` | none to make and check the copies; recovery afterwards if a copy fails (never after a Safe-mode button: `Session.model_free`) |
 | A9 | **Save N ready copies** | `POST /api/primary` during recovery | none |
 | A10 | **Continue** (after a pause, a stop, a failure or a restored conversation) | `POST /api/primary` → `_resume` | conversation or recovery |
 | A11 | **Stop now**, and closing the window while work runs | `POST /api/stop`; `web/shell.on_closing` | cuts the running call off |
@@ -55,8 +58,11 @@ also says "(test-set-3)". Paths are relative to `src/spec_surgeon/` unless they 
 | A20 | Click a link: in the chat, in release notes, About's links, the releases page | the system browser (`target=_blank`) | none |
 | A21 | **Reload the window** (shown only when the page fails to draw) | `frontend/src/components/ErrorBoundary.tsx` | none |
 | A22 | Settings → **Fast responses**: on with the second click on the button that names the price, off with one click | `POST /api/settings` `{fast_mode}` → `llm.set_fast_mode`, kept in `settings.json` | none (changes the speed of later calls) |
+| A23 | Choose **Safe** or **Default** in the top bar | `POST /api/mode` → `DocumentTask.set_mode`; kept in settings.json (`Settings.mode`) | none |
+| A24 | In Safe mode: a button, its short form, **Preview** | `POST /api/recipe` → `DocumentTask._recipe` → `recipes.build` → `compiler.compose_submission` (for *Match body formatting to template*, once per layout in `body_match.build_layouts`) → `Session.make_preview` (`model_free`: no visual check, no outcome planning) | none |
+| A25 | **Try these in Default mode** (beside what a button left untouched), **Go to Default mode** | `POST /api/handoff` → `DocumentTask.hand_off`; `POST /api/mode` | none |
 
-Count: 22 actions.
+Count: 25 actions.
 
 (re-audit) The server also has `/api/update/cancel`, `/api/update/skip`, `/api/update/dismiss`, `/api/update/releases`
 and `/api/quit`, behind the same launch token. The page calls none of them (`frontend/src/lib/api.ts`), so no click
@@ -72,10 +78,10 @@ your browser (N4).
 | B3 | Every attachment checked on arrival (triage); two attached documents of one name are named in the chat with both folders (re-audit) | `triage.triage`, `triage_reference`, `DocumentTask._say_same_names` | none | none |
 | B4 | After a reply, up to `AUTO_STEPS` internal steps: make the preview, prepare a custom method, carry out a recovery plan | `DocumentTask._settle`, `Session.outcome` (`auto`) | yes | Anthropic |
 | B5 | (test-set-2) The preview: plan every file the request covers (a document the user left out, `leave_out`, is not planned and is named under Left untouched), apply and verify samples in memory, render them | `Session.make_preview` (`planned_files`), `preview.make_preview`, `DocumentTask._left_untouched` | none | none |
-| B6 | Claude's visual check of the preview pages | `Session._visual_check` → `vision.review_samples` | yes | Anthropic |
+| B6 | Claude's visual check of the preview pages (not of a Safe-mode button's preview) | `Session._visual_check` → `vision.review_samples` | yes | Anthropic |
 | B7 | A custom method when no built-in operation fits | `Session._generate_custom` → `codegen.generate_op` | yes | Anthropic |
 | B8 | (test-set-2, test-set-3) An outcome plan and its trials when the built-in plan cannot be made: Claude calls the request unsupported, the preview's plan covers no file, a sample fails its check, or every sample is refused. A file the plan refuses while others plan does not start it, nor does a sample a later step of a chain refuses (`preview.refusals`); it waits under Left untouched beside the preview | `continuous_recovery.propose` / `execute`, `campaign_planner`, the condition in `Session.make_preview` | yes | Anthropic |
-| B9 | Recovery of copies that failed their check after Create edited copies | `DocumentTask._primary` → `Session.resolve_remaining` | yes | Anthropic |
+| B9 | Recovery of copies that failed their check after Create edited copies (not after a Safe-mode button) | `DocumentTask._primary` → `Session.resolve_remaining` | yes | Anthropic |
 | B10 | A call that failed for a passing reason is re-sent | `llm.call`, `RETRIES` | yes | Anthropic |
 | B11 | The page reports itself (load, errors, a 10 s heartbeat) to the local server; the watchdog | `frontend/src/lib/diagnostics.ts`, `web/watch.py` | none | loopback only |
 | B12 | The page polls `/api/state` and `/api/update` every 2 s while a job or download runs | `frontend/src/App.tsx` | none | loopback only |
@@ -174,7 +180,7 @@ On Windows, `config_dir()` = `%APPDATA%\Spec Surgeon`, `data_dir()` = `%LOCALAPP
 | Location | Holds | Your words or document text? | Kept |
 | --- | --- | --- | --- |
 | Windows Credential Manager, `Spec Surgeon/ANTHROPIC_API_KEY` | the API key, if you ticked Remember | — | until you delete it (no button in the window) |
-| `config_dir()\settings.json` | folders, colour scheme, whether Fast responses is on, update bookkeeping | paths only | overwritten |
+| `config_dir()\settings.json` | folders, colour scheme, whether Fast responses is on, the mode the window opens in (Safe or Default), update bookkeeping | paths only | overwritten |
 | `config_dir()\conversation.json`, `conversations\*.json` | the chat, your decisions and approved wording, results, estimated spending | yes | archived at each start; **never pruned** (F5) |
 | `config_dir()\attachments\<time>\` | full copies of files you dropped on the window | yes, whole files | **never deleted** (F5) |
 | `config_dir()\repair-memory.sqlite3` | past repair cases: your request, candidate plans, wording and generated code | yes | 2,000 cases, oldest dropped; no clear button (F4) |
@@ -382,7 +388,7 @@ Lv1 marks a claim in "Why trust it?"; D marks one in the dossier (section in bra
 | T37 | Word renders on your machine in new invisible instances (up to 3 side by side, T51), never your open Word; else LibreOffice | D(no AI, engine) | `render/word_com.py` (DispatchEx, Visible False), `render/__init__.pick` | manual |
 | T38 | The watchdog: heartbeat 10 s, a page silent 45 s, a job quiet 300 s, a Stop not obeyed in 30 s; closing waits 60 s for a job | D(runtime B11, A11) | `web/watch.py`, `web/shell.shutdown` | facts |
 | T39 | Opening the app starts a clean conversation; the last one is archived on this computer and never reopened | D(runtime B1) | `gui.main`, `DocumentTask.archive` | existing: `tests/test_document_task.py` |
-| T40 | Without a network, files still attach and are checked, copies open, logs and bundles work; nothing can be planned, because every request goes through Claude | D(no AI) | `DocumentTask._ready_to_talk`, triage | manual |
+| T40 | Without a network, files still attach and are checked, Safe mode's buttons preview and create copies, copies open, logs and bundles work; Default mode cannot plan, because every request there goes through Claude | D(no AI) | `DocumentTask._ready_to_talk`, triage, `recipes.py` | existing: `tests/test_recipes.py` (every button with `llm.client` raising) |
 | T41 | The sentences describing the plan are written by the operations' own code from the plan, not by Claude | D(provenance) | `review_display.spec_changes` → `change_sentence` (`Op.describe`) | existing: `tests/test_describe.py` |
 | T42 | Help's "Why trust it?" opens the dossier, which stacks on it; one Escape closes one dialog; focus returns | — | `HelpModal.tsx`, `dialogFocus.ts`, `dialogStack.ts` | trust.test, flows |
 | T43 | (re-audit) A decline is said in plain words and changes nothing; a follow-up reply declined straight away is taken back out of the conversation, while a first request or a reply declined after Claude read something stays in the history | D(runtime A5) | `Conversation._take_back` (`_reply_mark`, set only by `reply`), `declined_text` | facts (source text) + existing: `tests/test_conversation.py::test_a_reply_claude_declines_is_taken_back_and_said_in_plain_words`, `::test_a_refusal_after_tool_results_leaves_the_history_as_it_is` |
@@ -394,6 +400,8 @@ Lv1 marks a claim in "Why trust it?"; D marks one in the dossier (section in bra
 | T49 | When the fast capacity is busy a call runs at once at standard speed and price; a key refused fast mode runs at standard speed and Settings says why | D(engine, runtime B17) | `llm.call` (`_fast_capacity`, `_speed_refused`), `llm.fast_unavailable`, `server.fast_offer` | existing: `tests/test_fast_mode.py` |
 | T50 | A batch of 3 or more files is edited and checked in the app's own worker processes, one per core up to 8, each file whole in one worker; a preview plans 12 or more files and checks 3 or more samples the same way; the results are those of running them one by one | D(engine, runtime B5, A8) | `batch.worker_plan`, `batch.map_files`, `planner.plan_batch`, `preview._preview_sample` | facts (`processMinFiles`, `maxProcessWorkers`, `planProcessMinFiles`) + existing: `tests/test_runtime_reliability.py` (`test_an_auto_batch_of_three_runs_in_worker_processes_with_the_same_results_as_inline`, `test_the_preview_plans_and_checks_its_samples_side_by_side_with_the_same_results`) |
 | T51 | Word renders over up to 3 new invisible instances side by side, never your open Word | D(engine, runtime B5, A8) | `render/word_worker.run_word_batches`, `word_instances`, `WORD_INSTANCES` | facts (`wordInstances`, `wordInstancesEnv`) + existing: `tests/test_render_word_batch.py` |
+| T52 | Safe mode makes no AI call: a button's plan is built in code from its form, its preview has no visual check and no outcome planning, and its run no recovery; a Default-mode preview approved after switching to Safe mode is created with no recovery either | Lv1, D(summary, no AI, runtime A23–A25) | `recipes.py`, `Session.model_free`, `Session.make_preview`, `DocumentTask._primary` | existing: `tests/test_recipes.py::test_each_button_previews_and_runs_to_verified_copies_without_any_ai_call` (`vision.review_samples` and `llm.client` raise), `tests/test_recipes.py::test_a_default_plan_approved_in_safe_mode_takes_no_ai_step`, `tests/test_body_match.py::test_the_button_matches_a_mixed_batch_and_leaves_out_what_it_cannot_match` |
+| T53 | A Safe-mode button places only words typed in its form or read from a file you attached, and its plan passes the same gate as a conversation's | D(provenance, runtime A23–A25) | `recipes.Built.sources`, `compiler.compose_submission` | existing: `tests/test_recipes.py::test_typed_words_are_the_only_words_a_button_may_place` |
 
 ## 3. Findings (reported, not fixed in this change)
 

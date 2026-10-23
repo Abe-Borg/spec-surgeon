@@ -95,6 +95,10 @@ export const EMPTY_VIEW: View = {
   working: { generation: 0, from_originals: true, can_start_over: false },
   budget: { paused: false, steps_per_pause: 48 },
   update: { state: "none", version: "", notes: "", progress: 0, error: "" },
+  mode: "default",
+  modes: ["safe", "default"],
+  template: { kind: "none", typed_slots: [], reason: "" },
+  left_untouched: [],
 };
 
 export const INITIAL_STATE: UiState = {
@@ -155,6 +159,10 @@ export function normalizeView(raw: unknown): View {
     working: obj(v.working, EMPTY_VIEW.working),
     budget: obj(v.budget, EMPTY_VIEW.budget),
     update: obj(v.update, EMPTY_VIEW.update),
+    mode: v.mode === "safe" ? "safe" : "default",
+    modes: list<string>(v.modes).filter((m): m is View["mode"] => m === "safe" || m === "default"),
+    template: obj(v.template, EMPTY_VIEW.template),
+    left_untouched: list(v.left_untouched),
   };
 }
 

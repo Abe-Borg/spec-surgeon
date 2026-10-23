@@ -7,6 +7,7 @@ import Markdown from "./Markdown";
 import PaperCard from "./PaperCard";
 import PreviewCard from "./PreviewCard";
 import Tip from "./Tip";
+import { paperBtn } from "./ModalShell";
 
 interface Props {
   view: View;
@@ -22,6 +23,8 @@ interface Props {
   onOpen: (path: string) => void;
   onStartOver: () => void;
   onZoom: (src: string, title: string) => void;
+  /** Safe mode's "Try these in Default mode" for what the last button left untouched. */
+  onHandOff: (paths: string[]) => void;
 }
 
 /** Faux grey bars where the previews will appear; pulsing while a plan is being worked out. */
@@ -29,10 +32,13 @@ function PreviewPlaceholder({
   working,
   started,
   hasDocuments,
+  safe,
 }: {
   working: boolean;
   started: boolean;
   hasDocuments: boolean;
+  /** Safe mode: a button, not a request, brings the previews. */
+  safe: boolean;
 }) {
   const bar = (w: string, i: number) => (
     <div
@@ -51,11 +57,15 @@ function PreviewPlaceholder({
           <p className="mt-0.5 text-xs text-paper-faint">
             {working
               ? "The pages before and after appear here as they render."
-              : started
-                ? "The previews appear here once your request is clear."
-                : hasDocuments
-                  ? "Say what you want to change; the previews appear here."
-                  : "Add your documents and say what you want; the previews appear here."}
+              : safe
+                ? hasDocuments
+                  ? "Pick a button; the previews appear here."
+                  : "Add your documents and pick a button; the previews appear here."
+                : started
+                  ? "The previews appear here once your request is clear."
+                  : hasDocuments
+                    ? "Say what you want to change; the previews appear here."
+                    : "Add your documents and say what you want; the previews appear here."}
           </p>
         </div>
       </div>
@@ -78,7 +88,10 @@ function Workbench({
   onOpen,
   onStartOver,
   onZoom,
+  onHandOff,
 }: Props) {
+  const safe = view.mode === "safe";
+  const untouched = view.left_untouched ?? [];
   const hasPlan = planHasContent(view.plan);
   const folder = runFolder(view);
   const setAside = view.plan?.set_aside ?? [];
@@ -122,6 +135,7 @@ function Workbench({
             working={busy}
             started={view.messages.length > 0}
             hasDocuments={view.attachments.length > 0}
+            safe={safe}
           />
         )}
 
@@ -170,10 +184,48 @@ function Workbench({
         )}
 
         {setAside.length > 0 && (
-          <PaperCard title="Left untouched" subtitle="These documents are not part of the plan; each line says why.">
+          <PaperCard
+            title="Left untouched"
+            subtitle={
+              safe
+                ? "These documents are not part of the change; each line says why. Once the copies are created, you can hand them to Default mode."
+                : "These documents are not part of the plan; each line says why."
+            }
+          >
             <ul className="divide-y divide-paper-edge">
               {setAside.map((item, index) => (
                 <li key={`${index}-${item.name}`} className="py-2 first:pt-0 last:pb-0">
+                  <p className="text-sm font-medium text-paper-ink">{item.name}</p>
+                  <p className="text-[12px] leading-relaxed text-paper-dim">
+                    <Markdown text={item.reason} paper inline />
+                  </p>
+                </li>
+              ))}
+            </ul>
+          </PaperCard>
+        )}
+
+        {untouched.length > 0 && (
+          <PaperCard
+            title="Left untouched by the last button"
+            subtitle="These documents got no copy from it; each line says why. Default mode can plan them with an AI model."
+            aside={
+              <Tip
+                tip={
+                  busy
+                    ? "Finish the current work first"
+                    : "Puts these documents on your to-do list and switches to Default mode, where you describe what should be different"
+                }
+              >
+                <button type="button" className={paperBtn} disabled={busy} onClick={() => onHandOff(untouched.map((u) => u.path))}>
+                  Try these in Default mode
+                </button>
+              </Tip>
+            }
+          >
+            <ul className="divide-y divide-paper-edge">
+              {untouched.map((item) => (
+                <li key={item.path} className="py-2 first:pt-0 last:pb-0" title={item.path}>
                   <p className="text-sm font-medium text-paper-ink">{item.name}</p>
                   <p className="text-[12px] leading-relaxed text-paper-dim">
                     <Markdown text={item.reason} paper inline />
@@ -246,7 +298,7 @@ function Workbench({
 
         {view.working?.generation > 0 && (
           <p className="text-[12px] text-ink-faint">
-            Your next request builds on these copies.
+            {safe ? "The next button builds on these copies." : "Your next request builds on these copies."}
             {view.working.can_start_over && (
               <>
                 {" "}

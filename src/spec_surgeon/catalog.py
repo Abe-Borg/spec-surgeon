@@ -325,6 +325,10 @@ COMMON_ASSUMPTIONS: Dict[str, List[str]] = {
         "list, or levels whose leftover paragraphs would renumber, sets the file aside: convert every level",
         "with an example file whose style ids this file already has but numbers differently, use existing 'replace' "
         "('keep' sets the file aside: the scheme would not apply); tracked with 'replace' is refused",
+        "numbered paragraphs in table cells convert too unless include_tables is false; a cell the converted list "
+        "numbers then sets the file aside (it would lose its number)",
+        "counters 'keep' sets aside a file where any converted paragraph would count differently, or whose number "
+        "cannot be read with certainty; by default such shifts are flagged",
         "plain formatting (not tracked) unless asked",
     ],
     "convert_typed_numbers": [
@@ -335,6 +339,9 @@ COMMON_ASSUMPTIONS: Dict[str, List[str]] = {
         "letter) or a list that would renumber other paragraphs sets the file aside (the audit shows where)",
         "typed numbers in table cells stay as typed unless include_tables; paragraphs already numbered are never "
         "touched (a typed number on one is flagged)",
+        "match 'counters' converts a typed number whose VALUES are the list's at that place even when the list writes "
+        "it otherwise ('1.01' into a '1.1' list, 'PART 1 –' into 'PART 1 -'), each flagged; a typo, skip or duplicate "
+        "still sets the file aside",
         "the list number must LOOK like the typed one: a hidden or capitalised typed number ('a.' in All Caps), a "
         "paragraph mark that would make the number hidden, coloured, sized, raised, struck or in a symbol font sets the "
         "file aside; 'PART 1 -', '1.1', 'A.' in capitals are fine; a bold/italic/underline/font difference is flagged",
