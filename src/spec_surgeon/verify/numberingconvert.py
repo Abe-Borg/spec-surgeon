@@ -39,6 +39,11 @@ changed paragraph's pPr = the source's with ``w:pStyle`` set first (restyled), `
 children gone, the ``w:pPrChange`` by the shared rules (``clearing.check_cleared_ppr``); cleared runs and marks exactly
 (``clearing.check_runs_and_mark``). It strips ``pStyle``, ``pPrChange``, ``numPr`` (own) and the cleared names of the
 changed paragraphs (``strip_ppr``) after comparing the whole pPr.
+
+``select.include_tables`` false (true by default) leaves out of the chosen paragraphs every one with a ``w:tc`` among
+its ancestors, before the refusals. ``counters: "keep"`` (``flag`` by default): the op must refuse a converted
+paragraph whose number the source or the prediction does not evaluate (``numbering-unsupported``) and one whose
+predicted counters are not its source counters, compared as tuples (``numbering-mismatch``).
 """
 from __future__ import annotations
 
@@ -255,9 +260,21 @@ def _v_level_map(lm: Any, n: int) -> Dict[int, int]:
     return {int(k): v for k, v in lm.items()}
 
 
+def _v_in_cell(p) -> bool:
+    """A w:tc among the paragraph's ancestors."""
+    return any(anc.tag == W + "tc" for anc in p.iterancestors())
+
+
 def _converted_numbering(ctx: Ctx, a: Dict[str, Any], errs: List[str]) -> str:
     tag = "converted_numbering"
     params = a.get("params") or {}
+    sel = a.get("select") or {}
+    if set(sel) - {"include_tables"} or not isinstance(sel.get("include_tables", True), bool):
+        raise ValueError(f"select {sel!r} (the op must refuse: bad-params)")
+    cells = sel.get("include_tables", True)
+    keep = params.get("counters", "flag")
+    if keep not in ("flag", "keep"):
+        raise ValueError(f"counters {keep!r} (the op must refuse: bad-params)")
     levels, template, existing = _v_scheme_params(params)
     direct = params.get("direct_formatting", "keep")
     if direct not in ("keep", "clear"):
@@ -302,6 +319,8 @@ def _converted_numbering(ctx: Ctx, a: Dict[str, Any], errs: List[str]) -> str:
             st = v_paragraph_style(sv.pars[i], ctx.src_styles)
             if st in level_of:
                 chosen.append((x, level_of[st]))
+    if not cells:
+        chosen = [(x, k) for x, k in chosen if not _v_in_cell(sv.pars[x.index])]
     converted: List[Tuple[VNumbered, int]] = []
     picked = {x.index for x, _ in chosen}
     for x, src_level in chosen:
@@ -360,6 +379,15 @@ def _converted_numbering(ctx: Ctx, a: Dict[str, Any], errs: List[str]) -> str:
         if before != after and not (c is not None and c.num_id == dest.scheme.num_id):
             raise ValueError(f"{main} paragraph {i} is not converted and its number changes {before} → {after} "
                              f"outside the destination list (the op must refuse: numbering-mismatch)")
+    if keep == "keep":
+        for x, _ in converted:
+            y = at.get(x.index)
+            if x.not_evaluated is not None or y is None or y.not_evaluated is not None:
+                raise ValueError(f"{main} paragraph {x.index}: counters 'keep' with a number not evaluated before or "
+                                 f"after (the op must refuse: numbering-unsupported)")
+            if tuple(x.counters) != tuple(y.counters):
+                raise ValueError(f"{main} paragraph {x.index}: counters 'keep', and they go {tuple(x.counters)} → "
+                                 f"{tuple(y.counters)} (the op must refuse: numbering-mismatch)")
     mine = [v_row(y) for y in predicted]
     diff = v_first_difference(mine, a.get("predicted") or [])
     if diff:

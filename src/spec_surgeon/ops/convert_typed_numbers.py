@@ -9,9 +9,9 @@ Parameters: ``levels``, ``template``, ``existing`` — ``numbering_convert`` (th
 ``direct_formatting`` (``keep`` | ``clear``: apply_style's — clear_direct_formatting's DEFAULT rules on the paragraph,
 its runs and its mark; with a TRACKED conversion refused ``bad-params``, see below); ``tracked`` (default **true** —
 characters are removed, batch 1 rule 2; false → untracked, clean copies); ``author``; ``allow_missing`` (default true: a
-file with no typed number to convert is a no-op with a note; false → ``not-found``). ``select``: ``paragraphs`` (the
-paragraph selector grammar; default all), ``include_tables`` (default false: a typed "1." in a table cell is left alone).
-Main document only.
+file with no typed number to convert is a no-op with a note; false → ``not-found``); ``match``: ``exact`` (default) |
+``counters`` (below). ``select``: ``paragraphs`` (the paragraph selector grammar; default all), ``include_tables``
+(default false: a typed "1." in a table cell is left alone). Main document only.
 
 Definitions (the verifier's own reading is verify/typednumbers.py):
 
@@ -57,6 +57,13 @@ Definitions (the verifier's own reading is verify/typednumbers.py):
   "1.1" before any PART) is not evaluated, so it refuses too — the reason then names the nearest earlier unconverted
   line that looks like a typed number (``audit_numbering.typed_shape``) but matched no level, and what the level needs
   (F11: "PART 1 – GENERAL" with an en dash).
+* **match "counters"** (docs/PLAN-2026-10-23-modes.md G1): a typed number is found by ``lists.typed_number(…,
+  lenient=True)`` — a hyphen, en dash or em dash for one another, any digits for a decimal or decimalZero level — and a
+  converted paragraph meets the guarantee when its typed values (``lists.typed_values``) are the predicted counters of
+  the levels its level's text names (``counters_differ``), whatever the list then shows: "1.01" converts into a "1.1"
+  list where the list counts 1.1 there, "PART 1 –" into "PART 1 -". Every other counted paragraph reads exactly as
+  before. A typo, a skip or a duplicate still refuses the file (``numbering-mismatch``); each converted number the list
+  shows otherwise than typed is flagged.
 * Flagged: the look differences above; paragraphs whose lower-case text the new style shows in capitals (F9: "General"
   reads "GENERAL" under PRT); scheme level styles whose level is the linked level (``Destination.linked``, F3:
   LibreOffice's proofs show them at level 0); the destination's restart rules; double numbering.
@@ -83,8 +90,8 @@ from .audit_numbering import typed_shape
 from .base import JobException, Op, PlanFragment
 from .clear_formatting import ClearSettings, ParagraphClearing, changes_needed, check_markers, clear_paragraph, \
     paragraph_clearing
-from .convert_numbering import (REVISION_IN_NUMPR, conversion_extras, restyle_edit, scheme_phrase, tracked_words,
-                                with_second_sentence)
+from .convert_numbering import (REVISION_IN_NUMPR, conversion_extras, in_table, restyle_edit, scheme_phrase,
+                                tracked_words, with_second_sentence)
 from .effective import PropResolver
 from .markup import Look
 from .numbering_convert import (LOOK_FLAGGED, LOOK_REFUSED, destination, level_sample, look_of, number_look,
@@ -97,8 +104,8 @@ from .slots import field_runs
 from .style_import import apply_import, check_template_unchanged
 from .textedit import Edit, RunText, apply_part_edits, edits_to_data, plan_paragraph, run_text
 
-PARAM_KEYS = {"template", "levels", "existing", "direct_formatting", "tracked", "author", "allow_missing"}
-USER_PARAMS = ("template", "levels", "existing", "direct_formatting", "tracked", "allow_missing")
+PARAM_KEYS = {"template", "levels", "existing", "direct_formatting", "tracked", "author", "allow_missing", "match"}
+USER_PARAMS = ("template", "levels", "existing", "direct_formatting", "tracked", "allow_missing", "match")
 REFLOW_REASON = "the typed numbers become list numbers with the scheme's indents; text reflows"
 MISMATCH_SHOWN = 5
 
@@ -116,6 +123,19 @@ def hidden_toggle(look: Look, rpr, p) -> Optional[bool]:
     if a is True or b is True:
         return True
     return None if (a is None or b is None) else False
+
+
+def counters_differ(tn: lists.TypedNumber, y: Optional[lists.NumberedPar], scheme) -> Optional[str]:
+    """``match: "counters"``: why the converted typed number's values are not the list's counters at that place (None
+    when they are): the typed values (``lists.typed_values``) against the predicted counters of the levels they name."""
+    values = lists.typed_values(tn.token, scheme.level_defs, tn.level)
+    if values is None:
+        return f"the typed {tn.token!r} does not read as a number of its level"
+    if y is None or not y.evaluated:
+        return "the list cannot number it there"
+    if any(j >= len(y.counters) or y.counters[j] != v for j, v in values.items()):
+        return f"typed {tn.token!r}, the list counts {y.text!r} there"
+    return None
 
 
 def display_problem(look: Look, planned: PropResolver, planned_sheet, sheet, p, prefix_runs, token_runs, token: str,
@@ -180,15 +200,6 @@ def display_problem(look: Look, planned: PropResolver, planned_sheet, sheet, p, 
     return None, flagged
 
 
-def in_table(p) -> bool:
-    q = p.getparent()
-    while q is not None:
-        if q.tag == W + "tc":
-            return True
-        q = q.getparent()
-    return False
-
-
 @register
 class ConvertTypedNumbers(Op):
     name = "convert_typed_numbers"
@@ -209,7 +220,10 @@ class ConvertTypedNumbers(Op):
                     "description": "true = the typed numbers deleted as tracked changes; false = removed outright"},
         "author": {"type": "string"},
         "allow_missing": {"type": "boolean", "default": True,
-                          "description": "a file with no typed number to convert is a no-op (false: set aside)"}}}
+                          "description": "a file with no typed number to convert is a no-op (false: set aside)"},
+        "match": {"type": "string", "enum": ["exact", "counters"], "default": "exact",
+                  "description": "exact: the list must show each typed number as typed; counters: its values are "
+                                 "enough (\"1.01\" into a \"1.1\" list, \"PART 1 –\" into \"PART 1 -\")"}}}
     select_schema = {"type": "object", "properties": {
         "paragraphs": {"description": "'all' or {style_in, text_regex, in_table, is_empty, index_range, has_bold, "
                                       "is_all_caps, after_heading_regex, between_paragraphs}"},
@@ -233,7 +247,13 @@ class ConvertTypedNumbers(Op):
         first = prose.sentence(f"Turn the typed numbers at the start of {subject} into real list numbers of "
                                f"{scheme_phrase(params)}: each typed number and the space or tab after it are removed, "
                                f"{how}, and your list shows the same number in its place")
-        extras = ["nothing is added, and a file is converted only where the whole document then reads exactly as before"]
+        if params.get("match") == "counters":
+            extras = ["nothing is added; a typed number converts when its values are the ones your list counts at that "
+                      "place, whatever its zero padding or dash (a typed “1.01” shows as the list's “1.1”), and every "
+                      "other paragraph must read exactly as before"]
+        else:
+            extras = ["nothing is added, and a file is converted only where the whole document then reads exactly as "
+                      "before"]
         if select.get("include_tables") is True:
             extras.append("typed numbers in table cells are converted too")
         extras += conversion_extras(params, "no typed number")
@@ -255,6 +275,9 @@ class ConvertTypedNumbers(Op):
         for k in ("tracked", "allow_missing"):
             if k in params and not isinstance(params[k], bool):
                 raise JobException(f"{k} must be true or false", "bad-params")
+        if params.get("match", "exact") not in ("exact", "counters"):
+            raise JobException("match must be 'exact' or 'counters'", "bad-params")
+        lenient = params.get("match") == "counters"
         if "include_tables" in select and not isinstance(select["include_tables"], bool):
             raise JobException("include_tables must be true or false", "bad-params")
         tracked = bool(params.get("tracked", True))
@@ -295,14 +318,14 @@ class ConvertTypedNumbers(Op):
                 continue
             nb = lists.paragraph_numbering(p, sheet, defs)
             if nb is not None and not nb.dangling:
-                if lists.typed_number(texts[i], dest.scheme) is not None:
+                if lists.typed_number(texts[i], dest.scheme, lenient) is not None:
                     double.append(i)
                 continue
             if in_table(p) and not tables:
                 continue
             if not paragraph_selected(pred, p, i, block_full_text(p), sheet, all_pars=pars):
                 continue
-            tn = lists.typed_number(texts[i], dest.scheme)
+            tn = lists.typed_number(texts[i], dest.scheme, lenient)
             if tn is None:
                 continue
             where = f"{main} paragraph {i} ({shown(texts[i])!r})"
@@ -357,6 +380,7 @@ class ConvertTypedNumbers(Op):
         predicted = lists.count(root, dest.sheet, dest.defs, override)
         pred_at = {x.index: x for x in predicted}
         ends = {i: tn.end for i, tn in found}
+        typed = dict(found)
         bad: List[str] = []
         hint = None
         for i, p in enumerate(pars):
@@ -365,7 +389,11 @@ class ConvertTypedNumbers(Op):
             before = visible(by_src.get(i), texts[i])
             y = pred_at.get(i)
             after = visible(y, texts[i][ends[i]:] if i in ends else texts[i])
-            if before != after:
+            if lenient and i in typed:
+                differs = counters_differ(typed[i], y, dest.scheme) is not None    # its values, not its look
+            else:
+                differs = before != after
+            if differs:
                 if y is not None and y.issue == "skipped" and hint is None:
                     hint = self._skipped_hint(pars, texts, i, y, by_src, ends, dest)
                 if y is not None and y.issue == "skipped":
@@ -489,7 +517,7 @@ class ConvertTypedNumbers(Op):
             frag.notes.append("no typed number of the scheme in this file; no change")
         if not tables:
             skipped = sum(1 for i, p in enumerate(pars) if in_table(p) and lists.counted(p) and i not in by_src
-                          and lists.typed_number(texts[i], dest.scheme) is not None)
+                          and lists.typed_number(texts[i], dest.scheme, lenient) is not None)
             if skipped:
                 frag.notes.append(f"{skipped} typed number(s) in table cells left as typed (include_tables: false)")
         if double:
@@ -518,6 +546,12 @@ class ConvertTypedNumbers(Op):
             frag.flags.append(f"your scheme's style(s) {dest.linked} do not name their level (w:ilvl) in their numbering; "
                               f"Word shows them right, LibreOffice's proof PDFs show them at level 0 — add the level "
                               f"to those styles in the example file to make the proofs agree")
+        if lenient:
+            restyled = [(i, tn.token, pred_at[i].text) for i, tn in found if tn.token != pred_at[i].text]
+            if restyled:
+                frag.flags.append(f"{len(restyled)} typed number(s) will show as your list writes them, the same "
+                                  f"values: " + "; ".join(f"‘{a}’ → ‘{b}’" for _, a, b in restyled[:8])
+                                  + (" …" if len(restyled) > 8 else ""))
         frag.touches = list(dict.fromkeys(frag.touches))           # one per target and aspect (merge cost)
         return frag
 

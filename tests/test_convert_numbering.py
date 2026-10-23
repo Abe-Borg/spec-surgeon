@@ -470,6 +470,7 @@ def test_a_level_beyond_the_scheme_refuses_and_the_scheme_must_fit(tpl):
     ({"levels": SCHEME_LEVELS, "direct_formatting": "wipe"}, "bad-params"),
     ({"levels": SCHEME_LEVELS, "tracked": "yes"}, "bad-params"),
     ({"levels": SCHEME_LEVELS, "colour": "red"}, "bad-params"),
+    ({"levels": SCHEME_LEVELS, "counters": "renumber"}, "bad-params"),
 ])
 def test_parameters(params, code):
     with pytest.raises(JobException) as e:
@@ -477,6 +478,10 @@ def test_parameters(params, code):
     assert e.value.code == code
     with pytest.raises(JobException) as e:
         get_op("convert_numbering").plan(DocxPackage(fixture("clean")), {"paragraphs": "all"},
+                                         {"levels": SCHEME_LEVELS})
+    assert e.value.code == "bad-params"
+    with pytest.raises(JobException) as e:
+        get_op("convert_numbering").plan(DocxPackage(fixture("clean")), {"include_tables": "no"},
                                          {"levels": SCHEME_LEVELS})
     assert e.value.code == "bad-params"
 
@@ -502,6 +507,92 @@ def test_nothing_numbered_is_a_noted_no_op_unless_allow_missing_false(tpl):
                                          {"levels": SCHEME_LEVELS, "template": tpl, "allow_missing": False})
     assert e.value.code == "not-found"
     assert src
+
+
+# ---- table cells left as they are, numbers that must keep their values (docs/PLAN-2026-10-23-modes.md E1, E3) -------
+
+BY_STYLES = {"from": {"styles": [["Arch Part"], ["ArchArt"], ["ArchPara", "ArchParaAlt"], ["ArchSub"], ["ArchSub2"]]}}
+
+
+def _cell_own_list(root):
+    """'Cell requirement.' (ArchPara, in the table) numbered by a list of its own: num 99, "%1)"."""
+    find(root, "Cell requirement.").find(W + "pPr").insert(
+        1, _x('<w:numPr><w:ilvl w:val="0"/><w:numId w:val="99"/></w:numPr>'))
+
+
+def _own_list(root):
+    root.find(W + "num").addprevious(_x(
+        '<w:abstractNum w:abstractNumId="99"><w:lvl w:ilvl="0"><w:start w:val="1"/><w:numFmt w:val="decimal"/>'
+        '<w:lvlText w:val="%1)"/><w:lvlJc w:val="left"/></w:lvl></w:abstractNum>'))
+    root.append(_x('<w:num w:numId="99"><w:abstractNumId w:val="99"/></w:num>'))
+
+
+def _no_skipped_level(root):
+    """'Product data.' loses its ilvl-only numPr (level 3 right after an article: the skipped level) — the outline
+    has no number the engine cannot evaluate."""
+    ppr = find(root, "Product data.").find(W + "pPr")
+    ppr.remove(ppr.find(W + "numPr"))
+
+
+def test_numbered_table_cells_can_be_left_as_they_are(tpl, monkeypatch):
+    """include_tables false: a numbered paragraph in a table cell is not converted — its own list keeps numbering it —
+    while every other paragraph of the levels' styles is; a transform that converts it anyway (plan and apply agree)
+    is caught by the verifier's own reading of the cells."""
+    src = patch_docx(fixture("clean"), {MAIN: _cell_own_list, NUMBERING: _own_list})
+    assert numbers(src)["Cell requirement."] == "1)"
+    params = {"levels": SCHEME_LEVELS, "template": tpl, **BY_STYLES}
+    plan, out, rec = run_ops(src, [("convert_numbering", {}, params)])
+    assert rec.passed, rec.to_markdown()
+    assert numbers(out)["Cell requirement."] == "B." and numbers(out)["After the table."] == "C."
+    plan, out, rec = run_ops(src, [("convert_numbering", {"include_tables": False}, params)])
+    assert rec.passed, rec.to_markdown()
+    got = numbers(out)
+    assert got["Cell requirement."] == "1)" and got["After the table."] == "B."
+    assert pstyle(find(DocxPackage(out).xml(MAIN), "Cell requirement.")) == "ArchPara"
+    assert any("1 numbered paragraph(s) in table cells left as they are" in n for n in plan.notes), plan.notes
+    monkeypatch.setattr(cn, "in_table", lambda p: False)
+    plan, out, rec = run_ops(src, [("convert_numbering", {"include_tables": False}, params)])
+    assert failed(rec) == ["V10"] and "are not the plan's" in v10(rec), v10(rec)
+
+
+def test_a_cell_of_the_converted_list_left_out_sets_the_file_aside(tpl):
+    """The main list numbers 'Cell requirement.' too: left out of the conversion it would lose its number — refused,
+    naming it."""
+    src = patch_docx(fixture("clean"), {MAIN: _no_skipped_level})
+    with pytest.raises(JobException) as e:
+        get_op("convert_numbering").plan(DocxPackage(src), {"include_tables": False},
+                                         {"levels": SCHEME_LEVELS, "template": tpl})
+    assert e.value.code in ("numbering-unsupported", "numbering-mismatch") and "Cell requirement." in e.value.reason, \
+        e.value.reason
+
+
+def test_counters_keep_converts_when_every_number_keeps_its_values(tpl):
+    """counters 'keep': the architect's outline (its skipped level removed) converts — "1.01" shows as the scheme's
+    "1.1", the same counters — and nothing is flagged as counting differently."""
+    src = patch_docx(fixture("clean"), {MAIN: _no_skipped_level})
+    plan, out, rec = converting(src, tpl, counters="keep")
+    assert rec.passed, rec.to_markdown()
+    assert numbers(out)["SUMMARY"] == "1.1" and numbers(out)["Shop drawings."] == "B."
+    assert not any("count differently than before" in f for f in plan.flags)
+
+
+def test_counters_keep_sets_aside_a_file_whose_numbers_would_change(tpl, monkeypatch):
+    """A three-level scheme taking the deeper levels (level_map) renumbers the sub-paragraphs: refused, naming them; so
+    is the outline with its skipped level (whether those keep their numbers cannot be shown). A transform without the
+    rule (plan and apply agree) is caught by the verifier's own comparison."""
+    src = patch_docx(fixture("clean"), {MAIN: _no_skipped_level})
+    params = {"levels": SCHEME_LEVELS[:3], "template": tpl, "level_map": {"3": 2, "4": 2}, "counters": "keep"}
+    with pytest.raises(JobException) as e:
+        get_op("convert_numbering").plan(DocxPackage(src), {}, params)
+    assert e.value.code == "numbering-mismatch" and "would count differently" in e.value.reason
+    assert "'1.' → 'C.'" in e.value.reason, e.value.reason
+    with pytest.raises(JobException) as e:
+        get_op("convert_numbering").plan(DocxPackage(fixture("clean")), {},
+                                         {"levels": SCHEME_LEVELS, "template": tpl, "counters": "keep"})
+    assert e.value.code == "numbering-unsupported" and "‘Shop drawings.’" in e.value.reason
+    monkeypatch.setattr(cn, "counter_shift", lambda x, y: False)
+    plan, out, rec = run_ops(src, [("convert_numbering", {}, params)])
+    assert "V10" in failed(rec) and "the op must refuse: numbering-mismatch" in v10(rec), v10(rec)
 
 
 # ---- wrong OUTPUTS are caught -----------------------------------------------------------------------------------------
