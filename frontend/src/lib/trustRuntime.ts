@@ -221,7 +221,8 @@ export const RUNTIME_CARDS: RuntimeCard[] = [
       "Showing it is kept in settings.json; being in it never is, so the next start opens in Safe or Default. While " +
       "it is on, the conversation's gate stops tracing placed words to you (Claude may write wording; it is in the " +
       "plan you approve), a custom method may change anything Word stores, and a copy that fails its check is " +
-      "delivered marked UNVERIFIED instead of being held back, with no recovery after it. Entering or leaving it " +
+      "delivered marked UNVERIFIED instead of being held back, with no recovery after it; its preview page already " +
+      "says Did not pass, and the plan stands. Entering or leaving it " +
       "voids the plan on screen.",
     sent: "Nothing when you choose it. The conversation then sends what it sends in Default mode.",
     ai: NONE,

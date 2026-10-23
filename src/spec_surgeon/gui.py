@@ -706,13 +706,13 @@ class Session:
             n = len(self.spec["layouts"])
             log(f"Planning {n} layout(s) on their own files and trying one sample per layout…")
             self.preview = make_layout_preview(self.spec, [str(f) for f in files], out / "preview", renderer="auto",
-                                               do_render=render)
+                                               do_render=render, continue_failed=self.unguarded)
         elif is_chain(self.spec):
             from .preview import make_chain_preview
             n = len(self.spec["stages"])
             log(f"Planning every file through {n} ordered steps and trying the samples…")
             self.preview = make_chain_preview(self.spec, [str(f) for f in files], out / "preview", renderer="auto",
-                                              do_render=render)
+                                              do_render=render, continue_failed=self.unguarded)
         else:
             log("Planning every file and trying the samples…")
             self.preview = make_preview(self.spec, [str(f) for f in files], out / "preview", renderer="auto",
@@ -734,9 +734,13 @@ class Session:
         from .preview import refusals, sample_refused
         bp = self.preview.batch_plan
         samples = self.preview.samples
+        # Obliterate mode (``unguarded``): a sample whose copy was made but failed its checks does not void the plan —
+        # its failed checks show on its preview and Create delivers it marked UNVERIFIED; a refusal or an engine
+        # failure (no copy to deliver) still does
         if c is not None and c.continuous_recovery and (
                 len(refusals(self.preview)) >= len(bp.files)
-                or any(not s.passed and not sample_refused(s) for s in samples)
+                or any(not s.passed and not sample_refused(s) and not (self.unguarded and s.exception is None)
+                       for s in samples)
                 or (samples and all(sample_refused(s) for s in samples))):
             evidence = {"reason": self.preview.to_text(), "candidate": copy.deepcopy(self.spec)}
             self._set_outcome()

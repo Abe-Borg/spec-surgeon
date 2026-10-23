@@ -311,7 +311,7 @@ class LayoutPreview:
 
 
 def make_layout_preview(plan: Dict[str, Any], inputs: Sequence[str], out_dir: Path, renderer: str = "auto",
-                        do_render: bool = True) -> LayoutPreview:
+                        do_render: bool = True, *, continue_failed: bool = False) -> LayoutPreview:
     """Each layout previewed by ``preview.make_preview`` on its own files, under ``out_dir/layout-<id>``; the token
     binds every layout's spec, its files and the routing."""
     from .batch import expand_inputs
@@ -334,9 +334,12 @@ def make_layout_preview(plan: Dict[str, Any], inputs: Sequence[str], out_dir: Pa
                                        f"that part of the plan changes nothing.")
                 continue
             own_spec = layout_spec(plan, layout)
-            maker = make_chain_preview if is_chain(own_spec) else make_preview
-            pv = maker(own_spec, [str(f) for f in own], out_dir / f"layout-{layout['id']}",
-                       renderer=renderer, do_render=do_render)
+            if is_chain(own_spec):
+                pv = make_chain_preview(own_spec, [str(f) for f in own], out_dir / f"layout-{layout['id']}",
+                                        renderer=renderer, do_render=do_render, continue_failed=continue_failed)
+            else:
+                pv = make_preview(own_spec, [str(f) for f in own], out_dir / f"layout-{layout['id']}",
+                                  renderer=renderer, do_render=do_render)
             result.previews.append((layout, pv))
             result.samples.extend(pv.samples)
             result.warnings.extend(pv.warnings)

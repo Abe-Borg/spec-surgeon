@@ -104,8 +104,10 @@ What it lifts (`Session.unguarded`; CLAUDE.md, "Modes"):
   passes with them listed.
 - **Holding back.** A copy that fails a check is delivered to the run's `outputs/` instead of `failed/`, its record
   kept with every failure and V9 saying *delivered UNVERIFIED*; a chain's step hands its copy on and the chain's copy
-  carries everything that failed. The copies list marks it **UNVERIFIED** with the checks it failed, and the done
-  message counts them. No recovery runs after a run in this mode; a document whose copy could not be made at all
+  carries everything that failed. The preview already says so: a sample whose copy fails a check shows **Did not
+  pass** and the plan stands (no outcome investigation; a chain's sample goes on through every step, as the run will),
+  and a custom method's sample shows the checks it failed, never a pass. The copies list marks it **UNVERIFIED** with
+  the checks it failed, and the done message counts them. No recovery runs after a run in this mode; a document whose copy could not be made at all
   goes on the to-do list as in Default.
 
 What holds, in every mode: copies only (the window never writes in place, and an unverified copy is never written

@@ -323,3 +323,76 @@ def test_default_mode_is_untouched_by_all_of_it(tmp_path, planted_v2):
         pass
     assert str(path) not in task.results and not task.unverified
     assert len(fake.requests) > 1                                             # Default looked for a fix
+
+
+# ---- the preview (Codex review on Abe-Borg/spec-surgeon#102) ---------------------------------------------------------
+
+@pytest.fixture
+def planted_v2_everywhere(monkeypatch, planted_v2):
+    """The preview's samples fail V2 too (the previews read ``spec_surgeon.verify.run_suite`` at call time)."""
+    import spec_surgeon.verify as verify_module
+    real = verify_module.run_suite
+
+    def failing(src, out, plan, s, o):
+        rec = real(src, out, plan, s, o)
+        rec.set(CheckResult("V2", "Text preservation", "FAIL", "planted"))
+        return rec
+    monkeypatch.setattr(verify_module, "run_suite", failing)
+
+
+def test_a_chain_preview_carries_a_failed_sample_on_only_in_obliterate(tmp_path, planted_v2_everywhere):
+    from spec_surgeon.preview import make_chain_preview
+    d = tmp_path / "in"; d.mkdir()
+    (d / "21 05 00 – A.docx").write_bytes(build("21 05 00", "A"))
+    bold = {"request": "bold", "summary": "s", "mode": "formatting",
+            "ops": [{"op": "set_properties", "select": {"paragraphs": {"text_regex": "^SECTION"}},
+                     "params": {"run": {"b": True}, "tracked": False}}]}
+    chain = chain_from_specs([("replace", REPLACE), ("bold", bold)])
+    held = make_chain_preview(chain, [str(d)], tmp_path / "p1", renderer="none", do_render=False)
+    assert [st["stage"] for st in held.samples[0].stages] == [1] and held.samples[0].passed is False
+    loose = make_chain_preview(chain, [str(d)], tmp_path / "p2", renderer="none", do_render=False,
+                               continue_failed=True)
+    sample = loose.samples[0]
+    assert [st["stage"] for st in sample.stages] == [1, 2] and sample.passed is False   # the run will go on too
+    assert sample.exception is None and sample.output is not None
+
+
+def test_a_failed_check_in_the_preview_does_not_void_an_obliterate_plan(tmp_path, planted_v2_everywhere):
+    """Default hands a sample that failed its check to an outcome investigation (another AI call); Obliterate keeps
+    the plan, shows the sample as not passed, and Create delivers the copy marked UNVERIFIED."""
+    path = document(tmp_path / "Spec.docx")
+    fake = FakeClient(resp(tool("submit_editspec", {"spec": SPEC})))
+    task = task_for(tmp_path, fake, obliterate_allowed=True)
+    task.set_mode("obliterate", acknowledged=True)
+    task.attach([path])
+    view = task.perform("send", text=REQUEST)
+    assert view["stage"] == "preview" and len(fake.requests) == 1
+    assert [s.passed for s in view["samples"]] == [False]
+    view = task.perform("primary", token=view["token"])
+    assert view["stage"] == "done" and task.unverified[str(path)] == ["V2 (Text preservation)"]
+    assert len(fake.requests) == 1
+    # Default: the same failed sample sends the plan to investigation
+    path2 = document(tmp_path / "Other" / "Spec.docx")
+    fake2 = FakeClient(resp(tool("submit_editspec", {"spec": SPEC})))
+    task2 = task_for(tmp_path / "d", fake2)
+    task2.attach([path2])
+    try:
+        task2.perform("send", text=REQUEST)
+    except Exception:  # noqa: BLE001 — the scripted client has no second answer: the investigation asked for one
+        pass
+    assert len(fake2.requests) > 1
+
+
+def test_a_custom_methods_preview_shows_the_checks_it_failed(folder, tmp_path):
+    from types import SimpleNamespace
+    from spec_surgeon.preview import preview_generated
+    f = sorted(folder.glob("*.docx"))[0]
+    loose = trial(TEXT_OP, f, {}, {"twips": 900}, tmp_path / "u", unguarded=True)
+    assert loose.passed and loose.unverified                          # it may be delivered…
+    gp = preview_generated(SimpleNamespace(name="op", trials=[loose]), tmp_path / "pv", renderer="none",
+                           do_render=False)
+    assert gp.samples[0].passed is False and "verification FAIL" in gp.to_text()   # …but it never shows as checked
+    clean = trial(GOOD_OP, f, {}, {"twips": 900}, tmp_path / "c", unguarded=True)
+    gp = preview_generated(SimpleNamespace(name="op", trials=[clean]), tmp_path / "pv2", renderer="none",
+                           do_render=False)
+    assert gp.samples[0].passed is True
