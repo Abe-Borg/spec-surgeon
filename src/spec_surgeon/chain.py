@@ -215,6 +215,7 @@ class ChainFile:
     noop: bool = False                            # every stage left it as it was
     flags: List[str] = field(default_factory=list)
     outcomes: List[Dict[str, Any]] = field(default_factory=list)  # independent final requirements, after all stages
+    unverified: List[str] = field(default_factory=list)   # what failed in a copy delivered anyway (Obliterate mode)
 
     @property
     def record_stem(self) -> str:
@@ -246,7 +247,7 @@ class ChainFile:
                 "stages": self.stage_status, "stopped_at": self.stopped_at, "status": self.status, "code": self.code,
                 "category": self.category, "reason": self.reason, "delivered_to": self.delivered_to,
                 "output": str(self.output) if self.output else None, "noop": self.noop, "flags": self.flags,
-                "outcomes": self.outcomes}
+                "outcomes": self.outcomes, "unverified": list(self.unverified)}
 
 
 @dataclass
@@ -315,21 +316,25 @@ def _stop(cf: ChainFile, stage: int, status: str, code: str, reason: str, detail
 def run_chain(inputs: Sequence[str], chain: Dict[str, Any], out_dir: Path, workers: int = 0, renderer: str = "auto",
               do_render: bool = True, in_place: bool = False, progress=None, *,
               goal_contract=None, goal_bindings=None, approved_inputs=None, enforce_goals: bool = False,
-              worker_mode: Optional[str] = None) -> ChainResult:
-    """Execute approved recipe stages; enforce outcome data only for an explicit governed workflow."""
+              worker_mode: Optional[str] = None, deliver_unverified: bool = False) -> ChainResult:
+    """Execute approved recipe stages; enforce outcome data only for an explicit governed workflow.
+    ``deliver_unverified`` (Obliterate mode only; copies only): a step whose checks fail on a file hands the next step
+    its delivered copy instead of stopping it, a final requirement that fails is noted instead of stopping it, and the
+    chain's copy is delivered with everything that failed (``ChainFile.unverified``)."""
     with diag.scope(run_id=diag.context().get("run_id") or diag.new_id(), chain_id=diag.new_id()), \
             diag.span("chain", out_dir=str(out_dir), workers=workers, renderer=renderer,
                       do_render=do_render, in_place=in_place) as outcome:
         result = _run_chain(inputs, chain, out_dir, workers, renderer, do_render, in_place, progress,
                             copy.deepcopy(goal_contract), copy.deepcopy(goal_bindings or {}), copy.deepcopy(approved_inputs),
-                            enforce_goals, worker_mode)
+                            enforce_goals, worker_mode, deliver_unverified and not in_place)
         outcome.update(counts=result.counts(), timings=result.timings)
         return result
 
 
 def _run_chain(inputs: Sequence[str], chain: Dict[str, Any], out_dir: Path, workers: int, renderer: str,
                do_render: bool, in_place: bool, progress, goal_contract=None, goal_bindings=None,
-               approved_inputs=None, enforce_goals=False, worker_mode=None) -> ChainResult:
+               approved_inputs=None, enforce_goals=False, worker_mode=None,
+               deliver_unverified=False) -> ChainResult:
     """Run every stage of ``chain`` in order, each a ``run_batch`` in ``<out>/stage-NN/`` on the files the stage
     before it verified (the pin above); then the chain's own report. Raises ``ChainError`` for an unusable chain and
     ``ValueError`` for inputs inside the results folder — both before anything is created. A stage's own failure (the
@@ -442,7 +447,7 @@ def _run_chain(inputs: Sequence[str], chain: Dict[str, Any], out_dir: Path, work
                                          _input_snapshots=result.input_snapshots, _public_spec=sr.spec,
                                          _source_identities=stage_sources,
                                          _source_refusals=source_refusals if sr.index == 1 else None,
-                                         worker_mode=worker_mode)
+                                         worker_mode=worker_mode, deliver_unverified=deliver_unverified)
                     outcome["counts"] = sr.batch.counts()
                 result.renderer = result.renderer or sr.batch.renderer
                 by_input = {str(Path(fr.source).resolve()): fr for fr in sr.batch.files}
@@ -474,6 +479,13 @@ def _run_chain(inputs: Sequence[str], chain: Dict[str, Any], out_dir: Path, work
                             cf.out_name = fr.out_name or cf.out_name     # a stage that names files (name_output): the
                         cf.output = Path(fr.output) if fr.output else cf.output   # chain's copy keeps the new name
                         continue
+                    if fr.status == "FAIL" and deliver_unverified and fr.delivered_to and not stage_in_place:
+                        # Obliterate mode: the step's copy was delivered anyway; the next step reads it
+                        cf.unverified.append(f"step {sr.index} ({sr.name}): {', '.join(fr.unverified)}")
+                        current[str(cf.source)] = Path(fr.output)
+                        cf.out_name = fr.out_name or cf.out_name
+                        cf.output = Path(fr.output)
+                        continue
                     if fr.status == "FAIL":
                         bad = [c for c in fr.record.checks if c.status == "FAIL"]
                         _stop(cf, sr.index, "FAIL", "verify-fail",
@@ -491,7 +503,8 @@ def _run_chain(inputs: Sequence[str], chain: Dict[str, Any], out_dir: Path, work
             stage_label = "deliver"
             with diag.span("chain.delivery"):
                 _deliver(result, current, in_place, verified_bytes, guard, log,
-                         goal_contract if enforce_goals else None, goal_bindings or {})
+                         goal_contract if enforce_goals else None, goal_bindings or {},
+                         deliver_unverified=deliver_unverified)
             result.timings["total"] = time.perf_counter() - t_start
             stage_label = "reports"
             result.finished = datetime.now().astimezone().isoformat(timespec="seconds")
@@ -528,7 +541,7 @@ def _empty(folder: Path) -> None:
 
 
 def _deliver(result: ChainResult, current: Dict[str, Path], in_place: bool, verified_bytes, guard, log,
-             goal_contract=None, goal_bindings=None) -> None:
+             goal_contract=None, goal_bindings=None, deliver_unverified: bool = False) -> None:
     """The chain's own delivery: in copies mode, every file that passed every stage is copied — re-hashed against the
     last stage's verified bytes — into ``<out>/outputs/``; in place the last stage already wrote it back."""
     t0 = time.perf_counter()
@@ -572,7 +585,9 @@ def _deliver(result: ChainResult, current: Dict[str, Path], in_place: bool, veri
                 cf.outcomes = assert_outcomes(data, result.chain["assertions"])
                 outcome["results"] = cf.outcomes
             failures = [entry for entry in cf.outcomes if entry["status"] != "PASS"]
-            if failures:
+            if failures and deliver_unverified and not in_place:
+                cf.unverified.append("final requirements: " + "; ".join(entry["summary"] for entry in failures))
+            elif failures:
                 _stop(cf, n, "FAIL", OUTCOME_CODE,
                       "final requirements after all stages: " + "; ".join(entry["summary"] for entry in failures),
                       {"outcomes": cf.outcomes, "phase": "final requirements"})
@@ -636,7 +651,12 @@ def _deliver(result: ChainResult, current: Dict[str, Path], in_place: bool, veri
             log(f"  {cf.source.name}: not delivered — {cf.reason}")
             continue
         dest.write_bytes(data)
-        cf.status, cf.delivered_to, cf.output = "PASS", str(dest), dest
+        # a copy delivered with failed checks (Obliterate) says so: its status stays FAIL, with what failed
+        cf.status, cf.delivered_to, cf.output = ("FAIL" if cf.unverified else "PASS"), str(dest), dest
+        if cf.unverified:
+            from .report import explain_failure
+            cf.code, cf.reason = "unverified", "delivered UNVERIFIED (Obliterate mode): " + " | ".join(cf.unverified)
+            cf.category, cf.explanation = explain_failure(cf.code, cf.reason)
         diag.event("chain.delivered", source=str(cf.source), in_place=False, delivered_to=cf.delivered_to,
                    size=len(data), output_md5=last.output_md5)
     result.timings["deliver"] = time.perf_counter() - t0

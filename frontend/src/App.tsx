@@ -18,6 +18,8 @@ import SettingsModal from "./components/SettingsModal";
 import HelpModal from "./components/HelpModal";
 import ZoomModal from "./components/ZoomModal";
 import SafePanel from "./components/SafePanel";
+import ObliterateWarning from "./components/ObliterateWarning";
+import { modeChoice } from "./lib/modes";
 
 type PickKind = "documents" | "template" | "references";
 
@@ -275,8 +277,17 @@ export default function App() {
   }, [applyView]);
 
   const onStartOver = useCallback(() => applyView(api.startOver()), [applyView]);
+  // Obliterate opens its warning first, every time; the other modes switch at once.
+  const [warning, setWarning] = useState(false);
   const onMode = useCallback((mode: Mode) => {
-    if (!busyRef.current) applyView(api.setMode(mode));
+    if (busyRef.current) return;
+    const choice = modeChoice(view.mode, mode);
+    if (choice === "warn") setWarning(true);
+    else if (choice === "switch") applyView(api.setMode(mode));
+  }, [applyView, view.mode]);
+  const onObliterate = useCallback(() => {
+    setWarning(false);
+    if (!busyRef.current) applyView(api.setMode("obliterate", true));
   }, [applyView]);
   const onHandOff = useCallback((paths: string[]) => applyView(api.handOff(paths)), [applyView]);
 
@@ -289,6 +300,8 @@ export default function App() {
     () => <SafePanel recipes={recipes} view={view} busy={busy} onPreview={onRecipe} />,
     [recipes, view, busy, onRecipe],
   );
+
+  const onPutBack = useCallback((path: string) => applyView(api.putBack(path)), [applyView]);
 
   const onOpen = useCallback((path: string) => {
     api.openPath(path).catch((failure: unknown) => setNotice(failureText(failure)));
@@ -457,6 +470,7 @@ export default function App() {
           onRemove={onRemove}
           onOpen={onOpen}
           onStartOver={onStartOver}
+          onPutBack={onPutBack}
           onZoom={onZoom}
           onHandOff={onHandOff}
         />
@@ -494,6 +508,13 @@ export default function App() {
         bundleNote={bundleNote}
       />
       {zoom && <ZoomModal src={zoom.src} title={zoom.title} onClose={() => setZoom(null)} />}
+      {warning && (
+        <ObliterateWarning
+          keyReady={!!view.connection?.ready}
+          onCancel={() => setWarning(false)}
+          onConfirm={onObliterate}
+        />
+      )}
     </div>
   );
 }

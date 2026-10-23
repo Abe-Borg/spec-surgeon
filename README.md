@@ -118,7 +118,9 @@ and Settings.
    Each preview carries a green checkmark (looks good) and a red X (needs more work: set it aside for after the
    others). To leave documents out of a request altogether, say so ("leave out 20, and 23 for now"): the plan covers
    the others, the ones you named stay exactly as they are under **Left untouched**, and your next request covers
-   them again unless you leave them out again.
+   them again unless you leave them out again. To park documents for later instead, say that ("set 20 aside for
+   later, I'm waiting on the owner"): they go on your to-do list at once, with your reason, and stay out of every
+   request until you work on them or put them back.
 6. **Create edited copies.** One button, in the conversation above the box you type in, approves the displayed plan.
    The engine applies it to every file you did not set aside, verifies each one independently, and lists the copies
    under **Your edited copies**; click one to open it in Word. Originals are never written. A file that fails a
@@ -126,6 +128,16 @@ and Settings.
    never a method to choose. The documents you set aside wait on a to-do list; once the other copies are saved, the
    conversation offers to work on them: they are planned alone, from the same request, and you say what should be
    different.
+
+**The to-do list.** Documents wait there, each with why, until you come back to them: the ones you marked with the
+red X, the ones you asked the assistant to set aside, a file the plan could not be applied to (it goes there when you
+create the others' copies), and a file whose copy could not be made with nothing left to check it again. While files
+are being checked again after a run, **Set the rest aside for later** (offered once the ready copies are saved) puts
+what was not fixed there too and ends the request. Nothing on the list is changed. "Work on the documents I set aside"
+(a reply the app offers) plans them on their own, from the request they were set aside from, with the assistant told
+why each one waited; **Put back** beside one returns it to the other documents as it is. Each new request tells the
+assistant what is on the list, so it can answer "what did I set aside?" without planning those files. The list is
+kept in the saved conversation; **Start over from the originals** clears it.
 
 **Mixed batches.** Documents from different projects are often built differently: styled article titles in one,
 plain paragraphs with typed numbers in another. For such a batch the plan has one specification per layout, and the
@@ -139,8 +151,8 @@ copies remain. Every start of the app is a clean one: the last conversation is a
 
 ![The plan in the conversation and before/after pages, with one action](docs/conversation-preview.png)
 
-**Two modes.** The switch is in the top bar, beside the help topics, and the window opens in the mode you last used
-(Safe the first time).
+**Two modes, and a hidden third.** The switch is in the top bar, beside the help topics, and the window opens in the
+mode you last used (Safe the first time; never Obliterate).
 
 - **Safe — buttons, no AI.** What you control: the common changes, one button each — *Match headers and footers to
   template*, *Remove headers and footers*, *Add or remove a watermark*, *Swap the logo*, *Match body formatting to
@@ -170,6 +182,16 @@ copies remain. Every start of the app is a clean one: the last conversation is a
 - **Default — a conversation.** What you control: any change you can describe, from one word to whole tables,
   sections and pictures, on documents built in different ways. What it costs: an Anthropic API key and the AI's
   spending, and the AI can misread a request, so you read what it plans and look at the pages before you approve.
+- **Obliterate — the conversation without guardrails (hidden).** Off the switch until Settings → **Advanced** →
+  *Show Obliterate mode* is on, and chosen only after its warning, every time (tick *I understand*, then **Turn on
+  Obliterate**). What you control: Claude may write wording itself (it is in the plan you approve); when no operation
+  fits, Claude may write a custom method that changes anything Word stores, not only formatting; and a copy that fails
+  a check is delivered anyway, marked **UNVERIFIED** with the checks it failed, instead of being held back. What it
+  costs: no proof that the rest of the file is untouched, content can be lost or invented without a refusal, a copy
+  may need Word's repair, results can differ from run to run, and more AI spending. What still holds: copies only
+  (your originals are never written), a source that changed is never delivered over, the custom method's sandbox, and
+  the independent checks on every copy, their results kept beside it. **Back to Default** (or any other mode) leaves
+  it; the app never opens in it.
 
 On a batch from different projects, Safe mode's buttons work on every document they can change exactly and leave
 the rest untouched, each with the engine's reason — a template's section line it cannot find, an odd-and-even pages

@@ -20,8 +20,9 @@ documents a request leaves out in B5, per-file wording in provenance); those lin
 2026-10-23 for Safe mode (`docs/PLAN-2026-10-23-modes.md`, M1): A23–A25, the A8/B6/B9 exceptions for a Safe-mode
 button, `mode` in settings.json, T40, T52 and T53; and for its "match body formatting to template" button (M3), A24's
 path and T52's test. Updated 2026-10-23 after the 1.10.0 live run over test-set-3 (a sample a later step refuses no
-longer starts B8); that line also says "(test-set-3)". Paths are relative to `src/spec_surgeon/` unless they start
-with `frontend/`, `tests/` or `docs/`.
+longer starts B8); that line also says "(test-set-3)". Updated 2026-10-23 with the to-do list as the place
+documents wait (the chat's `set_aside` tool in §1d, A15, A26, A27, B18, T54, T55); those lines say "(to-do list)".
+Paths are relative to `src/spec_surgeon/` unless they start with `frontend/`, `tests/` or `docs/`.
 
 **Verification column:**
 - `facts` means `tests/test_trust_facts.py` pins the value to its source constant.
@@ -50,7 +51,7 @@ with `frontend/`, `tests/` or `docs/`.
 | A12 | Open a copy, or the copies' folder | `POST /api/open` → `os.startfile` | none |
 | A13 | **Start over from the originals** | `POST /api/start-over` (or the typed reply) | none |
 | A14 | **New conversation** | `POST /api/new-conversation` | none |
-| A15 | **Work on the documents I set aside** | `/api/send` with `WORK_TODO` → `start_todo` | none until the next request |
+| A15 | **Work on the documents I set aside** (to-do list: whatever put them there, each with why) | `/api/send` with `WORK_TODO` → `start_todo` | none until the next request |
 | A16 | Click a page to enlarge it | page only; the image comes from `GET /api/image` | none |
 | A17 | About → **Check for updates** | `POST /api/update/check` | none |
 | A18 | **Download** / **Download and install** / **Restart to update** / **Not now** | `/api/update/download`, `/install`; **Not now** hides the banner in the page only (`App.tsx` `dismissedUpdate`) | none |
@@ -61,8 +62,11 @@ with `frontend/`, `tests/` or `docs/`.
 | A23 | Choose **Safe** or **Default** in the top bar | `POST /api/mode` → `DocumentTask.set_mode`; kept in settings.json (`Settings.mode`) | none |
 | A24 | In Safe mode: a button, its short form, **Preview** | `POST /api/recipe` → `DocumentTask._recipe` → `recipes.build` → `compiler.compose_submission` (for *Match body formatting to template*, once per layout in `body_match.build_layouts`) → `Session.make_preview` (`model_free`: no visual check, no outcome planning) | none |
 | A25 | **Try these in Default mode** (beside what a button left untouched), **Go to Default mode** | `POST /api/handoff` → `DocumentTask.hand_off`; `POST /api/mode` | none |
+| A26 | (to-do list) **Put back** beside a document on the to-do list | `POST /api/put-back` → `DocumentTask.put_back` | none |
+| A27 | (to-do list) **Set the rest aside for later**, a reply offered while files are checked again once the ready copies are saved | `/api/send` with `SET_ASIDE_REST` → `DocumentTask.set_rest_aside` | none |
+| A28 | Settings → Advanced → **Show Obliterate mode** (a second click, **Show it**); **Obliterate** in the top bar, its warning, the box ticked, **Turn on Obliterate**; **Back to Default** | `POST /api/settings` `{show_obliterate}` (kept in settings.json); `POST /api/mode` `{mode: "obliterate", acknowledged: true}` → `DocumentTask.set_mode` → `Session.unguarded` (never kept: `web.server.launch_mode`) | none (changes what later calls may do: T56) |
 
-Count: 25 actions.
+Count: 28 actions.
 
 (re-audit) The server also has `/api/update/cancel`, `/api/update/skip`, `/api/update/dismiss`, `/api/update/releases`
 and `/api/quit`, behind the same launch token. The page calls none of them (`frontend/src/lib/api.ts`), so no click
@@ -91,9 +95,10 @@ your browser (N4).
 
 | B16 | A batch of 3 or more files is edited and checked in the app's own worker processes, one per core up to 8, each file whole in one worker; a preview plans 12 or more files, and checks 3 or more samples, the same way; Word renders over up to 3 private instances side by side | `batch.worker_plan` (`DEFAULT_WORKER_MODE` "auto"), `batch.map_files`, `planner.PLAN_PROCESS_MIN_FILES`, `render/word_worker.run_word_batches` | none | none |
 | B17 | With Fast responses on: a fast call the fast capacity cannot take (429, 529) is re-sent at once at standard speed; a key refused fast mode (a 400 or 403 naming the speed) runs at standard speed until the setting is turned on again | `llm.call` (`_fast_capacity`, `_speed_refused`, `_fast_unavailable`) | follows a call | Anthropic |
+| B18 | (to-do list) After Create edited copies runs: a file its preview refused, and a run failure no recovery takes, go on the to-do list with the reason (a Create that is refused moves nothing). After a conversation turn: the documents Claude set aside at the user's word (`set_aside`) go there too | `DocumentTask._refused_now`, `_bin_failed`, `_take_set_aside` | none of its own | none |
 
-Count: 17 automatic behaviours. B4–B10, B13, B15 and B17 run only inside work a click started. B1–B3, B11, B12, B14
-and B16 involve no model.
+Count: 18 automatic behaviours. B4–B10, B13, B15 and B17 run only inside work a click started. B1–B3, B11, B12, B14,
+B16 and B18 involve no model.
 
 ### 1c. Network destinations
 
@@ -146,7 +151,7 @@ overrides it).
 
 | Conversation | Tools | Validated by |
 | --- | --- | --- |
-| Chat (`conversation.py`) | `CHAT_TOOLS`: describe_op, inspect_template_styles, read_context_archive, run_analysis, read_analysis_result, list_parts, read_paragraphs, read_xml_page, inspect_profile, compare_files, list_styles, sample_paragraphs, show_part_text, read_template, read_input_file, ask_user, submit_editspec, view_pages, propose_defined_terms | `compiler.compose_submission` (schema, attached-file checks, `untraceable` wording check, dry plan); `conversation._ask_turn` (choice kinds, invisible characters, ≤5 suggested replies) |
+| Chat (`conversation.py`) | `CHAT_TOOLS`: describe_op, inspect_template_styles, read_context_archive, run_analysis, read_analysis_result, list_parts, read_paragraphs, read_xml_page, inspect_profile, compare_files, list_styles, sample_paragraphs, show_part_text, read_template, read_input_file, ask_user, submit_editspec, view_pages, propose_defined_terms, set_aside (to-do list: changes no file; it moves the named documents to the to-do list) | `compiler.compose_submission` (schema, attached-file checks, `untraceable` wording check, dry plan; the documents set aside are left out of it); `conversation._ask_turn` (choice kinds, invisible characters, ≤5 suggested replies); `compiler.resolve_set_aside` (labels THE BATCH lists) |
 | Custom-method writer (`codegen.py`) | the inspection tools + show_xml, find_paragraphs, list_styles, show_part_text, submit_op | `codegen.check_source` (import whitelist, forbidden names and attributes), sandbox run, `hard_limits`, `verify.run_suite`. (re-audit) Under an approved outcome contract (recovery's `custom_transform`), `hard_limits` returns before its formatting-only rules, `allowed_imports` adds `GOAL_FROM`, and the copy must also pass `goals.verify_goal` → `verify/goals.py` or `verify/effects.py` (independent) |
 | Visual check (`vision.py`) | submit_review | findings about pages it was not shown are dropped; advisory only |
 | Outcome planner (`campaign_planner.py`) | read tools, view_pages, list_documents, inspect_goal_effect, propose_plan, need_user, unsupported | `goals.validate_contract`, template pin, invisible characters |
@@ -156,6 +161,8 @@ overrides it).
 **What a request carries:**
 - The request, your answers and decisions.
 - What the copies already carry.
+- (to-do list) The names of the documents on your to-do list and why each waits (`compiler.build_messages` `todo`);
+  their contents are not sent while they wait.
 - File names, or trailing folders where two files share a name (`compiler.file_labels`). Recovery requests carry full
   paths.
 - The full local path of an attached template and of attached pictures and tables.
@@ -180,8 +187,8 @@ On Windows, `config_dir()` = `%APPDATA%\Spec Surgeon`, `data_dir()` = `%LOCALAPP
 | Location | Holds | Your words or document text? | Kept |
 | --- | --- | --- | --- |
 | Windows Credential Manager, `Spec Surgeon/ANTHROPIC_API_KEY` | the API key, if you ticked Remember | — | until you delete it (no button in the window) |
-| `config_dir()\settings.json` | folders, colour scheme, whether Fast responses is on, the mode the window opens in (Safe or Default), update bookkeeping | paths only | overwritten |
-| `config_dir()\conversation.json`, `conversations\*.json` | the chat, your decisions and approved wording, results, estimated spending | yes | archived at each start; **never pruned** (F5) |
+| `config_dir()\settings.json` | folders, colour scheme, whether Fast responses is on, the mode the window opens in (Safe or Default; never Obliterate), whether Obliterate mode is shown, update bookkeeping | paths only | overwritten |
+| `config_dir()\conversation.json`, `conversations\*.json` | the chat, your decisions and approved wording, results (and the failed checks of a copy delivered UNVERIFIED in Obliterate mode), the to-do list with why each document waits, estimated spending | yes | archived at each start; **never pruned** (F5) |
 | `config_dir()\attachments\<time>\` | full copies of files you dropped on the window | yes, whole files | **never deleted** (F5) |
 | `config_dir()\repair-memory.sqlite3` | past repair cases: your request, candidate plans, wording and generated code | yes | 2,000 cases, oldest dropped; no clear button (F4) |
 | `config_dir()\render-profiles\` | LibreOffice's own profiles | not inspected | kept |
@@ -351,9 +358,9 @@ Lv1 marks a claim in "Why trust it?"; D marks one in the dossier (section in bra
 | T1 | The window never writes over an original: it delivers copies, each run in its own folder | Lv1, D(summary, terms, runtime A8) | `gui.Session.run` raises on `in_place`; `DocumentTask._primary` calls `s.run(False, …)`; `guard.write_back` reached only through `in_place` | existing: `tests/test_document_task.py` (`source.read_bytes() == before`), `tests/test_execution_delivery_safety.py` |
 | T2 | Each change is predicted from the original before anything is changed | Lv1, D(terms) | CLAUDE.md invariant 1; `Op.plan` | existing: `tests/test_ops.py` and the op suites |
 | T3 | The checker shares no code with the editing | Lv1, D(engine, terms) | `verify/` imports | existing: `tests/test_independence.py` |
-| T4 | A copy that fails its check is never delivered; it goes to `failed\` | Lv1, D(runtime A8, limits) | `batch.py` | existing: `tests/test_batch*.py` |
-| T5 | Claude never edits a file; it writes a plan (or, for a custom method, a program that runs in a sandbox and must pass the same checker) — formatting only, unless it carries out an outcome plan you are shown (re-audit: softened from "formatting-only") | Lv1, D(engine, blast radius) | `conversation.py`, `codegen._trial`, `codegen.run_generated`, `codegen.hard_limits` (`goal_contract`) | facts (`test_the_copy_names_the_exceptions_the_code_has`) + existing: `tests/test_codegen*.py` |
-| T6 | Words placed in a document come from your request, answers, picked choices or attached files, with one exception (F1) | Lv1, D(provenance) | `compiler.untraceable`, `conversation.sources`, `continuous_recovery.approve` | existing: `tests/test_compiler*.py`, `tests/test_document_task.py::test_recovery_plan_and_preview_stay_in_same_task_without_json` |
+| T4 | A copy that fails its check is never delivered; it goes to `failed\` (in Safe and Default modes; Obliterate: T56) | Lv1, D(runtime A8, limits) | `batch.py` | existing: `tests/test_batch*.py` |
+| T5 | Claude never edits a file; it writes a plan (or, for a custom method, a program that runs in a sandbox and must pass the same checker) — formatting only, unless it carries out an outcome plan you are shown (re-audit: softened from "formatting-only"); in Safe and Default modes (Obliterate: T56) | Lv1, D(engine, blast radius) | `conversation.py`, `codegen._trial`, `codegen.run_generated`, `codegen.hard_limits` (`goal_contract`) | facts (`test_the_copy_names_the_exceptions_the_code_has`) + existing: `tests/test_codegen*.py` |
+| T6 | Words placed in a document come from your request, answers, picked choices or attached files, with one exception (F1); in Safe and Default modes (Obliterate: T56) | Lv1, D(provenance) | `compiler.untraceable`, `conversation.sources`, `continuous_recovery.approve` | existing: `tests/test_compiler*.py`, `tests/test_document_task.py::test_recovery_plan_and_preview_stay_in_same_task_without_json` |
 | T7 | A tapped suggested reply is a decision, never approved wording | Lv1, D(provenance, runtime A6) | `DocumentTask._send` (`chip`), `Conversation.reply(approve=False)` | existing: `tests/test_document_task.py` |
 | T8 | Nothing is delivered without your click on Create edited copies or Save ready copies, and the click approves the exact plan and files on screen | Lv1, D(runtime A8, terms) | `DocumentTask._primary` token check; `preview.approval_token`; `Session.run` re-checks | existing: `tests/test_approval_handoff.py` |
 | T9 | Every AI step runs inside work you started; one action can chain up to 6 internal steps | Lv1, D(summary, runtime) | `DocumentTask.perform`, `_settle`, `AUTO_STEPS` | facts (`autoSteps`) |
@@ -372,7 +379,7 @@ Lv1 marks a claim in "Why trust it?"; D marks one in the dossier (section in bra
 | T22 | view_pages renders at most 3 pages per call, on your machine | D(blast radius) | `compiler._Batch.view_pages` (`[:3]`) | facts (source text) |
 | T23 | Read tools take a file's label, never a path; only attached documents, the template and attached pictures/tables can be read | D(blast radius) | `compiler._Batch.pkg`, `inputs.read_input_file` | manual |
 | T24 | Model-written analysis runs in a separate process for at most 120 s and 1,024 MB, with no file, network or process access | D(blast radius) | `investigation.run_analysis`, `analysis_runner.py`, `resources` | facts |
-| T25 | A custom method is formatting only (except under an outcome plan, where it may make that plan's changes and must also pass the outcome check), runs in a separate process for at most 60 s and 2,048 MB, writes only in its own folder, and must pass the checker; up to 50 tries | D(origins, blast radius, runtime B7, B8) | `codegen.SANDBOX_TIMEOUT`, `MAX_ITER`, `process_limits.DEFAULT_MEMORY_MB`, `hard_limits`, `catalog.CUSTOM_TRANSFORM_LIMITS`, `goals.verify_goal` | facts |
+| T25 | A custom method is formatting only (except under an outcome plan, where it may make that plan's changes and must also pass the outcome check), runs in a separate process for at most 60 s and 2,048 MB, writes only in its own folder, and must pass the checker; up to 50 tries (Obliterate lifts "formatting only" and lets a result whose only failures are its checks pass with them listed: T56; the process, its limits and its folder hold) | D(origins, blast radius, runtime B7, B8) | `codegen.SANDBOX_TIMEOUT`, `MAX_ITER`, `process_limits.DEFAULT_MEMORY_MB`, `hard_limits`, `catalog.CUSTOM_TRANSFORM_LIMITS`, `goals.verify_goal` | facts |
 | T26a | Documents and the key go only to `api.anthropic.com`, unless `ANTHROPIC_BASE_URL` (read by the SDK, never set by the window) names another address | Lv1, D(engine, boundary, runtime A5) | `llm.client` (`anthropic.Anthropic()` with no address) | facts (`apiAddressEnv`: the SDK honours it) |
 | T26 | The model has no web search, no web fetch, no code execution on Anthropic's side, and no access to your file system or network | Lv1, D(blast radius) | tool lists; `llm.tool_uses` | manual |
 | T27 | The window's server listens on 127.0.0.1 only and refuses a request without the launch token | D(security) | `web/shell.serve`, `server.require_token` | facts (`loopback`, `tokenHeader`) + existing: `tests/test_web_server.py` |
@@ -393,7 +400,7 @@ Lv1 marks a claim in "Why trust it?"; D marks one in the dossier (section in bra
 | T42 | Help's "Why trust it?" opens the dossier, which stacks on it; one Escape closes one dialog; focus returns | — | `HelpModal.tsx`, `dialogFocus.ts`, `dialogStack.ts` | trust.test, flows |
 | T43 | (re-audit) A decline is said in plain words and changes nothing; a follow-up reply declined straight away is taken back out of the conversation, while a first request or a reply declined after Claude read something stays in the history | D(runtime A5) | `Conversation._take_back` (`_reply_mark`, set only by `reply`), `declined_text` | facts (source text) + existing: `tests/test_conversation.py::test_a_reply_claude_declines_is_taken_back_and_said_in_plain_words`, `::test_a_refusal_after_tool_results_leaves_the_history_as_it_is` |
 | T44 | (re-audit) Two attached documents with one name are named in the chat with both folders | D(runtime A3) | `DocumentTask._say_same_names` | facts (source text) + existing: `tests/test_document_task.py` ("are named") |
-| T45 | (re-audit) A custom method's prediction is its own program's; the app bounds it and V10 holds everything else unchanged | D(limits) | `codegen._trial` (`run_suite(..., sb.plan, ...)`), `hard_limits` | facts (source text) |
+| T45 | (re-audit) A custom method's prediction is its own program's; the app bounds it and V10 holds everything else unchanged (in Obliterate mode V10 still runs and reports: T56) | D(limits) | `codegen._trial` (`run_suite(..., sb.plan, ...)`), `hard_limits` | facts (source text) |
 | T46 | (re-audit) Without a native window the page opens in the default browser on the loopback address, the token in its URL | D(security) | `web/shell.native_backend_problem`, `main` | facts (source text) |
 | T47 | (re-audit) A File Properties value can be built from each file's own section number and title around your words | D(provenance) | `ops/docprops.py` `from_document`, `verify/docprops.py` | existing: `tests/test_properties_from_document.py` |
 | T48 | Fast responses is off until you turn it on in Settings, with a second click that names the price; on, the same model, effort and thinking write up to 2.5 times faster at 2 times the price on every token; the pill then says Fast | Lv1, D(engine, money, runtime A22) | `llm.set_fast_mode`, `fast_for`, `FAST_PRICES`, `FAST_SPEEDUP`, `FAST_PRICE_FACTOR`, `settings.Settings.fast_mode`, `SettingsModal.FastSection`, `DocumentTask._cost` | facts (`fastSpeedup`, `fastPriceFactor`, `test_fast_mode_is_off_until_turned_on_and_priced_from_the_table`), flows (9c) + existing: `tests/test_fast_mode.py`, `tests/test_web_server.py`, `frontend/tests/fastMode.test.ts` |
@@ -402,6 +409,9 @@ Lv1 marks a claim in "Why trust it?"; D marks one in the dossier (section in bra
 | T51 | Word renders over up to 3 new invisible instances side by side, never your open Word | D(engine, runtime B5, A8) | `render/word_worker.run_word_batches`, `word_instances`, `WORD_INSTANCES` | facts (`wordInstances`, `wordInstancesEnv`) + existing: `tests/test_render_word_batch.py` |
 | T52 | Safe mode makes no AI call: a button's plan is built in code from its form, its preview has no visual check and no outcome planning, and its run no recovery; a Default-mode preview approved after switching to Safe mode is created with no recovery either | Lv1, D(summary, no AI, runtime A23–A25) | `recipes.py`, `Session.model_free`, `Session.make_preview`, `DocumentTask._primary` | existing: `tests/test_recipes.py::test_each_button_previews_and_runs_to_verified_copies_without_any_ai_call` (`vision.review_samples` and `llm.client` raise), `tests/test_recipes.py::test_a_default_plan_approved_in_safe_mode_takes_no_ai_step`, `tests/test_body_match.py::test_the_button_matches_a_mixed_batch_and_leaves_out_what_it_cannot_match` |
 | T53 | A Safe-mode button places only words typed in its form or read from a file you attached, and its plan passes the same gate as a conversation's | D(provenance, runtime A23–A25) | `recipes.Built.sources`, `compiler.compose_submission` | existing: `tests/test_recipes.py::test_typed_words_are_the_only_words_a_button_may_place` |
+| T54 | (to-do list) Claude can set documents aside only at your word; it changes nothing in them, and no plan covers them until you work on them or put them back | D(runtime A5, blast radius) | `compiler.SET_ASIDE_TOOL`, `Conversation._take_set_aside`, `compiler.resolve_leave_out` (`set_aside`), `DocumentTask._take_set_aside` | existing: `tests/test_set_aside_bin.py` |
+| T55 | (to-do list) A file the plan refused, or whose copy could not be made with nothing to check it again, goes on your to-do list with the reason once the others run; a refused Create moves nothing there; Put back and Set the rest aside change no file | D(runtime B5, B8, A8, A15) | `DocumentTask._refused_now`, `_bin_failed`, `set_rest_aside`, `put_back` | existing: `tests/test_set_aside_bin.py` |
+| T56 | Obliterate mode is hidden unless Settings → Advanced shows it, is chosen only after its warning (acknowledged each time) and is never what a launch opens in. It lifts three guardrails: the placed-words trace at the gate, a custom method's formatting-only limits (it is offered whenever any method could make the change), and the holding back of a copy that fails a check (delivered to the run's outputs marked UNVERIFIED with its failed checks, no recovery; its preview sample shows "Did not pass" and the plan stands). It keeps: copies only (never in place), the source guard, the sandbox and import whitelist, and the independent checker on every copy; a governed outcome plan is never unguarded | Lv1, D(authority, runtime A28, A8, B7) | `DocumentTask.set_mode`, `Session.unguarded`, `compiler.compose_submission(unguarded=)`, `Conversation(unguarded=)`, `codegen.trial(unguarded=)`, `batch._deliver(deliver_unverified=)`, `chain._deliver`, `Session.make_preview` / `preview.make_chain_preview(continue_failed=)` / `preview._preview_generated`, `web.server.launch_mode`, `settings.MODES` | existing: `tests/test_obliterate.py` (every test), `tests/test_execution_delivery_safety.py::test_failed_outputs_are_quarantined_and_explained` (Default unchanged) |
 
 ## 3. Findings (reported, not fixed in this change)
 

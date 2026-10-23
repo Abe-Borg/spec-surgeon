@@ -306,7 +306,9 @@ test("a view without the to-do fields (an older server) normalizes to an empty l
   assert.deepEqual(v.focus, []);
   assert.equal(v.action.can_hold, false);
   const full = normalizeView({ todo: [{ path: "/a", name: "a.docx" }], focus: ["/a", 3], action: { label: "x", token: "t", kind: "approve", can_hold: true } });
-  assert.deepEqual(full.todo, [{ path: "/a", name: "a.docx" }]);
+  assert.deepEqual(full.todo, [{ path: "/a", name: "a.docx" }]);                // an entry from before it said why
+  const said = normalizeView({ todo: [{ path: "/a", name: "a.docx", why: "asked", reason: "You asked to set it aside for later." }] });
+  assert.deepEqual(said.todo[0], { path: "/a", name: "a.docx", why: "asked", reason: "You asked to set it aside for later." });
   assert.deepEqual(full.focus, ["/a"]);
   assert.equal(full.action.can_hold, true);
 });

@@ -61,8 +61,9 @@ export interface Untouched {
   reason: string;
 }
 
-/** Safe: the buttons, no AI call. Default: the conversation (docs/PLAN-2026-10-23-modes.md). */
-export type Mode = "safe" | "default";
+/** Safe: the buttons, no AI call. Default: the conversation. Obliterate: the conversation without the guardrails that
+ *  protect a document's content, offered only when Settings → Advanced shows it (docs/PLAN-2026-10-23-modes.md). */
+export type Mode = "safe" | "default" | "obliterate";
 
 /** What kind of header/footer template the attached template is (`recipes.template_kind`). */
 export interface TemplateInfo {
@@ -146,12 +147,22 @@ export interface Result {
   source: string;
   output: string;
   name: string;
+  /** Obliterate mode: the checks this copy failed; it was delivered anyway. Empty for a verified copy. */
+  unverified?: string[];
 }
 
-/** A document the user set aside at approval (the red X on its preview): it waits on the to-do list. */
+/** Why a document waits on the to-do list: the red X on its preview, the user asked the assistant, the plan
+ *  refused it, or its copy could not be made. */
+export type TodoWhy = "held" | "asked" | "refused" | "failed";
+
+/** A document waiting on the to-do list, out of every plan until the user works on it or puts it back. */
 export interface TodoItem {
   path: string;
   name: string;
+  /** Absent in a view from before the to-do list said why (read as the red X). */
+  why?: TodoWhy;
+  /** One sentence saying why, as the server words it. */
+  reason?: string;
 }
 
 export type ActionKind = "approve" | "continue" | "save" | "none";
@@ -288,6 +299,8 @@ export interface Settings {
   /** Claude's fast mode, kept in settings.json; off until the user turns it on. Absent from an older server. */
   fast_mode?: boolean;
   fast?: FastOffer;
+  /** Settings → Advanced: the top bar offers Obliterate mode. Absent from an older server. */
+  show_obliterate?: boolean;
 }
 
 /** What Settings says about fast mode, from the server's own price table (llm.PRICES / llm.FAST_PRICES): the model

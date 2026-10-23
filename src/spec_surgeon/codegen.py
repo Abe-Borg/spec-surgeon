@@ -26,6 +26,12 @@ Claude the whole conversation as its brief, read-only tools to look at the sampl
    to the model with the record; configurable ample attempts, stopping earlier when
    equivalent failures repeat without new inspection evidence.
 
+**Obliterate mode** (``unguarded``, docs/PLAN-2026-10-23-modes.md M5; never on a governed goal path): step 3 is
+skipped and the writer's prompt says any change Word stores is allowed; the whitelist (1) and the sandbox (2) are
+unchanged; the suite (4) still runs on every sample and every file, and a trial whose only failures are its checks
+— the verifier read the output, the source did not drift — passes with them listed (``FileTrial.unverified``),
+shown to the user and delivered with the copy.
+
 A passing op is saved (``generated_ops/<hash>.py`` + ``.history.json`` beside the batch's records) — a cache, not
 a registered op: promotion into ``ops/`` is a human decision, with tests. ``run_generated`` applies it to a batch
 the same way (sandbox per file, verifier per file); outputs go to the output folder only — never in place.
@@ -434,25 +440,28 @@ class FileTrial:
     output_md5: str = ""                          # the bytes the suite verified (re-checked before any copy)
     identity: Optional[Any] = None
     goal_binding: Optional[Dict[str, Any]] = None
+    unverified: List[str] = field(default_factory=list)   # Obliterate: the failed checks it passed with
 
     def to_dict(self):
         return {"source": str(self.source), "passed": self.passed, "problems": self.problems,
                 "output": str(self.output) if self.output else None, "output_md5": self.output_md5,
                 "identity": self.identity.to_dict() if self.identity is not None else None,
-                "goal_binding": self.goal_binding}
+                "goal_binding": self.goal_binding, "unverified": list(self.unverified)}
 
 
-def trial(source: str, f: Path, select, params, workdir: Path, *, goal_contract=None, goal_binding=None) -> FileTrial:
+def trial(source: str, f: Path, select, params, workdir: Path, *, goal_contract=None, goal_binding=None,
+          unguarded: bool = False) -> FileTrial:
     with diag.scope(trial_id=diag.new_id()), \
             diag.span("codegen.trial", source=str(f), workdir=str(workdir)) as record:
-        result = _trial(source, f, select, params, workdir, goal_contract, goal_binding)
+        result = _trial(source, f, select, params, workdir, goal_contract, goal_binding,
+                        unguarded and goal_contract is None)
         record.update(passed=result.passed, problem_count=len(result.problems), output_md5=result.output_md5,
                       failed_checks=[c.id for c in result.record.checks if c.status == "FAIL"]
                       if result.record is not None else [])
         return result
 
 
-def _trial(source, f, select, params, workdir, goal_contract, goal_binding):
+def _trial(source, f, select, params, workdir, goal_contract, goal_binding, unguarded=False):
     from .verify import CheckResult, run_suite
     f = Path(f).resolve()
     try:
@@ -486,7 +495,8 @@ def _trial(source, f, select, params, workdir, goal_contract, goal_binding):
                        + (f"\n(traceback, last lines:)\n{where}" if where else "")])
     try:
         with diag.span("codegen.trial.limits") as record:
-            limits = hard_limits(sb.plan, allowed_parts_of(f, source_bytes=original), goal_contract=goal_contract)
+            limits = [] if unguarded else hard_limits(sb.plan, allowed_parts_of(f, source_bytes=original),
+                                                      goal_contract=goal_contract)
             record.update(accepted=not bool(limits), problem_count=len(limits))
     except Exception as e:  # noqa: BLE001 — a plan the engine cannot even read is a failed trial, with the reason
         return failed([f"the generated op's plan is malformed ({type(e).__name__}: {e})"], sb.output)
@@ -517,6 +527,10 @@ def _trial(source, f, select, params, workdir, goal_contract, goal_binding):
     if drift:
         rec.set(CheckResult("V9", "Source identity", "FAIL", f"source changed during generated trial: {drift}"))
     fails = [f"{c.id} FAIL: {c.summary[:600]}" for c in rec.checks if c.status == "FAIL"]
+    if unguarded and fails and not drift:
+        # Obliterate: the checks report, they do not stop the copy
+        return FileTrial(f, True, [], sb.output, rec, hashlib.md5(out_bytes).hexdigest(), identity, goal_binding,
+                         unverified=[f"{c.id} ({c.name})" for c in rec.checks if c.status == "FAIL"])
     return FileTrial(f, rec.passed, fails, sb.output, rec, hashlib.md5(out_bytes).hexdigest(), identity, goal_binding)
 
 
@@ -542,6 +556,7 @@ class GeneratedOp:
     goal_contract: Optional[Dict[str, Any]] = None
     goal_bindings: Dict[str, Any] = field(default_factory=dict)
     approved_words: List[str] = field(default_factory=list)
+    unguarded: bool = False                   # written in Obliterate mode: no plain-formatting limits (module docstring)
 
 
 def _canonical_bindings(bindings):
@@ -626,7 +641,15 @@ def _examples() -> str:
     return "\n\n".join(out)
 
 
-def system_prompt(goal_contract=None) -> str:
+UNGUARDED_LIMITS = (
+    "- OBLITERATE MODE: the user lifted the plain-formatting limits for this method. It may change anything Word "
+    "stores that the request needs — text in any part, tracked or plain, text boxes, shapes, parts and members — "
+    "within the import whitelist and the sandbox. plan() still predicts every change (intended_parts, diffs, members, "
+    "rev_delta, assertions): the independent checks run on every copy and their failures are shown to the user beside "
+    "it, though they no longer stop it. Write only what the request asks for.\n")
+
+
+def system_prompt(goal_contract=None, unguarded: bool = False) -> str:
     from .catalog import CUSTOM_TRANSFORM_LIMITS
     prompt = CODEGEN_SYSTEM.format(allowed=json.dumps({k: sorted(v) for k, v in allowed_imports(goal_contract).items()}),
                                  plain=sorted(ALLOWED_IMPORT), examples=_examples(),
@@ -684,6 +707,10 @@ def system_prompt(goal_contract=None) -> str:
             reference = Path(__file__).resolve().parent / "ops" / "apply_header_footer_template.py"
             prompt += ("\nHeader/footer reference implementation (reference only; imports still obey the whitelist; "
                        "replace external template reads with pkg.inputs):\n" + reference.read_text(encoding="utf-8"))
+    elif unguarded:
+        start, end = prompt.index("- PLAIN formatting only:"), prompt.index("- If the request cannot")
+        prompt = prompt[:start] + UNGUARDED_LIMITS + prompt[end:]
+        prompt = prompt.replace('name, mode = "formatting", description', 'name, mode, description')
     return prompt
 
 
@@ -692,7 +719,8 @@ def generate_op(request: str, proposal: str, samples: Sequence[Path], out_dir: P
                 max_calls: int = MAX_CALLS, max_output_tokens: int = DEFAULT_MAX_OUTPUT_TOKENS,
                 effort: str = DEFAULT_EFFORT, stall_repetitions: int = DEFAULT_STALL_REPETITIONS,
                 max_context_tokens: int = DEFAULT_CONTEXT_TOKENS, analysis_limits=None,
-                goal_contract=None, goal_bindings=None, approved_words: Sequence[str] = ()) -> GeneratedOp:
+                goal_contract=None, goal_bindings=None, approved_words: Sequence[str] = (),
+                unguarded: bool = False) -> GeneratedOp:
     """Look → generate → sandbox + verify on the samples → feed failures back: at most ``max_iter`` submissions and
     ``max_calls`` calls. Every tool call is answered in the next message. Existing
     outer budget scopes still apply to every call; local settings cannot bypass them."""
@@ -700,14 +728,15 @@ def generate_op(request: str, proposal: str, samples: Sequence[Path], out_dir: P
             diag.span("codegen.generate", sample_count=len(samples), max_attempts=max_iter) as record:
         result = _generate_op(request, proposal, samples, out_dir, client, model, max_iter, log, brief,
                               max_calls, max_output_tokens, effort, stall_repetitions, max_context_tokens,
-                              analysis_limits, goal_contract, goal_bindings, approved_words)
+                              analysis_limits, goal_contract, goal_bindings, approved_words,
+                              unguarded and goal_contract is None)
         record.update(passed=result.passed, attempts=len(result.attempts), errors=len(result.errors))
         return result
 
 
 def _generate_op(request, proposal, samples, out_dir, client, model, max_iter, log, brief,
                  max_calls, max_output_tokens, effort, stall_repetitions, max_context_tokens,
-                 analysis_limits, goal_contract, goal_bindings, approved_words):
+                 analysis_limits, goal_contract, goal_bindings, approved_words, unguarded=False):
     from . import compiler, llm
     from .profile import profile
     from .package import DocxPackage
@@ -736,7 +765,7 @@ def _generate_op(request, proposal, samples, out_dir, client, model, max_iter, l
                                                                            supplied_bindings.get(str(Path(sample).resolve())))
     import copy
     goal_contract = copy.deepcopy(goal_contract)
-    system = system_prompt(goal_contract)
+    system = system_prompt(goal_contract, unguarded)
     profiles = [profile(DocxPackage.from_path(f)) for f in samples]
     from .goals import goal_templates
     templates = goal_templates(goal_contract) if goal_contract is not None else []
@@ -762,7 +791,8 @@ def _generate_op(request, proposal, samples, out_dir, client, model, max_iter, l
     retained_bindings = copy.deepcopy(supplied_bindings)
     retained_bindings.update(checked_bindings)
     g = GeneratedOp(model=model, request=request, proposal=proposal or "", brief=brief or "",
-                    goal_contract=goal_contract, goal_bindings=retained_bindings, approved_words=list(approved_words))
+                    goal_contract=goal_contract, goal_bindings=retained_bindings, approved_words=list(approved_words),
+                    unguarded=unguarded)
     batch.context_state = g.context_state
     g.transcript.append({"turn": 0, "role": "user", "content": messages[0]["content"],
                          "samples": [str(f) for f in samples]})
@@ -843,7 +873,8 @@ def _generate_op(request, proposal, samples, out_dir, client, model, max_iter, l
                     if not problems:
                         for i, f in enumerate(samples):
                             t = trial(src, Path(f), select, params, out_dir / "sandbox" / f"attempt{attempt}" / f"{i:02d}",
-                                      goal_contract=goal_contract, goal_binding=checked_bindings.get(str(Path(f).resolve())))
+                                      goal_contract=goal_contract, goal_binding=checked_bindings.get(str(Path(f).resolve())),
+                                      unguarded=unguarded)
                             trials.append(t)
                             problems += [f"{Path(f).name}: {p}" for p in t.problems]
                     record.update(passed=not bool(problems), problem_count=len(problems), trial_count=len(trials))
@@ -1038,7 +1069,8 @@ def _run_generated_files(g, files, out_dir, log, output_names, source_pins, acqu
                     t = FileTrial(f.resolve(), False, [f"source acquisition refused: {error}"], identity=identity)
                 else:
                     t = trial(g.source, f, g.select, g.params, Path(tmp) / f"{i:04d}",
-                              goal_contract=g.goal_contract, goal_binding=g.goal_bindings.get(key))
+                              goal_contract=g.goal_contract, goal_binding=g.goal_bindings.get(key),
+                              unguarded=getattr(g, "unguarded", False))
                 if t.goal_binding is not None:
                     g.goal_bindings[key] = t.goal_binding
                 name = names[str(f)]

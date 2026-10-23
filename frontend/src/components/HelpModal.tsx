@@ -10,6 +10,7 @@ import type { About, Update } from "../types";
 import { getAbout } from "../lib/api";
 import { useDialogFocus } from "../lib/dialogFocus";
 import { HELP_TITLES, HELP_TOPICS, modelLabel, releaseNotesBody, updateStatus, type HelpTopic } from "../lib/help";
+import { OBLITERATE_COSTS, OBLITERATE_GRANTS, OBLITERATE_KEPT } from "../lib/modes";
 import { primaryBtn, quietBtn } from "./ModalShell";
 import Tip from "./Tip";
 import { Guide, Lead, Points, Recipe, Steps, Tag } from "./helpParts";
@@ -52,11 +53,11 @@ function HowToUse({ stepsPerPause }: { stepsPerPause: number }) {
   return (
     <div className="space-y-4">
       <Lead>
-        Spec Surgeon edits your Word specifications in batches. It has two modes; the switch is in the top bar, beside
-        these help topics. In both, you look at the before-and-after pages and press one button for edited copies, and
-        every copy is checked before you get it.
+        Spec Surgeon edits your Word specifications in batches. It has two everyday modes and a third that is hidden;
+        the switch is in the top bar, beside these help topics. In every mode you look at the before-and-after pages
+        and press one button for edited copies, and every copy is checked.
       </Lead>
-      <Guide title="Two modes" tagline="Choose by what you need to change.">
+      <Guide title="Three modes" tagline="Choose by what you need to change.">
         <Points
           items={[
             {
@@ -66,6 +67,16 @@ function HowToUse({ stepsPerPause }: { stepsPerPause: number }) {
             {
               t: "Default — a conversation",
               d: "What you control: any change you can describe in your own words, from one word to whole tables, sections and pictures, on documents built in different ways. What it costs: an Anthropic API key and the AI’s spending, shown as it accrues in the top bar; and the AI can misread a request, so you read what it plans and look at the pages before you approve. The same checks guard every copy.",
+            },
+            {
+              t: "Obliterate — the conversation without guardrails (hidden)",
+              d: (
+                <>
+                  Shown only when Settings → Advanced → <Tag>Show Obliterate mode</Tag> is on, and chosen only after its
+                  warning, every time; the app never opens in it. What you control: {OBLITERATE_GRANTS.join(" ")} What
+                  it costs: {OBLITERATE_COSTS.join(" ")} What still holds: {OBLITERATE_KEPT.join(" ")}
+                </>
+              ),
             },
           ]}
         />
@@ -208,7 +219,7 @@ function HowToUse({ stepsPerPause }: { stepsPerPause: number }) {
         />
       </Guide>
       <p className="text-xs text-ink-faint">
-        Every AI step runs inside work you started in Default mode: a message, a choice, or the button. Safe mode makes
+        Every AI step runs inside work you started in Default or Obliterate mode: a message, a choice, or the button. Safe mode makes
         no AI call at all, and checking a file when it arrives makes none either. The app’s only request on its own is a once-a-day check for a new version, which carries
         nothing about your documents.
       </p>
@@ -307,9 +318,11 @@ function Workflows({ stepsPerPause }: { stepsPerPause: number }) {
         steps={[
           "When it arrives: a refused file is greyed out with the reason and the fix.",
           "When you ask: a document you leave out of a request (“leave out 20”) is not planned or changed, and is listed under Left untouched; the next request covers it again.",
-          "At plan time: a file whose result cannot be predicted is listed under Left untouched before anything runs, and the preview of the others stands; the assistant says why in its next reply.",
-          "At delivery: a copy that fails a check is never delivered. Spec Surgeon looks at it again on its own and comes back with a question or a new plan, never a method for you to choose.",
-          "While that question is open, Save N ready copies keeps the copies that already passed.",
+          "For later: a document you set aside (“set 20 aside for later”) goes on your to-do list at once, with your reason, and stays out of every request until you work on it or put it back.",
+          "At plan time: a file whose result cannot be predicted is listed under Left untouched before anything runs, and the preview of the others stands; the assistant says why in its next reply. When you create the others’ copies, it goes on your to-do list with that reason.",
+          "At delivery: a copy that fails a check is never delivered. Spec Surgeon looks at it again on its own and comes back with a question or a new plan, never a method for you to choose. A failed copy nothing will check again goes on your to-do list.",
+          "While that question is open, Save N ready copies keeps the copies that already passed; then Set the rest aside for later puts the others on your to-do list and ends the request.",
+          "Your to-do list says why each document is there. Work on the documents I set aside plans them on their own; Put back returns one to the others as it is. Nothing on the list is changed.",
         ]}
       />
       <Recipe
@@ -378,8 +391,8 @@ function HowItWorks() {
             d: "Settings → Appearance offers Warm Clay, Blueprint, Graphite & Teal, Carbon & Hi-Vis and Linen. The window changes at once and opens in your choice from then on.",
           },
           {
-            t: "Two modes, one engine",
-            d: "A Safe-mode button builds its plan in code from your form, with no AI call; in Default mode Claude writes the plan from your words. Either plan is previewed, approved and checked by the same engine, and there is nothing to run outside this window.",
+            t: "Three modes, one engine",
+            d: "A Safe-mode button builds its plan in code from your form, with no AI call; in Default mode Claude writes the plan from your words. Either plan is previewed, approved and checked by the same engine, and there is nothing to run outside this window. Obliterate mode, hidden unless Settings → Advanced shows it, uses the same engine and the same checks, but a failed check no longer holds a copy back.",
           },
         ]}
       />

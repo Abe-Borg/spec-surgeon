@@ -346,6 +346,9 @@ try {
   const todoCard = page.locator("[aria-label='Your to-do list']");
   check("the set-aside document is on the to-do card", (await todoCard.getByText("21 05 00 Common Work Results for Fire Suppression.docx", { exact: true }).count()) === 1);
   check("…and under the copies", (await page.locator("section[aria-label='Set aside for more work']").getByText("21 05 00", { exact: false }).count()) === 1);
+  check("the to-do card says why it waits", (await todoCard.getByText("You marked its preview as needing more work.", { exact: true }).count()) === 1);
+  check("…and so does the card under the copies", (await page.locator("section[aria-label='Set aside for more work']").getByText("You marked its preview as needing more work.", { exact: true }).count()) === 1);
+  check("each waiting document can be put back", await page.getByRole("button", { name: /Put back 21 05 00/ }).isVisible());
   check("the copy that looked right is listed", (await page.locator("section[aria-label='Your edited copies']").getByText("21 13 13", { exact: false }).count()) === 1);
   check("the set-aside document got no copy", (await page.locator("section[aria-label='Your edited copies']").getByText("21 05 00", { exact: false }).count()) === 0);
   if ((await trayToggle.getAttribute("aria-expanded")) === "false") await trayToggle.click();
@@ -356,7 +359,17 @@ try {
   check("the pass over the set-aside document begins with Continue", await page.getByRole("button", { name: "Continue" }).first().isVisible());
   check("the to-do card is gone during the pass", (await page.getByRole("button", { name: "Work on it now" }).count()) === 0);
 
-  // 16. Safe mode: the switch, the buttons in place of the message box, a button's form → preview → copies, and the
+  // 16. Put back takes a document off the to-do list without a pass; it is in scope again.
+  await scenario("todo");
+  await page.reload();
+  const putBack = page.getByRole("button", { name: /Put back / });
+  await putBack.waitFor({ timeout: 20000 });
+  await putBack.click();
+  await page.getByText(/is off your to-do list and back among the documents/).waitFor({ timeout: 20000 });
+  check("Put back empties the to-do list", (await page.locator("section[aria-label='Set aside for more work']").count()) === 0);
+  check("…and the chat's to-do card with it", (await page.getByRole("button", { name: "Work on it now" }).count()) === 0);
+
+  // 17. Safe mode: the switch, the buttons in place of the message box, a button's form → preview → copies, and the
   // hand-off of what it left untouched to Default mode.
   await scenario("attached");
   await page.reload();
@@ -389,6 +402,56 @@ try {
   await page.getByLabel("Describe a change or answer a question").waitFor({ timeout: 5000 });
   check("the hand-off switches to Default mode", (await modes.getByRole("button", { name: "Default" }).getAttribute("aria-pressed")) === "true");
   check("…with the document on the to-do list", await page.getByRole("button", { name: "Work on it now" }).isVisible());
+
+  // 17. Obliterate mode: hidden until Settings → Advanced shows it (a second click), its warning every time it is
+  // chosen (the box ticked before the button works), the top bar and the message box say so, Back to Default leaves
+  // it, and a copy delivered with a failed check carries the UNVERIFIED mark.
+  check("Obliterate is hidden at first", (await modes.getByRole("button", { name: "Obliterate" }).count()) === 0);
+  await page.getByRole("button", { name: "Settings" }).click();
+  const showSwitch = page.getByRole("switch", { name: "Show Obliterate mode" });
+  check("Settings → Advanced has the switch, off", (await showSwitch.getAttribute("aria-checked")) === "false");
+  await showSwitch.click();
+  const showIt = page.getByRole("button", { name: "Show it", exact: true });
+  check("showing it asks first", (await showIt.isVisible()) && (await showSwitch.getAttribute("aria-checked")) === "false");
+  await showIt.click();
+  await page.waitForFunction(() => document.querySelector("[role=switch][aria-label='Show Obliterate mode']")?.getAttribute("aria-checked") === "true");
+  await page.keyboard.press("Escape");
+  const obliterate = modes.getByRole("button", { name: "Obliterate" });
+  await obliterate.waitFor({ timeout: 5000 });
+  check("the top bar offers it once shown", await obliterate.isVisible());
+  await obliterate.click();
+  const warning = page.getByRole("dialog").filter({ hasText: "What it grants" });
+  await warning.waitFor({ timeout: 5000 });
+  const turnOn = warning.getByRole("button", { name: "Turn on Obliterate" });
+  check("its warning names what it grants, costs and keeps",
+    (await warning.getByText("What it costs").isVisible()) && (await warning.getByText("What still holds").isVisible()));
+  check("…and the button waits for the box", await turnOn.isDisabled());
+  await warning.getByRole("button", { name: "Stay in this mode" }).click();
+  check("Stay keeps the mode", (await modes.getByRole("button", { name: "Default" }).getAttribute("aria-pressed")) === "true");
+  await obliterate.click();
+  await warning.waitFor({ timeout: 5000 });
+  check("the warning shows again, unticked", (await turnOn.isDisabled()) && !(await warning.getByRole("checkbox").isChecked()));
+  await warning.getByRole("checkbox").check();
+  await turnOn.click();
+  const strip = page.getByRole("note", { name: "Obliterate mode" });
+  await strip.waitFor({ timeout: 5000 });
+  check("Obliterate is on: the switch and the message box say so",
+    (await obliterate.getAttribute("aria-pressed")) === "true" && (await page.getByText(/^Obliterate mode is on\./).isVisible()));
+  await strip.getByRole("button", { name: "Back to Default" }).click();
+  await page.getByText(/^Obliterate mode is off/).waitFor({ timeout: 5000 });
+  check("Back to Default leaves it", (await modes.getByRole("button", { name: "Default" }).getAttribute("aria-pressed")) === "true");
+  await scenario("obliterate-done");
+  await page.reload();
+  await page.getByText("Your edited copies").waitFor({ timeout: 5000 });
+  check("a copy delivered with a failed check is marked UNVERIFIED",
+    (await page.getByText("UNVERIFIED", { exact: true }).count()) === 1 &&
+      (await page.getByText("UNVERIFIED — V2 (Text preservation) failed. Check it in Word before you use it.").isVisible()));
+  await page.getByRole("button", { name: "Settings" }).click();
+  await showSwitch.click();
+  await page.waitForFunction(() => document.querySelector("[role=switch][aria-label='Show Obliterate mode']")?.getAttribute("aria-checked") === "false");
+  await page.keyboard.press("Escape");
+  await page.getByLabel("Describe a change or answer a question").waitFor({ timeout: 5000 });
+  check("hiding it again leaves the mode", (await modes.getByRole("button", { name: "Obliterate" }).count()) === 0);
 
   check("no page errors", errors.length === 0, errors.join(" | ").slice(0, 300));
   await browser.close();

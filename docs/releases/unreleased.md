@@ -39,3 +39,16 @@ Changes since v1.10.0.
 - Fixed (review of the button): its font step reached headers, footers, tables and every style; it now keeps to the
   body outside tables, and the outline takes the template's own fonts and sizes. A document whose own style shares an
   id with a template style is refused when a header, footer, note or table cell uses it, not only body text.
+
+## Obliterate mode (hidden)
+
+- **A third mode, off the switch until you show it.** Settings → **Advanced** → *Show Obliterate mode* (a second
+  click) adds **Obliterate** to the top bar. Choosing it shows a warning every time — what it grants, what it costs,
+  what still holds — and turns on only after you tick *I understand*. The app never opens in it: a window closed in
+  Obliterate opens in Default.
+- **What it lifts.** Claude may write wording itself (it is in the plan you approve); a custom method may change
+  anything Word stores, not only formatting; and a copy that fails a check is delivered anyway, marked
+  **UNVERIFIED** with the checks it failed, instead of being held back. No automatic recovery runs in this mode.
+- **What it keeps.** Copies only — your originals are never written; a source that changed is never delivered over;
+  the custom method's sandbox and limits; and the independent checks on every copy, their results kept beside it.
+- Entering or leaving it voids the plan on screen; Continue plans the request again under the new rules.

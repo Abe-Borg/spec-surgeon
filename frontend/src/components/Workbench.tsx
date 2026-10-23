@@ -2,6 +2,7 @@ import { memo, useEffect, useRef } from "react";
 import type { Attachment, View } from "../types";
 import type { Mark, Reviews } from "../lib/review";
 import { planHasContent, runFolder } from "../lib/workbench";
+import { unverifiedLine } from "../lib/modes";
 import DocumentsTray from "./DocumentsTray";
 import Markdown from "./Markdown";
 import PaperCard from "./PaperCard";
@@ -22,6 +23,8 @@ interface Props {
   onRemove: (attachment: Attachment) => void;
   onOpen: (path: string) => void;
   onStartOver: () => void;
+  /** Takes a document off the to-do list, back among the documents the next request works on. */
+  onPutBack: (path: string) => void;
   onZoom: (src: string, title: string) => void;
   /** Safe mode's "Try these in Default mode" for what the last button left untouched. */
   onHandOff: (paths: string[]) => void;
@@ -87,6 +90,7 @@ function Workbench({
   onRemove,
   onOpen,
   onStartOver,
+  onPutBack,
   onZoom,
   onHandOff,
 }: Props) {
@@ -240,7 +244,11 @@ function Workbench({
           <div ref={resultsRef} className="scroll-mt-6">
           <PaperCard
             title="Your edited copies"
-            subtitle="Each copy was checked against the plan, word for word. Click one to open it in Word; your originals stay intact."
+            subtitle={
+              view.results.some((r) => (r.unverified ?? []).length > 0)
+                ? "Each copy was checked against the plan. A copy marked UNVERIFIED failed a check and was delivered anyway (Obliterate mode): check it in Word before you use it. Your originals stay intact."
+                : "Each copy was checked against the plan, word for word. Click one to open it in Word; your originals stay intact."
+            }
             aside={
               folder ? (
                 <Tip tip={`Open the folder with these copies: ${folder}`}>
@@ -272,7 +280,18 @@ function Workbench({
                       <path d="M14 3v5h5" />
                     </svg>
                     <span className="truncate">{result.name || result.output.split(/[\\/]/).pop()}</span>
+                    {(result.unverified ?? []).length > 0 && (
+                      <span
+                        className="ml-auto flex-none rounded-full border border-err/50 bg-err/10 px-2 py-0.5 text-[10px] font-semibold tracking-wide text-err"
+                        title={unverifiedLine(result.unverified)}
+                      >
+                        UNVERIFIED
+                      </span>
+                    )}
                   </button>
+                  {(result.unverified ?? []).length > 0 && (
+                    <p className="pb-2 pl-6 text-[11px] leading-snug text-err">{unverifiedLine(result.unverified)}</p>
+                  )}
                 </li>
               ))}
             </ul>
@@ -280,16 +299,34 @@ function Workbench({
           </div>
         )}
 
-        {todo.length > 0 && (view.focus ?? []).length === 0 && (
+        {todo.length > 0 && (
           <PaperCard
             title="Set aside for more work"
-            subtitle="These documents got no copy yet. The conversation offers to work on them; the other copies stay as they are."
+            subtitle={
+              (view.focus ?? []).length > 0
+                ? "These wait for a pass of their own, out of the plan you are working on now. Put one back to have it join the other documents when this pass ends."
+                : "These documents wait here, out of every plan, until you work on them (the conversation offers it) or put one back. Nothing in them is changed."
+            }
             tone="muted"
           >
             <ul className="divide-y divide-paper-edge">
               {todo.map((item) => (
-                <li key={item.path} className="py-2 text-sm text-paper-ink first:pt-0 last:pb-0" title={item.path}>
-                  {item.name}
+                <li key={item.path} className="flex items-start gap-3 py-2 first:pt-0 last:pb-0">
+                  <div className="min-w-0 flex-1" title={item.path}>
+                    <p className="truncate text-sm text-paper-ink">{item.name}</p>
+                    {item.reason && <p className="mt-0.5 text-xs leading-snug text-paper-dim">{item.reason}</p>}
+                  </div>
+                  <Tip tip={busy ? "Finish or stop the current work first" : "Back among the documents your next request works on, as it is"}>
+                    <button
+                      type="button"
+                      onClick={() => onPutBack(item.path)}
+                      disabled={busy}
+                      aria-label={`Put back ${item.name}`}
+                      className="shrink-0 text-xs text-accent underline decoration-accent/40 underline-offset-2 transition-colors hover:decoration-accent disabled:pointer-events-none disabled:opacity-50"
+                    >
+                      Put back
+                    </button>
+                  </Tip>
                 </li>
               ))}
             </ul>

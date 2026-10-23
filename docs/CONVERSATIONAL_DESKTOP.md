@@ -91,6 +91,38 @@ Every change is plain and no word is placed.
 Typing is not possible in Safe mode, and the server refuses a message there; the conversation and its question cards
 belong to Default mode.
 
+## Obliterate mode (hidden)
+
+Most people never see it. Settings → **Advanced** → *Show Obliterate mode* (a second click, **Show it**) adds a third
+choice to the top bar's switch; turning the setting off removes it and leaves the mode. Choosing **Obliterate** opens
+its warning every time — what it grants, what it costs, what still holds — and **Turn on Obliterate** works only once
+the box under it is ticked. The mode is the conversation, as in Default, with a red strip above the box you type in
+(**Back to Default** leaves it) and the switch in the error colour. The window never opens in it: settings.json keeps
+Safe or Default, and a window closed in Obliterate opens in Default.
+
+What it lifts (`Session.unguarded`; CLAUDE.md, "Modes"):
+
+- **Wording.** The gate no longer traces placed words to the user's own (`compose_submission(unguarded=True)` skips
+  `_content_checks`). Claude may write wording itself and is told to put every word it will place in the plan the
+  user approves.
+- **Custom methods.** When no operation fits, the custom method is offered whenever any method could make the change,
+  and it may change anything Word stores: the writer's prompt drops the plain-formatting limits and `codegen` skips
+  `hard_limits`. A trial whose only failures are its checks — the verifier read the copy, the source did not move —
+  passes with them listed.
+- **Holding back.** A copy that fails a check is delivered to the run's `outputs/` instead of `failed/`, its record
+  kept with every failure and V9 saying *delivered UNVERIFIED*; a chain's step hands its copy on and the chain's copy
+  carries everything that failed. The preview already says so: a sample whose copy fails a check shows **Did not
+  pass** and the plan stands (no outcome investigation; a chain's sample goes on through every step, as the run will),
+  and a custom method's sample shows the checks it failed, never a pass. The copies list marks it **UNVERIFIED** with
+  the checks it failed, and the done message counts them. No recovery runs after a run in this mode; a document whose copy could not be made at all
+  goes on the to-do list as in Default.
+
+What holds, in every mode: copies only (the window never writes in place, and an unverified copy is never written
+back); the source guard (a source that moved is never delivered over); the sandbox, its import whitelist and its time
+and memory limits; the independent checker on every copy; built-in operations refusing what they cannot predict; and
+the governed outcome path, which is never unguarded. Entering or leaving the mode voids the plan on screen: what was
+planned under one set of rules is never created under the other (Continue plans the request again).
+
 ## The top bar
 
 The top bar follows Build-a-Spec's. Beside the title, a quiet line says what the conversation works on ("3
@@ -98,7 +130,7 @@ documents · 1 template · 1 picture · building on your copies"; files triage r
 1280 px wide and shortens with an ellipsis before anything else gives way. Then the in-app guide, one dialog with a
 tab strip:
 
-- **How to use** — the two modes, what each lets you control and what it costs, Safe mode in four steps, a Default
+- **How to use** — the modes (Obliterate's entry says it is hidden and how to show it), what each lets you control and what it costs, Safe mode in four steps, a Default
   first pass in eight steps, what a refused file means, and how spending, Stop now and the pause work.
 - **Workflows** — recipes for the usual jobs: a Safe-mode clean-up before issue, fonts across a set, headers and footers from a template, a logo, values
   from a sheet, an issue stamp, a mixed batch, one change after another, a file left untouched, stopped or paused work.
@@ -249,7 +281,8 @@ other document is created and verified as usual, each one still held to the exac
 from; a document that is not part of the displayed plan can never be set aside or run.
 
 Once the other copies are saved, the conversation shows **Set aside for more work** with the documents'
-names and one button, **Work on them now** (the same as typing “Work on the documents I set aside”). The pass
+names, why each one waits, and one button, **Work on them now** (the same as typing “Work on the documents I set
+aside”); the same list sits under the copies, with **Put back** beside each document. The pass
 over them begins: they are the only documents in the plan, tagged **Working on** in the documents section; the
 request they were set aside from stands; the assistant is told that you looked at the preview of that plan and
 set these documents aside, and is shown the plan you saw. Tell it what should be different for them, or
@@ -261,6 +294,26 @@ got and others did not is named per document, never claimed for all. Documents o
 removing one drops it from the list, and **Start over from the originals** clears the list. Setting every
 document aside creates nothing and begins the pass at once. The list and the pass are kept in the saved
 conversation.
+
+The red X is one way onto the list. The others:
+
+- **You ask for it.** "Set 20 aside for later", "park the Michigan one", "I'll come back to 23": the assistant puts
+  those documents on the list at once, with your reason when you give one, and the conversation goes on about the
+  others (a plan it submits afterwards covers only them). "Leave out" is different: it keeps a document out of this
+  one request, and the next request covers it again. Setting aside every document ends the request; setting aside
+  the documents of a pass over the list again ends that pass, and the others come back.
+- **The plan could not be applied to it.** A file listed under **Left untouched** because its result cannot be
+  predicted goes on the list, with that reason, when you create the others' copies. A click that is refused (a
+  file changed since the preview) moves nothing.
+- **Its copy could not be made.** A file whose copy failed and that nothing will check again goes on the list. While
+  files are being checked again (below), **Set the rest aside for later** is offered as a reply once the ready copies
+  are saved: what was not fixed, and the documents of layouts still waiting their turn, go on the list and the
+  request ends; the copies already saved are the working set.
+
+Each entry says why it is there, in the window and to the assistant: every new request tells it which documents
+wait on the list and why (it cannot read, plan or bring them back), and a pass over them tells it why each one
+waited. **Put back** takes a document off the list without a pass: it is among the documents the next request
+works on, as it is (during a pass it joins them when the pass ends). Nothing on the list is ever changed.
 
 Claude's visual check of the rendered pages is advisory. Its findings appear under **About these checks** with
 their file and page. A finding it marks as blocking changes that card's title to **Please check** and the
@@ -312,16 +365,18 @@ A file can be left out at four points, each time with one sentence that names th
 - At attach time, when triage refuses it (above).
 - When you ask: "leave out 20", "not 23 for now". The plan, its preview and its copies cover the other documents;
   the ones you named are not planned or changed, are listed under **Left untouched** ("You asked to leave it out of
-  this request"), and come back with the next request unless you leave them out again.
+  this request"), and come back with the next request unless you leave them out again. "Set 20 aside for later"
+  puts it on the to-do list instead (above), out of every request until you come back to it.
 - At plan time, when the operation cannot predict its result on that file, or when no layout covers its
   structure; in a plan done in steps, also a sample whose later step cannot predict its result (the later steps are
   planned on the samples alone). These appear under **Left untouched** before anything runs; no paid investigation
   precedes them. The preview of the other documents stands, and the assistant names each one with its reason in its
-  next reply; **Create edited copies** leaves them as they are (they are not run, so no recovery follows for them).
-  Only a plan that covers no file at all, a sample that fails its check, or a preview whose every sample is refused
+  next reply; **Create edited copies** leaves them as they are (they are not run, so no recovery follows for them)
+  and puts them on the to-do list with their reason. Only a plan that covers no file at all, a sample that fails its
+  check, or a preview whose every sample is refused
   sends the request on to outcome planning.
 - At delivery, when a file fails a verification check. It is never delivered. Spec Surgeon then checks it
-  again internally (below).
+  again internally (below); a file nothing can check again goes on the to-do list.
 
 ## Recovery and custom methods run internally
 
@@ -329,7 +384,9 @@ After **Create edited copies**, a file that did not pass goes straight into reco
 still need work…"). Recovery works on copies, within the same conversation, and ends where everything else ends:
 a question in the chat (for example "Which passage(s) in Spec.docx should change? Reply with the number, or
 numbers separated by commas.") or the same button. While a question is open, the copies that are already
-verified can be saved. The independent checks and the source-change guards are the same as for a first run.
+verified can be saved; once they are, **Set the rest aside for later** puts the documents recovery has not fixed on
+the to-do list and ends the request. The independent checks and the source-change guards are the same as for a
+first run.
 
 With a plan per layout, recovery takes one layout at a time, each against that layout's own specification: the
 first layout whose documents did not pass is investigated at once, the others wait and are checked by themselves
@@ -462,7 +519,7 @@ A PASS means the engine found exactly the predicted change and nothing else, not
 wanted. Automated page comparison and Claude's visual check are not human acceptance in Word; look at the
 pages, and open the copies.
 
-The window has two modes (Safe and Default, above), and there is no command line: it was removed on 2026-10-21 together with the
+The window has two modes (Safe and Default, above) and a hidden third (Obliterate), and there is no command line: it was removed on 2026-10-21 together with the
 features only it offered (the recipe library, office profiles, specification QA audits, project evidence, built-in
 workflows, campaign and recovery workspaces, evaluations).
 

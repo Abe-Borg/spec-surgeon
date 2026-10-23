@@ -39,11 +39,25 @@ files go to clients, so the one failure that matters is content lost or invented
 Out of reach by decision (refused with a code, "change this one in Word"): shapes, SmartArt, charts, equations,
 embedded objects, data-bound content controls and the theme.
 
+## Modes
+
+Every invariant binds **Safe** and **Default**. **Obliterate** (`docs/PLAN-2026-10-23-modes.md` M5; `Session.unguarded`)
+is the owner's decision to lift, for that mode only, the guardrails that protect a document's content: the placed-words
+trace (invariant 6: `compose_submission(unguarded=)` skips `_content_checks`, Claude may write wording and must show it
+in the plan), a custom method's formatting-only limits (`codegen` skips `hard_limits`; `UNGUARDED_LIMITS`), and the
+holding back of a copy that fails a check (`deliver_unverified`: delivered to `outputs/` marked UNVERIFIED, its
+failed checks in `FileResult.unverified`/`ChainFile.unverified`, no recovery). The verifier still runs on every copy
+and reports; invariants 1, 2, 3, 4, 5 (built-in ops still refuse what they cannot predict; Obliterate's way past a
+refusal is a custom method) and 7 bind every mode, and so do copies only, the source guard, the sandbox and its
+whitelist, and the governed outcome path (never unguarded). Obliterate is hidden unless `Settings.show_obliterate`,
+needs the warning acknowledged each time (`DocumentTask.set_mode(acknowledged=True)`), voids the plan when entered or
+left, and is never what a launch opens in (`settings.MODES`, `web.server.launch_mode`). Pinned by `tests/test_obliterate.py`.
+
 ## Repository layout
 
-The desktop is one window with two modes (`docs/PLAN-2026-10-23-modes.md`): **Safe** — buttons whose plans
-`recipes.py` builds in code from the user's form, no model call anywhere (`Session.model_free`: no visual check, no
-recovery) — and **Default**, the conversation below. Both pass the same gate (`compiler.compose_submission`), preview,
+The desktop is one window with two modes (`docs/PLAN-2026-10-23-modes.md`) and a hidden third (Modes, above): **Safe**
+— buttons whose plans `recipes.py` builds in code from the user's form, no model call anywhere (`Session.model_free`:
+no visual check, no recovery) — and **Default**, the conversation below. Both pass the same gate (`compiler.compose_submission`), preview,
 approval and verification. The page in `web/static/` (built from `frontend/`), served by `web/server.py` over one
 `document_task.DocumentTask` (contract `docs/WEB_API.md`) and shown by `web/shell.py`. The user attaches Word files, an
 optional template and pictures or tables for the edit to use; `triage.py` checks each on arrival without a model call.
@@ -57,7 +71,11 @@ request at a time); `applied` keeps the changes each copy carries, so the histor
 Documents the user leaves out of a request (`submit_editspec.leave_out` → `Session.left_out`) are not planned,
 previewed or run (`planned_files`) and wait under Left untouched; a file the plan refuses does too, as does a sample
 a chain's later step refuses (`preview.refusals`), and the preview of the others stands (outcome planning starts
-only when no file plans, a sample fails its check, or every sample is refused).
+only when no file plans, a sample fails its check, or every sample is refused). The to-do list
+(`DocumentTask.todo`, each entry with `why` and `reason`) is where documents wait for later: the red X, the chat's
+`set_aside` tool at the user's word (`Conversation.set_aside` → `DocumentTask._take_set_aside`), a file the plan
+refused once the others run, a run failure no recovery takes, and recovery's leftovers at `SET_ASIDE_REST`;
+`put_back` takes one off without a pass.
 Delivered copies are the working set the next request builds on. There is no command line (removed 2026-10-21 with the
 library, workspaces, workflows, office profiles, spec QA audits, project evidence, evaluations and the named v0.1.0
 jobs). Details: `docs/CONVERSATIONAL_DESKTOP.md`.

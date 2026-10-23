@@ -77,6 +77,7 @@ class FileResult:
     trace_path: Optional[Path] = None        # logs/<name>.trace.log: this file's path through the pipeline
     trace: List[str] = field(default_factory=list)       # its lines (also in run.log and DIAGNOSTICS.md)
     render_messages: List[str] = field(default_factory=list)   # what the renderer said about this file
+    unverified: List[str] = field(default_factory=list)   # the failed checks of a copy delivered anyway (Obliterate)
 
     @property
     def record_stem(self) -> str:
@@ -765,10 +766,13 @@ def run_batch(inputs: Sequence[str], job_name: str, params: Dict[str, Any], out_
               progress=None, spec: Optional[Dict[str, Any]] = None, *, goal_contract=None, goal_bindings=None,
               approved_inputs=None, _input_snapshots=None, _public_spec=None,
               _source_identities=None, _source_refusals=None, enforce_goals: bool = False,
-              worker_mode: Optional[str] = None) -> BatchResult:
+              worker_mode: Optional[str] = None, deliver_unverified: bool = False) -> BatchResult:
     """Run a batch with correlation, including validation before creating a results folder.
 
     Outcome data is advisory unless an explicit profile or governed caller opts into ``enforce_goals``.
+    ``deliver_unverified`` (Obliterate mode only, docs/PLAN-2026-10-23-modes.md M5): a copy that fails a check is
+    delivered to ``outputs/`` with its record and its failed checks (``FileResult.unverified``) instead of being moved
+    out — copies only; the source guard still holds.
     """
     with diag.scope(run_id=diag.context().get("run_id") or diag.new_id(), batch_id=diag.new_id()), \
             diag.span("batch", out_dir=str(out_dir), job=job_name, workers=workers,
@@ -778,7 +782,8 @@ def run_batch(inputs: Sequence[str], job_name: str, params: Dict[str, Any], out_
                             copy.deepcopy(goal_contract), copy.deepcopy(goal_bindings or {}),
                             copy.deepcopy(_input_snapshots or []), copy.deepcopy(_public_spec),
                             copy.deepcopy(approved_inputs), copy.deepcopy(_source_identities or {}),
-                            copy.deepcopy(_source_refusals or {}), enforce_goals, worker_mode)
+                            copy.deepcopy(_source_refusals or {}), enforce_goals, worker_mode,
+                            deliver_unverified and not in_place)
         outcome.update(counts=result.counts(), timings=result.timings)
         return result
 
@@ -788,7 +793,7 @@ def _run_batch(inputs: Sequence[str], job_name: str, params: Dict[str, Any], out
                progress, spec: Optional[Dict[str, Any]], goal_contract=None, goal_bindings=None,
                inherited_inputs=(), public_spec=None, approved_inputs=None,
                inherited_sources=None, inherited_refusals=None, enforce_goals=False,
-               worker_mode=None) -> BatchResult:
+               worker_mode=None, deliver_unverified=False) -> BatchResult:
     """Run an EditSpec (``spec``) over the inputs; ``job_name`` is only a label in the records.
 
     Everything the run does goes to ``<out>/logs/run.log`` (``progress`` gets the same progress lines), each file's
@@ -862,7 +867,7 @@ def _run_batch(inputs: Sequence[str], job_name: str, params: Dict[str, Any], out
             with diag.span("batch.delivery"):
                 if enforce_goals and goal_contract is not None:
                     _verify_delivery_goals(batch, goal_contract, goal_bindings or {}, log)
-                _deliver(batch, in_place, log)
+                _deliver(batch, in_place, log, deliver_unverified=deliver_unverified)
             stage = "records"
             with diag.span("batch.records"):
                 _write_records(batch, job_name, params, reported_spec, log)
@@ -1171,8 +1176,10 @@ def _render_and_compare(batch: BatchResult, renderer: str, do_render: bool, work
     batch.timings["render+geometry"] = time.perf_counter() - t_r
 
 
-def _deliver(batch: BatchResult, in_place: bool, log: "diag.RunLog") -> None:
-    """5. deliver (guarded, V9)."""
+def _deliver(batch: BatchResult, in_place: bool, log: "diag.RunLog", deliver_unverified: bool = False) -> None:
+    """5. deliver (guarded, V9). ``deliver_unverified`` (copies only): a copy whose checks failed stays in
+    ``outputs/`` and is delivered, its failed checks in ``FileResult.unverified`` and V9's summary — when the source is
+    unchanged and no auxiliary input moved, as for any delivery."""
     out_dir = batch.out_dir
     from .input_snapshots import changed_inputs
     t_d = time.perf_counter()
@@ -1184,7 +1191,8 @@ def _deliver(batch: BatchResult, in_place: bool, log: "diag.RunLog") -> None:
         t_file = time.perf_counter()
         diag.event("delivery.started", source=str(fr.source), output=str(fr.output),
                    in_place=in_place, noop=fr.noop, verified=fr.record.passed)
-        if not fr.record.passed:
+        anyway = deliver_unverified and not in_place and not fr.record.passed
+        if not fr.record.passed and not anyway:
             moved = quarantine_failed_output(fr, out_dir)
             fr.record.set(CheckResult("V9", "Overwrite guard", "NA",
                                       f"not delivered: verification failed; the output was moved out of outputs/ to "
@@ -1219,7 +1227,14 @@ def _deliver(batch: BatchResult, in_place: bool, log: "diag.RunLog") -> None:
             except (guard.GuardError, OSError) as e:
                 d = d or str(e)
             if not d:
-                if fr.noop:
+                if anyway:
+                    fr.delivered_to = str(fr.output)
+                    fr.unverified = [f"{c.id} ({c.name})" for c in fr.record.checks if c.status == "FAIL"]
+                    fr.record.set(CheckResult("V9", "Overwrite guard", "NA",
+                                              f"delivered UNVERIFIED at the user's word (Obliterate mode): "
+                                              f"{', '.join(fr.unverified)} failed; source unchanged since acquisition; "
+                                              f"output written to {fr.output}"))
+                elif fr.noop:
                     fr.record.set(CheckResult("V9", "Overwrite guard", "NA",
                                               "no-op: verified output identical to unchanged source; nothing written back"))
                 else:
@@ -1249,6 +1264,8 @@ def _result_line(fr: FileResult) -> str:
                 else f"PASS — delivered to {fr.delivered_to}" if fr.delivered_to else "PASS")
     if fr.status == "FAIL":
         bad = [c.id for c in fr.record.checks if c.status == "FAIL"]
+        if fr.unverified and fr.delivered_to:
+            return f"FAIL — delivered UNVERIFIED to {fr.delivered_to} ({', '.join(bad)} failed; Obliterate mode)"
         return (f"FAIL — not delivered ({', '.join(bad)} failed); the edited copy is in "
                 f"{Path(fr.output).parent.name}/{Path(fr.output).name}" if fr.output else f"FAIL ({', '.join(bad)})")
     e = fr.exception or {}
