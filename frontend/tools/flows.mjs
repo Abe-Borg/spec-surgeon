@@ -8,7 +8,8 @@
  * update check and diagnostic bundle, the page's own report of its load,
  * the update banner and the pill it leaves, start over, the button's home
  * in the conversation, the folding documents tray, and the red X on a
- * preview → the to-do list → the pass over it.
+ * preview → the to-do list → the pass over it; Safe mode's buttons, a button's form → preview → copies, and the
+ * hand-off of what it left untouched to Default mode.
  *
  *   npm run build
  *   node tools/flows.mjs
@@ -372,6 +373,40 @@ try {
   await page.waitForTimeout(300);
   check("the pass over the set-aside document begins with Continue", await page.getByRole("button", { name: "Continue" }).first().isVisible());
   check("the to-do card is gone during the pass", (await page.getByRole("button", { name: "Work on it now" }).count()) === 0);
+
+  // 16. Safe mode: the switch, the buttons in place of the message box, a button's form → preview → copies, and the
+  // hand-off of what it left untouched to Default mode.
+  await scenario("attached");
+  await page.reload();
+  const modes = page.getByRole("group", { name: "Mode" });
+  await modes.getByRole("button", { name: "Safe" }).click();
+  await page.getByRole("region", { name: "Safe mode" }).waitFor({ timeout: 5000 });
+  check("Safe mode puts the buttons where the message box was", (await page.getByLabel("Describe a change or answer a question").count()) === 0);
+  check("…and says no AI is used", await page.getByText("No AI in Safe mode").isVisible());
+  await page.getByRole("button", { name: "Match body formatting to template" }).click();
+  check("the body button's form starts from the template's roles",
+    (await page.getByRole("combobox", { name: "PART", exact: true }).inputValue()) === "PRT" &&
+    (await page.getByRole("combobox", { name: "Section title" }).inputValue()) === "TTL");
+  check("…says what it read from the template", await page.getByText("From your template: pages 8.5 × 11 in portrait").isVisible());
+  check("…and can be previewed as it is", await page.getByRole("button", { name: "Preview", exact: true }).isEnabled());
+  await page.getByRole("button", { name: "All buttons" }).click();
+  await page.getByRole("button", { name: "Find and replace" }).click();
+  const previewBtn = page.getByRole("button", { name: "Preview", exact: true });
+  check("an empty form cannot be previewed", await previewBtn.isDisabled());
+  await page.getByLabel("Find, row 1").fill("ACME");
+  await page.getByLabel("Replace with, row 1").fill("Contoso");
+  check("a filled form can", await previewBtn.isEnabled());
+  await previewBtn.click();
+  await page.getByRole("button", { name: "Create edited copies" }).waitFor({ timeout: 20000 });
+  check("a button previews with no conversation", (await page.locator("section[aria-label='Left untouched']").count()) === 1);
+  await page.getByRole("button", { name: "Create edited copies" }).click();
+  const handOff = page.getByRole("button", { name: "Try these in Default mode" });
+  await handOff.waitFor({ timeout: 20000 });
+  check("what the button left untouched waits beside the copies", await page.getByText("Your edited copies").isVisible());
+  await handOff.click();
+  await page.getByLabel("Describe a change or answer a question").waitFor({ timeout: 5000 });
+  check("the hand-off switches to Default mode", (await modes.getByRole("button", { name: "Default" }).getAttribute("aria-pressed")) === "true");
+  check("…with the document on the to-do list", await page.getByRole("button", { name: "Work on it now" }).isVisible());
 
   check("no page errors", errors.length === 0, errors.join(" | ").slice(0, 300));
   await browser.close();

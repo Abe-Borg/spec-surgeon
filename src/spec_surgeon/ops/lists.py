@@ -136,6 +136,14 @@ Scheme and typed numbers (design §0.3, §2.1)
   part of the definition (a break, ``\\n``, is neither whitespace nor the end). One level matching → its ``TypedNumber``
   (``token`` the number as typed, ``end`` the end of the prefix: position 0 to the end of the whitespace); several →
   ``ambiguous`` (``level`` None, ``levels`` all of them); none → None.
+* **Lenient typed number** (``typed_number(…, lenient=True)``; convert_typed_numbers ``match: "counters"``,
+  docs/PLAN-2026-10-23-modes.md G1): the same definition over each level's ``lenient_pattern_of`` — a literal hyphen,
+  en dash or em dash (``DASHES``) matches any of the three, and a ``%j`` of a decimal or decimalZero level (or of any
+  level, ``legal``) matches ``[0-9]+``: "1.01" is a typed number of a "%1.%2" decimal level, "PART 1 –" of "PART %1 -".
+  **Typed values** (``typed_values``): the typed number read back through the level's text — each ``%j``'s characters
+  as level j−1's counter value (digits as a number; letters as Word repeats them, "AA" = 27; a roman numeral only when
+  written as Word writes it); a ``%j`` of a ``none`` level shows nothing and gives no value; None when a part does not
+  read as a value.
 * **Visible line** (``visible_line``, design §2.4): the rendered number, its suffix (tab → ``\\t``, space → `` ``, nothing
   → ""), then the run text — or the run text alone for an unnumbered paragraph; every run of spaces, tabs and NBSPs
   collapsed to one space, leading and trailing spaces stripped.
@@ -177,8 +185,10 @@ API (for the batch-5 ops)
     ``Scheme``: ``num_id``, ``abstract_id``, ``levels`` ([``SchemeLevel``: ``style``, ``num_id``, ``ilvl``, ``level``
     (``LevelDef``), ``pattern``]), ``level_defs`` (every level of the num).
 ``level_pattern(scheme, k) -> str`` / ``pattern_of(level_defs, k) -> (pattern | None, reason | None)``
-``typed_number(run_text, scheme) -> TypedNumber | None``
+``typed_number(run_text, scheme, lenient=False) -> TypedNumber | None``
     ``TypedNumber``: ``level`` (None when ambiguous), ``token``, ``token_start``, ``end``, ``levels``; ``.ambiguous``.
+``lenient_pattern_of(level_defs, k) -> (pattern | None, reason | None)`` /
+``typed_values(token, level_defs, k) -> {level: value} | None``
 ``main_abstract(pars) -> int | None``
 ``visible_line(number_text, run_text, suff=None) -> str``
 ``list_is_clean(defs, num_id, counted_pars) -> str | None``
@@ -980,6 +990,86 @@ def pattern_of(level_defs: Mapping[int, LevelDef], k: int) -> Tuple[Optional[str
     return "".join(parts), None
 
 
+DASHES = "-\u2013\u2014"            # hyphen-minus, en dash, em dash: one another in a lenient typed number
+
+
+def _lenient_parts(level_defs: Mapping[int, LevelDef], k: int):
+    """Level ``k``'s text as pattern pieces: ("lit", regex) and ("lvl", j, regex) — or (None, why)."""
+    lv = level_defs.get(k)
+    if lv is None or lv.text is None:
+        return None, f"level {k} is not defined or has no number text"
+    pieces: List[Tuple[Any, ...]] = []
+    text, i = lv.text, 0
+    while i < len(text):
+        if text[i] == "%" and i + 1 < len(text) and text[i + 1] in "123456789":
+            j = int(text[i + 1]) - 1
+            ref = level_defs.get(j)
+            if ref is None or ref.unsupported:
+                return None, f"level {k}'s number text names level {j}, which the list cannot show"
+            if not lv.legal and ref.fmt == "bullet":
+                return None, f"level {k}'s number text names level {j}, a bullet: no typed number stands for it"
+            digits = lv.legal or ref.fmt in ("decimal", "decimalZero")
+            pieces.append(("lvl", j, "[0-9]+" if digits else FORMAT_PATTERNS[ref.fmt]))
+            i += 2
+        else:
+            ch = text[i]
+            pieces.append(("lit", "[" + re.escape(DASHES) + "]" if ch in DASHES else re.escape(ch)))
+            i += 1
+    return pieces, None
+
+
+def lenient_pattern_of(level_defs: Mapping[int, LevelDef], k: int) -> Tuple[Optional[str], Optional[str]]:
+    """(level ``k``'s lenient typed-number pattern, None) or (None, why there is none) — module docstring."""
+    pieces, why = _lenient_parts(level_defs, k)
+    if pieces is None:
+        return None, why
+    return "".join(x[1] if x[0] == "lit" else x[2] for x in pieces), None
+
+
+_ROMAN_VALUES = {"I": 1, "V": 5, "X": 10, "L": 50, "C": 100, "D": 500, "M": 1000}
+
+
+def value_of(fmt: str, s: str) -> Optional[int]:
+    """The counter value a typed piece ``s`` of format ``fmt`` stands for (digits for both decimal formats), else None:
+    letters as Word repeats them ("AA" = 27), a roman numeral only as Word writes it."""
+    if fmt in ("decimal", "decimalZero"):
+        return int(s) if s.isdigit() else None
+    if fmt in ("upperLetter", "lowerLetter"):
+        if not s or len(set(s)) != 1 or not s[0].isalpha():
+            return None
+        n = (len(s) - 1) * 26 + ord(s[0].upper()) - ord("A") + 1
+        return n if format_value(fmt, n) == s else None
+    if fmt in ("upperRoman", "lowerRoman"):
+        vals = [_ROMAN_VALUES.get(c.upper()) for c in s]
+        if not s or None in vals:
+            return None
+        n = sum(-v if i + 1 < len(vals) and v < vals[i + 1] else v for i, v in enumerate(vals))
+        return n if format_value(fmt, n) == s else None
+    return None
+
+
+def typed_values(token: str, level_defs: Mapping[int, LevelDef], k: int) -> Optional[Dict[int, int]]:
+    """The counter values a lenient typed number of level ``k`` shows, by level ({j: value}; a ``none`` level gives
+    none), or None when the token is not one or a part does not read as a value — module docstring."""
+    pieces, _ = _lenient_parts(level_defs, k)
+    if pieces is None:
+        return None
+    m = re.fullmatch("".join(x[1] if x[0] == "lit" else f"({x[2]})" for x in pieces), token)
+    if m is None:
+        return None
+    legal = level_defs[k].legal
+    out: Dict[int, int] = {}
+    for g, (_, j, _pat) in enumerate(x for x in pieces if x[0] == "lvl"):
+        fmt = "decimal" if legal else level_defs[j].fmt
+        if fmt == "none":
+            continue
+        v = value_of(fmt, m.group(g + 1))
+        if v is None or out.get(j, v) != v:
+            return None
+        out[j] = v
+    return out
+
+
 def level_pattern(scheme: Scheme, k: int) -> str:
     return scheme.levels[k].pattern
 
@@ -1051,10 +1141,11 @@ class TypedNumber:
         return len(self.levels) > 1
 
 
-def typed_number(run_text: str, scheme: Scheme) -> Optional[TypedNumber]:
+def typed_number(run_text: str, scheme: Scheme, lenient: bool = False) -> Optional[TypedNumber]:
     hits: List[Tuple[int, Any]] = []
     for sl in scheme.levels:
-        m = re.match("[ \t]*(" + sl.pattern + ")(?:[ \t ]+|\\Z)", run_text)
+        pattern = lenient_pattern_of(scheme.level_defs, sl.ilvl)[0] if lenient else sl.pattern
+        m = re.match("[ \t]*(" + pattern + ")(?:[ \t ]+|\\Z)", run_text)
         if m is not None and m.group(1):
             hits.append((sl.ilvl, m))
     if not hits:

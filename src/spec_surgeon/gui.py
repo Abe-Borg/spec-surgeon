@@ -155,8 +155,12 @@ class Session:
     recovery_checkpoint: Optional[Path] = None  # current durable investigation, including in-flight work
     pending_layout_recovery: List[Path] = field(default_factory=list)   # layout batch folders still to recover,
                                                   # in plan order (a plan per layout recovers one layout at a time)
+    outcome_source: str = ""                      # where the outcome came from: "compiled" (the conversation),
+                                                  # "recipe" (a Safe-mode button: ``model_free``), "" (none, or a test)
     left_out: List[Path] = field(default_factory=list)   # documents the user left out of the request: the plan, its
                                                   # preview and its run cover the others (``planned_files``)
+    left_out_reasons: Dict[str, str] = field(default_factory=dict)   # str(resolved path) → why a Safe-mode button
+                                                  # left it out (``body_match``); none: the user left it out
     diagnostic_id: str = field(default_factory=diag.new_id, init=False, repr=False, compare=False)
 
     def _diagnostic_state(self) -> Dict[str, Any]:
@@ -243,7 +247,7 @@ class Session:
 
     @_session_action
     def _set_outcome(self, spec: Optional[Dict[str, Any]] = None, generated: Any = None, source: str = "",
-                     left_out: Sequence[Any] = ()) -> None:
+                     left_out: Sequence[Any] = (), left_out_reasons: Optional[Dict[str, str]] = None) -> None:
         """The one place the session's outcome changes. A new outcome voids everything previewed or approved for the
         old one: a reply that turns a custom transform into a spec must never leave the transform runnable, and a reply
         that only asks a question must never leave the old spec's preview runnable. The outcome is a spec (or a plan
@@ -251,13 +255,21 @@ class Session:
         if spec is not None and generated is not None:
             raise ValueError("a session runs either a spec or a custom transform, not both")
         self.spec, self.generated = spec, generated
+        self.outcome_source = source if (spec is not None or generated is not None) else ""
         self.left_out = [Path(p).resolve() for p in left_out]   # an outcome's own: what the user left out of it
+        self.left_out_reasons = {str(Path(k).resolve()): str(v) for k, v in (left_out_reasons or {}).items()}
         self.recovery = None
         self.recovery_checkpoint = None
         self.pending_layout_recovery = []
         self.preview, self.generated_token, self.generated_preview = None, "", None
         self.generated_inputs, self.generated_intent = {}, ""
         self.pending_custom_transform = None
+
+    @property
+    def model_free(self) -> bool:
+        """The outcome is a Safe-mode button's (``recipes``): its preview and its run make no AI call — no visual
+        check of the pages, no investigation or recovery of the documents it sets aside."""
+        return self.outcome_source == "recipe"
 
     def outcome_key(self) -> Any:
         """What the approval token is taken over beside the files: the spec, a chain's key, or the plan per layout."""
@@ -705,19 +717,24 @@ class Session:
         log(f"Preview log: {out / 'preview' / 'logs' / 'preview.log'}")
         if on_preview is not None:
             on_preview()
-        if render and self.visual_check:
+        if render and self.visual_check and not self.model_free:
             log("Looking at the rendered pages…")
             self._visual_check(self.preview, self._intent(), out / "preview", log)
         self._note_preview()
         c = self.conversation
-        # A failed preview is one the plan cannot stand on: no file plans, or a sample fails its check. A file the plan
-        # refuses while others plan is set aside under Left untouched (docs/CONVERSATIONAL_DESKTOP.md) and the preview
-        # stands: the conversation hears why, the user decides. Outcome planning never takes the conversation over for
-        # one refused file (the 1.9.0 live run of 2026-10-22: one file's even-page footers voided a twelve-file preview).
+        # A failed preview is one the plan cannot stand on: no file plans, a sample fails its check, or no sample got
+        # through. A file the plan refuses while others plan — at its first step, or a sample at a later step of a
+        # chain — is set aside under Left untouched (docs/CONVERSATIONAL_DESKTOP.md) and the preview stands: the
+        # conversation hears why, the user decides. Outcome planning never takes the conversation over for refused
+        # files (the 1.9.0 live run of 2026-10-22: one file's even-page footers voided a twelve-file preview; the 1.10.0
+        # run of 2026-10-23: two samples' list numbering, refused by the font step, voided a nineteen-file one).
+        from .preview import refusals, sample_refused
         bp = self.preview.batch_plan
+        samples = self.preview.samples
         if c is not None and c.continuous_recovery and (
-                len(bp.exceptions) == len(bp.files)
-                or any(not s.passed for s in self.preview.samples)):
+                len(refusals(self.preview)) >= len(bp.files)
+                or any(not s.passed and not sample_refused(s) for s in samples)
+                or (samples and all(sample_refused(s) for s in samples))):
             evidence = {"reason": self.preview.to_text(), "candidate": copy.deepcopy(self.spec)}
             self._set_outcome()
             return self._after_turn(c.investigate_failure(evidence))
@@ -839,9 +856,11 @@ class Session:
         """Tell Claude what the preview found, so a reply from the Preview page is a correction it can act on."""
         if self.conversation is None or self.preview is None:
             return
+        from .preview import refusals
         pv = self.preview
         bp = pv.batch_plan
-        total, planned = len(bp.files), len(bp.files) - len(bp.exceptions)
+        refused = refusals(pv)
+        total, planned = len(bp.files), len(bp.files) - len(refused)
         flagged = len(pv.review.blocking()) if pv.review is not None else 0
         # what Claude must not miss leads, ahead of the full text the note cuts: the files the plan refused (a chain's
         # preview repeats its assumptions per stage, and pushed them out of the cut) and the blocking visual findings
@@ -849,11 +868,11 @@ class Session:
         if self.left_out:
             lead.append("LEFT OUT AT THE USER'S REQUEST (not planned, previewed or changed): "
                         + ", ".join(self.conversation.batch.label(p) for p in self.left_out))
-        if bp.exceptions:
+        if refused:
             lead.append("LEFT UNTOUCHED (the plan refused these; the others are previewed — name each to the user "
                         "with its reason and what would let it take part, or offer to leave it out):")
-            lead += [f"   {Path(f.source).name}: [{(f.exception or {}).get('code')}] "
-                     f"{(f.exception or {}).get('reason', '')}"[:400] for f in bp.exceptions[:20]]
+            lead += [f"   {source.name}: [{exc.get('code')}] {exc.get('reason', '')}"[:400]
+                     for source, exc in refused[:20]]
         for finding in (pv.review.blocking() if pv.review is not None else [])[:10]:
             lead.append(f"BLOCKING VISUAL FINDING — {finding.get('file')}, page {finding.get('page')}: "
                         f"{finding.get('text', '')}"[:400])
@@ -870,11 +889,12 @@ class Session:
         return files if kept is None else kept
 
     def _without_refused(self, files: List[Path], only) -> Optional[List[Path]]:
-        """What Create runs of an approved spec: the files the preview's plan refused stay as they are — the window
-        listed them under Left untouched, not part of the plan — so they are never run, and so never sent on to
-        recovery, while another file planned (a plan that refused every file went to outcome planning instead)."""
-        bp = getattr(self.preview, "batch_plan", None)
-        refused = {Path(f.source).resolve() for f in getattr(bp, "exceptions", None) or []}
+        """What Create runs of an approved spec: the files the preview refused (the plan, or a later step on a sample)
+        stay as they are — the window listed them under Left untouched, not part of the plan — so they are never run,
+        and so never sent on to recovery, while another file planned (a plan that refused every file went to outcome
+        planning instead)."""
+        from .preview import refusals
+        refused = {source.resolve() for source, _ in refusals(self.preview)}
         if not refused or len(refused) >= len(files):
             return only
         return [f for f in (files if only is None else only) if Path(f).resolve() not in refused]
@@ -1252,7 +1272,7 @@ def main(argv=None) -> int:
         session = Session()
         if settings.out_root:
             session.out_root = Path(settings.out_root)
-        task = DocumentTask(session, journal=config_dir() / "conversation.json")
+        task = DocumentTask(session, journal=config_dir() / "conversation.json", mode=settings.mode)
         # Every start is clean: the last conversation is archived under conversations\, never reopened.
         try:
             archived = task.archive()

@@ -1,7 +1,7 @@
 // Adapted from Build-a-Spec's frontend/src/App.tsx (copy-based reuse): the
 // layout and the one place the job stream's events dispatch.
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
-import type { Attachment, Choice, JobEvent, Update, View } from "./types";
+import type { Attachment, Choice, JobEvent, Mode, Recipe, RecipeInputs, Update, View } from "./types";
 import * as api from "./lib/api";
 import { actionButton } from "./lib/action";
 import { composerState, transcript } from "./lib/chat";
@@ -17,6 +17,7 @@ import UpdateBanner from "./components/UpdateBanner";
 import SettingsModal from "./components/SettingsModal";
 import HelpModal from "./components/HelpModal";
 import ZoomModal from "./components/ZoomModal";
+import SafePanel from "./components/SafePanel";
 
 type PickKind = "documents" | "template" | "references";
 
@@ -125,6 +126,10 @@ export default function App() {
   const onChoose = useCallback(
     (choice: Choice, wording?: string) =>
       void runJob(api.choose(choice.id, wording), wording === undefined ? choice.label : `${choice.label} — “${wording}”`, "choose"),
+    [runJob],
+  );
+  const onRecipe = useCallback(
+    (recipe: Recipe, inputs: RecipeInputs) => void runJob(api.recipe(recipe.id, inputs), recipe.label, "recipe"),
     [runJob],
   );
   const onStop = useCallback(() => {
@@ -271,6 +276,20 @@ export default function App() {
   }, [applyView]);
 
   const onStartOver = useCallback(() => applyView(api.startOver()), [applyView]);
+  const onMode = useCallback((mode: Mode) => {
+    if (!busyRef.current) applyView(api.setMode(mode));
+  }, [applyView]);
+  const onHandOff = useCallback((paths: string[]) => applyView(api.handOff(paths)), [applyView]);
+
+  // Safe mode's buttons: the same list for the whole session, fetched once.
+  const [recipes, setRecipes] = useState<Recipe[]>([]);
+  useEffect(() => {
+    api.getRecipes().then(setRecipes).catch((failure: unknown) => setNotice(failureText(failure)));
+  }, []);
+  const panel = useMemo(
+    () => <SafePanel recipes={recipes} view={view} busy={busy} onPreview={onRecipe} />,
+    [recipes, view, busy, onRecipe],
+  );
 
   const onOpen = useCallback((path: string) => {
     api.openPath(path).catch((failure: unknown) => setNotice(failureText(failure)));
@@ -384,6 +403,7 @@ export default function App() {
         onNewConversation={onNewConversation}
         onOpenSettings={onOpenSettings}
         onOpenHelp={setHelpTopic}
+        onMode={onMode}
       />
       {updateShown && (
         <UpdateBanner
@@ -423,6 +443,9 @@ export default function App() {
           prefill={prefill}
           onPrefill={onPrefill}
           onDraftChange={setDraft}
+          mode={view.mode}
+          panel={panel}
+          onMode={onMode}
         />
         <Workbench
           view={view}
@@ -436,6 +459,7 @@ export default function App() {
           onOpen={onOpen}
           onStartOver={onStartOver}
           onZoom={onZoom}
+          onHandOff={onHandOff}
         />
       </main>
       <input

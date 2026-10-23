@@ -192,8 +192,9 @@ export const RUNTIME_CARDS: RuntimeCard[] = [
     automatic: true,
     you:
       "Nothing beyond your request: when no ordinary plan fits (Claude finds no operation for it, the plan covers no " +
-      "file, or a sample fails its check), the app continues on its own. A file the plan refuses while the others " +
-      "plan does not start it: that file waits under Left untouched beside the preview of the others.",
+      "file, a sample fails its check, or every sample is refused), the app continues on its own. A file the plan " +
+      "refuses while the others plan does not start it, nor does a sample a later step of the plan refuses: that " +
+      "file waits under Left untouched beside the preview of the others.",
     runs:
       "Claude proposes the outcomes to reach (what should change, where, with what wording). The app checks the " +
       "proposal, carries it out without waiting for a pick, and tries methods on copies of your files: built-in " +
@@ -207,6 +208,24 @@ export const RUNTIME_CARDS: RuntimeCard[] = [
       `Counts toward the pause; the trials get at most ${F.recoveryAttemptsPerGroup} attempts per group of files, ` +
       "on copies only. The wording in Claude's proposed outcomes is treated as " +
       "approved on this path without a separate pick: read the plan before you approve it.",
+  },
+  {
+    covers: ["A23", "A24", "A25"],
+    title: "Safe mode: choosing a mode, pressing a button, handing documents over",
+    you:
+      "Choose Safe or Default in the top bar; in Safe mode, pick a button, fill in its form and press Preview; Try " +
+      "these in Default mode beside what a button left untouched.",
+    runs:
+      "Choosing a mode keeps it in settings.json for the next start. A button builds its plan in code from your form " +
+      "and your attachments; the plan passes the same gate as a conversation's (its settings, the files it reads, " +
+      "every word it would place traced to what you typed) and the ordinary preview runs, without Claude's visual " +
+      "check. Create edited copies then makes and checks the copies as always. Handing over puts those documents on " +
+      "your to-do list and switches to Default mode.",
+    sent: "Nothing. A button never reaches the network.",
+    ai: NONE,
+    bounds:
+      "The buttons and what they do are fixed in the app. A document a button cannot change exactly is left " +
+      "untouched with the reason; nothing an AI does follows, neither a visual check nor recovery.",
   },
   {
     covers: ["A7"],
@@ -228,7 +247,7 @@ export const RUNTIME_CARDS: RuntimeCard[] = [
       `core (at most ${F.maxProcessWorkers}), each file edited and checked whole in one of them, and Word renders over ` +
       `up to ${F.wordInstances} instances side by side. A copy that passes goes to a new timestamped folder; one that fails is moved to failed ` +
       "and never delivered. Then, if any copy failed, the app looks at those files again on its own (recovery) and " +
-      "comes back with a question or a new plan.",
+      "comes back with a question or a new plan — except after a Safe-mode button, whose copies get no recovery.",
     sent:
       "Nothing to make and check the copies. Recovery, if it runs, sends the failed files' names and full paths, their " +
       `profiles and overview, failure reasons, what its tools read, page images, and up to ${F.pastRepairCasesSent} matching ` +

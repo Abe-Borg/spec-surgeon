@@ -543,3 +543,42 @@ def test_the_window_applies_the_kept_fast_mode_from_its_start(tmp_path):
     assert llm.FAST_MODE is True
     WindowState(DocumentTask(session, render=False), Settings(), token=TOKEN, updates=FakeUpdates())
     assert llm.FAST_MODE is False
+
+
+# ---- Safe mode (docs/PLAN-2026-10-23-modes.md M1) ------------------------------------------------------------------
+
+def test_safe_mode_routes_the_buttons_the_mode_and_the_hand_off(tmp_path, monkeypatch):
+    from make_fixtures import build, build_dirty
+    monkeypatch.setenv("SPEC_SURGEON_CONFIG_DIR", str(tmp_path / "config"))
+    state, client = window(tmp_path)
+    catalog = client.get("/api/recipes").json()
+    assert [r["id"] for r in catalog["recipes"]][:1] == ["headers_footers_template"] and catalog["groups"]
+    view = client.get("/api/state").json()
+    assert view["mode"] == "default" and view["modes"] == ["safe", "default"]
+    assert view["template"]["kind"] == "none" and view["left_untouched"] == []
+    assert client.post("/api/mode", json={"mode": "obliterate"}).status_code == 400
+    view = client.post("/api/mode", json={"mode": "safe"}).json()
+    assert view["mode"] == "safe" and load_settings().mode == "safe"          # kept for the next start
+    good, empty = tmp_path / "21 13 13.docx", tmp_path / "empty.docx"
+    good.write_bytes(build("21 13 13", "WET-PIPE SPRINKLER SYSTEMS"))
+    empty.write_bytes(build_dirty("empty_body"))
+    client.post("/api/attach", json={"paths": [str(good), str(empty)]})
+    refused = client.post("/api/send", json={"text": "Make it Arial"})
+    events = frames(refused)
+    assert events[-1]["type"] == "error" and "Safe mode has no conversation" in events[-1]["message"]
+    with client.stream("POST", "/api/recipe", json={"recipe": "title_property",
+                                                    "inputs": {"pattern": "SECTION {number} - {title}"}}) as r:
+        events = frames(r)
+    done = events[-1]
+    assert done["type"] == "done" and done["state"]["stage"] == "preview"
+    assert done["state"]["action"]["kind"] == "approve"
+    assert [i["name"] for i in done["state"]["plan"]["set_aside"]] == ["empty.docx"]
+    with client.stream("POST", "/api/primary", json={"token": done["state"]["action"]["token"]}) as r:
+        view = frames(r)[-1]["state"]
+    assert view["stage"] == "done" and [e["name"] for e in view["left_untouched"]] == ["empty.docx"]
+    assert client.post("/api/handoff", json={"paths": []}).status_code == 400
+    view = client.post("/api/handoff", json={"paths": [view["left_untouched"][0]["path"]]}).json()
+    assert view["mode"] == "default" and [t["name"] for t in view["todo"]] == ["empty.docx"]
+    assert load_settings().mode == "default"
+    bad = client.post("/api/recipe", json={"recipe": "remove_highlight", "inputs": ["not", "a", "form"]})
+    assert bad.status_code == 400

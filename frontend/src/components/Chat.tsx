@@ -1,6 +1,6 @@
 // Adapted from Build-a-Spec's frontend/src/components/Chat.tsx (copy-based reuse).
-import { useCallback, useEffect, useRef, useState, type WheelEvent } from "react";
-import type { Choice } from "../types";
+import { useCallback, useEffect, useRef, useState, type ReactNode, type WheelEvent } from "react";
+import type { Choice, Mode } from "../types";
 import type { ActionButton } from "../lib/action";
 import { STARTERS, endedLive, withLeaving, type ChatItem } from "../lib/chat";
 import type { LiveReply } from "../lib/view";
@@ -29,6 +29,10 @@ interface Props {
   prefill?: { text: string; nonce: number };
   onPrefill: (text: string) => void;
   onDraftChange: (hasDraft: boolean) => void;
+  /** Safe mode: the buttons (``panel``) take the composer's place, and nothing here talks to the model. */
+  mode: Mode;
+  panel?: ReactNode;
+  onMode: (mode: Mode) => void;
 }
 
 export default function Chat({
@@ -46,7 +50,11 @@ export default function Chat({
   prefill,
   onPrefill,
   onDraftChange,
+  mode,
+  panel,
+  onMode,
 }: Props) {
+  const safe = mode === "safe";
   const scrollRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
   const pinnedRef = useRef(true);
@@ -71,7 +79,8 @@ export default function Chat({
     const timer = window.setTimeout(() => setLeaving(null), 450);
     return () => window.clearTimeout(timer);
   }, [leaving]);
-  const entries = withLeaving(items, leaving);
+  // Safe mode has no conversation: no question cards, no pause (no AI step runs there).
+  const entries = withLeaving(items, leaving).filter((item) => !safe || (item.kind !== "prompts" && item.kind !== "pause"));
 
   const stopFollowing = () => {
     if (followRef.current !== null) cancelAnimationFrame(followRef.current);
@@ -161,7 +170,17 @@ export default function Chat({
         style={{ overflowAnchor: "none" }}
         className="flex-1 overflow-y-auto px-5 py-6"
       >
-        {empty ? (
+        {empty && safe ? (
+          <div className="flex h-full flex-col items-center justify-center text-center">
+            <p className="font-[family-name:var(--font-display)] text-[1.7rem] leading-tight text-ink">
+              Safe mode. No AI.
+            </p>
+            <p className="mt-3 max-w-md text-sm leading-relaxed text-ink-dim">
+              Add your Word files, pick a button below and look at the previews. Nothing changes until you create the
+              copies, and your originals stay intact.
+            </p>
+          </div>
+        ) : empty ? (
           <div className="flex h-full flex-col items-center justify-center text-center">
             <p className="font-[family-name:var(--font-display)] text-[1.7rem] leading-tight text-ink">
               Less document work. More done.
@@ -221,7 +240,15 @@ export default function Chat({
                     />
                   );
                 case "todo":
-                  return <TodoCard key={item.key} names={item.names} busy={busy} onSend={onSend} />;
+                  return (
+                    <TodoCard
+                      key={item.key}
+                      names={item.names}
+                      busy={busy}
+                      onSend={onSend}
+                      onDefaultMode={safe ? () => onMode("default") : undefined}
+                    />
+                  );
                 default:
                   return null;
               }
@@ -229,16 +256,25 @@ export default function Chat({
           </div>
         )}
       </div>
-      <ActionBar button={paused ? null : button} held={held} onAct={onAct} />
-      <Composer
-        busy={busy}
-        canSend={canSend}
-        reason={sendReason}
-        onSend={onSend}
-        onStop={onStop}
-        prefill={prefill}
-        onDraftChange={onDraftChange}
-      />
+      <ActionBar button={paused || (safe && button?.kind === "stop") ? null : button} held={held} onAct={onAct} />
+      {safe ? (
+        <div className="border-t border-edge bg-surface px-4 pt-3 pb-2.5" role="region" aria-label="Safe mode">
+          <div className="mx-auto max-h-[46vh] max-w-3xl overflow-y-auto">{panel}</div>
+          <p className="mx-auto mt-2 max-w-3xl px-1 text-[11px] text-ink-faint">
+            Safe mode makes no AI call. Edited copies are saved separately; your originals stay intact.
+          </p>
+        </div>
+      ) : (
+        <Composer
+          busy={busy}
+          canSend={canSend}
+          reason={sendReason}
+          onSend={onSend}
+          onStop={onStop}
+          prefill={prefill}
+          onDraftChange={onDraftChange}
+        />
+      )}
     </section>
   );
 }

@@ -33,6 +33,7 @@ from .resources import DEFAULT_MAX_OUTPUT_TOKENS
 STEPS_PER_PAUSE = 48    # model calls between the pauses where the user says to go on
 AUTO_STEPS = 6          # internal steps the coordinator takes on its own after one user action (bounded)
 STAGES = ("empty", "question", "preview", "done", "budget", "resume")
+MODES = ("safe", "default")     # Safe: the buttons, no AI call; Default: the conversation (docs/PLAN-2026-10-23-modes.md)
 START_OVER = "Start over from the originals"   # the reply (a chip, a button) that drops the working copies
 LEFT_OUT_REASON = "You asked to leave it out of this request; it stays as it is."
 WORK_TODO = "Work on the documents I set aside"  # the reply (a chip, typed) that begins the pass over the to-do list
@@ -166,6 +167,9 @@ class MessageWords:
         return chr(code)
 
 
+SAFE_NO_CONVERSATION = ("Safe mode has no conversation: press a button to make a change, or switch to Default mode to "
+                        "type a request.")
+
 STATUS_FOR_LOG = {"Preparing and checking the preview…": ("previewing", "Preparing and checking the preview…"),
                   "Looking at the rendered pages…": ("looking", "Looking at the rendered pages…"),
                   "Creating and checking your edited copies…": ("creating", "Creating and checking your edited copies…"),
@@ -238,7 +242,10 @@ def _same_file_key(path) -> str:
 
 
 class DocumentTask:
-    def __init__(self, session=None, *, journal=None, render=True):
+    def __init__(self, session=None, *, journal=None, render=True, mode="default"):
+        if mode not in MODES:
+            raise ValueError(f"mode must be one of {MODES}")
+        self.mode = mode
         self.session = session or Session()
         self.session.recovery_attempts = RECOVERY_ATTEMPTS   # the recovery a reviewed outcome plan starts, too
         self.render = render
@@ -263,6 +270,10 @@ class DocumentTask:
         # focus: the pass over them, once the user begins it (its documents, the plan they saw)
         self.todo: Dict[str, Dict[str, Any]] = {}
         self.focus: Optional[Dict[str, Any]] = None
+        # what the last Safe-mode button left untouched (its documents, why, and the button's sentence): offered to
+        # Default mode, where the conversation can plan them (``hand_off``)
+        self.left_untouched: List[Dict[str, str]] = []
+        self._template_kind: Optional[tuple] = None    # (the template's path, size, mtime, recipes.template_kind)
         self._binned: List[str] = []        # documents of this request that could not take the change, on the list
         self._parked = ("", 0)              # (conversation id, how many of its set-aside documents were taken)
         self._events = None                 # the window's live channel for the job that is running (perform)
@@ -413,6 +424,9 @@ class DocumentTask:
         self.session.end_conversation()
         self._resume_recovery = None
         self._revision += 1
+        if self.mode == "safe":
+            # nothing to continue without the conversation: a button press is planned again when it is pressed
+            self.decisions = []
         self.stage = "resume" if self.decisions else "empty"
         self.problem = ""
 
@@ -435,6 +449,7 @@ class DocumentTask:
         if template and len(checked) != 1:
             raise ValueError("Choose one template document.")
         before = (self.documents(), self.template(), self.references())
+        had_button = self.session.model_free and self.stage == "preview"
         fresh: List[str] = []
         if template:
             found = triage(checked[0], template=True)
@@ -459,6 +474,9 @@ class DocumentTask:
             self._invalidate()
             if self.decisions:
                 self.say("The attachments changed. I’ll check the updated documents against your request.")
+            elif had_button:
+                self.say("The attachments changed, so that preview no longer applies. Press the button again to "
+                         "preview it on these documents.")
             if fresh:
                 self.say(f"{', '.join(fresh)}: attached as an original. The changes already made to the other copies "
                          f"are not in it; the next change is made to it as it is. To give it every change, say "
@@ -486,6 +504,7 @@ class DocumentTask:
         self.working.pop(str(path), None)
         self.applied.pop(str(path), None)
         self.todo.pop(str(path), None)
+        self.left_untouched = [e for e in self.left_untouched if _same_file_key(e["path"]) != _same_file_key(path)]
         pass_over = False
         if self.focus:
             self.focus["documents"] = [d for d in self.focus["documents"] if d != str(path)]
@@ -628,12 +647,13 @@ class DocumentTask:
                                 "Reply with the number, or numbers separated by commas."}
         return None
 
-    def perform(self, action, *, text="", token="", choice_id="", chip=False, hold=(), wording=None,
-                log=lambda _: None, events=None):
+    def perform(self, action, *, text="", token="", choice_id="", chip=False, hold=(), wording=None, recipe="",
+                inputs=None, log=lambda _: None, events=None):
         """Worker entry point. One ledger covers every nested model call and every turn. ``events`` is the window's
         live channel (docs/WEB_API.md: status, activity, text_delta, thinking_delta, message, plan, samples, results,
         question, cost); without one the job runs silently and the view says everything at the end. ``hold`` (the
-        primary action) names the previewed documents the user set aside: they go on the to-do list, the others run."""
+        primary action) names the previewed documents the user set aside: they go on the to-do list, the others run.
+        ``recipe`` and ``inputs`` (the ``recipe`` action) are a Safe-mode button and its form."""
         self.problem = ""
         self._events = events
         self.save(in_progress=True)
@@ -652,6 +672,8 @@ class DocumentTask:
                     self._choose(choice_id, checkpointed_log, wording=wording)
                 elif action == "primary":
                     self._primary(token, checkpointed_log, hold=hold)
+                elif action == "recipe":
+                    self._recipe(recipe, inputs, checkpointed_log)
                 else:
                     raise ValueError("Unknown task action")
         except llm.BudgetExceeded:
@@ -689,6 +711,8 @@ class DocumentTask:
         text = text.strip()
         if not text:
             return
+        if self.mode == "safe" and text.casefold() != START_OVER.casefold():
+            raise ValueError(SAFE_NO_CONVERSATION)
         if text.casefold() == START_OVER.casefold():
             self.say(text, "user")
             self.start_over()
@@ -747,6 +771,8 @@ class DocumentTask:
         """A picked choice; ``wording``: the user's edit of its one wording (``conversation.edited_wording``), checked
         before anything is said or kept."""
         from .conversation import edited_wording
+        if self.mode == "safe":
+            raise ValueError(SAFE_NO_CONVERSATION)
         self._ready_to_talk()
         chosen = next((c for c in self._choices() if c.id == choice_id), None)
         if chosen is None:
@@ -766,6 +792,147 @@ class DocumentTask:
         self.save(in_progress=True)
         with self._conversation():
             self.session.reply(choice_id=chosen.id, render=self.render, log=log, wording=edited)
+
+    # ---- Safe mode ----
+    def set_mode(self, mode: str) -> None:
+        """Safe (the buttons, no AI call) or Default (the conversation). The documents, copies, to-do list and any
+        preview stay as they are; only how the next change is asked for differs."""
+        if mode not in MODES:
+            raise ValueError("There is no such mode.")
+        self.mode = mode
+
+    def _recipe(self, recipe_id, inputs, log):
+        """A Safe-mode button: its fixed spec (``recipes.build``, from the form and the attachments) through the one
+        gate every submission passes (``compiler.compose_submission``), then the ordinary preview. No AI call: the
+        outcome is model-free (``Session.model_free``: no visual check, no recovery). A form that cannot be used, or
+        a spec the gate refuses, is said in one message and nothing is previewed."""
+        from . import compiler, recipes
+        if self.mode != "safe":
+            raise ValueError("The buttons are Safe mode's; switch to Safe mode to use them.")
+        s = self.session
+        recipe = recipes.BY_ID.get(str(recipe_id))
+        if recipe is None:
+            raise ValueError("There is no such button.")
+        files = s.files(outcome=False)
+        ctx = recipes.Context(files, self.template(), self.references())
+        try:
+            built = recipes.build(recipe.id, inputs, ctx)
+        except recipes.RecipeError as e:
+            self._revision += 1
+            self.say(f"{recipe.label}: {e}")
+            return
+        self._emit({"type": "status", "kind": "checking", "text": "Checking the documents…"})
+        if built.gated:
+            # a button that plans per layout passed each layout through the gate itself (``body_match``)
+            outcome, errors, nothing = built.outcome, [], built.outcome is None
+        else:
+            outcome, errors = compiler.compose_submission(built.spec, ctx.batch(), [built.request, *built.sources])
+            nothing = bool(errors) and errors[0].startswith(compiler.PLANS_ON_NONE)
+        if errors and not nothing:
+            self._revision += 1
+            self.say(f"{recipe.label} cannot be used on these documents: " + "; ".join(errors[:3]))
+            return
+        s.end_conversation()
+        self.say(built.request, "user")
+        self.decisions = [built.request]
+        self.word_sources.extend(w for w in built.sources if w not in self.word_sources)
+        self.left_untouched = []
+        if outcome is None:
+            # no layout of the batch can take the change: nothing to preview; each document's reason beside it
+            s._set_outcome()
+            self.left_untouched = [{"path": str(self.origin_of(Path(p))), "name": Path(p).name, "why": WHY_REFUSED,
+                                    "reason": r, "request": built.request} for p, r in built.left_out.items()]
+            self.stage = "empty"
+            self._revision += 1
+            self.say("None of the documents can take this change as they are; each one's reason is under Left "
+                     "untouched beside the documents.")
+            self.save()
+            return
+        s._set_outcome(spec=outcome, source="recipe", left_out=list(built.left_out),
+                       left_out_reasons=built.left_out)
+        self._settle(log)
+        if nothing:
+            self.say("None of the documents can take this change as they are; each one's reason is under Left "
+                     "untouched.")
+
+    def hand_off(self, paths) -> None:
+        """Safe mode's "Try these in Default mode": documents a button left untouched go on the to-do list with the
+        button's sentence as their request, and the window turns to Default mode, where the conversation can plan
+        them (``start_todo``). Only documents the last button left untouched; nothing while a preview waits."""
+        if self.stage == "preview":
+            raise ValueError("Create the copies, or press another button, before handing documents over.")
+        wanted = {str(Path(str(v))) for v in paths}
+        attached = {_same_file_key(a.path) for a in self.attachments if not a.template and not a.reference}
+        chosen = [entry for entry in self.left_untouched
+                  if entry["path"] in wanted and _same_file_key(entry["path"]) in attached]
+        if not chosen or len(chosen) != len(wanted):
+            raise ValueError("Those documents are not the ones the last button left untouched.")
+        for entry in chosen:
+            why = str(entry.get("reason") or "").strip().rstrip(".")
+            refused = entry.get("why", WHY_REFUSED) == WHY_REFUSED
+            self.todo[entry["path"]] = {
+                "name": entry["name"], "decisions": [entry["request"]] if entry["request"] else [], "seen": [],
+                "why": WHY_REFUSED if refused else WHY_FAILED,
+                "reason": ("The button could not change it" if refused else "Its copy could not be made")
+                + (f": {why}." if why else ".")}
+        self.left_untouched = [e for e in self.left_untouched if e["path"] not in wanted]
+        self.mode = "default"
+        self._sync()
+        names = ", ".join(e["name"] for e in chosen)
+        self.say(f"Handed over to Default mode: {names}. Say “{WORK_TODO}” and tell me what should be different; "
+                 f"the conversation plans them with an AI model.")
+        self._revision += 1
+        self.save()
+
+    def _refused_by_preview(self, preview, request: str) -> List[Dict[str, str]]:
+        """The documents a button's preview refused (the plan, or a later step on a sample), with their reasons:
+        Create does not run them (``Session._without_refused``), so the run's own results never name them."""
+        from .preview import refusals
+        out: List[Dict[str, str]] = []
+        for path, reason in self.session.left_out_reasons.items():       # a button that left documents out, with why
+            origin = str(self.origin_of(Path(path)))
+            out.append({"path": origin, "name": Path(origin).name, "why": WHY_REFUSED, "reason": reason,
+                        "request": request})
+        for source, exc in refusals(preview):
+            origin = str(self.origin_of(source))
+            out.append({"path": origin, "name": Path(origin).name, "why": WHY_REFUSED,
+                        "reason": str(exc.get("reason", "")), "request": request})
+        return out
+
+    def _left_after_run(self, request: str, refused: Sequence[Dict[str, str]] = ()) -> List[Dict[str, str]]:
+        """The documents a model-free run did not give a copy, with the reason the engine recorded: those its preview
+        refused (never run), then those the run set aside or that failed a check."""
+        last = self.session.last_batch
+        out: List[Dict[str, str]] = list(refused)
+        for item in getattr(last, "files", []) or []:
+            if item.status == "PASS":
+                continue
+            exc = getattr(item, "exception", None) or {}
+            reason = exc.get("reason") or ("A check failed on the edited copy, so it was not delivered; the run's "
+                                           "DIAGNOSTICS.md says which.")
+            origin = str(self.origin_of(Path(item.source)))
+            if all(e["path"] != origin for e in out):
+                out.append({"path": origin, "name": Path(origin).name, "why": WHY_FAILED, "reason": str(reason),
+                            "request": request})
+        return out
+
+    def template_info(self) -> Dict[str, Any]:
+        """What kind of header/footer template the attached template is (``recipes.template_kind``) and, under
+        ``body``, the roles "match body formatting to template" reads from it (``template_roles.detect``) — read again
+        only when the file changes."""
+        from . import recipes, template_roles
+        template = self.template()
+        if template is None:
+            return {**recipes.template_kind(None), "body": template_roles.detect(None)}
+        try:
+            st = Path(template).stat()
+            key = (str(template), st.st_size, st.st_mtime_ns)
+        except OSError:
+            return {**recipes.template_kind(None), "body": template_roles.detect(None)}
+        if self._template_kind is None or self._template_kind[0] != key:
+            self._template_kind = (key, {**recipes.template_kind(Path(template)),
+                                         "body": template_roles.detect(Path(template))})
+        return dict(self._template_kind[1])
 
     @staticmethod
     def _numbers(text, count):
@@ -983,6 +1150,8 @@ class DocumentTask:
         if token != self.action_token():
             raise ValueError("The documents or plan changed. Review the updated plan first.")
         s = self.session
+        if self.mode == "safe" and self.stage != "preview":
+            raise ValueError("Press a button to preview a change first.")
         if self.stage == "budget":
             # Extend the same ledger; do not reset accumulated usage or nested limits.
             self._budget.max_calls = max(self._budget.max_calls, self._budget.calls) + STEPS_PER_PAUSE
@@ -1008,6 +1177,9 @@ class DocumentTask:
         # list with the plan's reason, to come back to (the session keeps them until the request ends: the approval
         # was taken over them)
         refused = self._refused_now(held) if s.recovery is None else []
+        # a Safe-mode button's, or any plan approved in Safe mode (a Default-mode preview still waiting when the mode
+        # changed): no AI step follows, and what the run leaves untouched waits beside the copies, not on the list
+        model_free = s.model_free or self.mode == "safe"
         remaining = None
         if held:
             # the files the preview refused never run (Session._without_refused): a user who sets aside every
@@ -1016,6 +1188,14 @@ class DocumentTask:
             seen = [c["summary"] for g in self._groups() for c in g["changes"]]   # the plan the user looked at
             for path in held:
                 self._set_aside(path, seen)
+            if not remaining and model_free:
+                # a Safe-mode button: there is no conversation to plan them again; they wait for Default mode
+                self._sync()
+                self._invalidate()
+                self.say("You set every document aside, so no copy was created. They wait on your to-do list; "
+                         "Default mode can plan them with an AI model.")
+                self.save()
+                return
             if not remaining:
                 # every previewed document set aside: nothing to create; the pass over them begins at once
                 for path, seen_by, reason in refused:
@@ -1027,13 +1207,20 @@ class DocumentTask:
         if outcome.blocking:
             # A blocking visual finding is a separate, explicitly labelled decision on the displayed preview.
             s.acknowledge_review(outcome.token)
+        request = self.decisions[0] if self.decisions else ""
+        # a Safe-mode button's refused documents stay in scope for the next button; they are offered to Default mode
+        untouched_before = self._refused_by_preview(outcome.preview, request) if model_free else []
         log("Creating and checking your edited copies…")
         s.run(False, self.render, log, only=remaining)
-        self._binned += [self._set_aside(path, seen_by, why=WHY_REFUSED, reason=reason)
-                         for path, seen_by, reason in refused]
+        if not model_free:
+            self._binned += [self._set_aside(path, seen_by, why=WHY_REFUSED, reason=reason)
+                             for path, seen_by, reason in refused]
         self._collect_results()
         self._emit({"type": "results", "results": self._results_view()})
-        if s.last_batch is not None and any(f.status != "PASS" for f in s.last_batch.files):
+        if model_free:
+            # a Safe-mode button: no recovery (an AI call); what it left untouched is offered to Default mode
+            self.left_untouched = self._left_after_run(request, untouched_before)
+        elif s.last_batch is not None and any(f.status != "PASS" for f in s.last_batch.files):
             log("Checking the files that still need work…")
             conversation = s.conversation
             s.resolve_remaining(log, options=self._recovery_options())
@@ -1048,7 +1235,7 @@ class DocumentTask:
             # nothing a plan can recover: a document no layout covered stays as it was, named under "Left untouched",
             # and goes on the to-do list with why
             self._binned += self._bin_failed(s.last_batch.files)
-        if s.last_trials is not None and any(not f.passed for f in s.last_trials):
+        if not model_free and s.last_trials is not None and any(not f.passed for f in s.last_trials):
             log("Checking the files that still need work…")
             s.resolve_remaining(log, options=self._recovery_options())
             self._settle(log)
@@ -1058,7 +1245,7 @@ class DocumentTask:
             self._revision += 1
             self.say("The ready copies are saved. The remaining documents still need attention.")
             return
-        if s.pending_layout_recovery:
+        if s.pending_layout_recovery and not model_free:
             # a plan per layout: the previous layout's copies are saved; the next layout's documents are checked now
             log("Checking the next layout's documents that still need work…")
             s.resolve_next_layout(log, options=self._recovery_options())
@@ -1067,11 +1254,18 @@ class DocumentTask:
         self.stage = "done"
         self._revision += 1
         n = len(self.results)
-        self.say(f"{n} document {'copy is' if n == 1 else 'copies are'} ready. You can open them, describe another "
-                 f"change to make on top of them, or start over from the originals.")
+        if model_free:
+            self.say(f"{n} document {'copy is' if n == 1 else 'copies are'} ready. Open them, press another button "
+                     f"to change them further, or start over from the originals." +
+                     (f" Left untouched: {', '.join(e['name'] for e in self.left_untouched)} — each one's reason is "
+                      f"beside the copies." if self.left_untouched else ""))
+        else:
+            self.say(f"{n} document {'copy is' if n == 1 else 'copies are'} ready. You can open them, describe "
+                     f"another change to make on top of them, or start over from the originals.")
         self._advance_generation()
         binned, self._binned = self._binned, []
-        self._offer_todo(binned)
+        if not model_free:
+            self._offer_todo(binned)
 
     def _refused_now(self, held: Sequence[Path] = ()) -> List[tuple]:
         """At Create: the documents of the displayed plan its preview refused while another planned, each with the
@@ -1082,9 +1276,9 @@ class DocumentTask:
         refused = [f for f in planned if f not in runnable and f not in held]
         if not refused:
             return []
+        from .preview import refusals
         seen = [c["summary"] for g in self._groups() for c in g["changes"]]
-        reasons = {Path(item.source).resolve(): (item.exception or {}).get("reason", "")
-                   for item in getattr(getattr(s.preview, "batch_plan", None), "exceptions", None) or []}
+        reasons = {source.resolve(): exc.get("reason", "") for source, exc in refusals(s.preview)}
         out = []
         for f in refused:
             why = str(reasons.get(Path(f).resolve(), "")).strip().rstrip(".")
@@ -1243,13 +1437,13 @@ class DocumentTask:
 
     def _left_untouched(self, preview) -> List[Dict[str, str]]:
         """Left untouched beside a preview: the documents the user left out of the request (no plan covers them),
-        then those the plan refused, each with its reason."""
+        then those the preview refused (the plan, or a later step on a sample), each with its reason."""
         if preview is None:
             return []
-        items = [{"name": Path(path).name, "reason": LEFT_OUT_REASON} for path in self.session.left_out]
-        for item in getattr(getattr(preview, "batch_plan", None), "exceptions", []) or []:
-            exc = item.exception or {}
-            items.append({"name": Path(item.source).name, "reason": exc.get("reason", "")})
+        from .preview import refusals
+        why = self.session.left_out_reasons
+        items = [{"name": Path(path).name, "reason": why.get(str(path), LEFT_OUT_REASON)} for path in self.session.left_out]
+        items += [{"name": source.name, "reason": exc.get("reason", "")} for source, exc in refusals(preview)]
         return items
 
     def _delivered(self) -> List[Path]:
@@ -1259,8 +1453,12 @@ class DocumentTask:
         return [Path(f.source) for f in recovery.files if f.delivered_to] if recovery is not None else []
 
     def _undelivered_samples(self, preview) -> list:
+        """The samples the pages show: not one whose copy a partial save delivered, nor one a later step refused (it
+        waits under Left untouched, unchanged)."""
+        from .preview import sample_refused
         delivered = {str(path) for path in self._delivered()}
-        return [sv for sv in getattr(preview, "samples", []) or [] if str(sv.source) not in delivered]
+        return [sv for sv in getattr(preview, "samples", []) or []
+                if str(sv.source) not in delivered and not sample_refused(sv)]
 
     def _undelivered_findings(self, review) -> list:
         """The visual check's findings less those about a delivered document. A finding names its file by the label
@@ -1335,9 +1533,15 @@ class DocumentTask:
             warnings.append("Page appearance was not checked: a rendered preview is unavailable. "
                             "Check the edited copies in Word before using them.")
         set_aside = self._left_untouched(preview)
+        batch_plan = getattr(preview, "batch_plan", None)
         labels = {"preview": "Create edited copies", "resume": "Continue", "budget": "Continue"}
+        if self.mode == "safe":
+            labels = {k: v for k, v in labels.items() if k == "preview"}   # Safe mode continues no conversation
         if blocking and self.stage == "preview":
             labels["preview"] = "I reviewed the flagged pages — create copies"
+        planned = getattr(batch_plan, "files", None)
+        if s.model_free and self.stage == "preview" and planned and len(set_aside) >= len(planned):
+            labels.pop("preview", None)              # a button no document can take: there is nothing to create
         if self.stage == "question" and outcome.partial:
             ready = len(s.recovery.ready)
             labels["question"] = f"Save {ready} ready {'copy' if ready == 1 else 'copies'}"
@@ -1360,7 +1564,9 @@ class DocumentTask:
         can_start_over = bool(self.working or self.history or self.todo or self.focus)
         if can_start_over and resting and START_OVER not in chips:
             chips.append(START_OVER)
-        return {"stage": self.stage, "messages": list(self.messages),
+        return {"stage": self.stage, "mode": self.mode, "messages": list(self.messages),
+                "left_untouched": [{k: e[k] for k in ("path", "name", "reason")} for e in self.left_untouched]
+                if self.stage != "preview" else [],
                 "stages": stages if groups else 0,
                 "chips": chips,
                 "working": {"generation": self.generation, "from_originals": not self.working,
