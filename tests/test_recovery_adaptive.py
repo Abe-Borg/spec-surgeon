@@ -295,3 +295,26 @@ def test_scoped_adaptive_answer_leaves_easy_ready_output_untouched(tmp_path):
                  "effect_id": "titles", "candidate_ids": [selected]}, client=FakeClient(submit(method), critic()))
     assert len(resumed.ready) == 2 and resumed.files[1].attempts == 1
     assert (ready.output.read_bytes(), ready.output.stat().st_mtime_ns) == before
+
+
+def test_each_group_hears_only_its_own_documents_bindings(tmp_path, monkeypatch):
+    # The owner's 1.10.0 run (2026-10-23): every group's first message carried all 27 documents' bindings and goal
+    # resolutions (about 70 MB each), kept in the group state and the transcript; recovery.json reached 504 MB and
+    # every checkpoint took up to 18 s. A group hears its own documents, as its authority does.
+    from spec_surgeon import goals
+    from spec_surgeon.ops.base import JobException
+    sources = [write_document(tmp_path / "plain.docx"), write_document(tmp_path / "table.docx", layout="table")]
+
+    def failed_builtin(*args, **kwargs):
+        raise JobException("The old extraction cannot express this source layout", "legacy-extraction")
+    monkeypatch.setattr(goals, "compile_goal_candidate", failed_builtin)
+    client = FakeClient(*[resp(tool("unsupported", {"reason": "Not with these tools."})) for _ in sources])
+    result = recovery.recover(sources, "Make the section title bold", tmp_path / "session",
+                              adaptive_contract=contract(), options=opts(), client=client)
+    assert len({f.pattern_id for f in result.files}) == 2 and len(client.requests) == 2
+    assert sorted(result.key["adaptive_bindings"]) == sorted(str(s) for s in sources)   # the run still binds both
+    heard = [json.loads(request["messages"][0]["content"]) for request in client.requests]
+    assert [sorted(first["source_bindings"]) for first in heard] == [[str(s)] for s in sources]
+    assert [sorted(first["goal_resolutions"]) for first in heard] == [[str(s)] for s in sources]
+    kept = [entry["content"] for entry in result.transcript if entry.get("role") == "user" and "group" in entry]
+    assert [sorted(content["source_bindings"]) for content in kept] == [[str(s)] for s in sources]

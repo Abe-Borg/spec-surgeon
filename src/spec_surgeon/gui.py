@@ -721,14 +721,19 @@ class Session:
             self._visual_check(self.preview, self._intent(), out / "preview", log)
         self._note_preview()
         c = self.conversation
-        # A failed preview is one the plan cannot stand on: no file plans, or a sample fails its check. A file the plan
-        # refuses while others plan is set aside under Left untouched (docs/CONVERSATIONAL_DESKTOP.md) and the preview
-        # stands: the conversation hears why, the user decides. Outcome planning never takes the conversation over for
-        # one refused file (the 1.9.0 live run of 2026-10-22: one file's even-page footers voided a twelve-file preview).
+        # A failed preview is one the plan cannot stand on: no file plans, a sample fails its check, or no sample got
+        # through. A file the plan refuses while others plan — at its first step, or a sample at a later step of a
+        # chain — is set aside under Left untouched (docs/CONVERSATIONAL_DESKTOP.md) and the preview stands: the
+        # conversation hears why, the user decides. Outcome planning never takes the conversation over for refused
+        # files (the 1.9.0 live run of 2026-10-22: one file's even-page footers voided a twelve-file preview; the 1.10.0
+        # run of 2026-10-23: two samples' list numbering, refused by the font step, voided a nineteen-file one).
+        from .preview import refusals, sample_refused
         bp = self.preview.batch_plan
+        samples = self.preview.samples
         if c is not None and c.continuous_recovery and (
-                len(bp.exceptions) == len(bp.files)
-                or any(not s.passed for s in self.preview.samples)):
+                len(refusals(self.preview)) >= len(bp.files)
+                or any(not s.passed and not sample_refused(s) for s in samples)
+                or (samples and all(sample_refused(s) for s in samples))):
             evidence = {"reason": self.preview.to_text(), "candidate": copy.deepcopy(self.spec)}
             self._set_outcome()
             return self._after_turn(c.investigate_failure(evidence))
@@ -850,9 +855,11 @@ class Session:
         """Tell Claude what the preview found, so a reply from the Preview page is a correction it can act on."""
         if self.conversation is None or self.preview is None:
             return
+        from .preview import refusals
         pv = self.preview
         bp = pv.batch_plan
-        total, planned = len(bp.files), len(bp.files) - len(bp.exceptions)
+        refused = refusals(pv)
+        total, planned = len(bp.files), len(bp.files) - len(refused)
         flagged = len(pv.review.blocking()) if pv.review is not None else 0
         # what Claude must not miss leads, ahead of the full text the note cuts: the files the plan refused (a chain's
         # preview repeats its assumptions per stage, and pushed them out of the cut) and the blocking visual findings
@@ -860,11 +867,11 @@ class Session:
         if self.left_out:
             lead.append("LEFT OUT AT THE USER'S REQUEST (not planned, previewed or changed): "
                         + ", ".join(self.conversation.batch.label(p) for p in self.left_out))
-        if bp.exceptions:
+        if refused:
             lead.append("LEFT UNTOUCHED (the plan refused these; the others are previewed — name each to the user "
                         "with its reason and what would let it take part, or offer to leave it out):")
-            lead += [f"   {Path(f.source).name}: [{(f.exception or {}).get('code')}] "
-                     f"{(f.exception or {}).get('reason', '')}"[:400] for f in bp.exceptions[:20]]
+            lead += [f"   {source.name}: [{exc.get('code')}] {exc.get('reason', '')}"[:400]
+                     for source, exc in refused[:20]]
         for finding in (pv.review.blocking() if pv.review is not None else [])[:10]:
             lead.append(f"BLOCKING VISUAL FINDING — {finding.get('file')}, page {finding.get('page')}: "
                         f"{finding.get('text', '')}"[:400])
@@ -881,11 +888,12 @@ class Session:
         return files if kept is None else kept
 
     def _without_refused(self, files: List[Path], only) -> Optional[List[Path]]:
-        """What Create runs of an approved spec: the files the preview's plan refused stay as they are — the window
-        listed them under Left untouched, not part of the plan — so they are never run, and so never sent on to
-        recovery, while another file planned (a plan that refused every file went to outcome planning instead)."""
-        bp = getattr(self.preview, "batch_plan", None)
-        refused = {Path(f.source).resolve() for f in getattr(bp, "exceptions", None) or []}
+        """What Create runs of an approved spec: the files the preview refused (the plan, or a later step on a sample)
+        stay as they are — the window listed them under Left untouched, not part of the plan — so they are never run,
+        and so never sent on to recovery, while another file planned (a plan that refused every file went to outcome
+        planning instead)."""
+        from .preview import refusals
+        refused = {source.resolve() for source, _ in refusals(self.preview)}
         if not refused or len(refused) >= len(files):
             return only
         return [f for f in (files if only is None else only) if Path(f).resolve() not in refused]
