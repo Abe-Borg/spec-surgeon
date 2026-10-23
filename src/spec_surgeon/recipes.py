@@ -433,8 +433,9 @@ def _body_formatting(inputs: Dict[str, Any], ctx: Context) -> Built:
         assumptions.append(f"pages: {template_roles.page_words(roles.page)} (a document with a landscape page keeps "
                            f"its pages)")
     if font:
-        assumptions.append(f"text in {roles.font}" + (f", the documents' body text in {roles.size:g} pt"
-                                                         if roles.size else ""))
+        assumptions.append("the outline, the section line, the title and END OF SECTION in the template's own fonts "
+                           f"and sizes; other text of the body outside tables in {roles.font}"
+                           + (f" ({roles.size:g} pt where it is in the documents' body size)" if roles.size else ""))
     if clear:
         assumptions.append("paragraphs follow their styles' spacing, indents and alignment; bold, italic and "
                            "underlined words stay")
@@ -631,7 +632,8 @@ RECIPES: Tuple[Recipe, ...] = (
                   help="Attach the old logo too to swap only that picture.")), _swap_logo),
     Recipe("body_formatting", "Match body formatting to template", "Fonts & formatting",
            "Gives each document your template's outline styles and numbering, its page, its font, and lets the styles "
-           "set paragraph spacing, indents and alignment. Words and tables stay as they are.", ("template",),
+           "set paragraph spacing, indents and alignment. Words, tables, headers and footers stay as they are.",
+           ("template",),
            (Field("roles", "roles", "Your template's style for each part of a section",
                   help="Read from your template; change any that is wrong."),
             Field("page", "check", "Page size and margins", default=True),

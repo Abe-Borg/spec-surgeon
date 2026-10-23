@@ -36,6 +36,9 @@ Changes since v1.10.0.
   form shows the template's style for each part, read from the template and changeable. Documents it cannot match are
   left untouched with the reason and can be handed to Default mode. No AI call.
 - Fixed: creating the copies of a plan per layout whose layout ran as ordered steps stopped with an error.
+- Fixed (review of the button): its font step reached headers, footers, tables and every style; it now keeps to the
+  body outside tables, and the outline takes the template's own fonts and sizes. A document whose own style shares an
+  id with a template style is refused when a header, footer, note or table cell uses it, not only body text.
 
 ## Obliterate mode (hidden)
 

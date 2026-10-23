@@ -174,8 +174,9 @@ mode you last used (Safe the first time; never Obliterate).
   article shows as the template's "1.1", but a list that would renumber sets the document aside. An outline typed as
   text converts when its numbers are the ones the list counts (a typo, a skip or a duplicate sets it aside). With its
   boxes ticked (the default) it also sets the template's page size and margins (a document with a landscape page keeps
-  its pages), its body font, and lets the styles set paragraph spacing, indents and alignment — bold, italic and
-  underlined words stay. Documents built alike run as one plan and the rest are planned their own way; a document it
+  its pages), its fonts on the body (the outline in the template's own fonts and sizes, other body text in its body
+  font; headers, footers and tables keep theirs), and lets the styles set paragraph spacing, indents and alignment —
+  bold, italic and underlined words stay. Documents built alike run as one plan and the rest are planned their own way; a document it
   cannot read (no outline, typed and Word numbers mixed, an outline deeper than the template's, one of its styles
   shared with paragraphs it does not restyle) is left untouched with the reason.
 - **Default — a conversation.** What you control: any change you can describe, from one word to whole tables,

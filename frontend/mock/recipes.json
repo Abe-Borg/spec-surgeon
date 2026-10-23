@@ -110,7 +110,7 @@
    "id": "body_formatting",
    "label": "Match body formatting to template",
    "group": "Fonts & formatting",
-   "summary": "Gives each document your template's outline styles and numbering, its page, its font, and lets the styles set paragraph spacing, indents and alignment. Words and tables stay as they are.",
+   "summary": "Gives each document your template's outline styles and numbering, its page, its font, and lets the styles set paragraph spacing, indents and alignment. Words, tables, headers and footers stay as they are.",
    "needs": [
     "template"
    ],

@@ -69,11 +69,18 @@ spacing (all on). For each document, `body_match.plan_file` reads its own struct
   "counters"`); a mix of the two refuses;
 - the section number line, the title and END OF SECTION take the template's styles (`apply_style`), each only where
   one selector finds exactly that paragraph;
-- the template's page size and margins (`set_page_setup`, every section, unless one is in another orientation), its
-  body font (the *Match font to template* operations), and the clearing of paragraph spacing, indents and alignment
-  outside tables (`clear_direct_formatting`, runs untouched);
+- the template's page size and margins (`set_page_setup`, every section, unless one is in another orientation) and
+  the clearing of paragraph spacing, indents and alignment outside tables (`clear_direct_formatting`, runs
+  untouched);
+- the font, on the body outside tables only: the template's body font on runs that name a font (`set_font`) and on
+  the styles nothing else uses (`set_style_font`), the document defaults only when no table, header, footer or note
+  could inherit them; and, in a last step of its own, every style the plan brought from the template pinned to the
+  font and size it has in the template (`body_match.template_look`), since an imported style is based on the
+  document's own Normal, and the body text outside tables the plan does not restyle taking the body font on its runs
+  (its style may be one a table or a header shares). Headers, footers and tables keep their fonts;
 - a document whose own style has the id of a template role style and is used by paragraphs the plan does not
-  restyle is refused (the template's definition would change their look).
+  restyle — in a table cell the conversion leaves out, a header, a footer, a note or a comment as much as in the
+  body — is refused (the template's definition would change their look).
 
 Documents of one structure pattern whose plans agree run as one layout (the largest agreeing group; each other one
 is left out with why), and each layout's spec passes `compiler.compose_submission` on its own documents, which puts

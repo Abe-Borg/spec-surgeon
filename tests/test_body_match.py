@@ -20,6 +20,7 @@ from spec_surgeon.document_task import DocumentTask
 from spec_surgeon.gui import Session
 from spec_surgeon.ooxml import paragraphs
 from spec_surgeon.ops import lists as tl
+from spec_surgeon.ops.effective import Resolver, theme_fonts
 from spec_surgeon.ops.selectors import StyleSheet
 from spec_surgeon.package import DocxPackage, W
 
@@ -194,6 +195,102 @@ def test_a_style_the_template_would_replace_under_other_paragraphs_refuses(folde
         bm.plan_file(path, roles_of(folder))
 
 
+def with_header(data: bytes, style: str = "") -> bytes:
+    """The document with a header line ("ISSUED FOR PERMIT"), in ``style`` when given."""
+    import io
+    from docx import Document
+    doc = Document(io.BytesIO(data))
+    head = doc.sections[0].header
+    head.is_linked_to_previous = False
+    head.paragraphs[0].add_run("ISSUED FOR PERMIT")
+    if style:
+        head.paragraphs[0]._p.get_or_add_pPr().insert(0, etree.fromstring(f'<w:pStyle {W_DECL} w:val="{style}"/>'))
+    buf = io.BytesIO()
+    doc.save(buf)
+    return buf.getvalue()
+
+
+def test_a_style_the_template_would_replace_in_a_header_refuses_too(folder):
+    """Codex review on Abe-Borg/spec-surgeon#100: the guard read the body only. A header line in the document's own
+    "PR1" would take the template's PR1 unasked — refused, naming it."""
+    def own_pr1(root):
+        root.append(etree.fromstring(f'<w:style {W_DECL} w:type="paragraph" w:customStyle="1" w:styleId="PR1">'
+                                     f'<w:name w:val="PR1"/><w:basedOn w:val="Normal"/></w:style>'))
+    path = folder / "header.docx"
+    path.write_bytes(with_header(patch_docx(build_styled_outline(), {"word/styles.xml": own_pr1}), "PR1"))
+    with pytest.raises(bm.Refused, match="“PR1” would take the template's definition.*‘ISSUED FOR PERMIT’"):
+        bm.plan_file(path, roles_of(folder))
+
+
+def test_a_style_the_template_would_replace_in_a_table_cell_the_conversion_skips_refuses(folder):
+    """The conversion leaves table cells out; a cell on the main list in the document's own "ART" (the template's
+    article style id) would take the template's ART unasked — refused (it no longer counts as restyled)."""
+    def own_art(root):
+        root.append(etree.fromstring(f'<w:style {W_DECL} w:type="paragraph" w:customStyle="1" w:styleId="ART">'
+                                     f'<w:name w:val="ART"/><w:basedOn w:val="SpArt"/></w:style>'))
+
+    def cell_in_art(root):
+        cell = root.find(f".//{W}tc/{W}p")
+        cell.insert(0, etree.fromstring(f'<w:pPr {W_DECL}><w:pStyle w:val="ART"/></w:pPr>'))
+        old = cell.find(W + "pPr")
+        if old is not None and old is not cell[0]:
+            cell.remove(old)
+    path = folder / "cell.docx"
+    path.write_bytes(patch_docx(build_styled_outline(table=True), {"word/styles.xml": own_art, MAIN: cell_in_art}))
+    with pytest.raises(bm.Refused, match="“ART” would take the template's definition.*‘Product data’"):
+        bm.plan_file(path, roles_of(folder))
+
+
+def test_the_font_step_keeps_to_the_body_outside_tables(folder):
+    """Codex review on Abe-Borg/spec-surgeon#100: the font step reached headers, footers, notes, every style and the
+    document defaults, while the button promises that tables and headers and footers stay as they are. Now: the body's
+    runs outside tables, the styles only they use, and the defaults only when nothing else could inherit them."""
+    path = folder / "headed.docx"
+    path.write_bytes(with_header(build_styled_outline(table=True)))
+    plan = bm.plan_file(path, roles_of(folder), font=True)
+    assert plan.font_styles == ["SpArt", "SpPara", "SpPart", "SpSub"]      # Normal: the table cell and header use it
+    assert "Header" not in plan.font_styles and plan.defaults_free is False
+    bare = bm.plan_file(folder / "21 13 13.docx", roles_of(folder), font=True)
+    assert bare.defaults_free is False                                     # its table cell
+    ops = bm.font_ops("Arial", 10, [11.0], plan.font_styles, plan.defaults_free)
+    assert [o["op"] for o in ops] == ["set_font", "set_style_font"]
+    assert ops[0]["select"]["scope"] == ["document"] and ops[0]["select"]["paragraphs"] == {"in_table": False}
+    assert ops[1]["select"] == {"styles": {"ids": ["SpArt", "SpPara", "SpPart", "SpSub"]}}
+    assert [o["op"] for o in bm.font_ops("Arial", 10, [11.0], [], True)] == ["set_font", "set_doc_defaults_font"]
+    # the template's look, in a step of its own: each imported style pinned to its font and size in the template
+    assert {o["params"]["font"] for o in plan.look} == {"Arial"} and all(o["params"]["only_where_defined"] is False
+                                                                       for o in plan.look)
+    pinned = sorted(i for o in plan.look for i in o["select"]["styles"]["ids"])
+    assert pinned == sorted(["SCT", "TTL", "EOS", "PRT", "ART", "PR1", "PR2", "PR3"])
+    assert bm.plan_file(path, roles_of(folder)).look == []                 # the font box off: none
+
+
+def test_the_button_leaves_the_headers_and_tables_as_they_were(folder, monkeypatch):
+    """End to end on a document with a header: the copy's header part is byte-identical, and the table cell keeps its
+    font, while the outline takes the template's."""
+    no_ai(monkeypatch)
+    path = folder / "headed.docx"
+    path.write_bytes(with_header(build_styled_outline(table=True)))
+    task = DocumentTask(Session(out_root=folder / "out"), render=False, mode="safe")
+    task.attach([path])
+    task.attach([template(folder)], template=True)
+    view = task.perform("recipe", recipe="body_formatting", inputs={})
+    assert view["stage"] == "preview", [m["text"] for m in task.messages]
+    view = task.perform("primary", token=view["token"])
+    assert view["stage"] == "done" and all(f.status == "PASS" for f in task.session.last_batch.files)
+    src, out = DocxPackage.from_path(path), DocxPackage(Path(task.results[str(path.resolve())]).read_bytes())
+    heads = [part for part in src.text_parts() if "header" in part]
+    assert heads and all(src.read(part) == out.read(part) for part in heads)
+    assert src.read("word/styles.xml") != out.read("word/styles.xml")
+
+    def header_look(pkg):
+        p = paragraphs(pkg.xml(heads[0]))[0]
+        r = p.find(f".//{W}r")
+        got = Resolver(StyleSheet(pkg), theme_fonts(pkg)).run(r.find(W + "rPr"), p)
+        return got["ascii"], got["sz"]
+    assert header_look(out) == header_look(src) == ("Times New Roman", "22")
+
+
 def test_a_document_without_an_outline_refuses(tmp_path, folder):
     from docx import Document
     doc = Document()
@@ -242,8 +339,19 @@ def test_the_button_matches_a_mixed_batch_and_leaves_out_what_it_cannot_match(fo
     pkg = DocxPackage(out)
     mar = DocxPackage.sect_prs(pkg.xml(MAIN))[0].find(W + "pgMar")
     assert mar.get(W + "left") == "1440" and mar.get(W + "header") == "720"
+    # the font: the outline takes the template's Arial 10 pt (its imported styles pinned to the template's look); the
+    # table cell and the document defaults it inherits stay Times New Roman 11 pt — the button keeps out of tables
+    look = Resolver(StyleSheet(pkg), theme_fonts(pkg))
+
+    def seen(p):
+        r = p.find(f".//{W}r")
+        got_look = look.run(r.find(W + "rPr"), p)
+        return got_look["ascii"], got_look["sz"]
+    assert seen(got["SUMMARY"][2]) == ("Arial", "20") and seen(para) == ("Arial", "20")
+    assert seen(got["SECTION 21 13 13"][2])[0] == "Arial"
+    assert seen(got["Product data"][2]) == ("Times New Roman", "22")
     fonts = pkg.xml("word/styles.xml").find(f"{W}docDefaults/{W}rPrDefault/{W}rPr/{W}rFonts")
-    assert fonts.get(W + "ascii") == "Arial"
+    assert fonts.get(W + "ascii") == "Times New Roman"
     typed = outline(Path(task.results[str((folder / "typed.docx").resolve())]).read_bytes())
     assert typed["SUMMARY"][:2] == ("ART", "1.1") and typed["GENERAL"][:2] == ("PRT", "PART 1 -")
     assert any("match the body formatting" in line.lower() or "style" in line.lower() for line in task.history)
@@ -258,7 +366,13 @@ def test_the_layout_plans_each_pass_the_gate_as_ordered_steps(folder):
     for layout in plan["layouts"]:
         stages = [[o["op"] for o in st["spec"]["ops"]] for st in layout["spec"]["stages"]]
         assert stages[0][:2] == ["set_page_setup", "set_font"]          # the page and the font come first
-        assert stages[-1][-1] == "clear_direct_formatting"              # the clearing last
+        assert set(stages[-1]) <= {"set_style_font", "set_font"} and "set_style_font" in stages[-1]  # the look, last
+        for op in layout["spec"]["stages"][-1]["spec"]["ops"]:
+            if op["op"] == "set_font":                                  # plain body text: by its style, no table
+                assert op["select"]["paragraphs"]["in_table"] is False and op["select"]["paragraphs"]["style_in"]
+        assert stages[-2][-1] == "clear_direct_formatting"              # the clearing before it
+        first = layout["spec"]["stages"][0]["spec"]["ops"][1]
+        assert first["select"] == {"scope": ["document"], "runs": "all", "paragraphs": {"in_table": False}}
         assert all(st["spec"]["request"] == "Match" for st in layout["spec"]["stages"])
 
 
@@ -328,3 +442,35 @@ def test_a_chain_files_stop_reads_like_a_batch_files():
                             "reason": "it would count differently", "details": {}}
     cf.status = "FAIL"
     assert cf.exception is None
+
+
+def test_plain_body_text_on_a_shared_style_takes_the_body_font(folder, monkeypatch):
+    """Codex review on Abe-Borg/spec-surgeon#103: a body paragraph the plan does not restyle, in Normal — which the table
+    cell shares, so the font step leaves Normal alone — kept Times New Roman. Its runs now take the template's body
+    font in the last step; the table cell keeps its font."""
+    no_ai(monkeypatch)
+
+    def plain_note(root):
+        summary = next(p for p in root.iter(W + "p") if "".join(t.text or "" for t in p.iter(W + "t")) == "SUMMARY")
+        summary.addnext(etree.fromstring(f'<w:p {W_DECL}><w:r><w:t>A plain note to the specifier.</w:t></w:r></w:p>'))
+    path = folder / "plain.docx"
+    path.write_bytes(patch_docx(build_styled_outline(table=True), {MAIN: plain_note}))
+    plan = bm.plan_file(path, roles_of(folder), font=True)
+    assert plan.plain_styles == ["Normal"] and "Normal" not in plan.font_styles
+    task = DocumentTask(Session(out_root=folder / "out"), render=False, mode="safe")
+    task.attach([path])
+    task.attach([template(folder)], template=True)
+    view = task.perform("recipe", recipe="body_formatting", inputs={})
+    assert view["stage"] == "preview", [m["text"] for m in task.messages]
+    view = task.perform("primary", token=view["token"])
+    assert view["stage"] == "done" and all(f.status == "PASS" for f in task.session.last_batch.files)
+    data = Path(task.results[str(path.resolve())]).read_bytes()
+    out, got = DocxPackage(data), outline(data)
+    look = Resolver(StyleSheet(out), theme_fonts(out))
+
+    def seen(p):
+        r = p.find(f".//{W}r")
+        return look.run(r.find(W + "rPr"), p)["ascii"]
+    assert seen(got["A plain note to the specifier."][2]) == "Arial"
+    assert seen(got["Product data"][2]) == "Times New Roman"
+    assert seen(got["SECTION 21 13 13"][2]) == "Arial" and got["SECTION 21 13 13"][0] == "SCT"

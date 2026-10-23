@@ -20,13 +20,21 @@ code from the document's own structure and the template's roles (``template_role
 * The paragraph formatting (the form's "clear" box): ``clear_direct_formatting`` of paragraphs outside tables — only
   ``CLEARED`` (spacing, indents, alignment), runs untouched: bold, italic and underlined words stay.
 * A guard: a template role style the document already has (the same id) takes the template's definition; when
-  paragraphs the plan does not restyle also use it (directly or through ``w:basedOn``), the document is refused —
+  paragraphs the plan does not restyle also use it (directly or through ``w:basedOn``) — in a table cell the
+  conversion leaves out, a header, a footer, a note or a comment as much as in the body — the document is refused:
   their look would change unasked.
+* The template's look on the outline (the form's "font" box): every role style the plan imports is pinned, after the
+  import, to the font and size it resolves to in the template (``template_look``) — an imported style is based on the
+  document's own Normal, whose font and size are the document's; and the body text outside tables the plan does not
+  restyle (``FilePlan.plain_styles``) takes the body font on its runs in the same last step.
 
 **Per layout** (``build``): the documents of one structure pattern (``fingerprint.pattern_id``) whose plans agree run
 one plan; the largest agreeing group wins and each other document is left out with the reason. The font step (the form's
-"font" box: ``set_font``, ``set_style_font``, ``set_doc_defaults_font`` — the template's body font, and its size on the
-text in the documents' own body sizes) comes first after the page. Each layout's spec passes the one gate
+"font" box; ``font_ops``: the template's body font, and its size on the text in the documents' own body sizes) comes
+first after the page and reaches the body outside tables only, as the button promises: ``set_font`` on its runs,
+``set_style_font`` on the styles nothing else uses (``FilePlan.font_styles``: no table cell, header, footer, note or
+comment uses them; every document of the layout has them), ``set_doc_defaults_font`` only when nothing outside the
+body could inherit the defaults (``FilePlan.defaults_free``). Each layout's spec passes the one gate
 (``compiler.compose_submission``) on its own documents — overlapping operations become ordered steps; a layout the gate
 refuses leaves its documents out with the gate's reason. Every change is plain (no tracked changes), and no word is
 placed.
@@ -55,10 +63,14 @@ class FilePlan:
     kind: str                            # "automatic" or "typed"
     body_size: Optional[float] = None
     notes: List[str] = field(default_factory=list)
+    look: List[Dict[str, Any]] = field(default_factory=list)  # the template's look on its imported styles: last step
+    font_styles: List[str] = field(default_factory=list)   # styles only the body outside tables uses (font step)
+    plain_styles: List[str] = field(default_factory=list)  # the styles of body text outside tables it does not restyle
+    defaults_free: bool = False                            # nothing outside the body outside tables has paragraphs
 
     @property
     def key(self) -> str:
-        return json.dumps([self.kind, self.ops], sort_keys=True)
+        return json.dumps([self.kind, self.ops, self.look], sort_keys=True)
 
 
 def _style_chain(sheet, sid: Optional[str]) -> List[str]:
@@ -71,15 +83,62 @@ def _style_chain(sheet, sid: Optional[str]) -> List[str]:
     return out
 
 
+def _uses(pars, sheet) -> set:
+    """Every style the paragraphs use: their paragraph styles and their runs' character styles, each with its
+    ``w:basedOn`` chain."""
+    from .ops.lists import paragraph_style
+    from .package import W
+    out: set = set()
+    for p in pars:
+        out.update(_style_chain(sheet, paragraph_style(p, sheet)))
+        for rs in p.iter(W + "rStyle"):
+            out.update(_style_chain(sheet, rs.get(W + "val")))
+    return out
+
+
+def _elsewhere(pkg, main: str) -> List[Tuple[str, Any]]:
+    """``(part, paragraph)`` of every paragraph outside the main part's body text: the headers, footers, notes and
+    comments (the main part's table cells are the caller's)."""
+    from .ooxml import paragraphs
+    return [(part, p) for part in pkg.text_parts() if part != main for p in paragraphs(pkg.xml(part))]
+
+
+def template_look(roles: TemplateRoles, style_ids: List[str]) -> List[Tuple[str, Optional[float], List[str]]]:
+    """``(font, size, style ids)`` groups: the font and size each of ``style_ids`` resolves to in the template (its
+    ``w:basedOn`` chain, then the template's document defaults; a theme font through the template's theme). A style
+    whose font the template leaves to a theme it cannot resolve is left out."""
+    from lxml import etree
+    from .ops.effective import Resolver, theme_fonts
+    from .ops.selectors import StyleSheet
+    from .package import DocxPackage, W
+    pkg = DocxPackage.from_path(roles.path)
+    resolver = Resolver(StyleSheet(pkg), theme_fonts(pkg))
+    groups: Dict[Tuple[str, Optional[float]], List[str]] = {}
+    for sid in style_ids:
+        if sid not in resolver.styles:
+            continue
+        p = etree.fromstring(f'<w:p xmlns:w="{W[1:-1]}"><w:pPr><w:pStyle w:val="{sid}"/></w:pPr></w:p>')
+        look = resolver.run(None, p)
+        font = look.get("ascii")
+        if not font or font.startswith("theme:"):
+            continue
+        size = int(look["sz"]) / 2 if look.get("sz") else None
+        groups.setdefault((font, size), []).append(sid)
+    return [(font, size, ids) for (font, size), ids in groups.items()]
+
+
 def _clip(text: str, n: int = 40) -> str:
     text = " ".join(text.split())
     return text if len(text) <= n else text[:n - 1] + "…"
 
 
-def plan_file(path: Path, roles: TemplateRoles, *, page: bool = True, clear: bool = True) -> FilePlan:
-    """The document's own plan (module docstring), or ``Refused`` with the reason."""
+def plan_file(path: Path, roles: TemplateRoles, *, page: bool = True, clear: bool = True,
+              font: bool = False) -> FilePlan:
+    """The document's own plan (module docstring), or ``Refused`` with the reason. ``font``: the outline takes the
+    template's look (``template_look``); the font step itself is the layout's (``build_layouts``)."""
     from .ooxml import block_full_text, paragraphs
     from .ops.clear_formatting import ClearSettings
+    from .ops.convert_numbering import in_table
     from .ops.lists import ListDefs, count, main_abstract, paragraph_style
     from .ops.selectors import StyleSheet, paragraph_selected
     from .package import DocxPackage
@@ -88,8 +147,10 @@ def plan_file(path: Path, roles: TemplateRoles, *, page: bool = True, clear: boo
     pkg = DocxPackage.from_path(path)
     rows = analyze_structure(pkg)["paragraphs"]
     summary = role_summary(pkg)
-    root = pkg.xml(pkg.main_part())
+    main_part = pkg.main_part()
+    root = pkg.xml(main_part)
     pars = paragraphs(root)
+    cells = {i for i, p in enumerate(pars) if in_table(p)}
     sheet = StyleSheet(pkg)
     template = str(roles.path)
     present = [r for r in NUMBERED if r in summary["roles"]]
@@ -105,6 +166,7 @@ def plan_file(path: Path, roles: TemplateRoles, *, page: bool = True, clear: boo
     ops: List[Dict[str, Any]] = []
     notes: List[str] = []
     targeted: set = set()
+    applied: List[str] = []                 # the template styles this plan imports, in order
 
     # ---- the page ----
     if page and roles.page:
@@ -138,6 +200,7 @@ def plan_file(path: Path, roles: TemplateRoles, *, page: bool = True, clear: boo
             notes.append(f"the {LABELS[role].lower()} keeps its style (its selector also finds other paragraphs)")
             continue
         targeted |= set(members)
+        applied.append(style)
         ops.append({"op": "apply_style", "select": {"paragraphs": sel},
                     "params": {"style": style, "template": template, "existing": "replace",
                                "direct_formatting": "keep", "tracked": False}})
@@ -159,7 +222,9 @@ def plan_file(path: Path, roles: TemplateRoles, *, page: bool = True, clear: boo
             if level_map.get(source, target) != target:
                 raise Refused(f"two parts of its outline share level {source + 1} of their list")
             level_map[source] = target
-        targeted |= {x.index for x in counted if x.abstract_id == main}
+        # table cells are left out of the conversion (include_tables: false): they keep their look, and the guard
+        # below holds them to it
+        targeted |= {x.index for x in counted if x.abstract_id == main and x.index not in cells}
         params: Dict[str, Any] = {"levels": list(roles.levels), "template": template, "existing": "replace",
                                   "counters": "keep", "direct_formatting": "keep", "tracked": False,
                                   "allow_missing": False}
@@ -168,19 +233,29 @@ def plan_file(path: Path, roles: TemplateRoles, *, page: bool = True, clear: boo
             params["level_map"] = moved
         ops.append({"op": "convert_numbering", "select": {"include_tables": False}, "params": params})
     else:
-        targeted |= {row["paragraph"] for row in rows if row["role"] in present}
+        targeted |= {row["paragraph"] for row in rows if row["role"] in present and row["paragraph"] not in cells}
         ops.append({"op": "convert_typed_numbers", "select": {"include_tables": False},
                     "params": {"levels": list(roles.levels), "template": template, "existing": "replace",
                                "match": "counters", "tracked": False, "allow_missing": False}})
 
     # ---- the guard: a style the template replaces that other paragraphs use ----
+    applied += [sid for sid in roles.levels if sid not in applied]
     imported = set(roles.styles.values())
+    others = [(p, _uses([p], sheet)) for p in [p for i, p in enumerate(pars) if i not in targeted]
+              + [p for _, p in _elsewhere(pkg, main_part)]]
     for sid in sorted(imported & set(sheet.styles)):
-        stray = [i for i, p in enumerate(pars)
-                 if i not in targeted and sid in _style_chain(sheet, paragraph_style(p, sheet))]
+        stray = [p for p, uses in others if sid in uses]
         if stray:
             raise Refused(f"its style “{sid}” would take the template's definition, and {len(stray)} paragraph(s) the "
-                          f"button does not restyle use it (e.g. ‘{_clip(block_full_text(pars[stray[0]]))}’)")
+                          f"button does not restyle use it (e.g. ‘{_clip(block_full_text(stray[0]))}’)")
+
+    # ---- the template's look on the outline (the font box): a step of its own, after the import ----
+    look: List[Dict[str, Any]] = []
+    if font:
+        for look_font, look_size, ids in template_look(roles, applied):
+            look.append({"op": "set_style_font", "select": {"styles": {"ids": ids}},
+                        "params": {"font": look_font, **({"size": look_size} if look_size else {}),
+                                   "only_where_defined": False}})
 
     # ---- the paragraph formatting ----
     if clear:
@@ -191,18 +266,31 @@ def plan_file(path: Path, roles: TemplateRoles, *, page: bool = True, clear: boo
         top = body_text_fonts(pkg)
     except Exception:  # noqa: BLE001
         top = []
-    return FilePlan(Path(path), ops, kind, top[0]["size_pt"] if top and top[0]["size_pt"] else None, notes)
+    # the font step's reach: the styles only the body outside tables uses (none the import replaces), and whether
+    # anything outside it could inherit the document defaults
+    outside = [p for i, p in enumerate(pars) if i in cells] + [p for _, p in _elsewhere(pkg, main_part)]
+    body_styles = _uses([p for i, p in enumerate(pars) if i not in cells], sheet)
+    font_styles = sorted(body_styles - _uses(outside, sheet) - imported)
+    plain = {paragraph_style(p, sheet) for i, p in enumerate(pars) if i not in cells and i not in targeted}
+    return FilePlan(Path(path), ops, kind, top[0]["size_pt"] if top and top[0]["size_pt"] else None, notes,
+                    look=look, font_styles=font_styles, defaults_free=not outside,
+                    plain_styles=sorted(x for x in plain - imported if x))
 
 
-def font_ops(font: str, size: Optional[float], size_from: List[float]) -> List[Dict[str, Any]]:
-    """The font step: runs that name a font, every style and the document defaults take ``font``; with ``size``, the
-    text in the documents' own body sizes (``size_from``) takes it too."""
+def font_ops(font: str, size: Optional[float], size_from: List[float], styles: List[str] = (),
+             defaults: bool = False) -> List[Dict[str, Any]]:
+    """The font step, on the body outside tables only: its runs that name a font, the ``styles`` only it uses and,
+    with ``defaults``, the document defaults take ``font``; with ``size``, the text in the documents' own body sizes
+    (``size_from``) takes it too."""
     sized = {"size": size, "size_from": size_from} if size and size_from else {}
-    scope = ["document", "headers", "footers", "footnotes", "endnotes"]
-    return [{"op": "set_font", "select": {"scope": scope, "runs": "all"},
-             "params": {"font": font, **sized, "only_where_defined": True}},
-            {"op": "set_style_font", "select": {"styles": "all"}, "params": {"font": font, **sized}},
-            {"op": "set_doc_defaults_font", "params": {"font": font, **sized}}]
+    ops = [{"op": "set_font", "select": {"scope": ["document"], "runs": "all", "paragraphs": {"in_table": False}},
+            "params": {"font": font, **sized, "only_where_defined": True, "tracked": False}}]
+    if styles:
+        ops.append({"op": "set_style_font", "select": {"styles": {"ids": list(styles)}},
+                    "params": {"font": font, **sized}})
+    if defaults:
+        ops.append({"op": "set_doc_defaults_font", "params": {"font": font, **sized}})
+    return ops
 
 
 def _reason(errors: List[str]) -> str:
@@ -232,7 +320,7 @@ def build_layouts(roles: TemplateRoles, ctx, request: str, *, page: bool, font: 
         for f in batch.pattern_paths(pat):
             key = str(Path(f).resolve())
             try:
-                plans.append(plan_file(Path(f), roles, page=page, clear=clear))
+                plans.append(plan_file(Path(f), roles, page=page, clear=clear, font=font and bool(roles.font)))
             except Refused as e:
                 left[key] = f"Not matched: {e}."
             except Exception as e:  # noqa: BLE001 — a document that cannot be read is left out, with why
@@ -250,8 +338,9 @@ def build_layouts(roles: TemplateRoles, ctx, request: str, *, page: bool, font: 
         ops = list(chosen[0].ops)
         if font and roles.font:
             sizes = sorted({p.body_size for p in chosen if p.body_size})
+            shared = sorted(set.intersection(*(set(p.font_styles) for p in chosen)))
             at = 1 if ops and ops[0]["op"] == "set_page_setup" else 0
-            ops[at:at] = font_ops(roles.font, roles.size, sizes)
+            ops[at:at] = font_ops(roles.font, roles.size, sizes, shared, all(p.defaults_free for p in chosen))
         mode = "untracked" if chosen[0].kind == "typed" else "formatting"
         n = len(layouts) + 1
         what = "typed numbers" if chosen[0].kind == "typed" else "numbered by Word"
@@ -264,6 +353,28 @@ def build_layouts(roles: TemplateRoles, ctx, request: str, *, page: bool, font: 
         stub = {"kind": "layouts", "request": request, "layouts": [layout]}
         outcome, errors = compiler.compose_submission(layout_spec(stub, layout), batch, [request],
                                                       patterns=[pat["pattern_id"]], leave_out=list(left))
+        look_ops = list(chosen[0].look)
+        plain = sorted(set().union(*(p.plain_styles for p in chosen)))
+        if font and roles.font and plain:
+            # body text the plan does not restyle takes the body font on its runs (after the restyle, so the
+            # template's own styles keep their fonts): its style may be one a table or a header shares (Normal), which
+            # the font step leaves alone
+            sized = {"size": roles.size, "size_from": sizes} if roles.size and sizes else {}
+            look_ops.append({"op": "set_font", "select": {"scope": ["document"], "runs": "all",
+                                                          "paragraphs": {"style_in": plain, "in_table": False}},
+                             "params": {"font": roles.font, **sized, "only_where_defined": False, "tracked": False}})
+        if not errors and look_ops:
+            # the imported styles take the template's font and size in a step of their own, planned on the copy
+            # that holds them (the composer orders only ops that overlap in the source)
+            from .chain import chain_from_specs
+            from .editspec import is_chain
+            steps = ([(st["name"], st["spec"]) for st in outcome["stages"]] if is_chain(outcome)
+                     else [("match", outcome)])
+            look = {"request": request, "summary": "The template's font and size on the styles it brought.",
+                    "mode": "formatting", "ops": look_ops}
+            outcome, errors = compiler.compose_submission(chain_from_specs(steps + [("template look", look)]), batch,
+                                                          [request], patterns=[pat["pattern_id"]],
+                                                          leave_out=list(left))
         if errors:
             why = _reason(errors)
             for p in chosen:
