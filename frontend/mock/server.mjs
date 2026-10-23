@@ -245,6 +245,7 @@ function emptyView() {
 
 /** The reply that begins the pass over the to-do list; the real server recognises these exact words. */
 const WORK_TODO = "Work on the documents I set aside";
+const HELD_REASON = "You marked its preview as needing more work.";
 
 const SCENARIOS = {
   empty: () => emptyView(),
@@ -342,7 +343,7 @@ const SCENARIOS = {
     const v = SCENARIOS.done();
     const aside = DOCS[1];
     v.results = v.results.filter((r) => r.source !== aside.path);
-    v.todo = [{ path: aside.path, name: name(aside.path) }];
+    v.todo = [{ path: aside.path, name: name(aside.path), why: "held", reason: HELD_REASON }];
     v.attachments = v.attachments.map((a) => (a.path === aside.path ? { ...a, current: a.path } : a));
     v.messages = [
       ...v.messages,
@@ -751,7 +752,9 @@ async function primaryJob(res, token, hold = []) {
   );
   const held = inScope.filter((a) => hold.includes(a.current) || hold.includes(a.path));
   const running = inScope.filter((a) => !held.includes(a));
-  for (const a of held) if (!view.todo.some((t) => t.path === a.path)) view.todo.push({ path: a.path, name: a.name });
+  for (const a of held) {
+    if (!view.todo.some((t) => t.path === a.path)) view.todo.push({ path: a.path, name: a.name, why: "held", reason: HELD_REASON });
+  }
   view.focus = [];
   if (running.length === 0) {
     const note = msg("app", "You set every document aside, so no copy was created. Tell me what should be different, and I’ll plan them again.");
@@ -1021,6 +1024,15 @@ async function handle(req, res) {
       if (!running) return json(res, 409, { error: "Nothing is running." });
       running.stop = true;
       return json(res, 200, { ok: true });
+    case "POST /api/put-back": {
+      if (view.busy) return busyRefusal();
+      const body = await readJson(req);
+      const entry = view.todo.find((t) => t.path === body.path);
+      if (!entry) return json(res, 400, { error: "That document is not on your to-do list." });
+      view.todo = view.todo.filter((t) => t.path !== body.path);
+      view.messages.push(msg("app", `${entry.name} is off your to-do list and back among the documents your next request works on.`));
+      return json(res, 200, view);
+    }
     case "POST /api/start-over":
       if (view.busy) return busyRefusal();
       view.working = { generation: 0, from_originals: true, can_start_over: false };

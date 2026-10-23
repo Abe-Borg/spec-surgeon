@@ -346,6 +346,9 @@ try {
   const todoCard = page.locator("[aria-label='Your to-do list']");
   check("the set-aside document is on the to-do card", (await todoCard.getByText("21 05 00 Common Work Results for Fire Suppression.docx", { exact: true }).count()) === 1);
   check("…and under the copies", (await page.locator("section[aria-label='Set aside for more work']").getByText("21 05 00", { exact: false }).count()) === 1);
+  check("the to-do card says why it waits", (await todoCard.getByText("You marked its preview as needing more work.", { exact: true }).count()) === 1);
+  check("…and so does the card under the copies", (await page.locator("section[aria-label='Set aside for more work']").getByText("You marked its preview as needing more work.", { exact: true }).count()) === 1);
+  check("each waiting document can be put back", await page.getByRole("button", { name: /Put back 21 05 00/ }).isVisible());
   check("the copy that looked right is listed", (await page.locator("section[aria-label='Your edited copies']").getByText("21 13 13", { exact: false }).count()) === 1);
   check("the set-aside document got no copy", (await page.locator("section[aria-label='Your edited copies']").getByText("21 05 00", { exact: false }).count()) === 0);
   if ((await trayToggle.getAttribute("aria-expanded")) === "false") await trayToggle.click();
@@ -356,7 +359,17 @@ try {
   check("the pass over the set-aside document begins with Continue", await page.getByRole("button", { name: "Continue" }).first().isVisible());
   check("the to-do card is gone during the pass", (await page.getByRole("button", { name: "Work on it now" }).count()) === 0);
 
-  // 16. Safe mode: the switch, the buttons in place of the message box, a button's form → preview → copies, and the
+  // 16. Put back takes a document off the to-do list without a pass; it is in scope again.
+  await scenario("todo");
+  await page.reload();
+  const putBack = page.getByRole("button", { name: /Put back / });
+  await putBack.waitFor({ timeout: 20000 });
+  await putBack.click();
+  await page.getByText(/is off your to-do list and back among the documents/).waitFor({ timeout: 20000 });
+  check("Put back empties the to-do list", (await page.locator("section[aria-label='Set aside for more work']").count()) === 0);
+  check("…and the chat's to-do card with it", (await page.getByRole("button", { name: "Work on it now" }).count()) === 0);
+
+  // 17. Safe mode: the switch, the buttons in place of the message box, a button's form → preview → copies, and the
   // hand-off of what it left untouched to Default mode.
   await scenario("attached");
   await page.reload();

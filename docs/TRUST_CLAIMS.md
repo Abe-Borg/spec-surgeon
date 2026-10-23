@@ -20,8 +20,9 @@ documents a request leaves out in B5, per-file wording in provenance); those lin
 2026-10-23 for Safe mode (`docs/PLAN-2026-10-23-modes.md`, M1): A23–A25, the A8/B6/B9 exceptions for a Safe-mode
 button, `mode` in settings.json, T40, T52 and T53; and for its "match body formatting to template" button (M3), A24's
 path and T52's test. Updated 2026-10-23 after the 1.10.0 live run over test-set-3 (a sample a later step refuses no
-longer starts B8); that line also says "(test-set-3)". Paths are relative to `src/spec_surgeon/` unless they start
-with `frontend/`, `tests/` or `docs/`.
+longer starts B8); that line also says "(test-set-3)". Updated 2026-10-23 with the to-do list as the place
+documents wait (the chat's `set_aside` tool in §1d, A15, A26, A27, B18, T54, T55); those lines say "(to-do list)".
+Paths are relative to `src/spec_surgeon/` unless they start with `frontend/`, `tests/` or `docs/`.
 
 **Verification column:**
 - `facts` means `tests/test_trust_facts.py` pins the value to its source constant.
@@ -50,7 +51,7 @@ with `frontend/`, `tests/` or `docs/`.
 | A12 | Open a copy, or the copies' folder | `POST /api/open` → `os.startfile` | none |
 | A13 | **Start over from the originals** | `POST /api/start-over` (or the typed reply) | none |
 | A14 | **New conversation** | `POST /api/new-conversation` | none |
-| A15 | **Work on the documents I set aside** | `/api/send` with `WORK_TODO` → `start_todo` | none until the next request |
+| A15 | **Work on the documents I set aside** (to-do list: whatever put them there, each with why) | `/api/send` with `WORK_TODO` → `start_todo` | none until the next request |
 | A16 | Click a page to enlarge it | page only; the image comes from `GET /api/image` | none |
 | A17 | About → **Check for updates** | `POST /api/update/check` | none |
 | A18 | **Download** / **Download and install** / **Restart to update** / **Not now** | `/api/update/download`, `/install`; **Not now** hides the banner in the page only (`App.tsx` `dismissedUpdate`) | none |
@@ -61,8 +62,10 @@ with `frontend/`, `tests/` or `docs/`.
 | A23 | Choose **Safe** or **Default** in the top bar | `POST /api/mode` → `DocumentTask.set_mode`; kept in settings.json (`Settings.mode`) | none |
 | A24 | In Safe mode: a button, its short form, **Preview** | `POST /api/recipe` → `DocumentTask._recipe` → `recipes.build` → `compiler.compose_submission` (for *Match body formatting to template*, once per layout in `body_match.build_layouts`) → `Session.make_preview` (`model_free`: no visual check, no outcome planning) | none |
 | A25 | **Try these in Default mode** (beside what a button left untouched), **Go to Default mode** | `POST /api/handoff` → `DocumentTask.hand_off`; `POST /api/mode` | none |
+| A26 | (to-do list) **Put back** beside a document on the to-do list | `POST /api/put-back` → `DocumentTask.put_back` | none |
+| A27 | (to-do list) **Set the rest aside for later**, a reply offered while files are checked again once the ready copies are saved | `/api/send` with `SET_ASIDE_REST` → `DocumentTask.set_rest_aside` | none |
 
-Count: 25 actions.
+Count: 27 actions.
 
 (re-audit) The server also has `/api/update/cancel`, `/api/update/skip`, `/api/update/dismiss`, `/api/update/releases`
 and `/api/quit`, behind the same launch token. The page calls none of them (`frontend/src/lib/api.ts`), so no click
@@ -91,9 +94,10 @@ your browser (N4).
 
 | B16 | A batch of 3 or more files is edited and checked in the app's own worker processes, one per core up to 8, each file whole in one worker; a preview plans 12 or more files, and checks 3 or more samples, the same way; Word renders over up to 3 private instances side by side | `batch.worker_plan` (`DEFAULT_WORKER_MODE` "auto"), `batch.map_files`, `planner.PLAN_PROCESS_MIN_FILES`, `render/word_worker.run_word_batches` | none | none |
 | B17 | With Fast responses on: a fast call the fast capacity cannot take (429, 529) is re-sent at once at standard speed; a key refused fast mode (a 400 or 403 naming the speed) runs at standard speed until the setting is turned on again | `llm.call` (`_fast_capacity`, `_speed_refused`, `_fast_unavailable`) | follows a call | Anthropic |
+| B18 | (to-do list) After Create edited copies runs: a file its preview refused, and a run failure no recovery takes, go on the to-do list with the reason (a Create that is refused moves nothing). After a conversation turn: the documents Claude set aside at the user's word (`set_aside`) go there too | `DocumentTask._refused_now`, `_bin_failed`, `_take_set_aside` | none of its own | none |
 
-Count: 17 automatic behaviours. B4–B10, B13, B15 and B17 run only inside work a click started. B1–B3, B11, B12, B14
-and B16 involve no model.
+Count: 18 automatic behaviours. B4–B10, B13, B15 and B17 run only inside work a click started. B1–B3, B11, B12, B14,
+B16 and B18 involve no model.
 
 ### 1c. Network destinations
 
@@ -146,7 +150,7 @@ overrides it).
 
 | Conversation | Tools | Validated by |
 | --- | --- | --- |
-| Chat (`conversation.py`) | `CHAT_TOOLS`: describe_op, inspect_template_styles, read_context_archive, run_analysis, read_analysis_result, list_parts, read_paragraphs, read_xml_page, inspect_profile, compare_files, list_styles, sample_paragraphs, show_part_text, read_template, read_input_file, ask_user, submit_editspec, view_pages, propose_defined_terms | `compiler.compose_submission` (schema, attached-file checks, `untraceable` wording check, dry plan); `conversation._ask_turn` (choice kinds, invisible characters, ≤5 suggested replies) |
+| Chat (`conversation.py`) | `CHAT_TOOLS`: describe_op, inspect_template_styles, read_context_archive, run_analysis, read_analysis_result, list_parts, read_paragraphs, read_xml_page, inspect_profile, compare_files, list_styles, sample_paragraphs, show_part_text, read_template, read_input_file, ask_user, submit_editspec, view_pages, propose_defined_terms, set_aside (to-do list: changes no file; it moves the named documents to the to-do list) | `compiler.compose_submission` (schema, attached-file checks, `untraceable` wording check, dry plan; the documents set aside are left out of it); `conversation._ask_turn` (choice kinds, invisible characters, ≤5 suggested replies); `compiler.resolve_set_aside` (labels THE BATCH lists) |
 | Custom-method writer (`codegen.py`) | the inspection tools + show_xml, find_paragraphs, list_styles, show_part_text, submit_op | `codegen.check_source` (import whitelist, forbidden names and attributes), sandbox run, `hard_limits`, `verify.run_suite`. (re-audit) Under an approved outcome contract (recovery's `custom_transform`), `hard_limits` returns before its formatting-only rules, `allowed_imports` adds `GOAL_FROM`, and the copy must also pass `goals.verify_goal` → `verify/goals.py` or `verify/effects.py` (independent) |
 | Visual check (`vision.py`) | submit_review | findings about pages it was not shown are dropped; advisory only |
 | Outcome planner (`campaign_planner.py`) | read tools, view_pages, list_documents, inspect_goal_effect, propose_plan, need_user, unsupported | `goals.validate_contract`, template pin, invisible characters |
@@ -156,6 +160,8 @@ overrides it).
 **What a request carries:**
 - The request, your answers and decisions.
 - What the copies already carry.
+- (to-do list) The names of the documents on your to-do list and why each waits (`compiler.build_messages` `todo`);
+  their contents are not sent while they wait.
 - File names, or trailing folders where two files share a name (`compiler.file_labels`). Recovery requests carry full
   paths.
 - The full local path of an attached template and of attached pictures and tables.
@@ -181,7 +187,7 @@ On Windows, `config_dir()` = `%APPDATA%\Spec Surgeon`, `data_dir()` = `%LOCALAPP
 | --- | --- | --- | --- |
 | Windows Credential Manager, `Spec Surgeon/ANTHROPIC_API_KEY` | the API key, if you ticked Remember | — | until you delete it (no button in the window) |
 | `config_dir()\settings.json` | folders, colour scheme, whether Fast responses is on, the mode the window opens in (Safe or Default), update bookkeeping | paths only | overwritten |
-| `config_dir()\conversation.json`, `conversations\*.json` | the chat, your decisions and approved wording, results, estimated spending | yes | archived at each start; **never pruned** (F5) |
+| `config_dir()\conversation.json`, `conversations\*.json` | the chat, your decisions and approved wording, results, the to-do list with why each document waits, estimated spending | yes | archived at each start; **never pruned** (F5) |
 | `config_dir()\attachments\<time>\` | full copies of files you dropped on the window | yes, whole files | **never deleted** (F5) |
 | `config_dir()\repair-memory.sqlite3` | past repair cases: your request, candidate plans, wording and generated code | yes | 2,000 cases, oldest dropped; no clear button (F4) |
 | `config_dir()\render-profiles\` | LibreOffice's own profiles | not inspected | kept |
@@ -402,6 +408,8 @@ Lv1 marks a claim in "Why trust it?"; D marks one in the dossier (section in bra
 | T51 | Word renders over up to 3 new invisible instances side by side, never your open Word | D(engine, runtime B5, A8) | `render/word_worker.run_word_batches`, `word_instances`, `WORD_INSTANCES` | facts (`wordInstances`, `wordInstancesEnv`) + existing: `tests/test_render_word_batch.py` |
 | T52 | Safe mode makes no AI call: a button's plan is built in code from its form, its preview has no visual check and no outcome planning, and its run no recovery; a Default-mode preview approved after switching to Safe mode is created with no recovery either | Lv1, D(summary, no AI, runtime A23–A25) | `recipes.py`, `Session.model_free`, `Session.make_preview`, `DocumentTask._primary` | existing: `tests/test_recipes.py::test_each_button_previews_and_runs_to_verified_copies_without_any_ai_call` (`vision.review_samples` and `llm.client` raise), `tests/test_recipes.py::test_a_default_plan_approved_in_safe_mode_takes_no_ai_step`, `tests/test_body_match.py::test_the_button_matches_a_mixed_batch_and_leaves_out_what_it_cannot_match` |
 | T53 | A Safe-mode button places only words typed in its form or read from a file you attached, and its plan passes the same gate as a conversation's | D(provenance, runtime A23–A25) | `recipes.Built.sources`, `compiler.compose_submission` | existing: `tests/test_recipes.py::test_typed_words_are_the_only_words_a_button_may_place` |
+| T54 | (to-do list) Claude can set documents aside only at your word; it changes nothing in them, and no plan covers them until you work on them or put them back | D(runtime A5, blast radius) | `compiler.SET_ASIDE_TOOL`, `Conversation._take_set_aside`, `compiler.resolve_leave_out` (`set_aside`), `DocumentTask._take_set_aside` | existing: `tests/test_set_aside_bin.py` |
+| T55 | (to-do list) A file the plan refused, or whose copy could not be made with nothing to check it again, goes on your to-do list with the reason once the others run; a refused Create moves nothing there; Put back and Set the rest aside change no file | D(runtime B5, B8, A8, A15) | `DocumentTask._refused_now`, `_bin_failed`, `set_rest_aside`, `put_back` | existing: `tests/test_set_aside_bin.py` |
 
 ## 3. Findings (reported, not fixed in this change)
 

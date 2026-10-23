@@ -242,7 +242,8 @@ other document is created and verified as usual, each one still held to the exac
 from; a document that is not part of the displayed plan can never be set aside or run.
 
 Once the other copies are saved, the conversation shows **Set aside for more work** with the documents'
-names and one button, **Work on them now** (the same as typing “Work on the documents I set aside”). The pass
+names, why each one waits, and one button, **Work on them now** (the same as typing “Work on the documents I set
+aside”); the same list sits under the copies, with **Put back** beside each document. The pass
 over them begins: they are the only documents in the plan, tagged **Working on** in the documents section; the
 request they were set aside from stands; the assistant is told that you looked at the preview of that plan and
 set these documents aside, and is shown the plan you saw. Tell it what should be different for them, or
@@ -254,6 +255,26 @@ got and others did not is named per document, never claimed for all. Documents o
 removing one drops it from the list, and **Start over from the originals** clears the list. Setting every
 document aside creates nothing and begins the pass at once. The list and the pass are kept in the saved
 conversation.
+
+The red X is one way onto the list. The others:
+
+- **You ask for it.** "Set 20 aside for later", "park the Michigan one", "I'll come back to 23": the assistant puts
+  those documents on the list at once, with your reason when you give one, and the conversation goes on about the
+  others (a plan it submits afterwards covers only them). "Leave out" is different: it keeps a document out of this
+  one request, and the next request covers it again. Setting aside every document ends the request; setting aside
+  the documents of a pass over the list again ends that pass, and the others come back.
+- **The plan could not be applied to it.** A file listed under **Left untouched** because its result cannot be
+  predicted goes on the list, with that reason, when you create the others' copies. A click that is refused (a
+  file changed since the preview) moves nothing.
+- **Its copy could not be made.** A file whose copy failed and that nothing will check again goes on the list. While
+  files are being checked again (below), **Set the rest aside for later** is offered as a reply once the ready copies
+  are saved: what was not fixed, and the documents of layouts still waiting their turn, go on the list and the
+  request ends; the copies already saved are the working set.
+
+Each entry says why it is there, in the window and to the assistant: every new request tells it which documents
+wait on the list and why (it cannot read, plan or bring them back), and a pass over them tells it why each one
+waited. **Put back** takes a document off the list without a pass: it is among the documents the next request
+works on, as it is (during a pass it joins them when the pass ends). Nothing on the list is ever changed.
 
 Claude's visual check of the rendered pages is advisory. Its findings appear under **About these checks** with
 their file and page. A finding it marks as blocking changes that card's title to **Please check** and the
@@ -305,16 +326,18 @@ A file can be left out at four points, each time with one sentence that names th
 - At attach time, when triage refuses it (above).
 - When you ask: "leave out 20", "not 23 for now". The plan, its preview and its copies cover the other documents;
   the ones you named are not planned or changed, are listed under **Left untouched** ("You asked to leave it out of
-  this request"), and come back with the next request unless you leave them out again.
+  this request"), and come back with the next request unless you leave them out again. "Set 20 aside for later"
+  puts it on the to-do list instead (above), out of every request until you come back to it.
 - At plan time, when the operation cannot predict its result on that file, or when no layout covers its
   structure; in a plan done in steps, also a sample whose later step cannot predict its result (the later steps are
   planned on the samples alone). These appear under **Left untouched** before anything runs; no paid investigation
   precedes them. The preview of the other documents stands, and the assistant names each one with its reason in its
-  next reply; **Create edited copies** leaves them as they are (they are not run, so no recovery follows for them).
-  Only a plan that covers no file at all, a sample that fails its check, or a preview whose every sample is refused
+  next reply; **Create edited copies** leaves them as they are (they are not run, so no recovery follows for them)
+  and puts them on the to-do list with their reason. Only a plan that covers no file at all, a sample that fails its
+  check, or a preview whose every sample is refused
   sends the request on to outcome planning.
 - At delivery, when a file fails a verification check. It is never delivered. Spec Surgeon then checks it
-  again internally (below).
+  again internally (below); a file nothing can check again goes on the to-do list.
 
 ## Recovery and custom methods run internally
 
@@ -322,7 +345,9 @@ After **Create edited copies**, a file that did not pass goes straight into reco
 still need work…"). Recovery works on copies, within the same conversation, and ends where everything else ends:
 a question in the chat (for example "Which passage(s) in Spec.docx should change? Reply with the number, or
 numbers separated by commas.") or the same button. While a question is open, the copies that are already
-verified can be saved. The independent checks and the source-change guards are the same as for a first run.
+verified can be saved; once they are, **Set the rest aside for later** puts the documents recovery has not fixed on
+the to-do list and ends the request. The independent checks and the source-change guards are the same as for a
+first run.
 
 With a plan per layout, recovery takes one layout at a time, each against that layout's own specification: the
 first layout whose documents did not pass is investigated at once, the others wait and are checked by themselves

@@ -106,6 +106,11 @@ export async function remove(path: string, template: boolean): Promise<View> {
   return normalizeView(await post<unknown>("/api/remove", { path, template }));
 }
 
+/** A document off the to-do list without a pass over it: back among the documents the next request works on. */
+export async function putBack(path: string): Promise<View> {
+  return normalizeView(await post<unknown>("/api/put-back", { path }));
+}
+
 export async function startOver(): Promise<View> {
   return normalizeView(await post<unknown>("/api/start-over"));
 }

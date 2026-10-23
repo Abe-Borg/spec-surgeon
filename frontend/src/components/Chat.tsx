@@ -243,7 +243,7 @@ export default function Chat({
                   return (
                     <TodoCard
                       key={item.key}
-                      names={item.names}
+                      items={item.items}
                       busy={busy}
                       onSend={onSend}
                       onDefaultMode={safe ? () => onMode("default") : undefined}

@@ -290,6 +290,8 @@ export default function App() {
     [recipes, view, busy, onRecipe],
   );
 
+  const onPutBack = useCallback((path: string) => applyView(api.putBack(path)), [applyView]);
+
   const onOpen = useCallback((path: string) => {
     api.openPath(path).catch((failure: unknown) => setNotice(failureText(failure)));
   }, []);
@@ -457,6 +459,7 @@ export default function App() {
           onRemove={onRemove}
           onOpen={onOpen}
           onStartOver={onStartOver}
+          onPutBack={onPutBack}
           onZoom={onZoom}
           onHandOff={onHandOff}
         />
