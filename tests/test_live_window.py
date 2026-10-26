@@ -71,7 +71,8 @@ def test_the_next_request_builds_on_the_copies_and_start_over_returns_to_the_ori
     assert task.documents() == [first_copy]                       # the next request works on the copy
     assert view["working"]["generation"] == 0
     view = task.view()
-    assert view["working"] == {"generation": 1, "from_originals": False, "can_start_over": True}
+    assert view["working"] == {"generation": 1, "from_originals": False, "can_start_over": True,
+                               "undo": REQUEST, "undo_blocked": ""}   # a conversation's run can be undone too
     assert START_OVER in view["chips"]
     assert view["attachments"][0]["current"] == str(first_copy)
     view = task.perform("send", text="Also make that title italic.")
@@ -89,6 +90,7 @@ def test_the_next_request_builds_on_the_copies_and_start_over_returns_to_the_ori
     restored = task_for(tmp_path, FakeClient(), journal=journal)
     restored.restore()
     assert restored.documents() == [second_copy] and restored.generation == 2 and len(restored.history) == 2
+    assert len(restored.undo_points) == 2                         # and what each run replaced
     # start over: the originals again, the plan void, the copies untouched
     view = task.perform("send", text=START_OVER)
     assert task.documents() == [source] and task.generation == 0 and task.history == []

@@ -225,6 +225,19 @@ def test_a_removed_document_comes_back_as_its_original_not_an_old_copy(tmp_path,
     task.attach([files[1]])
     task.undo()
     assert list(task.working) == [str(files[0])] and task.current_of(files[1]) == files[1]
+    assert list(task.results) == [str(files[0])]                      # its old copy is not shown as its result
+
+
+def test_a_removed_document_is_not_shown_again_by_discard(tmp_path, files):
+    task = safe_task(tmp_path)
+    task.attach(files)
+    press(task, "remove_highlight")
+    task.perform("recipe", recipe="remove_comments", inputs={})
+    task.remove(files[1])                                               # voids the preview
+    task.attach([files[1]])
+    task.perform("recipe", recipe="remove_comments", inputs={})
+    task.discard_preview()
+    assert list(task.results) == [str(files[0])]
 
 
 def test_start_over_clears_what_can_be_undone(tmp_path, files):

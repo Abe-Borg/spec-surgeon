@@ -527,10 +527,15 @@ class DocumentTask:
         self.working.pop(str(path), None)
         self.applied.pop(str(path), None)
         self.todo.pop(str(path), None)
-        for point in self.undo_points:
-            # attached again later, it is an original: no undo puts an old copy back in its place
-            point["working"].pop(str(path), None)
-            point["applied"].pop(str(path), None)
+        for shown in [*self.undo_points, self._before_button or {}]:
+            # attached again later, it is an original: no undo or discard puts an old copy back in its place, or
+            # shows one as its result
+            for part in ("working", "applied", "results", "unverified"):
+                if part in shown:
+                    shown[part].pop(str(path), None)
+            if "left_untouched" in shown:
+                shown["left_untouched"] = [e for e in shown["left_untouched"]
+                                           if _same_file_key(e["path"]) != _same_file_key(path)]
         self.left_untouched = [e for e in self.left_untouched if _same_file_key(e["path"]) != _same_file_key(path)]
         pass_over = False
         if self.focus:
