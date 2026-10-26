@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import type { Attachment, Choice, JobEvent, Mode, Recipe, RecipeInputs, Update, View } from "./types";
 import * as api from "./lib/api";
-import { actionButton } from "./lib/action";
+import { actionButton, canDiscard } from "./lib/action";
 import { composerState, transcript } from "./lib/chat";
 import { canReview, heldSources, reviewKey, setMark, type Mark, type Reviews } from "./lib/review";
 import { INITIAL_STATE, reduce } from "./lib/view";
@@ -17,7 +17,8 @@ import UpdateBanner from "./components/UpdateBanner";
 import SettingsModal from "./components/SettingsModal";
 import HelpModal from "./components/HelpModal";
 import ZoomModal from "./components/ZoomModal";
-import SafePanel, { type SafeFormState } from "./components/SafePanel";
+import SafePanel from "./components/SafePanel";
+import { EMPTY_SAFE_FORM, type SafeFormState } from "./lib/recipes";
 import ObliterateWarning from "./components/ObliterateWarning";
 import { modeChoice } from "./lib/modes";
 
@@ -36,7 +37,7 @@ export default function App() {
   const [notice, setNotice] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
   const [draft, setDraft] = useState("");
-  const [safeForm, setSafeForm] = useState<SafeFormState>({ recipe: null, inputs: {} });
+  const [safeForm, setSafeForm] = useState<SafeFormState>(EMPTY_SAFE_FORM);
   const [prefill, setPrefill] = useState({ text: "", nonce: 0 });
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [helpTopic, setHelpTopic] = useState<HelpTopic | null>(null);
@@ -284,7 +285,7 @@ export default function App() {
 
   const resetInputs = useCallback(() => {
     setDraft("");
-    setSafeForm({ recipe: null, inputs: {} });
+    setSafeForm(EMPTY_SAFE_FORM);
     setPrefill({ text: "", nonce: 0 });
     setReviews({});
   }, []);
@@ -295,6 +296,15 @@ export default function App() {
   }, [applyView, resetInputs]);
 
   const onStartOver = useCallback(() => applyView(api.startOver(), resetInputs), [applyView, resetInputs]);
+  // Safe mode's ways back: Discard withdraws a button's preview (the form keeps what was typed); Undo takes the
+  // working set back to the copies from before the last button.
+  const onDiscard = useCallback(() => {
+    if (!busyRef.current) applyView(api.discard());
+  }, [applyView]);
+  const onUndo = useCallback(() => {
+    if (!busyRef.current) applyView(api.undo());
+  }, [applyView]);
+  const discard = canDiscard(view, busy) ? onDiscard : undefined;
   // Obliterate opens its warning first, every time; the other modes switch at once.
   const [warning, setWarning] = useState(false);
   const onMode = useCallback((mode: Mode) => {
@@ -315,8 +325,18 @@ export default function App() {
     api.getRecipes().then(setRecipes).catch((failure: unknown) => setNotice(failureText(failure)));
   }, []);
   const panel = useMemo(
-    () => <SafePanel recipes={recipes} view={view} busy={busy} onPreview={onRecipe} form={safeForm} onFormChange={setSafeForm} />,
-    [recipes, view, busy, onRecipe, safeForm],
+    () => (
+      <SafePanel
+        recipes={recipes}
+        view={view}
+        busy={busy}
+        onPreview={onRecipe}
+        onDiscard={onDiscard}
+        form={safeForm}
+        onFormChange={setSafeForm}
+      />
+    ),
+    [recipes, view, busy, onRecipe, onDiscard, safeForm],
   );
 
   const onPutBack = useCallback((path: string) => applyView(api.putBack(path)), [applyView]);
@@ -480,6 +500,7 @@ export default function App() {
           mode={view.mode}
           panel={panel}
           onMode={onMode}
+          onDiscard={discard}
         />
         <Workbench
           view={view}
@@ -492,6 +513,7 @@ export default function App() {
           onRemove={onRemove}
           onOpen={onOpen}
           onStartOver={onStartOver}
+          onUndo={onUndo}
           onPutBack={onPutBack}
           onZoom={onZoom}
           onHandOff={onHandOff}

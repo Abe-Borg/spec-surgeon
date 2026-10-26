@@ -582,6 +582,26 @@ def create_app(state: WindowState, *, dev: bool = False) -> FastAPI:
         state.task.start_over()
         return state.view()
 
+    @app.post("/api/discard")
+    def discard():
+        if state.busy:
+            return busy_error()
+        try:
+            state.task.discard_preview()
+        except ValueError as e:
+            return error(str(e))
+        return state.view()
+
+    @app.post("/api/undo")
+    def undo():
+        if state.busy:
+            return busy_error()
+        try:
+            state.task.undo()
+        except ValueError as e:
+            return error(str(e))
+        return state.view()
+
     @app.post("/api/put-back")
     async def put_back(request: Request):
         if state.busy:

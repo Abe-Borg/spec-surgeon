@@ -51,7 +51,7 @@ that ends a job is authoritative.
   "todo": [{"path": "C:/Specs/21 05 00.docx", "name": "21 05 00.docx", "why": "held | asked | refused | failed",
             "reason": "You marked its preview as needing more work."}],
   "focus": [],
-  "working": {"generation": 0, "from_originals": true, "can_start_over": false},
+  "working": {"generation": 0, "from_originals": true, "can_start_over": false, "undo": "", "undo_blocked": ""},
   "budget": {"paused": false, "steps_per_pause": 48},
   "mode": "safe | default | obliterate",
   "modes": ["safe", "default"],
@@ -126,6 +126,13 @@ Rules the page relies on:
   sent as a reply, it puts what recovery has not fixed on the to-do list and ends the request (no model call).
 - `results` lists the edited copies of the latest run; `working.generation` > 0 means the next request builds on
   those copies, and `can_start_over` shows the "Start over from the originals" chip.
+- `working.undo` is the request of the last run that delivered copies (the button's sentence in Safe mode), which
+  `POST /api/undo` goes back before; "" when nothing can be undone. `working.undo_blocked` says why it cannot be
+  undone now ("Discard the preview first." while a preview waits, a request still open); "" when it can. In Safe mode
+  the page shows **Undo the last button** beside Start over while `undo` is set, disabled with `undo_blocked` as its
+  reason. While a Safe-mode preview waits (`mode` `safe`, stage `preview`), the page shows **Discard preview** beside
+  the one button (`POST /api/discard`), alone when `action.kind` is `none`; **All buttons** discards it too. The page
+  keeps each button's form when the user goes back to all the buttons (page memory only; **Clear form** empties it).
 - The page keeps the unsent message and staged Safe form across mode switches. Only a conversation mode's draft
   holds its Create action. A successful New conversation or Start over clears both inputs; a failed reset keeps
   them. Start over retains the attached originals and clears the last button's untouched status; New conversation
@@ -164,7 +171,9 @@ explicitly injected clients are retained. Both key replacement and removal refus
 | POST | `/api/handoff` | `{"paths": ["<left_untouched path>", …]}` — the documents go on the to-do list with the button's sentence as their request, and the mode becomes `default`; 400 for a path the last button did not leave untouched, or while a preview waits | the view |
 | POST | `/api/stop` | | `{"ok": true}` — the running model call is cut off; the stream then ends with `done` |
 | POST | `/api/put-back` | `{"path": "<a todo entry's path>"}` | the view (the document is off the to-do list and back among the documents the next request works on; during a pass it joins them when the pass ends; a plan on screen is void when the documents in scope change); 400 with `{"error"}` for a path not on the list, 409 while work runs |
-| POST | `/api/start-over` | | the view (the working set returns to the originals; the plan is void; the to-do list is cleared) |
+| POST | `/api/start-over` | | the view (the working set returns to the originals; the plan is void; the to-do list is cleared; nothing can be undone) |
+| POST | `/api/discard` | | Safe mode's Discard: the view (the waiting preview withdrawn, nothing created; `results` and `left_untouched` as they were before the button was pressed); 400 with `{"error"}` outside Safe mode or with no preview waiting, 409 while work runs |
+| POST | `/api/undo` | | the view (the working set back to the copies from before the last run that delivered copies; `results`, `left_untouched` and the to-do entries that run's ✗ added as they were; no file written or deleted); 400 with `{"error"}` when there is nothing to undo, a preview waits, a request is open or a copy it would go back to is gone, 409 while work runs |
 | POST | `/api/new-conversation` | | the view (archives the journal, starts empty) |
 | POST | `/api/open` | `{"path": "..."}` | opens a result in Word / a folder with the OS (`{"ok": true}`); 404 if gone |
 | GET | `/api/image` | `?path=…` | the PNG (only files under the app's run folders are served; else 404) |

@@ -6,7 +6,21 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import type { Attachment, Recipe, View } from "../src/types.ts";
-import { availability, fieldShown, grouped, initialInputs, missing, payload, pictures, refreshInputs, tables } from "../src/lib/recipes.ts";
+import {
+  EMPTY_SAFE_FORM,
+  availability,
+  clearForm,
+  fieldShown,
+  grouped,
+  initialInputs,
+  leaveForm,
+  missing,
+  openForm,
+  payload,
+  pictures,
+  refreshInputs,
+  tables,
+} from "../src/lib/recipes.ts";
 import { EMPTY_VIEW, normalizeView } from "../src/lib/view.ts";
 
 const file = (name: string, kind: Attachment["kind"], state: Attachment["state"] = "ok"): Attachment => ({
@@ -192,4 +206,30 @@ test("the view carries the mode, the template and what a button left untouched",
   assert.equal(v.template.kind, "none");
   assert.equal(v.left_untouched.length, 1);
   assert.equal(normalizeView({}).mode, "default");
+});
+
+test("going back to a button finds what was typed in its form, until the form is cleared", () => {
+  const docs = view([file("a.docx", "document"), file("pairs.csv", "reference")]);
+  let form = openForm(EMPTY_SAFE_FORM, FIND, docs);
+  assert.deepEqual(form.inputs, initialInputs(FIND, docs));
+  const typed = { pairs: [{ find: "ACME", replace: "Contoso" }], table: "C:/Specs/pairs.csv", tracked: true, whole_word: false };
+  form = { ...form, inputs: typed };
+  form = leaveForm(form);
+  assert.equal(form.recipe, null);
+  assert.deepEqual(form.inputs, {});
+  // another button opens fresh, and leaving it keeps its own values beside the first one's
+  form = leaveForm({ ...openForm(form, WATERMARK, docs), inputs: { action: "add", text: "DRAFT" } });
+  assert.deepEqual(Object.keys(form.kept).sort(), ["find_replace", "watermark"]);
+  form = openForm(form, FIND, docs);
+  assert.equal(form.recipe, "find_replace");
+  assert.deepEqual(form.inputs, typed);
+  // what was kept is taken up to the attachments as they are now: a table no longer attached is not sent
+  assert.deepEqual(openForm(leaveForm(form), FIND, view([file("a.docx", "document")])).inputs, { ...typed, table: "" });
+  // Clear form: the form as it first opens, and nothing kept for that button any more
+  form = clearForm(form, FIND, docs);
+  assert.deepEqual(form.inputs, initialInputs(FIND, docs));
+  assert.equal("find_replace" in form.kept, false);
+  assert.deepEqual(form.kept.watermark, { action: "add", text: "DRAFT" });
+  // leaving the button list changes nothing
+  assert.equal(leaveForm(EMPTY_SAFE_FORM), EMPTY_SAFE_FORM);
 });

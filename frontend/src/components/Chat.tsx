@@ -34,6 +34,8 @@ interface Props {
   mode: Mode;
   panel?: ReactNode;
   onMode: (mode: Mode) => void;
+  /** Safe mode's Discard, while a button's preview waits (beside the one button). */
+  onDiscard?: () => void;
 }
 
 export default function Chat({
@@ -55,6 +57,7 @@ export default function Chat({
   mode,
   panel,
   onMode,
+  onDiscard,
 }: Props) {
   const safe = mode === "safe";
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -254,7 +257,12 @@ export default function Chat({
           )}
         </div>
       )}
-      <ActionBar button={paused || (safe && button?.kind === "stop") ? null : button} held={held} onAct={onAct} />
+      <ActionBar
+        button={paused || (safe && button?.kind === "stop") ? null : button}
+        held={held}
+        onAct={onAct}
+        onDiscard={onDiscard}
+      />
       {safe ? (
         <div
           className={`flex min-h-0 flex-1 flex-col bg-surface px-4 pt-2.5 pb-2 ${showTranscript ? "border-t border-edge" : ""}`}
