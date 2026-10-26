@@ -54,6 +54,7 @@ Paths are relative to `src/spec_surgeon/` unless they start with `frontend/`, `t
 | A14 | **New conversation** | `POST /api/new-conversation` | none |
 | A15 | **Work on the documents I set aside** (to-do list: whatever put them there, each with why) | `/api/send` with `WORK_TODO` → `start_todo` | none until the next request |
 | A16 | Click a page to enlarge it | page only; the image comes from `GET /api/image` | none |
+| A16a | Read why a preview or document did not pass | `ui_feedback.failed_preview_checks` reads actual verdicts, including earlier chain stages; `refusal_message` presents common refusals; original engine evidence remains in diagnostics | none; presentation only |
 | A17 | About → **Check for updates** | `POST /api/update/check` | none |
 | A18 | **Download** / **Download and install** / **Restart to update** / **Not now** | `/api/update/download`, `/install`; **Not now** hides the banner in the page only (`App.tsx` `dismissedUpdate`) | none |
 | A19 | About → **Open diagnostic logs** / **Save a diagnostic bundle** | `/api/logs`, `/api/diagnostics/bundle` | none |

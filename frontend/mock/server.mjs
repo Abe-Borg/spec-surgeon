@@ -405,6 +405,14 @@ const SCENARIOS = {
     v.connection = { ready: true, origin: "environment" };
     return v;
   },
+  "failed-preview": () => {
+    const v = SCENARIOS.preview();
+    v.mode = "safe";
+    v.samples[0].passed = false;
+    v.samples[0].failures = [{ check: "V2", reason: "The copy's wording does not match the change predicted by the plan." }];
+    v.action.disabled_reason = `${v.samples[0].name} did not pass its preview checks (V2).`;
+    return v;
+  },
 };
 
 let view = emptyView();
