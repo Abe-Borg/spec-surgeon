@@ -18,7 +18,8 @@ Recovery runs inside the conversation and needs no setup. When **Create edited c
 file that did not pass, or a sample fails during the preview, the app investigates those files on
 copies in the same conversation. It shares the conversation's ledger (no spending or token ceiling,
 the pause every 48 AI steps, 128,000 output tokens per call), up to eight candidate attempts per
-problem group and high reasoning effort; **Stop now** cuts it off like any other step. The
+problem group and high reasoning effort (`xhigh` while it writes a custom method:
+`resources.CODEGEN_EFFORT`); **Stop now** cuts it off like any other step. The
 window has no budget, attempt or model controls; Settings holds only the API key.
 
 A question from the investigation appears in the chat once, as buttons or a text box. The result

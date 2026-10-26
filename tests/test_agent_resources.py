@@ -144,6 +144,41 @@ def test_no_call_runs_at_max_effort(source):
         Conversation("r", [source], effort="max")
 
 
+def test_xhigh_is_allowed_for_the_custom_method_writer_and_max_is_still_refused(source):
+    """The owner's decision of 2026-10-26: the custom-method writer thinks at xhigh; max stays refused everywhere."""
+    from spec_surgeon.recovery import RecoveryOptions
+    from spec_surgeon.resources import CODEGEN_EFFORT, EFFORTS
+    assert CODEGEN_EFFORT == "xhigh" and EFFORTS == ("low", "medium", "high", "xhigh") and "max" not in EFFORTS
+    fake = FakeClient(resp(text("ok")))
+    llm.call(fake, model="claude-opus-5-5", system="S", tools=[], messages=[{"role": "user", "content": "x"}],
+             effort="xhigh")
+    assert fake.requests[0]["output_config"] == {"effort": "xhigh"}
+    RecoveryOptions(effort="xhigh").validate()
+    with pytest.raises(ValueError, match="effort"):
+        llm.effort_scope("max").__enter__()
+
+
+def test_an_effort_scope_sets_the_calls_inside_and_only_those(source):
+    """Inside the window's budget (medium) the innermost effort wins: the scope's calls run at its effort, every outer
+    limit still counts them, and the calls after it are back at the budget's. Outside any budget it installs
+    nothing: the caller's own effort reaches the call."""
+    call = lambda fake: llm.call(fake, model="claude-opus-5-5", system="S", tools=[],
+                                 messages=[{"role": "user", "content": "x"}], effort="low")
+    fake = FakeClient(resp(text("a")), resp(text("b")), resp(text("c")))
+    outer = llm.CallBudget(effort="medium", max_calls=3, max_cost_usd=None, max_total_tokens=None)
+    with llm.budget_scope(outer):
+        call(fake)
+        with llm.effort_scope("xhigh") as inner:
+            call(fake)
+        call(fake)
+    assert [r["output_config"]["effort"] for r in fake.requests] == ["medium", "xhigh", "medium"]
+    assert outer.calls == 3 and inner.calls == 1 and inner.max_cost_usd is None
+    with llm.effort_scope("xhigh") as nothing:
+        fake = FakeClient(resp(text("d")))
+        call(fake)
+    assert nothing is None and fake.requests[0]["output_config"] == {"effort": "low"}
+
+
 @pytest.fixture
 def long_document(source):
     pkg = DocxPackage.from_path(source)

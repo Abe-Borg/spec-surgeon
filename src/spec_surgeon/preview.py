@@ -128,6 +128,10 @@ def generated_key(g: Any) -> Dict[str, Any]:
            "goal_contract": getattr(g, "goal_contract", None), "goal_bindings": getattr(g, "goal_bindings", {})}
     if getattr(g, "unguarded", False):
         key["unguarded"] = True                   # an Obliterate method's approval is never a guarded one's
+        if getattr(g, "attachments", None):
+            key["attachments"] = list(g.attachments)          # the attached files' pinned bytes it was written with
+        if getattr(g, "accepted_failures", None):
+            key["accepted_failures"] = dict(g.accepted_failures)   # the reasons the user read beside the copies
     return key
 
 

@@ -13,6 +13,7 @@ export const TRUST_FACTS = {
   maxOutputTokens: 128000,
   conversationEffort: "medium",
   recoveryEffort: "high",
+  codegenEffort: "xhigh",
   fastSpeedup: 2.5,
   fastPriceFactor: 2,
   stepsPerPause: 48,
@@ -48,6 +49,7 @@ export const TRUST_FACTS = {
   customMethodSeconds: 60,
   customMethodMemoryMB: 2048,
   customMethodAttempts: 50,
+  obliterateCheckRounds: 3,
   analysisSeconds: 120,
   analysisMemoryMB: 1024,
   // Attachments (inputs.py, package_limits.py)

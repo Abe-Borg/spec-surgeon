@@ -24,10 +24,13 @@ DEFAULT_ANALYSIS_SECONDS = 120
 DEFAULT_ANALYSIS_MEMORY_MB = 1024
 DEFAULT_ANALYSIS_OUTPUT_BYTES = 16 * 1024 * 1024
 DEFAULT_ANALYSIS_INPUT_BYTES = 128 * 1024 * 1024
-# The owner's decision (2026-10-22): no call runs at "max". High is the most any call asks for; the window's chat
-# asks for less (document_task.CONVERSATION_EFFORT). "max" is refused, not quietly lowered.
+# The owner's decisions: no call runs at "max" (2026-10-22: "max" is refused, not quietly lowered); the window's
+# chat asks for medium (document_task.CONVERSATION_EFFORT); the custom-method writer — the one place the app has
+# Claude write the code that edits the documents — thinks at "xhigh" (2026-10-26, CODEGEN_EFFORT), and the calls
+# after it go back to their own effort.
 DEFAULT_EFFORT = "high"
-EFFORTS = ("low", "medium", "high")
+CODEGEN_EFFORT = "xhigh"
+EFFORTS = ("low", "medium", "high", "xhigh")
 DEFAULT_STALL_REPETITIONS = 3
 
 

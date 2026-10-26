@@ -193,16 +193,18 @@ class IncompleteResponse(RuntimeError):
         self.transient = transient
 
 
-def _stream_events(stream):
+def _stream_events(stream, eager=False):
     try:
         yield from stream
     except (ValueError, IndexError) as error:
         # JSON decoding and invalid SSE block indices can fail in the SDK before
         # it yields an event. These are unusable provider responses, not tools.
-        raise IncompleteResponse("the model response stream contained malformed content") from error
+        # With a tool that streams its input unbuffered (``eager``), that JSON is the model's own and unchecked by the
+        # server: the call is sent again (Anthropic's guidance for a stream the SDK could not parse).
+        raise IncompleteResponse("the model response stream contained malformed content", transient=eager) from error
 
 
-def _finished_message(stream, seen=None, cancel=None):
+def _finished_message(stream, seen=None, cancel=None, eager=frozenset()):
     """Check actual SSE completion rather than trusting the SDK's partial snapshot.
 
     The SDK deliberately parses incomplete JSON while streaming and returns its latest
@@ -210,11 +212,13 @@ def _finished_message(stream, seen=None, cancel=None):
     so an unfinished object cannot become a valid-looking tool argument dictionary.
     Non-iterable adapters still have to supply a completed response stop reason.
     ``seen`` collects the usage the stream reports on its way (what a stopped call is settled from); a set ``cancel``
-    stops reading at the next event.
+    stops reading at the next event. ``eager``: the names of the tools sent with ``eager_input_streaming`` — the
+    server no longer checks their input, so a broken one is a call to send again (transient), unless the response
+    stopped on a refusal or at max_tokens, which the caller's ``stop_problem`` reports before acting on any tool.
     """
     if callable(getattr(stream, "__iter__", None)):
-        started, stopped, opened, tool_json = False, False, set(), {}
-        for event in _stream_events(stream):
+        started, stopped, opened, tool_json, unbuffered = False, False, set(), {}, set()
+        for event in _stream_events(stream, bool(eager)):
             if cancel is not None and cancel.is_set():
                 raise UserCancelled(STOPPED)
             kind = getattr(event, "type", None)
@@ -237,6 +241,8 @@ def _finished_message(stream, seen=None, cancel=None):
                     tool_json.clear()
                 elif block_type(block) in ("tool_use", "server_tool_use", "mcp_tool_use"):
                     tool_json[index] = ""
+                    if str(getattr(block, "name", "") or "") in eager:
+                        unbuffered.add(index)
                     _observe({"type": "tool", "name": str(getattr(block, "name", "") or ""), "index": index})
             elif kind == "content_block_delta" and getattr(event.delta, "type", None) == "input_json_delta":
                 if event.index in tool_json:
@@ -253,7 +259,7 @@ def _finished_message(stream, seen=None, cancel=None):
         if not started or not stopped or opened:
             raise IncompleteResponse("the model response stream ended before its final message and content blocks "
                                      "completed", transient=True)
-        for payload in tool_json.values():
+        for index, payload in tool_json.items():
             if payload:
                 try:
                     def reject_constant(value):
@@ -262,7 +268,15 @@ def _finished_message(stream, seen=None, cancel=None):
                     if not isinstance(value, dict):
                         raise ValueError()
                 except (ValueError, TypeError) as error:
-                    raise IncompleteResponse("the model response contained incomplete or invalid tool JSON") from error
+                    if index in unbuffered:
+                        try:
+                            response = stream.get_final_message()
+                        except Exception:  # noqa: BLE001 — the SDK could not build it either: send it again
+                            response = None
+                        if getattr(response, "stop_reason", None) in ("refusal", "max_tokens"):
+                            return response    # stop_problem reports it; no tool of this turn is acted on
+                    raise IncompleteResponse("the model response contained incomplete or invalid tool JSON",
+                                             transient=index in unbuffered) from error
     response = stream.get_final_message()
     stop = getattr(response, "stop_reason", None)
     if stop == "model_context_window_exceeded":
@@ -566,7 +580,7 @@ def _call(client, *, model, system, tools, messages, record, max_output_tokens, 
         raise ValueError(f"max_output_tokens must not exceed {MAX_TOKENS}")
     effort = EFFORT if effort is None else effort
     if effort not in EFFORTS:
-        raise ValueError("effort must be low, medium or high")
+        raise ValueError("effort must be one of " + ", ".join(EFFORTS))
     retries_disabled = False
     tools = list(tools)
     record.update(phase="preflight", message_count=len(messages), tool_count=len(tools), budgeted=bool(budgets))
@@ -626,7 +640,9 @@ def _call(client, *, model, system, tools, messages, record, max_output_tokens, 
             record["phase"] = "stream.receive"
             diag.event("model.stream.opened")
             with _stop_on_cancel(stream, cancel):
-                resp = _finished_message(stream, seen, cancel)
+                resp = _finished_message(stream, seen, cancel,
+                                         frozenset(t.get("name") for t in tools
+                                                   if isinstance(t, dict) and t.get("eager_input_streaming")))
     except BaseException as exc:
         stopped = cancel is not None and cancel.is_set()
         for budget, reservation in zip(budgets, reservations if budgets else ()):
@@ -1042,7 +1058,7 @@ class CallBudget:
         if model is not None and (not isinstance(model, str) or not model.strip() or model != model.strip()):
             raise ValueError("model must be a non-empty model name without surrounding whitespace, or None")
         if not isinstance(effort, str) or effort not in EFFORTS:
-            raise ValueError("effort must be low, medium or high")
+            raise ValueError("effort must be one of " + ", ".join(EFFORTS))
         for name, value in (("max_calls", max_calls), ("max_output_tokens", max_output_tokens),
                             ("max_total_tokens", max_total_tokens)):
             if name == "max_total_tokens" and value is None:
@@ -1219,3 +1235,22 @@ def budget_scope(budget: CallBudget):
         yield budget
     finally:
         _CALL_BUDGETS.reset(token)
+
+
+EFFORT_SCOPE_CALLS = 2 ** 31                       # an effort scope adds no call limit of its own
+
+
+@contextmanager
+def effort_scope(effort: str):
+    """The calls inside run at ``effort`` (the custom-method writer's ``resources.CODEGEN_EFFORT``), then the calls
+    after them at their own again. Inside a budget the innermost budget's effort wins (``_call``), so this installs an
+    effort-only budget with no limits of its own — every outer limit, the pause and the spending shown still count
+    each call. Outside any budget the caller's own ``effort`` already reaches the call, and nothing is installed."""
+    if effort not in EFFORTS:
+        raise ValueError("effort must be one of " + ", ".join(EFFORTS))
+    if not _CALL_BUDGETS.get():
+        yield None
+        return
+    with budget_scope(CallBudget(effort=effort, max_calls=EFFORT_SCOPE_CALLS, max_total_tokens=None,
+                                 max_cost_usd=None)) as budget:
+        yield budget

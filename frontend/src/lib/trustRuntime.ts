@@ -26,7 +26,8 @@ export const NONE = "None.";
 
 /** The model as it ships; SPEC_SURGEON_MODEL replaces it (the dossier's engine section says so). */
 const conversationModel = `${MODEL_NAME} (${F.model}) by default, ${F.conversationEffort} effort, up to ${grouped(F.maxOutputTokens)} output tokens per call.`;
-const recoveryModel = `${MODEL_NAME} (${F.model}) by default, ${F.recoveryEffort} effort, up to ${grouped(F.maxOutputTokens)} output tokens per call.`;
+const recoveryModel = `${MODEL_NAME} (${F.model}) by default, ${F.recoveryEffort} effort (${F.codegenEffort} while it writes a custom method), up to ${grouped(F.maxOutputTokens)} output tokens per call.`;
+const codegenModel = `${MODEL_NAME} (${F.model}) by default, ${F.codegenEffort} effort while it writes the method (the conversation's next call is back at ${F.conversationEffort}), up to ${grouped(F.maxOutputTokens)} output tokens per call.`;
 
 export const RUNTIME_CARDS: RuntimeCard[] = [
   {
@@ -186,10 +187,13 @@ export const RUNTIME_CARDS: RuntimeCard[] = [
       "text (only whitelisted modules, no file, process or network calls), runs it on copies of the samples in a " +
       "separate Python process, and checks every result with the independent checker. It may change formatting only: " +
       "no words, no new parts, no tracked changes. A failure goes back to Claude with the reason. In Obliterate mode " +
-      "(its own card) it is offered whenever any method could make the change, may change anything Word stores, and " +
-      "a result whose only failures are its checks passes with them listed.",
-    sent: "To the Anthropic API: the request, the sample files' XML and text that its tools read, and each failure's reason.",
-    ai: conversationModel,
+      "(its own card) it is offered whenever any method could make the change, may change anything Word stores, " +
+      "and may use the template, pictures and tables you attached; a result whose only failures are its checks goes " +
+      `back to Claude up to ${F.obliterateCheckRounds} times to fix them or keep each with a reason you read beside ` +
+      "every copy, then the latest is used with its failures listed.",
+    sent: "To the Anthropic API: the request, the sample files' XML and text that its tools read, and each failure's " +
+      "reason; in Obliterate mode also what its tools read of the files you attached.",
+    ai: codegenModel,
     bounds:
       `Up to ${F.customMethodAttempts} submissions, each sandbox run ${F.customMethodSeconds} s and ` +
       `${F.customMethodMemoryMB} MB. Every call counts toward the pause. The method edits nothing of yours: its copies ` +
@@ -229,7 +233,8 @@ export const RUNTIME_CARDS: RuntimeCard[] = [
     runs:
       "Showing it is kept in settings.json; being in it never is, so the next start opens in Safe or Default. While " +
       "it is on, the conversation's gate stops tracing placed words to you (Claude may write wording; it is in the " +
-      "plan you approve), a custom method may change anything Word stores, and a copy that fails its check is " +
+      "plan you approve), a custom method may change anything Word stores and use the files you attached (its " +
+      `failed checks go back to Claude up to ${F.obliterateCheckRounds} times first), and a copy that fails its check is ` +
       "delivered marked UNVERIFIED instead of being held back, with no recovery after it; its preview page already " +
       "says Did not pass, and the plan stands. Entering or leaving it " +
       "voids the plan on screen.",

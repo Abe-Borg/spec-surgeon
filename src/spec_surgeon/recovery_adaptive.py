@@ -315,7 +315,7 @@ def custom_trial(ctx, group, proposal, pid, code, latest, *, remembered=None):
                 max_iter=max(1, ctx.get("group_state", {}).get("attempt_limit", options.max_attempts)
                              - ctx.get("group_state", {}).get("used", 0)),
                 max_calls=ctx.get("group_slice_remaining", options.group_call_slice),
-                max_output_tokens=options.max_output_tokens, effort=options.effort,
+                max_output_tokens=options.max_output_tokens,   # the writer's effort: CODEGEN_EFFORT
                 max_context_tokens=options.max_context_tokens, analysis_limits=options.analysis_limits,
                 goal_contract=contract, goal_bindings=bindings, approved_words=ctx["sources"])
         entry["generated_attempts"], entry["codegen_transcript"] = generated.attempts, generated.transcript

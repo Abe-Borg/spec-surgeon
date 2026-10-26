@@ -580,9 +580,11 @@ class Session:
         before = approval_inputs({}, files)
         log(f"Writing a one-off transform, tested on {[s.name for s in samples]}…")
         writer_dir = out / ("codegen" if attempt == 1 else f"codegen-{attempt:02d}")
+        # Obliterate: the method may use the files the user attached (a template, a picture, a table)
         g = generate_op(request, proposal or "", samples, writer_dir, client=self.client, log=log, brief=brief,
                         approved_words=list(self.conversation.sources if self.conversation else [request]),
-                        unguarded=self.unguarded)
+                        unguarded=self.unguarded, template=self.template if self.unguarded else None,
+                        input_files=list(self.inputs or []) if self.unguarded else [])
         if not g.passed:
             raise TransformFailed("; ".join(g.errors or [f"attempt {a['attempt']}: {'; '.join(a['problems'][:2])}"
                 for a in g.attempts[-1:]]) or "no transform was submitted",
@@ -613,14 +615,13 @@ class Session:
         are taken BEFORE the trials, so a file that changes while they run voids them. Raises ``exc`` (``TrialsFailed``,
         a RuntimeError) naming every sample that fails; changes nothing in the session. Returns (token, inputs,
         trials)."""
-        from .codegen import trial
+        from .codegen import trial, trial_options
         from .preview import approval_inputs, _approval_token_from_inputs
         key = self._generated_key(g)
         inputs = approval_inputs(key, files)
         token = _approval_token_from_inputs(key, inputs)
-        trials = [trial(g.source, f, g.select, g.params, folder / f"{i:02d}",
-                        unguarded=getattr(g, "unguarded", False),
-                        **({"goal_contract": g.goal_contract, "goal_binding": g.goal_bindings.get(str(f))}
+        trials = [trial(g.source, f, g.select, g.params, folder / f"{i:02d}", **trial_options(g),
+                        **({"goal_binding": g.goal_bindings.get(str(f))}
                            if getattr(g, "goal_contract", None) is not None else {})) for i, f in enumerate(samples)]
         bad = [f"{t.source.name}: {'; '.join(t.problems[:2])}" for t in trials if not t.passed]
         if bad:
