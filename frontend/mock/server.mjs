@@ -1071,18 +1071,23 @@ async function handle(req, res) {
       view.samples = [];
       view.warnings = [];
       view.results = [];
+      view.left_untouched = [];
       view.todo = [];
       view.focus = [];
       view.action = { label: "", token: "", kind: "none", can_hold: false };
       view.stage = view.messages.length ? "resume" : "empty";
       view.attachments = view.attachments.map((a) => ({ ...a, current: a.path }));
-      view.messages.push(msg("app", "Starting over from the originals. The plan is void."));
+      view.messages.push(msg("app", "Starting over from the originals. " +
+        (view.mode === "safe" ? "Pick a button to start." : "Tell me what you'd like to change.")));
       return json(res, 200, view);
     case "POST /api/new-conversation": {
       if (view.busy) return busyRefusal();
       const keep = view.update;
+      const mode = view.mode, modes = view.modes;
       view = emptyView();
       view.update = keep;
+      view.mode = mode;
+      view.modes = modes;
       return json(res, 200, view);
     }
     case "POST /api/open": {

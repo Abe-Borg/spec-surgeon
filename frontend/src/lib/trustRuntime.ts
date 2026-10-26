@@ -245,7 +245,8 @@ export const RUNTIME_CARDS: RuntimeCard[] = [
       "Choose Safe or Default in the top bar; in Safe mode, pick a button, fill in its form and press Preview; Try " +
       "these in Default mode beside what a button left untouched.",
     runs:
-      "Choosing a mode keeps it in settings.json for the next start. A button builds its plan in code from your form " +
+      "Choosing a mode keeps it in settings.json for the next start. Switching modes keeps your unsent message and " +
+      "Safe-mode form in this window; an unsent message holds Create only in a conversation mode. A button builds its plan in code from your form " +
       "and your attachments; the plan passes the same gate as a conversation's (its settings, the files it reads, " +
       "every word it would place traced to what you typed) and the ordinary preview runs, without Claude's visual " +
       "check. Create edited copies then makes and checks the copies as always. Handing over puts those documents on " +
@@ -364,7 +365,9 @@ export const RUNTIME_CARDS: RuntimeCard[] = [
       "are saved).",
     runs:
       "Start over makes your originals the working set again; the plan is void and the to-do list is cleared. New " +
-      "conversation archives this conversation in the conversations folder and starts an empty one. The to-do list " +
+      "conversation archives this conversation in the conversations folder and starts an empty one. Both clear " +
+      "unsent messages and staged forms after the reset succeeds. Start over keeps the attached originals; " +
+      "New conversation clears the attachments. The to-do list " +
       "holds the documents set aside, each with why: the ✗ on its preview, your word to the assistant, a plan or a " +
       "Safe-mode button that could not be applied to it, or a copy that could not be made. Working on them makes them " +
       "the only documents in scope and repeats the request they were set aside from; Claude is told why each one " +

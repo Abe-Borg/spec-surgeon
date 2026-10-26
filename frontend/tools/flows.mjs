@@ -174,6 +174,7 @@ try {
   await page.getByRole("button", { name: "Settings" }).click();
   const schemes = page.getByRole("radiogroup", { name: "Colour scheme" });
   await schemes.getByRole("radio", { name: "Warm Clay" }).waitFor();
+  await page.waitForFunction(() => !!document.querySelector('[role="radiogroup"][aria-label="Colour scheme"] [aria-checked="true"]'));
   check(
     "Appearance offers five schemes, Warm Clay chosen",
     (await schemes.getByRole("radio").count()) === 5 &&

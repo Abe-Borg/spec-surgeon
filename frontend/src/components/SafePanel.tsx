@@ -1,4 +1,4 @@
-import { Fragment, memo, useEffect, useMemo, useState } from "react";
+import { Fragment, memo, useEffect, useMemo, type Dispatch, type SetStateAction } from "react";
 import type { FindReplacePair, Recipe, RecipeField, RecipeInputs, View } from "../types";
 import { availability, fieldShown, grouped, initialInputs, missing, payload, pictures, refreshInputs, tables } from "../lib/recipes";
 import { primaryBtn } from "./ModalShell";
@@ -10,6 +10,13 @@ interface Props {
   busy: boolean;
   /** Previews the button's change: a job with no AI call (docs/WEB_API.md, `POST /api/recipe`). */
   onPreview: (recipe: Recipe, inputs: RecipeInputs) => void;
+  form: SafeFormState;
+  onFormChange: Dispatch<SetStateAction<SafeFormState>>;
+}
+
+export interface SafeFormState {
+  recipe: string | null;
+  inputs: RecipeInputs;
 }
 
 const inputClass =
@@ -228,9 +235,9 @@ function FieldInput({
  * one chosen, and Preview. No AI call is made: the server builds the change from the form (recipes.py) and the
  * previews, the checks and the one button that creates the copies are the same as in Default mode.
  */
-function SafePanel({ recipes, view, busy, onPreview }: Props) {
-  const [chosen, setChosen] = useState<Recipe | null>(null);
-  const [inputs, setInputs] = useState<RecipeInputs>({});
+function SafePanel({ recipes, view, busy, onPreview, form, onFormChange }: Props) {
+  const chosen = recipes.find((recipe) => recipe.id === form.recipe) ?? null;
+  const inputs = form.inputs;
   const groups = useMemo(() => grouped(recipes), [recipes]);
 
   // A form opened with what was attached then; a template, picture or table attached or removed since is taken
@@ -238,15 +245,18 @@ function SafePanel({ recipes, view, busy, onPreview }: Props) {
   const slotsKey = (view.template?.typed_slots ?? []).join("\n") + JSON.stringify(view.template?.body?.roles ?? {});
   const filesKey = [...pictures(view), ...tables(view)].map((f) => f.path).join("\n");
   useEffect(() => {
-    if (chosen) setInputs((current) => refreshInputs(chosen, current, view));
+    if (chosen) onFormChange((current) => current.recipe === chosen.id
+      ? { ...current, inputs: refreshInputs(chosen, current.inputs, view) }
+      : current);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [slotsKey, filesKey]);
+  }, [slotsKey, filesKey, chosen?.id]);
 
   const open = (recipe: Recipe) => {
-    setChosen(recipe);
-    setInputs(initialInputs(recipe, view));
+    onFormChange({ recipe: recipe.id, inputs: initialInputs(recipe, view) });
   };
-  const change = (name: string, value: RecipeInputs[string]) => setInputs((current) => ({ ...current, [name]: value }));
+  const change = (name: string, value: RecipeInputs[string]) => onFormChange((current) => ({
+    ...current, inputs: { ...current.inputs, [name]: value },
+  }));
 
   if (chosen) {
     const ready = availability(chosen, view);
@@ -260,7 +270,7 @@ function SafePanel({ recipes, view, busy, onPreview }: Props) {
           </div>
           <button
             type="button"
-            onClick={() => setChosen(null)}
+            onClick={() => onFormChange({ recipe: null, inputs: {} })}
             className="shrink-0 text-xs text-accent underline decoration-accent/40 underline-offset-2 hover:decoration-accent"
           >
             All buttons

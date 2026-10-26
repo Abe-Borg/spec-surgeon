@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from make_fixtures import build
+from make_fixtures import build, build_dirty
 from spec_surgeon import batch, preview, verify
 from spec_surgeon.chain import chain_from_specs, run_chain
 from spec_surgeon.document_task import DocumentTask
@@ -128,3 +128,21 @@ def test_a_refused_later_button_does_not_show_earlier_copies(tmp_path):
     with pytest.raises(ValueError, match="No documents"):
         task.session.run(False, False, lambda _: None)
     assert task.working[str(source)] == previous and Path(previous).is_file()
+
+
+def test_start_over_keeps_the_originals_and_clears_the_last_buttons_untouched_state(tmp_path):
+    task, source = task_for(tmp_path)
+    empty = tmp_path / "empty.docx"
+    empty.write_bytes(build_dirty("empty_body"))
+    task.attach([empty])
+    view = task.perform("recipe", recipe="title_property", inputs={"pattern": "SECTION {number} - {title}"})
+    task.perform("primary", token=view["token"])
+    assert task.left_untouched and task.results
+    saved_copy = task.results[str(source)]
+    task.start_over()
+    view = task.view()
+    assert view["stage"] == "empty" and view["results"] == {} and view["left_untouched"] == []
+    assert view["working"]["from_originals"] is True
+    assert set(task.documents()) == {source, empty}
+    assert "Pick a button to start" in task.messages[-1]["text"]
+    assert Path(saved_copy).is_file()

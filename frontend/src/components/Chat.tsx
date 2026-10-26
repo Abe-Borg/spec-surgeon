@@ -28,7 +28,8 @@ interface Props {
   onStop: () => void;
   prefill?: { text: string; nonce: number };
   onPrefill: (text: string) => void;
-  onDraftChange: (hasDraft: boolean) => void;
+  draft: string;
+  onDraftChange: (text: string) => void;
   /** Safe mode: the buttons (``panel``) take the composer's place, and nothing here talks to the model. */
   mode: Mode;
   panel?: ReactNode;
@@ -50,6 +51,7 @@ export default function Chat({
   prefill,
   onPrefill,
   onDraftChange,
+  draft,
   mode,
   panel,
   onMode,
@@ -294,7 +296,8 @@ export default function Chat({
           onSend={onSend}
           onStop={onStop}
           prefill={prefill}
-          onDraftChange={onDraftChange}
+          value={draft}
+          onChange={onDraftChange}
         />
         </>
       )}

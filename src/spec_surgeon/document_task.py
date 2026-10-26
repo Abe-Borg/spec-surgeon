@@ -635,10 +635,12 @@ class DocumentTask:
         self.working, self.generation, self.history, self.decisions = {}, 0, [], []
         self.results, self.unverified = {}, {}
         self.applied, self.todo, self.focus, self._binned = {}, {}, None, []
+        self.left_untouched = []
         self._sync()
         self._invalidate()
         self.stage = "empty"
-        self.say("Starting over from the originals. Tell me what you'd like to change.")
+        self.say("Starting over from the originals. " +
+                 ("Pick a button to start." if self.mode == "safe" else "Tell me what you'd like to change."))
         self.save()
 
     def _target_question(self):

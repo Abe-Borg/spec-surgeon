@@ -17,7 +17,7 @@ import UpdateBanner from "./components/UpdateBanner";
 import SettingsModal from "./components/SettingsModal";
 import HelpModal from "./components/HelpModal";
 import ZoomModal from "./components/ZoomModal";
-import SafePanel from "./components/SafePanel";
+import SafePanel, { type SafeFormState } from "./components/SafePanel";
 import ObliterateWarning from "./components/ObliterateWarning";
 import { modeChoice } from "./lib/modes";
 
@@ -35,7 +35,8 @@ export default function App() {
 
   const [notice, setNotice] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
-  const [draft, setDraft] = useState(false);
+  const [draft, setDraft] = useState("");
+  const [safeForm, setSafeForm] = useState<SafeFormState>({ recipe: null, inputs: {} });
   const [prefill, setPrefill] = useState({ text: "", nonce: 0 });
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [helpTopic, setHelpTopic] = useState<HelpTopic | null>(null);
@@ -115,7 +116,10 @@ export default function App() {
         dispatch({ type: "job_failed", message: failureText(failure) });
       } finally {
         busyRef.current = false;
-        if (resend) setPrefill((p) => ({ text: resend, nonce: p.nonce + 1 }));
+        if (resend) {
+          setDraft(resend);
+          setPrefill((p) => ({ text: resend, nonce: p.nonce + 1 }));
+        }
         // The view that ends a job is authoritative; the state route is the
         // same view, fetched once more in case the stream was cut short.
         void refresh();
@@ -158,7 +162,10 @@ export default function App() {
     [runJob, view.action.kind, held],
   );
 
-  const button = useMemo(() => actionButton(view, busy, draft, held.length), [view, busy, draft, held.length]);
+  const button = useMemo(
+    () => actionButton(view, busy, view.mode !== "safe" && !!draft.trim(), held.length),
+    [view, busy, draft, held.length],
+  );
   const items = useMemo(() => transcript(state), [state]);
   const composer = useMemo(() => composerState(view), [view]);
 
@@ -166,10 +173,13 @@ export default function App() {
 
   // A view answered while a job stream is attached (an upload that landed after Send) must not replace the
   // streaming state with the pre-job view; the stream's own `done` carries the authoritative one.
-  const applyView = useCallback((promise: Promise<View>) => {
+  const applyView = useCallback((promise: Promise<View>, onApplied?: () => void) => {
     promise
       .then((next) => {
-        if (!busyRef.current) dispatch({ type: "view", view: next });
+        if (!busyRef.current) {
+          onApplied?.();
+          dispatch({ type: "view", view: next });
+        }
       })
       .catch((failure: unknown) => setNotice(failureText(failure)));
   }, []);
@@ -272,12 +282,19 @@ export default function App() {
 
   // --- Conversation, results -----------------------------------------------
 
+  const resetInputs = useCallback(() => {
+    setDraft("");
+    setSafeForm({ recipe: null, inputs: {} });
+    setPrefill({ text: "", nonce: 0 });
+    setReviews({});
+  }, []);
+
   const onNewConversation = useCallback(() => {
     if (busyRef.current) return;
-    applyView(api.newConversation());
-  }, [applyView]);
+    applyView(api.newConversation(), resetInputs);
+  }, [applyView, resetInputs]);
 
-  const onStartOver = useCallback(() => applyView(api.startOver()), [applyView]);
+  const onStartOver = useCallback(() => applyView(api.startOver(), resetInputs), [applyView, resetInputs]);
   // Obliterate opens its warning first, every time; the other modes switch at once.
   const [warning, setWarning] = useState(false);
   const onMode = useCallback((mode: Mode) => {
@@ -298,8 +315,8 @@ export default function App() {
     api.getRecipes().then(setRecipes).catch((failure: unknown) => setNotice(failureText(failure)));
   }, []);
   const panel = useMemo(
-    () => <SafePanel recipes={recipes} view={view} busy={busy} onPreview={onRecipe} />,
-    [recipes, view, busy, onRecipe],
+    () => <SafePanel recipes={recipes} view={view} busy={busy} onPreview={onRecipe} form={safeForm} onFormChange={setSafeForm} />,
+    [recipes, view, busy, onRecipe, safeForm],
   );
 
   const onPutBack = useCallback((path: string) => applyView(api.putBack(path)), [applyView]);
@@ -308,7 +325,10 @@ export default function App() {
     api.openPath(path).catch((failure: unknown) => setNotice(failureText(failure)));
   }, []);
 
-  const onPrefill = useCallback((text: string) => setPrefill((p) => ({ text, nonce: p.nonce + 1 })), []);
+  const onPrefill = useCallback((text: string) => {
+    setDraft(text);
+    setPrefill((p) => ({ text, nonce: p.nonce + 1 }));
+  }, []);
 
   // Stable handlers: the header, the workbench and the composer are memoized and skip the renders a streamed
   // delta would otherwise cause, as long as nothing handed to them is a new function each time.
@@ -456,6 +476,7 @@ export default function App() {
           prefill={prefill}
           onPrefill={onPrefill}
           onDraftChange={setDraft}
+          draft={draft}
           mode={view.mode}
           panel={panel}
           onMode={onMode}
