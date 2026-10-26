@@ -843,8 +843,27 @@ class Session:
                                           approval_inputs(self._generated_key(self.generated), self.planned_files()))
             return ("a file changed since the AI-written transform was tested — press Preview again"
                     + "".join(f"\n  • {detail}" for detail in what))
-        if self._current_review()[0] is None:
+        preview = self._current_review()[0]
+        if preview is None:
             return "Press Preview first — review its changes before Run."
+        if self.recovery is not None:
+            # Recovery's Save ready copies exports only READY files; its other samples may still be failing.
+            return ""
+        from .preview import refusals, sample_refused
+        for sample in getattr(preview, "samples", []) or []:
+            if sample_refused(sample) or sample.passed is True:
+                continue
+            if self.unguarded and sample.passed is False and sample.exception is None:
+                continue
+            failed = sorted({key for key, value in sample.checks.items() if value == "FAIL"}
+                            | {key for stage in sample.stages for key, value in stage.get("checks", {}).items()
+                               if value == "FAIL"})
+            checks = f" ({', '.join(failed)})" if failed else ""
+            return (f"Create is unavailable: {Path(sample.source).name} did not pass its preview checks{checks}. "
+                    "Choose another change or prepare a new preview before creating copies.")
+        planned = getattr(getattr(preview, "batch_plan", None), "files", None)
+        if self.model_free and planned is not None and (not planned or len(refusals(preview)) >= len(planned)):
+            return "No documents can take this change, so no copies can be created. Choose another change."
         return ""
 
     @_session_action

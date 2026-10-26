@@ -68,6 +68,7 @@ export function actionButton(view: View, busy: boolean, draft: boolean, held = 0
   const counted = kind === "approve" && held > 0;
   if (counted) label = `${label} (${held} set aside)`;
   if (draft) return { kind, label, token: action.token, disabled: true, tip: DRAFT_TIP };
+  if (action.disabled_reason) return { kind, label, token: action.token, disabled: true, tip: action.disabled_reason };
   const tip =
     kind === "approve"
       ? view.blocking
@@ -83,6 +84,7 @@ export function actionButton(view: View, busy: boolean, draft: boolean, held = 0
 
 /** The sentence beside the button, in the conversation pane. */
 export function actionSentence(button: ActionButton, held: number): string {
+  if (button.kind !== "stop" && button.disabled) return button.tip;
   switch (button.kind) {
     case "approve":
       return held > 0

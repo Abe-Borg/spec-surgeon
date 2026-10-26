@@ -60,6 +60,17 @@ test("an action without a token cannot be clicked", () => {
   if (button && button.kind !== "stop") assert.equal(button.disabled, true);
 });
 
+test("a server verification failure disables Create and explains why", () => {
+  const reason = "Create is unavailable: Spec.docx did not pass its preview checks (V2).";
+  const button = actionButton(view({ action: {
+    label: "Create edited copies", token: "current", kind: "approve", disabled_reason: reason,
+  } }), false, false);
+  assert.ok(button && button.kind !== "stop");
+  assert.equal(button.disabled, true);
+  assert.equal(button.tip, reason);
+  assert.equal(actionSentence(button, 0), reason);
+});
+
 test("an unknown kind from a newer server shows no button rather than a wrong one", () => {
   const button = actionButton(view({ action: { label: "x", token: "t", kind: "deliver" as View["action"]["kind"] } }), false, false);
   assert.equal(button, null);

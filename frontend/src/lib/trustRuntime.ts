@@ -271,7 +271,8 @@ export const RUNTIME_CARDS: RuntimeCard[] = [
     you: "Create edited copies (or “I reviewed the flagged pages — create copies”).",
     runs:
       "The click approves exactly the plan and files on screen: if a file or the plan changed since the preview, it " +
-      "is refused. Every approved file is edited from its original, checked by the independent checker (its checks " +
+      "is refused. In Safe and Default modes a failed preview check also blocks Create, with its reason beside " +
+      "the button. Every approved file is edited from its original, checked by the independent checker (its checks " +
       `V1–V10) and rendered; ${F.processMinFiles} files or more are shared over the app's own worker processes, one per ` +
       `core (at most ${F.maxProcessWorkers}), each file edited and checked whole in one of them, and Word renders over ` +
       `up to ${F.wordInstances} instances side by side. A copy that passes goes to a new timestamped folder; one that fails is moved to failed ` +

@@ -213,6 +213,7 @@ class WindowState:
                 "samples": samples, "warnings": list(raw["warnings"]), "blocking": bool(raw["blocking"]),
                 "results": results,
                 "action": {"label": label, "token": raw["token"], "kind": kind,
+                           "disabled_reason": raw.get("blocked_reason", ""),
                            "can_hold": kind == "approve" and bool(raw.get("can_hold"))},
                 "todo": [dict(item) for item in raw.get("todo", [])], "focus": list(raw.get("focus", [])),
                 "working": raw["working"], "budget": {"paused": bool(raw["budget_paused"]),
