@@ -20,10 +20,10 @@ interface Props {
 }
 
 const ORIGIN_TIPS: Record<string, string> = {
-  saved: "Connected with the key remembered securely on this computer.",
-  environment: "Connected with the key from the ANTHROPIC_API_KEY environment variable.",
-  session: "Connected with a key entered for this session only.",
-  none: "No API key is connected. Connect one in Settings to start.",
+  saved: "A key remembered securely on this computer is available. It has not been tested with Anthropic.",
+  environment: "A key from the ANTHROPIC_API_KEY environment variable is available. It has not been tested with Anthropic.",
+  session: "A key entered for this session is available. It has not been tested with Anthropic.",
+  none: "No API key is available. Add one in Settings to start.",
 };
 
 function Header({
@@ -133,12 +133,14 @@ function Header({
           title={
             safe
               ? "Safe mode makes no AI call, so it needs no API key. Default mode does; connect one in Settings."
-              : (ORIGIN_TIPS[view.connection?.origin ?? "none"] ?? ORIGIN_TIPS.none)
+              : ready && view.connection?.origin === "none"
+                ? "SDK credentials are available. No connection test has been run."
+                : (ORIGIN_TIPS[view.connection?.origin ?? "none"] ?? ORIGIN_TIPS.none)
           }
           className="flex items-center gap-2 rounded-full border border-edge bg-raised px-3 py-1 text-xs whitespace-nowrap text-ink-dim transition-colors hover:border-accent hover:text-accent"
         >
           <span className={`h-2 w-2 rounded-full ${safe ? "bg-ink-faint" : ready ? "bg-ok" : "bg-warn"}`} aria-hidden />
-          {safe ? "No AI in Safe mode" : ready ? "Connected" : "Connect your API key"}
+          {safe ? "No AI in Safe mode" : ready ? (view.connection?.origin === "none" ? "Credentials available" : "Key available") : "Add your API key"}
         </button>
         <Tip
           tip={

@@ -189,6 +189,10 @@ export async function saveSettings(apiKey: string, remember: boolean): Promise<S
   return post<Settings>("/api/settings", { api_key: apiKey, remember });
 }
 
+export async function removeKey(): Promise<Settings> {
+  return post<Settings>("/api/settings/remove-key");
+}
+
 /** Keep a colour scheme (src/lib/theme.ts) in settings.json for the next start. */
 export async function saveTheme(theme: string): Promise<Settings> {
   return post<Settings>("/api/settings", { theme });

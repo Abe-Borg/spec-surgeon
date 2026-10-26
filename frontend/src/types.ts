@@ -296,6 +296,8 @@ export interface Settings {
   key_present: boolean;
   origin: Connection["origin"];
   can_remember: boolean;
+  /** An app-managed session/saved key can be removed; external credentials are managed outside the app. */
+  can_remove_key?: boolean;
   out_root: string;
   logs_dir: string;
   /** The colour scheme kept in settings.json: one of src/lib/theme.ts's ids. */

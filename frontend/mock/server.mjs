@@ -399,11 +399,18 @@ const SCENARIOS = {
     settings = { ...settings, key_present: false, origin: "none" };
     return v;
   },
+  "environment-key": () => {
+    const v = SCENARIOS.attached();
+    settings = { ...settings, key_present: true, origin: "environment" };
+    v.connection = { ready: true, origin: "environment" };
+    return v;
+  },
 };
 
 let view = emptyView();
 let settings = { key_present: true, origin: "saved", can_remember: true, out_root: "C:/Users/abe/AppData/Local/Spec Surgeon/runs", logs_dir: "C:/Users/abe/AppData/Roaming/Spec Surgeon/logs", theme: "clay", fast_mode: false, show_obliterate: false, fast: { model: "claude-opus-5-5", available: true, speedup: 2.5, price_factor: 2, standard_usd_per_mtok: [4, 20], fast_usd_per_mtok: [8, 40], refused: null } };
 const THEMES = ["clay", "blueprint", "graphite", "carbon", "linen"];
+function keySettings() { return { ...settings, can_remove_key: ["saved", "session"].includes(settings.origin) }; }
 let running = null; // { stop: boolean }
 let downloadTimer = null;
 let updateFound = true; // what the next check for updates finds; the up-to-date scenario turns it off
@@ -1104,13 +1111,19 @@ async function handle(req, res) {
       return res.end(png);
     }
     case "GET /api/settings":
-      return json(res, 200, settings);
+      return json(res, 200, keySettings());
+    case "POST /api/settings/remove-key":
+      if (view.busy) return busyRefusal();
+      if (!["saved", "session"].includes(settings.origin)) return json(res, 400, { error: "No app-managed key to remove." });
+      settings = { ...settings, key_present: false, origin: "none" };
+      view.connection = { ready: false, origin: "none" };
+      return json(res, 200, keySettings());
     case "POST /api/settings": {
       const body = await readJson(req);
       if ("theme" in body) {
         if (!THEMES.includes(body.theme)) return json(res, 400, { error: "There is no such colour scheme." });
         settings = { ...settings, theme: body.theme };
-        if (!("api_key" in body)) return json(res, 200, settings);
+        if (!("api_key" in body)) return json(res, 200, keySettings());
       }
       if ("show_obliterate" in body) {
         if (typeof body.show_obliterate !== "boolean") return json(res, 400, { error: "Show Obliterate mode is on or off." });
@@ -1120,19 +1133,19 @@ async function handle(req, res) {
           view.mode = "default";
           view.messages.push(msg("app", OBLITERATE_OFF));
         }
-        if (!("api_key" in body)) return json(res, 200, settings);
+        if (!("api_key" in body)) return json(res, 200, keySettings());
       }
       if ("fast_mode" in body) {
         if (typeof body.fast_mode !== "boolean") return json(res, 400, { error: "Fast responses is on or off." });
         settings = { ...settings, fast_mode: body.fast_mode };
         view.cost = { ...view.cost, fast: body.fast_mode };
-        if (!("api_key" in body)) return json(res, 200, settings);
+        if (!("api_key" in body)) return json(res, 200, keySettings());
       }
       const key = String(body.api_key || "");
-      if (!key.startsWith("sk-")) return json(res, 400, { error: "That does not look like an Anthropic API key; it starts with sk-ant-." });
+      if (!key.trim()) return json(res, 200, keySettings());
       settings = { ...settings, key_present: true, origin: body.remember ? "saved" : "session" };
       view.connection = { ready: true, origin: settings.origin };
-      return json(res, 200, settings);
+      return json(res, 200, keySettings());
     }
     case "GET /api/about":
       return json(res, 200, {

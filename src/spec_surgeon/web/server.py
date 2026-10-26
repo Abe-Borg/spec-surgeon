@@ -155,12 +155,34 @@ class WindowState:
         self.watch = WindowWatch(job_status=self.job_status)
         self._last_view: Optional[Dict[str, Any]] = None
         llm.set_fast_mode(settings.fast_mode)          # the user's choice, for every call from the window's start
-        self.key_origin = "environment" if os.environ.get(credentials.ENV) else "none"
+        self._environment_key = os.environ.get(credentials.ENV)
+        self._saved_key_present = False
+        self.key_origin = "environment" if self._environment_key else "none"
         if self.key_origin == "none":
             saved = credentials.load()
             if saved:
                 os.environ[credentials.ENV] = saved
                 self.key_origin = "saved"
+                self._saved_key_present = True
+
+    def remove_app_key(self) -> None:
+        """Remove only the key managed by this window and its app-specific secure-store entry. A launch-time
+        environment key is restored; auth tokens and SDK profiles are owned outside this app and stay intact."""
+        if self.key_origin not in {"saved", "session"}:
+            raise ValueError("This window has no app-managed key to remove. Environment and SDK credentials are managed outside the app.")
+        available = credentials.available()
+        if self._saved_key_present and not available:
+            raise ValueError("The secure credential store is unavailable; the saved key could not be removed.")
+        if available and (self._saved_key_present or credentials.load()):
+            if not credentials.delete():
+                raise ValueError("The saved key could not be removed securely. The current key is still available.")
+        if self._environment_key:
+            os.environ[credentials.ENV] = self._environment_key
+            self.key_origin = "environment"
+        else:
+            os.environ.pop(credentials.ENV, None)
+            self.key_origin = "none"
+        self._saved_key_present = False
 
     @property
     def busy(self) -> bool:
@@ -592,6 +614,7 @@ def create_app(state: WindowState, *, dev: bool = False) -> FastAPI:
     @app.get("/api/settings")
     def get_settings():
         return {"key_present": state.task.session.claude_ready(), "origin": state.key_origin,
+                "can_remove_key": state.key_origin in {"saved", "session"},
                 "can_remember": credentials.available(), "out_root": str(state.task.session.out_root),
                 "logs_dir": str(logs_dir()), "steps_per_pause": STEPS_PER_PAUSE, "theme": state.settings.theme,
                 "fast_mode": state.settings.fast_mode, "fast": fast_offer(),
@@ -631,8 +654,19 @@ def create_app(state: WindowState, *, dev: bool = False) -> FastAPI:
                 try:
                     credentials.save(key)
                     state.key_origin = "saved"
+                    state._saved_key_present = True
                 except Exception:  # noqa: BLE001
                     return error("The key is set for this session but could not be saved securely.")
+        return get_settings()
+
+    @app.post("/api/settings/remove-key")
+    def remove_key():
+        if state.busy:
+            return busy_error()
+        try:
+            state.remove_app_key()
+        except ValueError as exc:
+            return error(str(exc))
         return get_settings()
 
     def fast_offer() -> Dict[str, Any]:
