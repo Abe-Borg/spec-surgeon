@@ -289,6 +289,14 @@ class DocumentTask:
         # what the last Safe-mode button left untouched (its documents, why, and the button's sentence): offered to
         # Default mode, where the conversation can plan them (``hand_off``)
         self.left_untouched: List[Dict[str, str]] = []
+        # what the window showed before a Safe-mode button cleared it for its preview (the last copies, what the last
+        # button left untouched): Discard shows it again (``discard_preview``), and the undo point of that button's
+        # run keeps it as what came before
+        self._before_button: Optional[Dict[str, Any]] = None
+        # the working set as it was before each run that delivered copies, newest last (``undo``), and the point
+        # taken at the approval that is running, kept by ``_advance_generation`` once that run delivers
+        self.undo_points: List[Dict[str, Any]] = []
+        self._pending_undo: Optional[Dict[str, Any]] = None
         self._template_kind: Optional[tuple] = None    # (the template's path, size, mtime, recipes.template_kind)
         self._binned: List[str] = []        # documents of this request that could not take the change, on the list
         self._parked = ("", 0)              # (conversation id, how many of its set-aside documents were taken)
@@ -520,6 +528,15 @@ class DocumentTask:
         self.working.pop(str(path), None)
         self.applied.pop(str(path), None)
         self.todo.pop(str(path), None)
+        for shown in [*self.undo_points, self._before_button or {}]:
+            # attached again later, it is an original: no undo or discard puts an old copy back in its place, or
+            # shows one as its result
+            for part in ("working", "applied", "results", "unverified"):
+                if part in shown:
+                    shown[part].pop(str(path), None)
+            if "left_untouched" in shown:
+                shown["left_untouched"] = [e for e in shown["left_untouched"]
+                                           if _same_file_key(e["path"]) != _same_file_key(path)]
         self.left_untouched = [e for e in self.left_untouched if _same_file_key(e["path"]) != _same_file_key(path)]
         pass_over = False
         if self.focus:
@@ -537,6 +554,7 @@ class DocumentTask:
             # changes the history lists are in none of them
             self.history, self.generation, self.results, self.applied = [], 0, {}, {}
             self.unverified = {}
+            self.undo_points, self._before_button = [], None
             self.stage = "resume" if self.decisions else "empty"
             self.say("No edited copy is attached any more, so the next change starts from your originals.")
         self.save()
@@ -612,6 +630,16 @@ class DocumentTask:
                 self.working[key] = copy_path
         if not moved:
             return
+        point, self._pending_undo = self._pending_undo, None
+        if point is None:
+            # a run whose approval took no point (it resumed after a restart): nothing before it can be gone back to
+            # exactly, so no undo reaches past it
+            self.undo_points = []
+        else:
+            before = set(point.pop("todo_before", []))
+            point["todo_added"] = [key for key in self.todo if key not in before]
+            self.undo_points.append(point)
+        self._before_button = None
         done = [c["summary"] for g in self._groups() for c in g["changes"]] or self.decisions[:1]
         self.history.extend(done)
         for key in moved:
@@ -639,11 +667,103 @@ class DocumentTask:
         self.results, self.unverified = {}, {}
         self.applied, self.todo, self.focus, self._binned = {}, {}, None, []
         self.left_untouched = []
+        self.undo_points, self._pending_undo, self._before_button = [], None, None
         self._sync()
         self._invalidate()
         self.stage = "empty"
         self.say("Starting over from the originals. " +
                  ("Pick a button to start." if self.mode == "safe" else "Tell me what you'd like to change."))
+        self.save()
+
+    # ---- going back ----
+    def _undo_point(self) -> Dict[str, Any]:
+        """The working set as it is before the run being approved, and what the window shows of it (a button's
+        preview cleared that, so its ``_before_button``): what ``undo`` restores once the run has delivered."""
+        shown = self._before_button or {"results": self.results, "unverified": self.unverified,
+                                        "left_untouched": self.left_untouched}
+        return {"request": self.decisions[0] if self.decisions else "",
+                "working": dict(self.working), "generation": self.generation, "history": list(self.history),
+                "applied": {k: list(v) for k, v in self.applied.items()},
+                "results": dict(shown["results"]),
+                "unverified": {k: list(v) for k, v in shown["unverified"].items()},
+                "left_untouched": [dict(e) for e in shown["left_untouched"]],
+                "todo_before": list(self.todo)}
+
+    def _undo_blocked(self) -> str:
+        """Why the last change cannot be undone now; '' when it can."""
+        if not self.undo_points:
+            return "There is nothing to undo."
+        if self.stage == "preview":
+            return ("Discard the preview first." if self.mode == "safe" else
+                    "A plan is waiting for your approval; create the copies or change the request first.")
+        if self.stage not in ("done", "empty", "resume") or self.session.recovery is not None:
+            return "Finish the request that is open first."
+        if self.focus:
+            return "Finish the pass over your to-do list first."
+        return ""
+
+    def _shown_again(self, shown: Dict[str, Any]) -> None:
+        """The copies and the Left untouched list a window showed before, for the documents still attached; a copy
+        no longer where it was saved is not shown."""
+        attached = {str(a.path) for a in self.attachments if not a.template and not a.reference}
+        keys = {_same_file_key(p) for p in attached}
+        self.results = {k: v for k, v in shown["results"].items() if k in attached and Path(v).is_file()}
+        self.unverified = {k: list(v) for k, v in shown["unverified"].items() if k in self.results}
+        self.left_untouched = [dict(e) for e in shown["left_untouched"]
+                               if _same_file_key(e["path"]) in keys and e["path"] not in self.todo]
+
+    def discard_preview(self) -> None:
+        """Safe mode's Discard: the preview waiting for approval is withdrawn and nothing is created. The window shows
+        again what it showed before the button was pressed (the last copies, what that button left untouched); the
+        working set never changed. No file is written or deleted."""
+        if self.mode != "safe":
+            raise ValueError("Discard is for Safe mode's previews; in this mode, say what should be different instead.")
+        if self.stage != "preview":
+            raise ValueError("There is no preview to discard.")
+        before, self._before_button = self._before_button, None
+        self._invalidate()
+        if before is not None:
+            self._shown_again(before)
+        self.stage = "done" if self.results and self.generation else "empty"
+        self.say("Preview discarded; nothing was created. Change the form and preview again, or choose another "
+                 "button.")
+        self.save()
+
+    def undo(self) -> None:
+        """Undo the last change: the working set goes back to what it was before the last run that delivered copies.
+        The documents that run changed build on their copies from before it again (their originals, when it was the
+        first), the history and each copy's changes are as they were, the copies and Left untouched list it replaced
+        show again, and the documents its ✗ put on the to-do list come off it. One step per call, newest first. No
+        file is written or deleted: the copies it made stay where they were saved."""
+        blocked = self._undo_blocked()
+        if blocked:
+            raise ValueError(blocked)
+        point = self.undo_points[-1]
+        attached = {str(a.path) for a in self.attachments if not a.template and not a.reference}
+        working = {k: v for k, v in point["working"].items() if k in attached}
+        gone = [Path(v).name for v in working.values() if not Path(v).is_file()]
+        if gone:
+            raise ValueError(f"The copies from before the last change are no longer where they were saved "
+                             f"({', '.join(gone[:3])}), so it cannot be undone. Start over from the originals "
+                             f"instead.")
+        self.undo_points.pop()
+        self.working, self.generation = working, point["generation"]
+        self.history = list(point["history"])
+        self.applied = {k: list(v) for k, v in point["applied"].items() if k in working}
+        for key in point.get("todo_added", []):
+            self.todo.pop(key, None)
+        self._shown_again(point)
+        self._before_button = self._pending_undo = None
+        self._sync()
+        self._invalidate()
+        if not self.decisions:
+            self.stage = "done" if self.results and self.generation else "empty"
+        request = str(point.get("request") or "").strip().rstrip(".")
+        upcoming = "The next button" if self.mode == "safe" else "Your next request"
+        self.say((f"Undid “{request}”. " if request else "Undid the last change. ") +
+                 (f"{upcoming} builds on the copies from before it." if self.working else
+                  f"{upcoming} works on your originals again.") +
+                 " The copies it made stay where they were saved; nothing was deleted.")
         self.save()
 
     def _target_question(self):
@@ -872,6 +992,12 @@ class DocumentTask:
             self.say(f"{recipe.label} cannot be used on these documents: " + "; ".join(errors[:3]))
             return
         s.end_conversation()
+        if self._before_button is None:
+            # what the window shows now: Discard shows it again (a button pressed over another's preview keeps the
+            # first one's, which is still what came before)
+            self._before_button = {"results": dict(self.results),
+                                   "unverified": {k: list(v) for k, v in self.unverified.items()},
+                                   "left_untouched": [dict(e) for e in self.left_untouched]}
         # Results describe this button's copies. Earlier copies remain in the working set and on disk, but must
         # not be presented as if they carry a later change that could be refused or fail verification.
         self.results, self.unverified = {}, {}
@@ -1218,6 +1344,9 @@ class DocumentTask:
         if held and s.recovery is not None:
             raise ValueError("A document cannot be set aside while files are being checked again; save the ready "
                              "copies first.")
+        if self.stage == "preview":
+            # what Undo goes back to once this run has delivered (a later save of recovered copies keeps this point)
+            self._pending_undo = self._undo_point()
         # the files the preview refused never run (Session._without_refused): once the others run they go on the to-do
         # list with the plan's reason, to come back to (the session keeps them until the request ends: the approval
         # was taken over them)
@@ -1644,7 +1773,10 @@ class DocumentTask:
                 "stages": stages if groups else 0,
                 "chips": chips,
                 "working": {"generation": self.generation, "from_originals": not self.working,
-                            "can_start_over": can_start_over},
+                            "can_start_over": can_start_over,
+                            "undo": (self.undo_points[-1].get("request") or "the last change") if self.undo_points
+                            else "",
+                            "undo_blocked": self._undo_blocked() if self.undo_points else ""},
                 "todo": [{"path": path, "name": entry["name"], "why": entry.get("why", WHY_HELD),
                           "reason": entry.get("reason") or HELD_REASON} for path, entry in self.todo.items()],
                 "focus": list(self.focus["documents"]) if self.focus else [],
@@ -1691,7 +1823,7 @@ class DocumentTask:
                         str(self.session.recovery_checkpoint) if self.session.recovery_checkpoint else self._resume_recovery,
             "pending_layouts": [str(x) for x in self.session.pending_layout_recovery],
             "working": dict(self.working), "generation": self.generation, "history": list(self.history),
-            "applied": self.applied, "todo": self.todo, "focus": self.focus,
+            "applied": self.applied, "todo": self.todo, "focus": self.focus, "undo": self.undo_points,
             "budget": self._budget.to_dict(), "in_progress": in_progress})
 
     def _restore_todo(self, data) -> None:
@@ -1730,6 +1862,32 @@ class DocumentTask:
                        "why": {k: {"why": v.get("why", WHY_HELD), "reason": v.get("reason") or HELD_REASON}
                                for k, v in focus.get("why", {}).items() if k in documents}}
                       if focus and documents else None)
+
+    @staticmethod
+    def _restored_undo(points) -> List[Dict[str, Any]]:
+        """The undo points a journal kept, in the shape ``_advance_generation`` wrote them; anything else gives none
+        (nothing can be undone rather than something restored wrongly). A copy no longer on disk is found when the
+        point is used (``undo``)."""
+        text = lambda value: isinstance(value, str)  # noqa: E731
+        texts = lambda value: isinstance(value, list) and all(map(text, value))  # noqa: E731
+        paths = lambda value: isinstance(value, dict) and all(text(k) and text(v) for k, v in value.items())  # noqa: E731
+        lists = lambda value: isinstance(value, dict) and all(text(k) and texts(v) for k, v in value.items())  # noqa: E731
+        entry = lambda e: isinstance(e, dict) and all(text(e.get(k, "")) for k in  # noqa: E731
+                                                      ("path", "name", "why", "reason", "request")) and text(e.get("path"))
+        if not isinstance(points, list) or not all(
+                isinstance(p, dict) and text(p.get("request", "")) and paths(p.get("working"))
+                and type(p.get("generation")) is int and texts(p.get("history")) and lists(p.get("applied"))
+                and paths(p.get("results")) and lists(p.get("unverified")) and texts(p.get("todo_added", []))
+                and isinstance(p.get("left_untouched"), list) and all(map(entry, p["left_untouched"]))
+                for p in points):
+            return []
+        return [{"request": p.get("request", ""), "working": dict(p["working"]), "generation": p["generation"],
+                 "history": list(p["history"]), "applied": {k: list(v) for k, v in p["applied"].items()},
+                 "results": dict(p["results"]), "unverified": {k: list(v) for k, v in p["unverified"].items()},
+                 "left_untouched": [{"path": e["path"], "name": e.get("name") or Path(e["path"]).name,
+                                     "why": e.get("why", WHY_REFUSED), "reason": e.get("reason", ""),
+                                     "request": e.get("request", "")} for e in p["left_untouched"]],
+                 "todo_added": list(p.get("todo_added", []))} for p in points]
 
     def restore(self):
         if not self.journal or not self.journal.is_file():
@@ -1799,6 +1957,7 @@ class DocumentTask:
                 self.say("The edited copies from your last run could not be found where they were saved, so the next "
                          "change starts from your originals.")
         self._restore_todo(data)
+        self.undo_points = self._restored_undo(data.get("undo", [])) if self.working or self.history else []
         self._sync()
         self._resume_recovery = data.get("recovery")
         layouts = data.get("pending_layouts", [])

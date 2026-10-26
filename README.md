@@ -202,6 +202,11 @@ setting that differs from the template's, a phrase whose formatting changes part
 nothing is half-edited: a copy passes every check or is not made. After the copies are created, **Try these in
 Default mode** puts the untouched documents on your to-do list in Default mode, where the conversation can plan them.
 
+Changed your mind in Safe mode? While a button's preview waits, **Discard preview** (or **All buttons**) withdraws it
+and nothing is created; each button's form keeps what you typed until **Clear form**. After the copies are created,
+**Undo the last button** goes back one button at a time: the next button builds on the copies from before it (your
+originals, after the first one), and the copies the undone button made stay where they were saved. Nothing is deleted.
+
 Besides Word documents you can attach pictures and tables for the edit to use, such as a new logo to swap in or
 insert, a schedule to place as a table, or a spreadsheet of project values to fill in; Claude is told about them and can read the tables, and nothing
 beside your documents is ever looked for.

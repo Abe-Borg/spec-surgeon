@@ -416,6 +416,19 @@ const SCENARIOS = {
 };
 
 let view = emptyView();
+// Safe mode's ways back, as the app keeps them (docs/WEB_API.md, `POST /api/discard`, `POST /api/undo`): what the window
+// showed before a button's preview cleared it, and the working set before each button's run, newest last.
+let beforeButton = null;
+let undoStack = [];
+let lastRequest = "";
+function resetGoingBack() {
+  beforeButton = null;
+  undoStack = [];
+}
+function undoFields() {
+  const top = undoStack[undoStack.length - 1];
+  return { undo: top ? top.request : "", undo_blocked: top && view.stage === "preview" ? "Discard the preview first." : "" };
+}
 let settings = { key_present: true, origin: "saved", can_remember: true, out_root: "C:/Users/abe/AppData/Local/Spec Surgeon/runs", logs_dir: "C:/Users/abe/AppData/Roaming/Spec Surgeon/logs", theme: "clay", fast_mode: false, show_obliterate: false, fast: { model: "claude-opus-5-5", available: true, speedup: 2.5, price_factor: 2, standard_usd_per_mtok: [4, 20], fast_usd_per_mtok: [8, 40], refused: null } };
 const THEMES = ["clay", "blueprint", "graphite", "carbon", "linen"];
 function keySettings() { return { ...settings, can_remove_key: ["saved", "session"].includes(settings.origin) }; }
@@ -687,6 +700,9 @@ async function planJob(res, userText, layouts = false) {
 async function recipeJob(res, recipe) {
   const s = startStream(res);
   view.messages.push(msg("user", recipe.label));
+  if (!beforeButton) beforeButton = { results: view.results, left_untouched: view.left_untouched };
+  lastRequest = recipe.label;
+  view.results = [];
   view.plan = null;
   view.samples = [];
   view.warnings = [];
@@ -708,6 +724,7 @@ async function recipeJob(res, recipe) {
   await s.emit({ type: "samples", samples: view.samples, warnings: [], blocking: false });
   view.stage = "preview";
   view.action = { label: "Create edited copies", token: `tok-approve-${++seq}`, kind: "approve", can_hold: true };
+  view.working = { ...view.working, ...undoFields() };
   s.end();
 }
 
@@ -818,7 +835,16 @@ async function primaryJob(res, token, hold = []) {
     : [];
   const fresh = results().filter((r) => running.some((a) => a.path === r.source) && !asideByButton.some((x) => x.path === r.source));
   if (view.mode === "safe") {
-    // A button's run: the app's own note, no AI words; what it left untouched waits beside the copies.
+    // A button's run: the app's own note, no AI words; what it left untouched waits beside the copies. What it
+    // replaces is kept for Undo.
+    undoStack.push({
+      request: lastRequest || "the last button",
+      generation: view.working.generation,
+      results: beforeButton ? beforeButton.results : view.results,
+      left_untouched: beforeButton ? beforeButton.left_untouched : view.left_untouched,
+      currents: view.attachments.map((a) => [a.path, a.current]),
+    });
+    beforeButton = null;
     view.results = [...view.results.filter((r) => !fresh.some((f) => f.source === r.source)), ...fresh];
     await s.emit({ type: "results", results: view.results });
     view.left_untouched = asideByButton.map((x) => ({ path: x.path, name: x.name, reason: x.reason }));
@@ -831,6 +857,10 @@ async function primaryJob(res, token, hold = []) {
     view.samples = [];
     view.action = { label: "", token: "", kind: "none", can_hold: false };
     view.working = { generation: view.working.generation + 1, from_originals: false, can_start_over: true };
+    view.attachments = view.attachments.map((a) =>
+      running.some((r) => r.path === a.path) ? { ...a, current: `${RUN_DIR}/${a.name}` } : a,
+    );
+    view.working = { ...view.working, ...undoFields() };
     return s.end();
   }
   view.results = [...view.results.filter((r) => !fresh.some((f) => f.source === r.source)), ...fresh];
@@ -920,6 +950,7 @@ async function handle(req, res) {
     const body = await readJson(req);
     if (path === "/mock/reset") {
       view = emptyView();
+      resetGoingBack();
       running = null;
       return json(res, 200, view);
     }
@@ -930,6 +961,7 @@ async function handle(req, res) {
       updateFound = true;
       view = make();
       running = null;
+      resetGoingBack();
       return json(res, 200, view);
     }
     if (path === "/mock/health") return json(res, 200, { ok: true, token: TOKEN });
@@ -1079,8 +1111,49 @@ async function handle(req, res) {
       view.messages.push(msg("app", `${entry.name} is off your to-do list and back among the documents your next request works on.`));
       return json(res, 200, view);
     }
+    case "POST /api/discard": {
+      if (view.busy) return busyRefusal();
+      if (view.mode !== "safe") return json(res, 400, { error: "Discard is for Safe mode's previews; in this mode, say what should be different instead." });
+      if (view.stage !== "preview") return json(res, 400, { error: "There is no preview to discard." });
+      if (beforeButton) {
+        view.results = beforeButton.results;
+        view.left_untouched = beforeButton.left_untouched;
+      }
+      beforeButton = null;
+      view.plan = null;
+      view.samples = [];
+      view.warnings = [];
+      view.action = { label: "", token: "", kind: "none", can_hold: false };
+      view.stage = view.results.length && view.working.generation ? "done" : "empty";
+      view.working = { ...view.working, ...undoFields() };
+      view.messages.push(msg("app", "Preview discarded; nothing was created. Change the form and preview again, or choose another button."));
+      return json(res, 200, view);
+    }
+    case "POST /api/undo": {
+      if (view.busy) return busyRefusal();
+      const top = undoStack[undoStack.length - 1];
+      if (!top) return json(res, 400, { error: "There is nothing to undo." });
+      if (view.stage === "preview") return json(res, 400, { error: "Discard the preview first." });
+      undoStack.pop();
+      const currents = new Map(top.currents);
+      view.attachments = view.attachments.map((a) => (currents.has(a.path) ? { ...a, current: currents.get(a.path) } : a));
+      view.results = top.results;
+      view.left_untouched = top.left_untouched;
+      view.stage = view.results.length && top.generation ? "done" : "empty";
+      view.working = {
+        generation: top.generation,
+        from_originals: top.generation === 0,
+        can_start_over: top.generation > 0 || view.todo.length > 0,
+      };
+      view.working = { ...view.working, ...undoFields() };
+      view.messages.push(msg("app", `Undid “${top.request}”. ` +
+        (top.generation ? "The next button builds on the copies from before it." : "The next button works on your originals again.") +
+        " The copies it made stay where they were saved; nothing was deleted."));
+      return json(res, 200, view);
+    }
     case "POST /api/start-over":
       if (view.busy) return busyRefusal();
+      resetGoingBack();
       view.working = { generation: 0, from_originals: true, can_start_over: false };
       view.plan = null;
       view.samples = [];
@@ -1100,6 +1173,7 @@ async function handle(req, res) {
       const keep = view.update;
       const mode = view.mode, modes = view.modes;
       view = emptyView();
+      resetGoingBack();
       view.update = keep;
       view.mode = mode;
       view.modes = modes;

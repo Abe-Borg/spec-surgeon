@@ -1,7 +1,7 @@
 import { memo, useEffect, useRef } from "react";
 import type { Attachment, View } from "../types";
 import type { Mark, Reviews } from "../lib/review";
-import { planHasContent, runFolder } from "../lib/workbench";
+import { planHasContent, runFolder, undoLink } from "../lib/workbench";
 import { unverifiedLine } from "../lib/modes";
 import DocumentsTray from "./DocumentsTray";
 import Markdown from "./Markdown";
@@ -23,6 +23,8 @@ interface Props {
   onRemove: (attachment: Attachment) => void;
   onOpen: (path: string) => void;
   onStartOver: () => void;
+  /** Safe mode's Undo the last button: the working set back to the copies from before it. */
+  onUndo: () => void;
   /** Takes a document off the to-do list, back among the documents the next request works on. */
   onPutBack: (path: string) => void;
   onZoom: (src: string, title: string) => void;
@@ -90,11 +92,13 @@ function Workbench({
   onRemove,
   onOpen,
   onStartOver,
+  onUndo,
   onPutBack,
   onZoom,
   onHandOff,
 }: Props) {
   const safe = view.mode === "safe";
+  const undo = undoLink(view, busy);
   const untouched = view.left_untouched ?? [];
   const hasPlan = planHasContent(view.plan);
   const folder = runFolder(view);
@@ -347,6 +351,21 @@ function Workbench({
                     className="text-accent underline decoration-accent/40 underline-offset-2 transition-colors hover:decoration-accent disabled:pointer-events-none disabled:opacity-50"
                   >
                     Start over from the originals
+                  </button>
+                </Tip>
+              </>
+            )}
+            {undo && (
+              <>
+                {" · "}
+                <Tip tip={undo.tip}>
+                  <button
+                    type="button"
+                    onClick={onUndo}
+                    disabled={undo.disabled}
+                    className="text-accent underline decoration-accent/40 underline-offset-2 transition-colors hover:decoration-accent disabled:pointer-events-none disabled:opacity-50"
+                  >
+                    Undo the last button
                   </button>
                 </Tip>
               </>

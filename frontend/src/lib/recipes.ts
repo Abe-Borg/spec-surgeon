@@ -164,3 +164,35 @@ export function grouped(recipes: Recipe[]): { group: string; recipes: Recipe[] }
   }
   return out;
 }
+
+/** The Safe panel's form: the button whose form is open, what it holds, and what each button's form held when it was
+ *  left (All buttons), so going back to a button finds what was typed. Kept by the page only, until New conversation
+ *  or Start over. */
+export interface SafeFormState {
+  recipe: string | null;
+  inputs: RecipeInputs;
+  kept: Record<string, RecipeInputs>;
+}
+
+export const EMPTY_SAFE_FORM: SafeFormState = { recipe: null, inputs: {}, kept: {} };
+
+/** A button's form opened: what it held when it was left, taken up to the attachments as they are now, or a new
+ *  form. */
+export function openForm(form: SafeFormState, recipe: Recipe, view: Attached): SafeFormState {
+  const kept = form.kept[recipe.id];
+  return { ...form, recipe: recipe.id, inputs: kept ? refreshInputs(recipe, kept, view) : initialInputs(recipe, view) };
+}
+
+/** Back to all the buttons: the open form's values are kept for when its button is chosen again. */
+export function leaveForm(form: SafeFormState): SafeFormState {
+  return form.recipe === null
+    ? form
+    : { recipe: null, inputs: {}, kept: { ...form.kept, [form.recipe]: form.inputs } };
+}
+
+/** The open form as it first opens, what was typed in it gone. */
+export function clearForm(form: SafeFormState, recipe: Recipe, view: Attached): SafeFormState {
+  const kept = { ...form.kept };
+  delete kept[recipe.id];
+  return { recipe: recipe.id, inputs: initialInputs(recipe, view), kept };
+}

@@ -236,8 +236,9 @@ class Session:
         return files
 
     def new_out_dir(self) -> Path:
-        self.out_dir = Path(self.out_root) / datetime.now().strftime("%Y%m%d-%H%M%S")
-        self.out_dir.mkdir(parents=True, exist_ok=True)
+        # never a folder that exists: two Safe-mode buttons run within one second would otherwise share it, and the
+        # second run would read its inputs from inside its own results folder
+        self.out_dir = self._next_session_dir()
         return self.out_dir
 
     # ---- steps ----

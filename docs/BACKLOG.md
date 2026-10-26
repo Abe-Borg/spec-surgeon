@@ -63,7 +63,10 @@ specifications, Windows and Word, and only the owner can do them. Record what a 
 
 - **Safe mode:** a real mixed batch (several projects, good and badly built files) through each button with Word
   rendering. Match body formatting to template over office masters, MasterSpec ("1.01", "PART 1 –") and
-  Heading-styled files. Record the Left untouched reasons. The copies open in Word without a repair prompt.
+  Heading-styled files. Record the Left untouched reasons. The copies open in Word without a repair prompt. Then
+  change your mind on that batch in the installed app: Discard a preview, go back to a button and find its form as
+  you left it, run two buttons and Undo twice (the next button builds on the right copies each time, and every copy
+  is still in its run folder), and Undo after a restart.
 - **Default mode:** a choice's drafted wording edited before it is picked, and the copy carrying the edit.
 - **Obliterate:** a request Default refuses (a text box, Claude's own wording), with Word; a copy marked UNVERIFIED
   opened in Word. A request that needs a custom method using an attached file (a logo from an attached picture, a

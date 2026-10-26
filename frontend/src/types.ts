@@ -199,6 +199,11 @@ export interface Working {
   generation: number;
   from_originals: boolean;
   can_start_over: boolean;
+  /** The request the last run that delivered copies carried out, which Undo goes back before; "" when nothing can be
+   *  undone. Absent from an older server. */
+  undo?: string;
+  /** Why it cannot be undone now (a preview waits, a request is open); "" when it can. */
+  undo_blocked?: string;
 }
 
 export interface Budget {

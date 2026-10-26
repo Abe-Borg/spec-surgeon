@@ -6,7 +6,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import type { View } from "../src/types.ts";
-import { APPROVE_TIP, BLOCKING_TIP, DRAFT_TIP, STOP_TIP, actionButton, actionSentence, defaultLabel, heldTip } from "../src/lib/action.ts";
+import { APPROVE_TIP, BLOCKING_TIP, DRAFT_TIP, STOP_TIP, actionButton, actionSentence, canDiscard, defaultLabel, heldTip } from "../src/lib/action.ts";
 import { EMPTY_VIEW } from "../src/lib/view.ts";
 
 function view(overrides: Partial<View> = {}): View {
@@ -101,4 +101,11 @@ test("the sentence beside the button says what it does, and counts the set-aside
   const cont = actionButton(view({ action: { label: "Continue", token: "t", kind: "continue" } }), false, false)!;
   assert.ok(actionSentence(cont, 0).includes("checked against your request again"));
   assert.equal(actionSentence({ kind: "stop", label: "Stop now", tip: STOP_TIP }, 0), "");
+});
+
+test("Discard shows only while a Safe-mode preview waits and no work runs", () => {
+  assert.equal(canDiscard(view({ mode: "safe", stage: "preview" }), false), true);
+  assert.equal(canDiscard(view({ mode: "safe", stage: "preview" }), true), false);
+  assert.equal(canDiscard(view({ mode: "safe", stage: "done" }), false), false);
+  assert.equal(canDiscard(view({ mode: "default", stage: "preview" }), false), false);
 });

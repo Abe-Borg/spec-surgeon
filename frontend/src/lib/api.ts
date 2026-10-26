@@ -115,6 +115,17 @@ export async function startOver(): Promise<View> {
   return normalizeView(await post<unknown>("/api/start-over"));
 }
 
+/** Safe mode's Discard: the preview waiting for approval is withdrawn, nothing is created, and the window shows what
+ *  it showed before the button was pressed. */
+export async function discard(): Promise<View> {
+  return normalizeView(await post<unknown>("/api/discard"));
+}
+
+/** Undo the last button: the working set goes back to the copies from before its run. No file is deleted. */
+export async function undo(): Promise<View> {
+  return normalizeView(await post<unknown>("/api/undo"));
+}
+
 export async function newConversation(): Promise<View> {
   return normalizeView(await post<unknown>("/api/new-conversation"));
 }
