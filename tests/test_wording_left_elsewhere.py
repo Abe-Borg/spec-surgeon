@@ -1,4 +1,4 @@
-"""A change kept to one place says where the same words remain (docs/PLAN-2026-10-22-batch-consistency.md C3).
+"""A change kept to one place says where the same words remain.
 
 From the owner's Division 21 run: the rename touched only the footer of 21 05 53, the first page still read
 "Identification for Fire Suppression Systems", and no step said so. ``replace_text`` now flags each place its find

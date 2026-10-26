@@ -1,4 +1,4 @@
-"""Operation library (docs/history/NL_SURGICAL_EDITOR_PLAN.md §4). Add an op: write a module with an Op subclass
+"""Operation library. Add an op: write a module with an Op subclass
 (``plan``, ``apply`` and ``describe`` — the sentence the plan shows for it, over ``prose.py``), decorate it with
 ``register`` and import it here."""
 from __future__ import annotations

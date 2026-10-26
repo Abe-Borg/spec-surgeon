@@ -1,5 +1,5 @@
 /**
- * The window's modes in words (docs/PLAN-2026-10-23-modes.md): the switch's labels and tips, and Obliterate's warning
+ * The window's modes in words (CLAUDE.md, Modes): the switch's labels and tips, and Obliterate's warning
  * — what it grants, what it costs and what still holds — said the same way in the warning, in How to use and in the
  * trust dossier. Obliterate is offered only when Settings → Advanced shows it, and is chosen only after its warning,
  * every time; a launch never opens in it.

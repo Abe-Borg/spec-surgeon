@@ -1,4 +1,4 @@
-"""Obliterate mode (docs/PLAN-2026-10-23-modes.md M5): the conversation without the guardrails that protect a document's
+"""Obliterate mode (CLAUDE.md, Modes): the conversation without the guardrails that protect a document's
 content, hidden unless Settings → Advanced shows it, chosen only after its warning, never restored at a launch.
 
 What is pinned here: what it lifts — the placed-words trace at the one gate, the custom method's plain-formatting

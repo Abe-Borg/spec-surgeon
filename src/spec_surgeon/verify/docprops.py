@@ -13,7 +13,7 @@ custom properties part the op created is compared whole with this module's own e
 relationships and ``[Content_Types].xml`` with the source plus exactly its one relationship and one override
 (``Ctx.verified_members``). The changes it derives must be the plan's (``changed``).
 
-``from_document`` (docs/PLAN-2026-10-22-batch-consistency.md C5): a property whose value is the user's words with
+``from_document``: a property whose value is the user's words with
 ``{number}`` and ``{title}`` in place of the file's own section number and title. They are read here from the SOURCE
 by this module's own copy of the reference rules (``_V_REFERENCE``) through the verifier's own fill reading
 (``verify/template.fill_value``); the property must read exactly the words with them in place. Words with neither,

@@ -375,14 +375,8 @@ recorded for the requests that follow.
 - [docs/DEVELOPER_DIAGNOSTICS.md](docs/DEVELOPER_DIAGNOSTICS.md) — investigating a failure: what each log and journal
   holds, how to follow one action through them, and what the window records about itself.
 - [docs/releases/](docs/releases/) — release notes per version, what the update banner shows.
-- [docs/audits/](docs/audits/) — independent audits, sweeps and their responses.
-- [docs/history/](docs/history/) — the previous CLAUDE.md files ([2026-10-18](docs/history/CLAUDE-2026-10-18.md),
-  [2026-10-20](docs/history/CLAUDE-2026-10-20.md)) and [README.md](docs/history/README-2026-10-18.md), five days of
-  design decisions, definitions and change notes, [the design and phased plan of the natural-language
-  editor](docs/history/NL_SURGICAL_EDITOR_PLAN.md), and the guides to the command-line features removed on 2026-10-21
-  (workspaces, workflows, office profiles, spec QA audits, project evidence, evaluations). The current round's plan is
-  `docs/PLAN-2026-10-22-batch-consistency.md` (what the first live run found); the full-control round's,
-  `docs/PLAN-2026-10-21-full-control.md`, waits on its live runs.
+- [docs/BACKLOG.md](docs/BACKLOG.md) — the open work: what is not built yet, and the real-file runs that wait on
+  Windows and Word. Earlier plans, audits and retired guides are in the git history.
 - [docs/RELIABILITY.md](docs/RELIABILITY.md) — the review flow, what PASS means and the remaining evidence limits;
   [docs/RECOVERY.md](docs/RECOVERY.md) — how files a run set aside are investigated;
   [docs/TEXT_HYGIENE.md](docs/TEXT_HYGIENE.md) — the character hygiene operations; the

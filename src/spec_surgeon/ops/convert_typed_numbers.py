@@ -57,7 +57,7 @@ Definitions (the verifier's own reading is verify/typednumbers.py):
   "1.1" before any PART) is not evaluated, so it refuses too — the reason then names the nearest earlier unconverted
   line that looks like a typed number (``audit_numbering.typed_shape``) but matched no level, and what the level needs
   (F11: "PART 1 – GENERAL" with an en dash).
-* **match "counters"** (docs/PLAN-2026-10-23-modes.md G1): a typed number is found by ``lists.typed_number(…,
+* **match "counters"**: a typed number is found by ``lists.typed_number(…,
   lenient=True)`` — a hyphen, en dash or em dash for one another, any digits for a decimal or decimalZero level — and a
   converted paragraph meets the guarantee when its typed values (``lists.typed_values``) are the predicted counters of
   the levels its level's text names (``counters_differ``), whatever the list then shows: "1.01" converts into a "1.1"

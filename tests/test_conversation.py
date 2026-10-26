@@ -127,7 +127,7 @@ PLACES_EDITED = {**PLACES_STAMP, "ops": [{**PLACES_STAMP["ops"][0],
 
 
 def test_an_edited_wording_is_the_approved_one_and_the_draft_is_not(folder):
-    """docs/PLAN-2026-10-23-modes.md M4: the user edits Claude's draft before picking it. The edited text is what
+    """The user edits Claude's draft before picking it. The edited text is what
     picking approves — Claude is told the exact words — and the draft it replaced is never approved: a spec placing it
     is refused, a spec placing the edit passes."""
     fake = FakeClient(

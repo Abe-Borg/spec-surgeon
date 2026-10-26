@@ -101,7 +101,7 @@ def settings_path() -> Path:
 # The window's colour schemes, the first the default: the page's own list is frontend/src/lib/theme.ts, the colours
 # frontend/src/index.css (tests/test_settings.py keeps the three in step).
 THEMES = ("clay", "blueprint", "graphite", "carbon", "linen")
-MODES = ("safe", "default")     # the window's modes a launch may start in (docs/PLAN-2026-10-23-modes.md); Safe first
+MODES = ("safe", "default")     # the window's modes a launch may start in (CLAUDE.md, Modes); Safe first
 
 
 @dataclass

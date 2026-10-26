@@ -2903,6 +2903,6 @@ KINDS.update(FIELD_INSERT_KINDS)
 KINDS.update(COMMENT_THREAD_KINDS)
 KINDS.update(DELETION_KINDS)
 KINDS.update(FOOTNOTE_KINDS)
-# custom methods (docs/PLAN-2026-10-22-custom-envelope.md, A3): list label formatting at named levels
+# custom methods: list label formatting at named levels
 from .numberinglabels import NUMBERING_LABEL_KINDS  # noqa: E402
 KINDS.update(NUMBERING_LABEL_KINDS)

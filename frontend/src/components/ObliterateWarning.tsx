@@ -10,7 +10,7 @@ interface Props {
 }
 
 /**
- * Obliterate's warning, shown every time the mode is chosen (docs/PLAN-2026-10-23-modes.md M5): what it grants, what
+ * Obliterate's warning, shown every time the mode is chosen (CLAUDE.md, Modes): what it grants, what
  * it costs and what still holds, then a box to tick before the button turns it on. Nothing is remembered: the next
  * time it asks again, and a launch never opens in Obliterate.
  */

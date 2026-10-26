@@ -1,4 +1,4 @@
-"""Document properties built from each file's own section (docs/PLAN-2026-10-22-batch-consistency.md C5).
+"""Document properties built from each file's own section.
 
 From the owner's Division 21 run: File Properties titles from other projects ("SECTION PP-16622 - REMOTE POWER
 PANELS", "SECTION 211313 - WET-PIPE SPRINKLER SYSTEMS") sat in the batch, and set_document_properties took typed words

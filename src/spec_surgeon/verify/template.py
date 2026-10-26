@@ -20,7 +20,7 @@
       styles/theme vs the TEMPLATE's) identical, tab stops rescaled by the declared rule; the run sequence equal
       to the template's with each run a slot touches cut at the slot's edges and each slot collapsed to one fill
       run (its highlight gone for highlight slots), every run's content (text and other children, in order) as
-      modelled; a slot named in ``caps_fills`` (docs/PLAN-2026-10-22-batch-consistency.md C4) shows its fill in
+      modelled; a slot named in ``caps_fills`` shows its fill in
       capitals by formatting — its run's effective caps on, its letters and every other property as above;
     - ``wp:docPr`` ids of the part unique in the whole output.
 * ``styles_added`` — independently derive equivalent styles and the missing dependency closure; exactly those

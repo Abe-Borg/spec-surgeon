@@ -19,7 +19,7 @@ CASES = {
         # the main list with its levels remapped (the engine's level 1 is the reader's level 2), no example file
         ({}, {"levels": ["ART", "PR1"], "level_map": {"1": 0, "2": 1}},
          ["main list", "level 2 of the list going to the “ART” style", "level 3 of the list going to the “PR1” style"]),
-        # table cells left as they are, every number keeping its values (docs/PLAN-2026-10-23-modes.md E1, E3)
+        # table cells left as they are, every number keeping its values
         ({"include_tables": False}, {"levels": ["PRT", "ART", "PR1"], "template": "T.docx", "counters": "keep"},
          ["main list", "table cells are left as they are", "would count differently is set aside"]),
     ],
@@ -39,7 +39,7 @@ CASES = {
          {"levels": ["PR1"], "template": "T.docx", "existing": "replace", "author": "Spec Team"},
          ["whose text matches the pattern “^[A-Z]\\.”", "outside tables", "“PR1”", "replacing this file's own",
           "tracked changes by “Spec Team”"]),
-        # typed values instead of the typed look (docs/PLAN-2026-10-23-modes.md G1), plain
+        # typed values instead of the typed look, plain
         ({}, {"levels": ["PRT", "ART", "PR1"], "template": "T.docx", "match": "counters", "tracked": False},
          ["without tracked changes", "values are the ones your list counts at that place",
           "whatever its zero padding or dash", "“1.01” shows as the list's “1.1”",

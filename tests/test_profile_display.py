@@ -1,5 +1,5 @@
 """What the profiles and the paragraph tools say about how text LOOKS, beside the text as typed (live-run finding
-2026-10-22, docs/PLAN-2026-10-22-batch-consistency.md C1): lines Word shows in capitals through formatting are named,
+2026-10-22): lines Word shows in capitals through formatting are named,
 and a header/footer view the size bound thins says how many lines it left out — a footer read as two lines when it
 has four looks like a template that did not fully take."""
 from __future__ import annotations

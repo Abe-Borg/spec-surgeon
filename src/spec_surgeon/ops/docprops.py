@@ -23,7 +23,7 @@ they run only when the user asks for them by name, and change exactly the named 
   a custom part gets ``docProps/custom.xml`` (only that member: its package relationship and content-type override with
   it; CLAUDE.md rule 10's third case — the op's purpose is the property).
 * a value is the user's words: text, not blank, one line, no control or invisible character, at most 255 characters.
-* ``from_document`` (docs/PLAN-2026-10-22-batch-consistency.md C5): a core/app property whose value is the user's
+* ``from_document``: a core/app property whose value is the user's
   words with ``{number}`` and/or ``{title}`` (each at most once, and no other brace: ``{title:uppercase}`` would be
   written as typed) in place of the file's own section number and title,
   read by the reference fill rules (``slots.REFERENCE_FILLS``, as a template fill reads them) — one request fixes a

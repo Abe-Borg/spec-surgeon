@@ -359,7 +359,7 @@ def test_proposed_rewrite_requires_wording_choice_then_preview_approval(tmp_path
 
 
 def test_an_edited_draft_is_the_users_wording_end_to_end(tmp_path):
-    """docs/PLAN-2026-10-23-modes.md M4: the choice offers Claude's draft pre-filled and editable; the user's edit is
+    """The choice offers Claude's draft pre-filled and editable; the user's edit is
     the approved wording, the copy carries exactly it, and the draft is never approved. A bad edit is refused before
     anything is said or kept."""
     original = "Keep this technical wording intact."

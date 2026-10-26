@@ -136,8 +136,8 @@ Scheme and typed numbers (design §0.3, §2.1)
   part of the definition (a break, ``\\n``, is neither whitespace nor the end). One level matching → its ``TypedNumber``
   (``token`` the number as typed, ``end`` the end of the prefix: position 0 to the end of the whitespace); several →
   ``ambiguous`` (``level`` None, ``levels`` all of them); none → None.
-* **Lenient typed number** (``typed_number(…, lenient=True)``; convert_typed_numbers ``match: "counters"``,
-  docs/PLAN-2026-10-23-modes.md G1): the same definition over each level's ``lenient_pattern_of`` — a literal hyphen,
+* **Lenient typed number** (``typed_number(…, lenient=True)``; convert_typed_numbers ``match: "counters"``):
+  the same definition over each level's ``lenient_pattern_of`` — a literal hyphen,
   en dash or em dash (``DASHES``) matches any of the three, and a ``%j`` of a decimal or decimalZero level (or of any
   level, ``legal``) matches ``[0-9]+``: "1.01" is a typed number of a "%1.%2" decimal level, "PART 1 –" of "PART %1 -".
   **Typed values** (``typed_values``): the typed number read back through the level's text — each ``%j``'s characters

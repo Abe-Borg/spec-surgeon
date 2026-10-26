@@ -57,7 +57,7 @@ template's section number and title placeholders are filled from each document a
 in the form; an ordinary specification gives each document its own number and title wherever its headers and footers
 show its own; a template with nothing to fill is refused at the button.
 
-**Match body formatting to template** (`template_roles.py`, `body_match.py`; docs/PLAN-2026-10-23-modes.md M3) plans
+**Match body formatting to template** (`template_roles.py`, `body_match.py`) plans
 each document on its own, in code. The form shows the template's style for each part of a section (the section
 number line, the title, PART, articles, paragraphs, subparagraphs, END OF SECTION: `template_roles.detect`, from
 `structure.role_summary` over the template), each changeable, and boxes for the page, the font and the paragraph
