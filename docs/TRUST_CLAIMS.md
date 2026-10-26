@@ -305,6 +305,8 @@ How each is labelled:
   Saving reports availability, without testing authentication. Remove app key deletes only app-managed credentials;
   an inherited environment key is restored and external auth tokens/SDK profiles remain. `tests/test_key_removal.py`
   covers session/saved keys, store failure, busy refusal, environment restoration and external credentials with fakes.
+  Replacing/removing a key also forgets the conversation's app-created SDK client, so an older key is not reused
+  from that cache. Explicitly supplied clients remain the caller's responsibility. Key changes refuse while busy.
 - **Local server:**
   - It binds `127.0.0.1` on a free port (`web/shell.free_port`, `serve`).
   - Every `/api` request needs the launch token (`secrets.token_urlsafe(24)`, compared in constant time).

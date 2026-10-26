@@ -140,6 +140,8 @@ Rules the page relies on:
 key makes no provider call. `can_remove_key` permits removal only for the app's session/saved key. Removal restores
 any launch-time environment key and leaves auth tokens/SDK profiles intact; other credentials may therefore remain
 available afterward. A blank key in a settings update still means "leave unchanged".
+Key replacement/removal also discards app-created conversation clients that cached the previous credential;
+explicitly injected clients are retained. Both key replacement and removal refuse while work runs (409).
 
 | Method | Route | Body | Answer |
 | --- | --- | --- | --- |

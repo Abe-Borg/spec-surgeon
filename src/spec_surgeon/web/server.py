@@ -180,6 +180,12 @@ class WindowState:
         else:
             os.environ.pop(credentials.ENV, None)
             self.key_origin = "none"
+        self._forget_cached_credentials()
+
+    def _forget_cached_credentials(self) -> None:
+        conversation = self.task.session.conversation
+        if conversation is not None:
+            conversation.forget_cached_credentials()
 
     @property
     def busy(self) -> bool:
@@ -645,8 +651,11 @@ def create_app(state: WindowState, *, dev: bool = False) -> FastAPI:
         key = str(body.get("api_key") or "").strip()
         remember = bool(body.get("remember"))
         if key:
+            if state.busy:
+                return busy_error()
             os.environ[credentials.ENV] = key
             state.key_origin = "session"
+            state._forget_cached_credentials()
             if remember and credentials.available():
                 try:
                     credentials.save(key)

@@ -84,6 +84,7 @@ def test_removal_is_refused_while_work_runs(tmp_path, monkeypatch):
     state, client, store = window(tmp_path, monkeypatch, stored="fake-saved-key")
     monkeypatch.setattr(type(state), "busy", property(lambda self: True))
     assert client.post("/api/settings/remove-key").status_code == 409
+    assert client.post("/api/settings", json={"api_key": "fake-new-key", "remember": False}).status_code == 409
     assert store["key"] == os.environ[credentials.ENV] == "fake-saved-key"
 
 
@@ -112,3 +113,33 @@ def test_strict_removal_recognizes_only_windows_not_found_as_absence(monkeypatch
     else:
         with pytest.raises(RuntimeError, match="could not be removed"):
             credentials.remove_saved_key()
+
+
+def test_key_changes_forget_a_conversations_cached_sdk_client(tmp_path, monkeypatch):
+    from spec_surgeon import compiler
+    from spec_surgeon.conversation import Conversation
+    state, client, _ = window(tmp_path, monkeypatch)
+    conversation = Conversation("continue this request", [])
+    state.task.session.conversation = conversation
+    old_client = object()
+    conversation._client = old_client  # a client previously built from the app key
+    client.post("/api/settings", json={"api_key": "fake-session-key", "remember": False})
+    assert conversation._client is None
+    conversation._client = old_client
+    client.post("/api/settings/remove-key")
+    assert conversation._client is None
+    def unavailable():
+        raise RuntimeError("fake credentials unavailable")
+    monkeypatch.setattr(compiler, "_client", unavailable)
+    with pytest.raises(RuntimeError, match="credentials unavailable"):
+        conversation._client_now()
+
+
+def test_removal_does_not_clear_an_explicitly_supplied_client(tmp_path, monkeypatch):
+    from spec_surgeon.conversation import Conversation
+    state, client, _ = window(tmp_path, monkeypatch)
+    supplied = object()
+    state.task.session.conversation = Conversation("external client", [], client=supplied)
+    client.post("/api/settings", json={"api_key": "fake-session-key", "remember": False})
+    client.post("/api/settings/remove-key")
+    assert state.task.session.conversation._client_now() is supplied
