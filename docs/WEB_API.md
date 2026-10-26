@@ -92,6 +92,10 @@ Rules the page relies on:
   `set_aside` (the **Left untouched** card); `groups`, `targets` and `stages` tell it a plan exists but are not
   displayed (the chat says what will change, the previews show it).
 - `samples[].images` are URLs served by `GET /api/image?path=…&token=…` (PNG side-by-side before/after pages).
+- `samples[].failures` lists actual failed checks as `{check, reason}` in plain language, including earlier chain
+  steps that failed before a later step passed. A preview that could not complete says so; a missing renderer is
+  not a failed verification. Common refusal reasons under Left untouched are presented without operation numbers
+  or extraction patterns; the engine's original exceptions and check records remain in diagnostics.
 - `samples` are the pages of the plan waiting for the user (stages `preview` and `question`), less any document
   whose copy a partial save already delivered; every other stage sends none, so a finished run takes its
   pages along. The visual check's findings in `warnings`, and `blocking`, follow the same rule.

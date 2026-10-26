@@ -143,6 +143,8 @@ export interface Sample {
   pages_before: number | null;
   pages_after: number | null;
   passed: boolean;
+  /** Actual failed checks in plain language; absent from older servers. */
+  failures?: { check: string; reason: string }[];
 }
 
 export interface Result {

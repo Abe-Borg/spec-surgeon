@@ -466,4 +466,4 @@ def test_a_sample_a_later_step_refused_is_left_untouched_beside_a_buttons_copies
     view = task.view()
     assert list(task.results) == [str(a)] and b.read_bytes() == before
     assert [(e["name"], e["reason"]) for e in view["left_untouched"]] == [
-        (b.name, "stage 2 (fonts): a list defined through a numbering style")]
+        (b.name, "a list defined through a numbering style")]

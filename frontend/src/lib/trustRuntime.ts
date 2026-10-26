@@ -148,7 +148,8 @@ export const RUNTIME_CARDS: RuntimeCard[] = [
       "at least one per layout, so more when there are more layouts) are edited in memory and checked by the independent checker. Their before and after " +
       `pages are rendered by Microsoft Word (new, invisible instances, up to ${F.wordInstances} side by side, never the Word you have open) or, without ` +
       `Word, LibreOffice. From ${F.planProcessMinFiles} files the plans, and from ${F.processMinFiles} samples the samples, are worked out side by ` +
-      "side in the app's own worker processes, each file whole in one of them.",
+      "side in the app's own worker processes, each file whole in one of them. A failed preview names its check " +
+      "and explains what it checks. Common refusals use plain words; the original technical evidence stays in diagnostics.",
     sent: "Nothing. Planning, editing the samples, checking and rendering all run on your computer.",
     ai: NONE,
     bounds:

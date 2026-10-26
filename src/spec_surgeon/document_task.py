@@ -24,6 +24,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence
 
+from .ui_feedback import failed_preview_checks, refusal_message
+
 from . import llm, review_display
 from .gui import Session
 from .inputs import KINDS as REFERENCE_KINDS
@@ -880,7 +882,7 @@ class DocumentTask:
             # no layout of the batch can take the change: nothing to preview; each document's reason beside it
             s._set_outcome()
             self.left_untouched = [{"path": str(self.origin_of(Path(p))), "name": Path(p).name, "why": WHY_REFUSED,
-                                    "reason": r, "request": built.request} for p, r in built.left_out.items()]
+                                    "reason": refusal_message({"reason": r}), "request": built.request} for p, r in built.left_out.items()]
             self.stage = "empty"
             self._revision += 1
             self.say("None of the documents can take this change as they are; each one's reason is under Left "
@@ -930,12 +932,12 @@ class DocumentTask:
         out: List[Dict[str, str]] = []
         for path, reason in self.session.left_out_reasons.items():       # a button that left documents out, with why
             origin = str(self.origin_of(Path(path)))
-            out.append({"path": origin, "name": Path(origin).name, "why": WHY_REFUSED, "reason": reason,
+            out.append({"path": origin, "name": Path(origin).name, "why": WHY_REFUSED, "reason": refusal_message({"reason": reason}),
                         "request": request})
         for source, exc in refusals(preview):
             origin = str(self.origin_of(source))
             out.append({"path": origin, "name": Path(origin).name, "why": WHY_REFUSED,
-                        "reason": str(exc.get("reason", "")), "request": request})
+                        "reason": refusal_message(exc), "request": request})
         return out
 
     def _left_after_run(self, request: str, refused: Sequence[Dict[str, str]] = ()) -> List[Dict[str, str]]:
@@ -947,7 +949,7 @@ class DocumentTask:
             if item.status == "PASS":
                 continue
             exc = getattr(item, "exception", None) or {}
-            reason = exc.get("reason") or ("A check failed on the edited copy, so it was not delivered; the run's "
+            reason = refusal_message(exc) if exc else ("A check failed on the edited copy, so it was not delivered; the run's "
                                            "DIAGNOSTICS.md says which.")
             origin = str(self.origin_of(Path(item.source)))
             if all(e["path"] != origin for e in out):
@@ -1511,8 +1513,8 @@ class DocumentTask:
             return []
         from .preview import refusals
         why = self.session.left_out_reasons
-        items = [{"name": Path(path).name, "reason": why.get(str(path), LEFT_OUT_REASON)} for path in self.session.left_out]
-        items += [{"name": source.name, "reason": exc.get("reason", "")} for source, exc in refusals(preview)]
+        items = [{"name": Path(path).name, "reason": refusal_message({"reason": why.get(str(path), LEFT_OUT_REASON)})} for path in self.session.left_out]
+        items += [{"name": source.name, "reason": refusal_message(exc)} for source, exc in refusals(preview)]
         return items
 
     def _delivered(self) -> List[Path]:
@@ -1550,7 +1552,8 @@ class DocumentTask:
         samples = self._undelivered_samples(preview)
         return {"samples": [{"source": str(sv.source), "name": Path(sv.source).name,
                              "images": [str(p) for p in sv.images if Path(p).is_file()],
-                             "pages_before": sv.pages_before, "pages_after": sv.pages_after, "passed": sv.passed}
+                             "pages_before": sv.pages_before, "pages_after": sv.pages_after, "passed": sv.passed,
+                             "failures": failed_preview_checks(sv)}
                             for sv in samples],
                 "warnings": list(dict.fromkeys(getattr(preview, "warnings", []) or [])),
                 "blocking": any(f.get("severity") == "block"

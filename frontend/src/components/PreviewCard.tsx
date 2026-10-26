@@ -98,6 +98,13 @@ export default function PreviewCard({ sample, mark, canReview, onMark, onZoom }:
         </div>
       }
     >
+      {!sample.passed && (sample.failures ?? []).length > 0 && (
+        <ul className="mb-2 space-y-1 text-xs leading-relaxed text-err" aria-label={`Failed checks for ${name}`}>
+          {sample.failures!.map((failure) => (
+            <li key={failure.check}>{failure.reason} <span className="text-paper-dim">({failure.check})</span></li>
+          ))}
+        </ul>
+      )}
       {pages.text && (
         <p className="text-xs text-paper-dim tabular-nums">
           {pages.text.replace(/ \(.*\)$/, "")}

@@ -27,6 +27,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Streamin
 from fastapi.staticfiles import StaticFiles
 
 from .. import __version__, about, credentials, llm, recipes
+from ..ui_feedback import failed_preview_checks
 from .. import diagnostics as diag
 from ..document_task import LAUNCH_MODES, STEPS_PER_PAUSE, DocumentTask
 from ..gui import Session
@@ -223,7 +224,8 @@ class WindowState:
                 "stages": raw.get("stages", 0)} if raw["groups"] or raw["set_aside"] else None
         samples = [{"source": str(sv.source), "name": Path(sv.source).name,
                     "images": [self.image_url(p) for p in sv.images if Path(p).is_file()],
-                    "pages_before": sv.pages_before, "pages_after": sv.pages_after, "passed": sv.passed}
+                    "pages_before": sv.pages_before, "pages_after": sv.pages_after, "passed": sv.passed,
+                    "failures": failed_preview_checks(sv)}
                    for sv in raw["samples"]]
         unverified = raw.get("unverified") or {}
         results = [{"source": source, "output": output, "name": Path(output).name,
