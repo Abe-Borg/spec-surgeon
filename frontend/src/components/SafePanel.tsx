@@ -28,7 +28,7 @@ function Label({ field }: { field: RecipeField }) {
 }
 
 function Help({ text }: { text?: string }) {
-  return text ? <span className="mt-1 block text-[11px] leading-snug text-ink-faint">{text}</span> : null;
+  return text ? <span className="mt-1 block text-[13px] leading-snug text-ink-dim">{text}</span> : null;
 }
 
 function Pairs({ value, onChange }: { value: FindReplacePair[]; onChange: (pairs: FindReplacePair[]) => void }) {
@@ -166,7 +166,7 @@ function FieldInput({
       const names = Object.keys(slots);
       if (names.length === 0) {
         return (
-          <p className="text-[12px] leading-relaxed text-ink-faint">
+          <p className="text-[13px] leading-snug text-ink-dim">
             {view.template?.kind === "reference"
               ? "Your template is an ordinary specification: its own section number and title become each document's own."
               : "Each document's own section number and title fill the template's placeholders."}
@@ -175,7 +175,7 @@ function FieldInput({
       }
       return (
         <div className="flex flex-col gap-2">
-          <p className="text-[12px] leading-relaxed text-ink-faint">
+          <p className="text-[13px] leading-snug text-ink-dim">
             The section number and title come from each document. Type the template's other values exactly as they
             should appear:
           </p>
@@ -200,7 +200,7 @@ function FieldInput({
       return (
         <div>
           <Label field={field} />
-          <div className="grid grid-cols-[minmax(0,auto)_minmax(0,1fr)] items-center gap-x-3 gap-y-1.5">
+          <div className="grid grid-cols-[minmax(0,auto)_minmax(0,1fr)] items-center gap-x-3 gap-y-1">
             {body.order.map((role) => (
               <Fragment key={role}>
                 <span className="text-[12px] text-ink-dim">{body.labels[role] ?? role}</span>
@@ -262,11 +262,11 @@ function SafePanel({ recipes, view, busy, onPreview, form, onFormChange }: Props
     const ready = availability(chosen, view);
     const needs = ready.ready ? missing(chosen, inputs) : ready.reason;
     return (
-      <div className="flex flex-col gap-3" aria-label={chosen.label}>
+      <div className="flex flex-col gap-2.5" aria-label={chosen.label}>
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
             <h2 className="text-sm font-semibold text-ink">{chosen.label}</h2>
-            <p className="mt-0.5 text-[12px] leading-snug text-ink-dim">{chosen.summary}</p>
+            <p className="mt-0.5 text-[13px] leading-snug text-ink-dim">{chosen.summary}</p>
           </div>
           <button
             type="button"
@@ -280,7 +280,7 @@ function SafePanel({ recipes, view, busy, onPreview, form, onFormChange }: Props
           <FieldInput key={field.name} recipe={chosen} field={field} inputs={inputs} view={view} onChange={change} />
         ))}
         <div className="flex items-center justify-between gap-3">
-          <p className="text-[11px] text-ink-faint">{needs || "Nothing changes until you look at the previews and create the copies."}</p>
+          <p className="min-w-0 flex-1 text-[13px] leading-snug text-ink-dim">{needs || "Nothing changes until you look at the previews and create the copies."}</p>
           <Tip tip={busy ? "Wait for the current work to finish" : needs || "Shows the pages before and after; no copy is made yet"}>
             <button
               type="button"

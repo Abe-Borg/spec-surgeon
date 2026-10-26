@@ -163,108 +163,105 @@ export default function Chat({
     if (event.deltaY < 0) stopFollowing();
   };
 
+  // Safe mode's buttons and forms are the work surface. An empty conversation does not keep a transcript
+  // column open for them: the header already says there is no AI, and a centered hero would only crowd the buttons.
+  const showTranscript = !(empty && safe);
+
   return (
-    <section className="flex min-w-[400px] flex-1 basis-[46%] flex-col border-r border-edge" aria-label="Conversation">
-      <div
-        ref={scrollRef}
-        onScroll={onScroll}
-        onWheel={onWheel}
-        style={{ overflowAnchor: "none" }}
-        className="flex-1 overflow-y-auto px-5 py-6"
-      >
-        {empty && safe ? (
-          <div className="flex h-full flex-col items-center justify-center text-center">
-            <p className="font-[family-name:var(--font-display)] text-[1.7rem] leading-tight text-ink">
-              Safe mode. No AI.
-            </p>
-            <p className="mt-3 max-w-md text-sm leading-relaxed text-ink-dim">
-              Add your Word files, pick a button below and look at the previews. Nothing changes until you create the
-              copies, and your originals stay intact.
-            </p>
-          </div>
-        ) : empty ? (
-          <div className="flex h-full flex-col items-center justify-center text-center">
-            <p className="font-[family-name:var(--font-display)] text-[1.7rem] leading-tight text-ink">
-              Less document work. More done.
-            </p>
-            <p className="mt-3 max-w-md text-sm leading-relaxed text-ink-dim">
-              Add your Word files and tell me what you want to change. I&apos;ll check the documents, work
-              out a plan, and show you what will happen.
-            </p>
-            <div className="mt-6 flex w-full max-w-md flex-col gap-2 text-left">
-              {STARTERS.map((starter) => (
-                <button
-                  key={starter.title}
-                  type="button"
-                  onClick={() => onPrefill(starter.text)}
-                  title="Puts this request in the box; edit it, then send"
-                  className="rounded-xl border border-edge bg-surface px-4 py-2.5 transition-colors hover:border-accent/70 hover:bg-raised"
-                >
-                  <span className="block text-[11px] font-medium tracking-wide text-ink-faint uppercase">
-                    {starter.title}
-                  </span>
-                  <span className="mt-0.5 block text-sm leading-snug text-ink-dim">“{starter.text}”</span>
-                </button>
-              ))}
+    <section className="flex min-h-0 min-w-[400px] flex-1 basis-[46%] flex-col border-r border-edge" aria-label="Conversation">
+      {showTranscript && (
+        <div
+          ref={scrollRef}
+          onScroll={onScroll}
+          onWheel={onWheel}
+          style={{ overflowAnchor: "none" }}
+          className={safe ? "max-h-[18vh] min-h-0 shrink-0 overflow-y-auto px-5 py-3" : "flex-1 overflow-y-auto px-5 py-6"}
+        >
+          {empty ? (
+            <div className="flex h-full flex-col items-center justify-center text-center">
+              <p className="font-[family-name:var(--font-display)] text-[1.7rem] leading-tight text-ink">
+                Less document work. More done.
+              </p>
+              <p className="mt-3 max-w-md text-sm leading-relaxed text-ink-dim">
+                Add your Word files and tell me what you want to change. I&apos;ll check the documents, work
+                out a plan, and show you what will happen.
+              </p>
+              <div className="mt-6 flex w-full max-w-md flex-col gap-2 text-left">
+                {STARTERS.map((starter) => (
+                  <button
+                    key={starter.title}
+                    type="button"
+                    onClick={() => onPrefill(starter.text)}
+                    title="Puts this request in the box; edit it, then send"
+                    className="rounded-xl border border-edge bg-surface px-4 py-2.5 transition-colors hover:border-accent/70 hover:bg-raised"
+                  >
+                    <span className="block text-[11px] font-medium tracking-wide text-ink-faint uppercase">
+                      {starter.title}
+                    </span>
+                    <span className="mt-0.5 block text-sm leading-snug text-ink-dim">“{starter.text}”</span>
+                  </button>
+                ))}
+              </div>
             </div>
-          </div>
-        ) : (
-          <div ref={contentRef} className="mx-auto flex max-w-3xl flex-col gap-5">
-            {entries.map((item) => {
-              switch (item.kind) {
-                case "message":
-                  return <ChatMessage key={item.key} message={item.message} live={null} aside={item.aside} />;
-                case "live":
-                  return <ChatMessage key={item.key} message={null} live={item.live} aside={null} leaving={item.leaving} />;
-                case "error":
-                  return <ErrorBubble key={item.key} text={item.text} />;
-                case "prompts":
-                  return (
-                    <Prompts
-                      key={item.key}
-                      questions={item.questions}
-                      choices={item.choices}
-                      chips={item.chips}
-                      busy={busy}
-                      onChoose={onChoose}
-                      onSend={onSend}
-                    />
-                  );
-                case "pause":
-                  return (
-                    <PauseCard
-                      key={item.key}
-                      stepsPerPause={item.stepsPerPause}
-                      costText={item.costText}
-                      canContinue={item.canContinue}
-                      busy={busy}
-                      onContinue={onContinue}
-                    />
-                  );
-                case "todo":
-                  return (
-                    <TodoCard
-                      key={item.key}
-                      items={item.items}
-                      busy={busy}
-                      onSend={onSend}
-                      onDefaultMode={safe ? () => onMode("default") : undefined}
-                    />
-                  );
-                default:
-                  return null;
-              }
-            })}
-          </div>
-        )}
-      </div>
+          ) : (
+            <div ref={contentRef} className="mx-auto flex max-w-3xl flex-col gap-5">
+              {entries.map((item) => {
+                switch (item.kind) {
+                  case "message":
+                    return <ChatMessage key={item.key} message={item.message} live={null} aside={item.aside} />;
+                  case "live":
+                    return <ChatMessage key={item.key} message={null} live={item.live} aside={null} leaving={item.leaving} />;
+                  case "error":
+                    return <ErrorBubble key={item.key} text={item.text} />;
+                  case "prompts":
+                    return (
+                      <Prompts
+                        key={item.key}
+                        questions={item.questions}
+                        choices={item.choices}
+                        chips={item.chips}
+                        busy={busy}
+                        onChoose={onChoose}
+                        onSend={onSend}
+                      />
+                    );
+                  case "pause":
+                    return (
+                      <PauseCard
+                        key={item.key}
+                        stepsPerPause={item.stepsPerPause}
+                        costText={item.costText}
+                        canContinue={item.canContinue}
+                        busy={busy}
+                        onContinue={onContinue}
+                      />
+                    );
+                  case "todo":
+                    return (
+                      <TodoCard
+                        key={item.key}
+                        items={item.items}
+                        busy={busy}
+                        onSend={onSend}
+                        onDefaultMode={safe ? () => onMode("default") : undefined}
+                      />
+                    );
+                  default:
+                    return null;
+                }
+              })}
+            </div>
+          )}
+        </div>
+      )}
       <ActionBar button={paused || (safe && button?.kind === "stop") ? null : button} held={held} onAct={onAct} />
       {safe ? (
-        <div className="border-t border-edge bg-surface px-4 pt-3 pb-2.5" role="region" aria-label="Safe mode">
-          <div className="mx-auto max-h-[46vh] max-w-3xl overflow-y-auto">{panel}</div>
-          <p className="mx-auto mt-2 max-w-3xl px-1 text-[11px] text-ink-faint">
-            Safe mode makes no AI call. Edited copies are saved separately; your originals stay intact.
-          </p>
+        <div
+          className={`flex min-h-0 flex-1 flex-col bg-surface px-4 pt-2.5 pb-2 ${showTranscript ? "border-t border-edge" : ""}`}
+          role="region"
+          aria-label="Safe mode"
+        >
+          <div className="mx-auto min-h-0 w-full max-w-3xl flex-1 overflow-y-auto">{panel}</div>
         </div>
       ) : (
         <>
