@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { Settings } from "../types";
-import { getSettings, saveFastMode, saveSettings, saveShowObliterate, saveTheme } from "../lib/api";
+import { getSettings, removeKey, saveFastMode, saveSettings, saveShowObliterate, saveTheme } from "../lib/api";
 import { fastStatus, fastWords } from "../lib/fastMode";
 import { THEMES, applyTheme, resolveTheme } from "../lib/theme";
 import { ModalShell, primaryBtn, quietBtn } from "./ModalShell";
@@ -31,7 +31,7 @@ export default function SettingsModal({ stepsPerPause, onClose, onSaved }: Props
   const [remember, setRemember] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
-  const [saved, setSaved] = useState(false);
+  const [status, setStatus] = useState("");
   const [themeError, setThemeError] = useState("");
   /** The latest click: an answer to an earlier one arriving after it is ignored. */
   const themeTurn = useRef(0);
@@ -65,12 +65,30 @@ export default function SettingsModal({ stepsPerPause, onClose, onSaved }: Props
     if (saving) return;
     setSaving(true);
     setError("");
-    setSaved(false);
+    setStatus("");
     try {
       const next = await saveSettings(key.trim(), remember && !!settings?.can_remember);
       setSettings(next);
       setKey("");
-      setSaved(true);
+      setStatus(`The key is saved for ${next.origin === "saved" ? "this computer" : "this session"}. It has not been tested with Anthropic.`);
+      onSaved();
+    } catch (failure) {
+      setError(failure instanceof Error ? failure.message : String(failure));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const remove = async () => {
+    if (saving) return;
+    setSaving(true);
+    setError("");
+    setStatus("");
+    try {
+      const next = await removeKey();
+      setSettings(next);
+      setKey("");
+      setStatus("The app's key was removed." + (next.key_present ? " Other credentials are still available." : ""));
       onSaved();
     } catch (failure) {
       setError(failure instanceof Error ? failure.message : String(failure));
@@ -152,7 +170,7 @@ export default function SettingsModal({ stepsPerPause, onClose, onSaved }: Props
             onKeyDown={(e) => {
               if (e.key === "Enter" && key.trim()) void save();
             }}
-            placeholder={keyPresent ? "A key is connected; enter a new one to replace it" : "sk-ant-…"}
+            placeholder={keyPresent ? "Credentials are available; enter a key to replace the app's key" : "sk-ant-…"}
             aria-label="Anthropic API key"
             className="mt-3 w-full rounded-lg border border-edge bg-bg px-3 py-2 text-sm text-ink outline-none placeholder:text-ink-faint focus:border-accent/70"
           />
@@ -198,13 +216,21 @@ export default function SettingsModal({ stepsPerPause, onClose, onSaved }: Props
             {error}
           </p>
         )}
-        {saved && !error && (
+        {settings && keyPresent && !settings.can_remove_key && (
+          <p className="text-xs text-ink-faint">Credentials from the environment or SDK profile are managed outside this app.</p>
+        )}
+        {status && !error && (
           <p className="text-xs text-ok" role="status">
-            The key is connected.
+            {status}
           </p>
         )}
-        <div className="flex justify-end">
-          <Tip tip={key.trim() ? "Connect this key" : "Enter a key first"}>
+        <div className="flex justify-end gap-2">
+          {settings?.can_remove_key && (
+            <Tip tip="Removes the app's session key and any key it saved securely. Environment credentials and SDK profiles stay intact.">
+              <button type="button" className={quietBtn} disabled={saving} onClick={() => void remove()}>Remove app key</button>
+            </Tip>
+          )}
+          <Tip tip={key.trim() ? "Save this key without making a connection test" : "Enter a key first"}>
             <button type="button" className={primaryBtn} disabled={!key.trim() || saving} onClick={() => void save()}>
               {saving ? "Saving…" : "Save"}
             </button>

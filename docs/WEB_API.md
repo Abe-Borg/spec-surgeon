@@ -136,8 +136,16 @@ Rules the page relies on:
 
 ## Routes
 
+`connection.ready` and Settings' `key_present` report credential availability, not tested authentication. Saving a
+key makes no provider call. `can_remove_key` permits removal only for the app's session/saved key. Removal restores
+any launch-time environment key and leaves auth tokens/SDK profiles intact; other credentials may therefore remain
+available afterward. A blank key in a settings update still means "leave unchanged".
+Key replacement/removal also discards app-created conversation clients that cached the previous credential;
+explicitly injected clients are retained. Both key replacement and removal refuse while work runs (409).
+
 | Method | Route | Body | Answer |
 | --- | --- | --- | --- |
+| POST | `/api/settings/remove-key` | | the settings; 409 while work runs; 400 for external-only credentials or secure-store deletion failure |
 | GET | `/api/state` | | the view |
 | POST | `/api/attach` | `{"paths": [..], "template": false}` | the view (400 with `{"error"}` for a refused file) |
 | POST | `/api/upload` | multipart `files[]`, `template` field | copies the bytes under the config folder's `attachments/<stamp>/` and attaches them; the view |

@@ -51,16 +51,18 @@ export const RUNTIME_CARDS: RuntimeCard[] = [
   },
   {
     covers: ["A1"],
-    title: "Connecting your API key",
-    you: "Settings → paste your key → Save, with or without “Remember securely on this computer”.",
+    title: "Saving or removing your API key",
+    you: "Settings → paste your key → Save, with or without “Remember securely on this computer”; Remove app key to forget it.",
     runs:
       "The key is held in the app's memory for this session. Ticked, it is also written to Windows Credential " +
-      `Manager under “${F.credentialTarget}”. A key already in the ANTHROPIC_API_KEY environment variable is used first.`,
+      `Manager under “${F.credentialTarget}”. Availability does not mean authentication was tested. Remove app key ` +
+      "deletes the app's stored/session key and restores any launch-time environment key; external auth tokens and " +
+      "SDK profiles stay intact. Removal is refused while work runs or the saved key cannot be deleted securely.",
     sent: "Nothing. Saving the key makes no request; it is first used by the next request you send.",
     ai: NONE,
     bounds:
       "The key is never written to settings.json, a conversation, a record or a log (it is scrubbed from logs by value " +
-      "and by pattern). The window has no button that deletes a remembered key: remove it in Credential Manager.",
+      "and by pattern). Removal does not revoke the key at Anthropic and makes no provider request.",
   },
   {
     covers: ["A3", "B3"],

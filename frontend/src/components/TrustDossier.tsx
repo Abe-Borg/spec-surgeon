@@ -642,8 +642,9 @@ function Dossier() {
               <>
                 Remembered only if you tick the box, in Windows Credential Manager under{" "}
                 <Mono>{F.credentialTarget}</Mono>; otherwise kept for the session. Never written to settings, records or
-                conversations; scrubbed from logs by value and by pattern; sent only to Anthropic. The window has no
-                button to forget it: delete it in Credential Manager.
+                conversations; scrubbed from logs by value and by pattern; sent only to Anthropic. Settings → Remove
+                app key removes the app's session and saved key, without revoking it at Anthropic or changing external
+                credentials. Saving reports availability; it does not test authentication.
               </>,
             ],
             [

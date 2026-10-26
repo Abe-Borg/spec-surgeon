@@ -38,6 +38,7 @@ Paths are relative to `src/spec_surgeon/` unless they start with `frontend/`, `t
 | # | Action (the window's words) | Route / handler | AI involved |
 | --- | --- | --- | --- |
 | A1 | Settings → paste the key, **Save** (optional **Remember securely on this computer**) | `POST /api/settings` → `credentials.save` | none |
+| A1a | Settings → **Remove app key** | `POST /api/settings/remove-key` → `WindowState.remove_app_key`; deletes the app-specific secure-store entry and session override, restores a launch environment key; refuses while busy or deletion fails | none; no revocation or authentication check |
 | A2 | Settings → **Appearance** (colour scheme) | `POST /api/settings` `{theme}` | none |
 | A3 | **Add Word documents**, **Add a template (optional)**, **Add a picture or table (optional)**, or a drop anywhere in the window | `POST /api/pick` → `/api/attach`; a drop → `POST /api/upload` → `DocumentTask.attach` → `triage` | none |
 | A4 | Remove an attachment (✕) | `POST /api/remove` | none |
@@ -187,7 +188,7 @@ On Windows, `config_dir()` = `%APPDATA%\Spec Surgeon`, `data_dir()` = `%LOCALAPP
 
 | Location | Holds | Your words or document text? | Kept |
 | --- | --- | --- | --- |
-| Windows Credential Manager, `Spec Surgeon/ANTHROPIC_API_KEY` | the API key, if you ticked Remember | — | until you delete it (no button in the window) |
+| Windows Credential Manager, `Spec Surgeon/ANTHROPIC_API_KEY` | the API key, if you ticked Remember | — | until Settings → Remove app key, or deletion in Credential Manager |
 | `config_dir()\settings.json` | folders, colour scheme, whether Fast responses is on, the mode the window opens in (Safe or Default; never Obliterate), whether Obliterate mode is shown, update bookkeeping | paths only | overwritten |
 | `config_dir()\conversation.json`, `conversations\*.json` | the chat, your decisions and approved wording, results (and the failed checks of a copy delivered UNVERIFIED in Obliterate mode), the to-do list with why each document waits, estimated spending | yes | archived at each start; **never pruned** (F5) |
 | `config_dir()\attachments\<time>\` | full copies of files you dropped on the window | yes, whole files | **never deleted** (F5) |
@@ -301,6 +302,11 @@ How each is labelled:
 
 - **API key:** Credential Manager (`CRED_PERSIST_LOCAL_MACHINE`) or the session only. It is put into the process
   environment and redacted from logs by value and by pattern (`telemetry.redact_text`).
+  Saving reports availability, without testing authentication. Remove app key deletes only app-managed credentials;
+  an inherited environment key is restored and external auth tokens/SDK profiles remain. `tests/test_key_removal.py`
+  covers session/saved keys, store failure, busy refusal, environment restoration and external credentials with fakes.
+  Replacing/removing a key also forgets the conversation's app-created SDK client, so an older key is not reused
+  from that cache. Explicitly supplied clients remain the caller's responsibility. Key changes refuse while busy.
 - **Local server:**
   - It binds `127.0.0.1` on a free port (`web/shell.free_port`, `serve`).
   - Every `/api` request needs the launch token (`secrets.token_urlsafe(24)`, compared in constant time).

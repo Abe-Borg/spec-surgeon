@@ -155,18 +155,18 @@ try {
   // 9. No key: the composer says why; Settings saves and reconnects.
   await scenario("no-key");
   await page.reload();
-  await page.getByText("Connect your API key").waitFor();
+  await page.getByText("Add your API key").waitFor();
   const sendBtn = page.getByRole("button", { name: "Send" });
   check("no key: Send is disabled", !(await sendBtn.isEnabled()));
   const reasonTip = await sendBtn.locator("xpath=..").getAttribute("title");
   check("no key: the reason on hover", reasonTip === "Connect your Anthropic API key in Settings to start.", reasonTip ?? "");
-  await page.getByRole("button", { name: "Connect your API key" }).click();
+  await page.getByRole("button", { name: "Add your API key" }).click();
   await page.getByLabel("Anthropic API key").fill("sk-ant-test");
   await page.getByRole("button", { name: "Save" }).click();
-  await page.getByText("The key is connected.").waitFor({ timeout: 5000 });
+  await page.getByText(/The key is saved for this computer\. It has not been tested with Anthropic\./).waitFor({ timeout: 5000 });
   await page.keyboard.press("Escape");
   await page.waitForTimeout(500);
-  check("the key pill reads Connected after saving", await page.getByText("Connected", { exact: true }).isVisible());
+  check("the key pill reports availability after saving", await page.getByText("Key available", { exact: true }).isVisible());
 
   // 9b. Settings → Appearance: a scheme recolours the window at once, the server keeps it, a reload opens in it.
   const bodyBg = () => page.evaluate(() => getComputedStyle(document.body).backgroundColor);
@@ -187,7 +187,7 @@ try {
   check("the server keeps the scheme", kept.theme === "linen", String(kept.theme));
   await page.keyboard.press("Escape");
   await page.reload();
-  await page.getByText("Connected", { exact: true }).waitFor();
+  await page.getByText("Key available", { exact: true }).waitFor();
   check(
     "a reload opens in Linen",
     (await page.evaluate(() => document.documentElement.dataset.theme)) === "linen" && (await bodyBg()) === "rgb(245, 241, 234)",
@@ -216,7 +216,7 @@ try {
   check("the server keeps it", fastKept.fast_mode === true, String(fastKept.fast_mode));
   await page.keyboard.press("Escape");
   await page.reload();
-  await page.getByText("Connected", { exact: true }).waitFor();
+  await page.getByText("Key available", { exact: true }).waitFor();
   check("the spending pill says Fast", await page.locator("header").getByText("Fast", { exact: true }).isVisible());
   await page.getByRole("button", { name: "Settings" }).click();
   await Promise.all([savedTheme(), fastSwitch.click()]);

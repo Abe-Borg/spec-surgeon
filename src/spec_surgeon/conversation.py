@@ -324,6 +324,7 @@ class Conversation:
         self.work_dir = Path(work_dir) if work_dir else None
         self.log = log or (lambda m: None)
         self._client = client
+        self._client_given = client is not None
         # Pictures and tables the user attached for the edit to use (INPUT FILES); nothing beside them is discovered.
         self.batch = compiler._Batch(self.files, self.template, input_files=[Path(p) for p in input_files])
         self.batch.work_dir = self.work_dir
@@ -406,6 +407,7 @@ class Conversation:
             raise RuntimeError("start the conversation first")
         if client is not None:
             self._client = client
+            self._client_given = True
         text = (text or "").strip()
         chosen = self.choice(choice_id) if choice_id else None
         if chosen is not None and chosen.kind in APP_CHOICE_KINDS:
@@ -569,6 +571,11 @@ class Conversation:
         return res
 
     # ---- the loop ----
+    def forget_cached_credentials(self):
+        """Forget a client built here from old app credentials. Explicitly supplied clients belong to the caller."""
+        if not self._client_given:
+            self._client = None
+
     def _client_now(self):
         if self._client is None:
             self._client = compiler._client()
