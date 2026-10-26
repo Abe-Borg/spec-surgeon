@@ -19,6 +19,11 @@ def window(tmp_path, monkeypatch, *, stored=None, environment=None, profile=Fals
     monkeypatch.setattr(credentials, "load", lambda: store.get("key"))
     monkeypatch.setattr(credentials, "save", lambda value: store.__setitem__("key", value))
     monkeypatch.setattr(credentials, "delete", lambda: store.pop("key", None) is not None)
+    def remove_saved():
+        if not credentials.available():
+            raise RuntimeError("fake store unavailable")
+        return store.pop("key", None) is not None
+    monkeypatch.setattr(credentials, "remove_saved_key", remove_saved)
     monkeypatch.setattr(llm, "credentials_found", lambda: profile or any(os.environ.get(v) for v in llm.CREDENTIAL_ENV))
     task = DocumentTask(Session(out_root=tmp_path / "out", visual_check=False), render=False)
     state = WindowState(task, Settings(), token="key-test")
@@ -67,7 +72,9 @@ def test_external_auth_still_works_after_removing_the_app_key(tmp_path, monkeypa
 def test_secure_store_failure_keeps_the_current_key(tmp_path, monkeypatch, available):
     _, client, store = window(tmp_path, monkeypatch, stored="fake-saved-key")
     monkeypatch.setattr(credentials, "available", lambda: available)
-    monkeypatch.setattr(credentials, "delete", lambda: False)
+    def cannot_remove():
+        raise RuntimeError("fake deletion failed")
+    monkeypatch.setattr(credentials, "remove_saved_key", cannot_remove)
     response = client.post("/api/settings/remove-key")
     assert response.status_code == 400 and "could not be removed" in response.json()["error"]
     assert store["key"] == os.environ[credentials.ENV] == "fake-saved-key"
@@ -78,3 +85,30 @@ def test_removal_is_refused_while_work_runs(tmp_path, monkeypatch):
     monkeypatch.setattr(type(state), "busy", property(lambda self: True))
     assert client.post("/api/settings/remove-key").status_code == 409
     assert store["key"] == os.environ[credentials.ENV] == "fake-saved-key"
+
+
+@pytest.mark.parametrize("available", [True, False])
+def test_unknown_saved_key_state_cannot_report_success(tmp_path, monkeypatch, available):
+    _, client, store = window(tmp_path, monkeypatch, stored="fake-old-key", environment="fake-launch-key")
+    client.post("/api/settings", json={"api_key": "fake-override", "remember": False})
+    monkeypatch.setattr(credentials, "available", lambda: available)
+    monkeypatch.setattr(credentials, "load", lambda: None)  # a swallowed read failure is not confirmed absence
+    def denied():
+        raise RuntimeError("fake store inaccessible")
+    monkeypatch.setattr(credentials, "remove_saved_key", denied)
+    assert client.post("/api/settings/remove-key").status_code == 400
+    assert store["key"] == "fake-old-key" and os.environ[credentials.ENV] == "fake-override"
+
+
+@pytest.mark.parametrize("code,absent", [(1168, True), (5, False)])
+def test_strict_removal_recognizes_only_windows_not_found_as_absence(monkeypatch, code, absent):
+    class FakeStore:
+        CRED_TYPE_GENERIC = 1
+        def CredDelete(self, *args):
+            raise OSError(code, "fake credential error")
+    monkeypatch.setattr(credentials, "_win32cred", lambda: FakeStore())
+    if absent:
+        assert credentials.remove_saved_key() is False
+    else:
+        with pytest.raises(RuntimeError, match="could not be removed"):
+            credentials.remove_saved_key()

@@ -156,33 +156,30 @@ class WindowState:
         self._last_view: Optional[Dict[str, Any]] = None
         llm.set_fast_mode(settings.fast_mode)          # the user's choice, for every call from the window's start
         self._environment_key = os.environ.get(credentials.ENV)
-        self._saved_key_present = False
+        self._credential_store_expected = credentials.available() or sys.platform == "win32"
         self.key_origin = "environment" if self._environment_key else "none"
         if self.key_origin == "none":
             saved = credentials.load()
             if saved:
                 os.environ[credentials.ENV] = saved
                 self.key_origin = "saved"
-                self._saved_key_present = True
 
     def remove_app_key(self) -> None:
         """Remove only the key managed by this window and its app-specific secure-store entry. A launch-time
         environment key is restored; auth tokens and SDK profiles are owned outside this app and stay intact."""
         if self.key_origin not in {"saved", "session"}:
             raise ValueError("This window has no app-managed key to remove. Environment and SDK credentials are managed outside the app.")
-        available = credentials.available()
-        if self._saved_key_present and not available:
-            raise ValueError("The secure credential store is unavailable; the saved key could not be removed.")
-        if available and (self._saved_key_present or credentials.load()):
-            if not credentials.delete():
-                raise ValueError("The saved key could not be removed securely. The current key is still available.")
+        if self._credential_store_expected or credentials.available():
+            try:
+                credentials.remove_saved_key()
+            except RuntimeError as exc:
+                raise ValueError("The saved key could not be removed securely. The current key is still available.") from exc
         if self._environment_key:
             os.environ[credentials.ENV] = self._environment_key
             self.key_origin = "environment"
         else:
             os.environ.pop(credentials.ENV, None)
             self.key_origin = "none"
-        self._saved_key_present = False
 
     @property
     def busy(self) -> bool:
@@ -654,7 +651,7 @@ def create_app(state: WindowState, *, dev: bool = False) -> FastAPI:
                 try:
                     credentials.save(key)
                     state.key_origin = "saved"
-                    state._saved_key_present = True
+                    state._credential_store_expected = True
                 except Exception:  # noqa: BLE001
                     return error("The key is set for this session but could not be saved securely.")
         return get_settings()

@@ -61,6 +61,24 @@ def delete(target: str = TARGET) -> bool:
         return False
 
 
+def remove_saved_key(target: str = TARGET) -> bool:
+    """Delete the app entry, distinguishing confirmed absence from an inaccessible store. Unlike ``delete``'s
+    legacy best-effort API, an access/module failure must never be reported to the window as successful removal."""
+    wc = _win32cred()
+    if wc is None:
+        raise RuntimeError("Windows Credential Manager is unavailable")
+    try:
+        wc.CredDelete(target, wc.CRED_TYPE_GENERIC, 0)
+    except Exception as exc:
+        code = getattr(exc, "winerror", None)
+        if code is None and exc.args:
+            code = exc.args[0]
+        if code == 1168:  # ERROR_NOT_FOUND is the only failure that confirms the entry is absent.
+            return False
+        raise RuntimeError("The app's saved key could not be removed securely") from exc
+    return True
+
+
 def key_source() -> str:
     """Where the key the next compile will use comes from: "environment" | "saved" | "session" | "none".
     ("session" = typed into the window and not saved; the window tracks that itself.)"""
