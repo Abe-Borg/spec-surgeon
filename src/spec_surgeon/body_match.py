@@ -1,4 +1,4 @@
-"""Safe mode's "match body formatting to template" (docs/PLAN-2026-10-23-modes.md M3): one plan per document, built in
+"""Safe mode's "match body formatting to template": one plan per document, built in
 code from the document's own structure and the template's roles (``template_roles``) — never by a model.
 
 **Per document** (``plan_file``, on the unmodified source; ``structure.role_summary`` and its rows):

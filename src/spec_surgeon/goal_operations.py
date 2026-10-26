@@ -29,7 +29,7 @@ OPERATIONS = {
 }
 # Options an operation offers that the approved-effect verifier (verify/goal_operations.py, verify/goal_numbering.py)
 # does not model: never advertised to an outcome contract, and refused in one (they serve Safe mode's "match body
-# formatting to template", which runs the operations themselves — docs/PLAN-2026-10-23-modes.md M2).
+# formatting to template", which runs the operations themselves).
 NOT_FOR_EFFECTS = {"numbering": {"params": {"counters"}, "select": {"include_tables"}},
                    "typed_numbering": {"params": {"match"}, "select": set()}}
 TEMPLATED = {"paragraph_style", "style_mapping", "table_style", "numbering", "typed_numbering"}

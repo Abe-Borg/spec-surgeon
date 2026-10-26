@@ -1,5 +1,5 @@
-"""Safe mode's "match body formatting to template" (``template_roles``, ``body_match``; docs/PLAN-2026-10-23-modes.md
-M3): the template's roles read without a model and checked; each document's own plan (its outline converted to the
+"""Safe mode's "match body formatting to template" (``template_roles``, ``body_match``): the
+template's roles read without a model and checked; each document's own plan (its outline converted to the
 template's styles and numbering with every number keeping its values, the section line, title and END OF SECTION
 restyled, the page and font matched, paragraph spacing, indents and alignment cleared — bold words and tables left);
 documents it cannot match left out with the reason; the whole run with no AI call, every copy through the independent

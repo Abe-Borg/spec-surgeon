@@ -1,5 +1,4 @@
-"""The compiler — a plain-English request → an EditSpec, once per batch (docs/history/NL_SURGICAL_EDITOR_PLAN.md §6,
-Appendix B; Phase 4).
+"""The compiler — a plain-English request → an EditSpec, once per batch.
 
 Claude reads the request, the batch's per-pattern profiles (profile.py), the op catalog (catalog.py), the
 template's profile when one is attached, and any prior pass's
@@ -629,7 +628,7 @@ CHAT_TOOLS = ([ASK_USER_CHAT if t["name"] == "ask_user" else t for t in TOOLS]
 
 
 UNGUARDED_PROMPT = """
-OBLITERATE MODE (the user's own choice, for this whole conversation; docs/PLAN-2026-10-23-modes.md M5): the rule that
+OBLITERATE MODE (the user's own choice, for this whole conversation): the rule that
 every placed word must be the user's is lifted. You may write wording yourself — drafts, rewrites, new paragraphs —
 and place it without asking for it verbatim; put every word you will place in the plan's summary so the user reads it
 before approving. When no operation fits, set custom_transform to "possible" whenever a one-off method could do it at

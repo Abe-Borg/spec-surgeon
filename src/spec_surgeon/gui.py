@@ -1,4 +1,4 @@
-"""The engine behind the Spec Surgeon window (docs/history/NL_SURGICAL_EDITOR_PLAN.md Phase 7), and its entry point.
+"""The engine behind the Spec Surgeon window, and its entry point.
 
     spec-surgeon-gui            (no console window on Windows; the installed app's SpecSurgeon.exe)
     python -m spec_surgeon      (from a terminal)
@@ -161,7 +161,7 @@ class Session:
                                                   # preview and its run cover the others (``planned_files``)
     left_out_reasons: Dict[str, str] = field(default_factory=dict)   # str(resolved path) → why a Safe-mode button
                                                   # left it out (``body_match``); none: the user left it out
-    unguarded: bool = False                       # Obliterate mode (docs/PLAN-2026-10-23-modes.md M5): Claude may write
+    unguarded: bool = False                       # Obliterate mode (CLAUDE.md, Modes): Claude may write
                                                   # wording and unrestricted custom methods, and a copy that fails a
                                                   # check is delivered marked unverified; set by DocumentTask.set_mode
     diagnostic_id: str = field(default_factory=diag.new_id, init=False, repr=False, compare=False)

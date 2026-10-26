@@ -770,7 +770,7 @@ def run_batch(inputs: Sequence[str], job_name: str, params: Dict[str, Any], out_
     """Run a batch with correlation, including validation before creating a results folder.
 
     Outcome data is advisory unless an explicit profile or governed caller opts into ``enforce_goals``.
-    ``deliver_unverified`` (Obliterate mode only, docs/PLAN-2026-10-23-modes.md M5): a copy that fails a check is
+    ``deliver_unverified`` (Obliterate mode only, CLAUDE.md, Modes): a copy that fails a check is
     delivered to ``outputs/`` with its record and its failed checks (``FileResult.unverified``) instead of being moved
     out — copies only; the source guard still holds.
     """

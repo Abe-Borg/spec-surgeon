@@ -140,5 +140,4 @@ verification, stale inputs, dropped goals and later stages undoing earlier requi
 
 Automated tests use synthetic documents and scripted model replies. Live Claude repair quality,
 real-project success rates, actual API economics and Microsoft Word COM fidelity have **not**
-been validated by those tests. Real batches are needed before making reliability or savings claims (the earlier
-evaluation protocol is kept in [docs/history/RECOVERY_EVALUATION.md](history/RECOVERY_EVALUATION.md)).
+been validated by those tests. Real batches are needed before making reliability or savings claims.

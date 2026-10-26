@@ -1,7 +1,7 @@
 """Safe mode's buttons: fixed recipes, built in code from what the user typed and attached — never by a model.
 
-A recipe turns one button's form into an EditSpec (docs/PLAN-2026-10-23-modes.md, M1). The spec then passes the gate
-every submission passes (``compiler.compose_submission``: validation, the attached-file check, the words a spec
+A recipe turns one button's form into an EditSpec (docs/CONVERSATIONAL_DESKTOP.md, Safe mode). The spec then passes
+the gate every submission passes (``compiler.compose_submission``: validation, the attached-file check, the words a spec
 places traced to the user's own, the dry plan, the composition of overlapping operations into ordered steps) and the
 ordinary preview → approve → run → verify of the window, with no AI call anywhere: the visual check and the recovery
 of set-aside files are model calls, and a recipe's outcome skips both (``Session.outcome_source``).

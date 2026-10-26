@@ -1,4 +1,4 @@
-"""Safe mode's buttons (``recipes``, docs/PLAN-2026-10-23-modes.md M1): every button builds a fixed spec from its form
+"""Safe mode's buttons (``recipes``): every button builds a fixed spec from its form
 and the attachments, the spec passes the one gate every submission passes, and the window's preview → approve → run →
 verify carries it out with no AI call — no visual check, no recovery — on clean and dirty documents alike. What a
 button cannot do on a document is said beside the copies, and can be handed to Default mode."""
@@ -68,7 +68,7 @@ def test_every_button_is_in_a_group_with_a_form_the_panel_can_render():
             if f["kind"] == "choice":
                 assert f["default"] in {o["value"] for o in f["options"]}
     assert seen == set(recipes.BY_ID)
-    # the owner's list (2026-10-23): first set and second set, nothing dropped back in; and the body button (M3)
+    # the owner's list (2026-10-23): first set and second set, nothing dropped back in; and the body button
     assert seen == {"headers_footers_template", "remove_headers_footers", "watermark", "swap_logo", "font_template",
                     "find_replace", "accept_changes", "remove_comments", "remove_highlight", "remove_hidden_text",
                     "remove_empty_paragraphs", "name_files", "title_property", "track_changes_off", "body_formatting"}
@@ -442,7 +442,7 @@ def test_the_mock_servers_buttons_are_the_apps():
 
 def test_a_sample_a_later_step_refused_is_left_untouched_beside_a_buttons_copies(tmp_path, monkeypatch):
     # A button's spec passes the gate that turns overlapping operations into ordered steps, so a later step can refuse a
-    # sample (docs/PLAN-2026-10-22-batch-consistency.md P1). Create does not run that document (Session._without_refused)
+    # sample. Create does not run that document (Session._without_refused)
     # and Left untouched names it with the step's reason, never a document dropped without a word.
     a, b = tmp_path / "21 13 13.docx", tmp_path / "21 13 16.docx"
     a.write_bytes(build("21 13 13", "WET-PIPE SPRINKLER SYSTEMS"))

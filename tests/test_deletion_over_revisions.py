@@ -1,4 +1,4 @@
-"""A tracked deletion over someone's pending revisions (docs/PLAN-2026-10-22-batch-consistency.md C6).
+"""A tracked deletion over someone's pending revisions.
 
 From the owner's Division 21 run: a tracked delete_paragraphs set aside every paragraph that held a redline, though Word
 deletes over them. Now the deletion core (ops/deletion.py ↔ verify/deletion.py) deletes as Word does: text in a pending

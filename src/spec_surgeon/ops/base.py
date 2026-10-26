@@ -1,4 +1,4 @@
-"""Operation interface — the composable unit of the natural-language editor (docs/history/NL_SURGICAL_EDITOR_PLAN.md §4).
+"""Operation interface — the composable unit of the natural-language editor.
 
 An op is two functions over a package:
 
@@ -72,8 +72,8 @@ def text_diffs(diffs) -> list:
 
 GEOMETRY_REFERENCES = ("source", "template", "none")
 
-# The start of a flag that says where a change kept to one place leaves the same words (docs/PLAN-2026-10-22-batch-
-# consistency.md C3): the preview gathers these flags for every file, for the user and for the assistant. A flag
+# The start of a flag that says where a change kept to one place leaves the same words: the preview gathers these
+# flags for every file, for the user and for the assistant. A flag
 # only — nothing is predicted from it, so the reads behind it are no ``touches``.
 LEFT_ELSEWHERE = "Not changed elsewhere: "
 # The start of a flag that says a header/footer fill will show in another case than the template's own text shows

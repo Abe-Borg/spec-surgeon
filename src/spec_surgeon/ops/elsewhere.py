@@ -1,4 +1,4 @@
-"""Wording left elsewhere (docs/PLAN-2026-10-22-batch-consistency.md C3): a change kept to one place says where the
+"""Wording left elsewhere: a change kept to one place says where the
 same words remain. ``flag_left_elsewhere`` runs once every op of a spec is planned on a file (``editspec.plan_spec``,
 before the merge), so a place another op of the spec changes is never named:
 

@@ -43,7 +43,7 @@ embedded objects, data-bound content controls and the theme.
 
 ## Modes
 
-Every invariant binds **Safe** and **Default**. **Obliterate** (`docs/PLAN-2026-10-23-modes.md` M5; `Session.unguarded`)
+Every invariant binds **Safe** and **Default**. **Obliterate** (`Session.unguarded`)
 is the owner's decision to lift, for that mode only, the guardrails that protect a document's content: the placed-words
 trace (invariant 6: `compose_submission(unguarded=)` skips `_content_checks`, Claude may write wording and must show it
 in the plan), a custom method's formatting-only limits (`codegen` skips `hard_limits`; `UNGUARDED_LIMITS`), and the
@@ -57,7 +57,7 @@ left, and is never what a launch opens in (`settings.MODES`, `web.server.launch_
 
 ## Repository layout
 
-The desktop is one window with two modes (`docs/PLAN-2026-10-23-modes.md`) and a hidden third (Modes, above): **Safe**
+The desktop is one window with two modes (`docs/CONVERSATIONAL_DESKTOP.md`) and a hidden third (Modes, above): **Safe**
 — buttons whose plans `recipes.py` builds in code from the user's form, no model call anywhere (`Session.model_free`:
 no visual check, no recovery) — and **Default**, the conversation below. Both pass the same gate (`compiler.compose_submission`), preview,
 approval and verification. The page in `web/static/` (built from `frontend/`), served by `web/server.py` over one
@@ -119,8 +119,8 @@ jobs). Details: `docs/CONVERSATIONAL_DESKTOP.md`.
   - `render/` (Word COM, LibreOffice), `schemas/` (ECMA-376 XSDs), `skill/`, `examples/`.
 - `tests/` — pytest; `make_fixtures.py` and `fx_*.py` build synthetic documents; `fake_claude.py` scripts Claude;
   `conftest.py` seals keys, config dir and model; `describe_cases/` feeds `test_describe.py`.
-- `docs/` — design notes (`BUILTIN_OPS_BATCH*_DESIGN.md`), plans, `releases/`, `audits/`, `history/`; `TRUST_CLAIMS.md`
-  (the ledger behind the trust surfaces).
+- `docs/` — `BACKLOG.md` (the open work), design notes (`BUILTIN_OPS_BATCH*_DESIGN.md`), `releases/`;
+  `TRUST_CLAIMS.md` (the ledger behind the trust surfaces).
 - `packaging/` — PyInstaller spec, Inno Setup script, installed-app smoke tests, `license_notices.py` (the app's
   LICENSE.txt and its AGPL Corresponding Source). Two licenses, never one: Spec Surgeon's own code is MIT; the
   Windows app bundles PyMuPDF (AGPL-3.0, no commercial license held), so the app as a whole is AGPL v3
@@ -174,14 +174,18 @@ than none.
 
 ## Session protocol
 
-Current rounds: `docs/PLAN-2026-10-23-modes.md` (Safe, Default and Obliterate modes; match body formatting; the
-pre-filled wording field — one pull request per item) and `docs/PLAN-2026-10-22-batch-consistency.md` (what the first
-live run found); the full-control round,
-`docs/PLAN-2026-10-21-full-control.md` (design: `docs/BUILTIN_OPS_BATCH6_DESIGN.md`), waits on its live runs. Read both
-before any work and take items from the current round's status table. Beside them, `docs/PLAN-2026-10-22-word-judge.md`
-(real Word judges the tracked changes the engine writes and reads; test evidence only) has its own status table, and so
-has `docs/PLAN-2026-10-22-custom-envelope.md` (Option A: more kinds of formatting a custom method may do, each behind a
-V10 kind that proves the content it touches untouched; never more kinds of change). New operations go into a plan before they are
-built. Nothing is done on fixtures alone: the plan's acceptance names a real-file run, which the user performs. Before
-ending, update the rows you worked in the status table with a dated one-line note: what changed, what is tested, what
-still needs the user's machine.
+The open work is in `docs/BACKLOG.md`. Read it before any work, and take an item from it unless the user asks for
+something else. The pull request that finishes an item removes it from the backlog, or moves it to "Waiting on the
+owner's machine" when only a real-file run is left. The pull request says what changed and what is tested, so the
+backlog keeps no log and no dated notes. Do not add dated plan files: a new operation gets its design in the backlog
+(or in a design note it links) before it is built. Nothing is done on fixtures alone: an item's acceptance names a
+real-file run, which the user performs.
+
+Standing decisions from the earlier rounds (their plans are in the git history):
+
+- Text boxes are not pursued. No raw-XML operation, catch-all deletion operation or `force` flag is added.
+- In Safe and Default, a custom method may do more kinds of formatting, never more kinds of change: a family is added
+  only behind a V10 kind that proves the content it touches is the source's, and the sandbox's limits stay as they are.
+- Capitals are a display property (`w:caps`) unless the user gives capitalised wording; nothing retypes a file's letters
+  in another case.
+- The batch overview and the plan's flags describe and never decide: they change, choose and order nothing.

@@ -34,7 +34,7 @@ Definitions (the verifier's own reading is verify/numberingconvert.py):
   (``numbering-unsupported``); tracked when a converted paragraph's style chain holds a style the import REPLACES
   (``numbering_convert.replaced_in_chain``; ``tracked-format``, F14 — the replacement is never tracked, reject-all would
   give the old style back under the new numbered definition).
-* ``counters: "keep"`` (docs/PLAN-2026-10-23-modes.md E3): a converted paragraph whose predicted counters — the values
+* ``counters: "keep"``: a converted paragraph whose predicted counters — the values
   of its level and the levels above it — are not its source counters (``counter_shift``) is refused
   (``numbering-mismatch``, naming the first ones: a renumbered article breaks "as specified in 1.3"); so is one whose
   number the source or the prediction cannot evaluate (``numbering-unsupported``: that it keeps its number cannot be

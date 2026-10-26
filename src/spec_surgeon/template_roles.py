@@ -1,4 +1,4 @@
-"""The roles of a template for Safe mode's "match body formatting to template" (docs/PLAN-2026-10-23-modes.md M3):
+"""The roles of a template for Safe mode's "match body formatting to template":
 which of the template's paragraph styles stands for each part of a specification, its page and its body font — read
 from the template without a model.
 

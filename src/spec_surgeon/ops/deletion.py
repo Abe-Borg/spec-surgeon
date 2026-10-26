@@ -37,7 +37,7 @@ marks and comment range marks (``structure``), a row of a deleted table that is 
 or one that never ends and begins in them (``field-crossing``; a run in a pending deletion of a changed paragraph
 counts as deleted).
 
-**Over someone's pending revisions** (docs/PLAN-2026-10-22-batch-consistency.md C6), as Word deletes over them: a run
+**Over someone's pending revisions**, as Word deletes over them: a run
 in a pending insertion (a ``w:ins`` wrapping content, walked like a container) is deleted inside it, its new ``w:del``
 nested in the ``w:ins`` (``replace_text``'s grammar: rejecting the insertion still removes all of it); a pending deletion
 (a ``w:del`` wrapping content) stays as it is, nothing in it walked; a paragraph mark someone inserted gets its new

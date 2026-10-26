@@ -1678,7 +1678,7 @@ def build_scheme_example() -> bytes:
     return buf.getvalue()
 
 
-# ---- Safe mode's "match body formatting to template" (docs/PLAN-2026-10-23-modes.md M3) -------------------------------
+# ---- Safe mode's "match body formatting to template" -------------------------------
 
 def _page(doc, margin: int, size=(12240, 15840), header: int = 720):
     """Every section's page: ``size`` (w, h twips), all four margins ``margin``, header/footer distance ``header``."""
@@ -2028,7 +2028,7 @@ def build_tables(section_number: str = "21 13 13", title: str = "WET-PIPE SPRINK
     return docx_bytes(doc)
 
 
-# ---- the dirty fixture family (docs/PLAN-2026-10-18-live-runs.md: live runs on messy project files) -----------------
+# ---- the dirty fixture family (live runs on messy project files) -----------------
 
 DIRTY_KINDS = ("fragmented_runs", "textbox_headers", "nbsp_spaces", "compat_mode", "many_revisions", "protected",
                "libreoffice_like", "empty_body", "styled")

@@ -62,7 +62,7 @@ export interface Untouched {
 }
 
 /** Safe: the buttons, no AI call. Default: the conversation. Obliterate: the conversation without the guardrails that
- *  protect a document's content, offered only when Settings → Advanced shows it (docs/PLAN-2026-10-23-modes.md). */
+ *  protect a document's content, offered only when Settings → Advanced shows it (CLAUDE.md, Modes). */
 export type Mode = "safe" | "default" | "obliterate";
 
 /** What kind of header/footer template the attached template is (`recipes.template_kind`). */

@@ -545,7 +545,7 @@ def test_the_window_applies_the_kept_fast_mode_from_its_start(tmp_path):
     assert llm.FAST_MODE is False
 
 
-# ---- Safe mode (docs/PLAN-2026-10-23-modes.md M1) ------------------------------------------------------------------
+# ---- Safe mode ------------------------------------------------------------------
 
 def test_safe_mode_routes_the_buttons_the_mode_and_the_hand_off(tmp_path, monkeypatch):
     from make_fixtures import build, build_dirty

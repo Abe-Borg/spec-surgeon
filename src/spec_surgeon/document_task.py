@@ -36,7 +36,7 @@ STEPS_PER_PAUSE = 48    # model calls between the pauses where the user says to 
 AUTO_STEPS = 6          # internal steps the coordinator takes on its own after one user action (bounded)
 STAGES = ("empty", "question", "preview", "done", "budget", "resume")
 # Safe: the buttons, no AI call; Default: the conversation; Obliterate: the conversation without the guardrails that
-# protect a document's content (docs/PLAN-2026-10-23-modes.md M5) — hidden unless Settings → Advanced shows it, chosen
+# protect a document's content (CLAUDE.md, Modes) — hidden unless Settings → Advanced shows it, chosen
 # only after its warning, never restored at a launch
 MODES = ("safe", "default", "obliterate")
 LAUNCH_MODES = ("safe", "default")

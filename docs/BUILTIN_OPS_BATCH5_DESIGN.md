@@ -509,7 +509,7 @@ master's rollover test already did, and `tests/test_contexts.py` guards the head
 must stay in its first epoch: about 5,300 estimated tokens to spare). Whether to compact the catalog (the schema repeats every op's parameters; the worked examples are
 sent whole) or raise the allowance is left for Abraham.
 
-## Addendum (2026-10-23): three settings for matching a template (docs/PLAN-2026-10-23-modes.md E1, E3, G1)
+## Addendum (2026-10-23): three settings for matching a template
 
 The "match body formatting to template" button (Safe mode) converts a whole batch to the template's numbering with no
 model and no question asked, so three cases the defaults flag or refuse need a setting of their own. Each has its V10

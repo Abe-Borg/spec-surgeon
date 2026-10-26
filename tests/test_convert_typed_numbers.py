@@ -407,7 +407,7 @@ def test_a_scheme_level_whose_number_is_hidden_or_in_capitals_refuses(tmp_path, 
     assert "V10" in failed(rec) and "the op must refuse: scheme" in v10(rec)
 
 
-# ---- typed values instead of the typed look (docs/PLAN-2026-10-23-modes.md G1) ---------------------------------------
+# ---- typed values instead of the typed look ---------------------------------------
 
 @pytest.mark.parametrize("tracked", [True, False])
 def test_typed_values_convert_into_the_lists_own_look(tpl, tracked):

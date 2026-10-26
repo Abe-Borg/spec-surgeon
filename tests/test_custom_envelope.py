@@ -1,4 +1,4 @@
-"""What a custom method may format (docs/PLAN-2026-10-22-custom-envelope.md, Option A).
+"""What a custom method may format: more kinds of formatting, never more kinds of change.
 
 A1 — the limits say what the checker proves. ``CUSTOM_TRANSFORM_LIMITS`` (2026-10-17) listed highlight under "cannot",
 though V10's ``properties`` kind has verified highlight, superscript and subscript, hidden text, character spacing and

@@ -1,5 +1,4 @@
-"""Preview and approval — what the user sees before anything runs on the batch (docs/history/NL_SURGICAL_EDITOR_PLAN.md §7;
-Phase 4).
+"""Preview and approval — what the user sees before anything runs on the batch.
 
 ``make_preview(spec, inputs, out_dir)``:
 1. plans the spec on every file (planner.plan_batch — summaries and exceptions, nothing written);
