@@ -412,13 +412,44 @@ try {
   await page.getByLabel("Find, row 1").fill("ACME");
   await page.getByLabel("Replace with, row 1").fill("Contoso");
   check("a filled form can", await previewBtn.isEnabled());
+  // Changing your mind: Discard beside Create, All buttons while a preview waits, the form kept, Undo after Create.
+  const createCopies = page.getByRole("button", { name: "Create edited copies" });
+  const discarded = page.getByText("Preview discarded; nothing was created.");
   await previewBtn.click();
-  await page.getByRole("button", { name: "Create edited copies" }).waitFor({ timeout: 20000 });
+  await createCopies.waitFor({ timeout: 20000 });
+  const discardBtn = page.getByRole("button", { name: "Discard preview" });
+  check("a button's preview can be discarded beside Create", await discardBtn.isVisible());
+  await discardBtn.click();
+  await discarded.first().waitFor({ timeout: 5000 });
+  check("Discard withdraws the preview and Create with it", (await createCopies.count()) === 0 && (await discardBtn.count()) === 0);
+  check("…and the form keeps what was typed", (await page.getByLabel("Find, row 1").inputValue()) === "ACME");
+  await previewBtn.click();
+  await createCopies.waitFor({ timeout: 20000 });
+  await page.getByRole("button", { name: "All buttons" }).click();
+  await discarded.nth(1).waitFor({ timeout: 5000 });
+  check("All buttons discards a waiting preview", (await createCopies.count()) === 0);
+  await page.getByRole("button", { name: "Find and replace" }).click();
+  check("going back to a button finds what was typed",
+    (await page.getByLabel("Find, row 1").inputValue()) === "ACME" &&
+      (await page.getByLabel("Replace with, row 1").inputValue()) === "Contoso");
+  await previewBtn.click();
+  await createCopies.waitFor({ timeout: 20000 });
   check("a button previews with no conversation", (await page.locator("section[aria-label='Left untouched']").count()) === 1);
-  await page.getByRole("button", { name: "Create edited copies" }).click();
+  await createCopies.click();
   const handOff = page.getByRole("button", { name: "Try these in Default mode" });
   await handOff.waitFor({ timeout: 20000 });
   check("what the button left untouched waits beside the copies", await page.getByText("Your edited copies").isVisible());
+  const undoBtn = page.getByRole("button", { name: "Undo the last button" });
+  check("Undo the last button sits beside Start over", await undoBtn.isEnabled());
+  await undoBtn.click();
+  await page.getByText("Undid “Find and replace”.").waitFor({ timeout: 5000 });
+  check("Undo goes back before the button: no copies, nothing left untouched",
+    (await page.getByText("Your edited copies").count()) === 0 && (await handOff.count()) === 0);
+  check("…and nothing is left to undo", (await undoBtn.count()) === 0);
+  await previewBtn.click();
+  await createCopies.waitFor({ timeout: 20000 });
+  await createCopies.click();
+  await handOff.waitFor({ timeout: 20000 });
   await handOff.click();
   await page.getByLabel("Describe a change or answer a question").waitFor({ timeout: 5000 });
   check("the hand-off switches to Default mode", (await modes.getByRole("button", { name: "Default" }).getAttribute("aria-pressed")) === "true");

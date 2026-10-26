@@ -98,3 +98,12 @@ export function actionSentence(button: ActionButton, held: number): string {
       return "";
   }
 }
+
+export const DISCARD_TIP = "Withdraws this preview. Nothing is created, and the form keeps what you typed.";
+/** The sentence when a button's preview has nothing to create: every document was left untouched. */
+export const DISCARD_ONLY = "No document can take this change as it is. Discard the preview to choose another button.";
+
+/** Safe mode's Discard, beside the one button while a button's preview waits (docs/WEB_API.md, `POST /api/discard`). */
+export function canDiscard(view: Pick<View, "mode" | "stage">, busy: boolean): boolean {
+  return !busy && view.mode === "safe" && view.stage === "preview";
+}

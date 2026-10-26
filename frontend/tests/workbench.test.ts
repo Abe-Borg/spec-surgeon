@@ -18,6 +18,7 @@ import {
   sectionAttachments,
   traySummary,
   trayTitle,
+  undoLink,
 } from "../src/lib/workbench.ts";
 
 const group = (overrides: Partial<PlanGroup> = {}): PlanGroup => ({
@@ -126,4 +127,20 @@ test("each section lists its own kind, and the pictures title counts the accepte
   assert.deepEqual(sectionAttachments("references", { attachments }).map((a) => a.path), ["/logo.png", "/broken.png"]);
   assert.equal(referencesTitle({ attachments }), "Pictures and tables · 1");
   assert.equal(referencesTitle({ attachments: [] }), "Pictures and tables");
+});
+
+test("Undo the last button shows in Safe mode when there is something to undo, with why it waits", () => {
+  const working = { generation: 2, from_originals: false, can_start_over: true, undo: "Remove highlighting", undo_blocked: "" };
+  const link = undoLink({ mode: "safe", working }, false);
+  assert.equal(link?.disabled, false);
+  assert.ok(link?.tip.includes("“Remove highlighting”") && link.tip.includes("Nothing is deleted"));
+  assert.deepEqual(undoLink({ mode: "safe", working: { ...working, undo_blocked: "Discard the preview first." } }, false), {
+    disabled: true,
+    tip: "Discard the preview first.",
+  });
+  assert.equal(undoLink({ mode: "safe", working }, true)?.disabled, true);
+  assert.equal(undoLink({ mode: "safe", working: { ...working, undo: "" } }, false), null);
+  assert.equal(undoLink({ mode: "default", working }, false), null);
+  // an older server sends no undo: no link
+  assert.equal(undoLink({ mode: "safe", working: { generation: 1, from_originals: false, can_start_over: true } }, false), null);
 });

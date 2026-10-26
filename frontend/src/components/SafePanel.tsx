@@ -1,23 +1,35 @@
 import { Fragment, memo, useEffect, useMemo, type Dispatch, type SetStateAction } from "react";
 import type { FindReplacePair, Recipe, RecipeField, RecipeInputs, View } from "../types";
-import { availability, fieldShown, grouped, initialInputs, missing, payload, pictures, refreshInputs, tables } from "../lib/recipes";
+import {
+  availability,
+  clearForm,
+  fieldShown,
+  grouped,
+  leaveForm,
+  missing,
+  openForm,
+  payload,
+  pictures,
+  refreshInputs,
+  tables,
+  type SafeFormState,
+} from "../lib/recipes";
 import { primaryBtn } from "./ModalShell";
 import Tip from "./Tip";
 
 interface Props {
   recipes: Recipe[];
-  view: Pick<View, "attachments" | "template">;
+  view: Pick<View, "attachments" | "template" | "stage">;
   busy: boolean;
   /** Previews the button's change: a job with no AI call (docs/WEB_API.md, `POST /api/recipe`). */
   onPreview: (recipe: Recipe, inputs: RecipeInputs) => void;
+  /** Withdraws the preview waiting for approval (docs/WEB_API.md, `POST /api/discard`). */
+  onDiscard: () => void;
   form: SafeFormState;
   onFormChange: Dispatch<SetStateAction<SafeFormState>>;
 }
 
-export interface SafeFormState {
-  recipe: string | null;
-  inputs: RecipeInputs;
-}
+export type { SafeFormState };
 
 const inputClass =
   "w-full rounded-lg border border-edge bg-raised px-2.5 py-1.5 text-sm text-ink outline-none transition-colors " +
@@ -235,7 +247,7 @@ function FieldInput({
  * one chosen, and Preview. No AI call is made: the server builds the change from the form (recipes.py) and the
  * previews, the checks and the one button that creates the copies are the same as in Default mode.
  */
-function SafePanel({ recipes, view, busy, onPreview, form, onFormChange }: Props) {
+function SafePanel({ recipes, view, busy, onPreview, onDiscard, form, onFormChange }: Props) {
   const chosen = recipes.find((recipe) => recipe.id === form.recipe) ?? null;
   const inputs = form.inputs;
   const groups = useMemo(() => grouped(recipes), [recipes]);
@@ -251,8 +263,13 @@ function SafePanel({ recipes, view, busy, onPreview, form, onFormChange }: Props
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [slotsKey, filesKey, chosen?.id]);
 
-  const open = (recipe: Recipe) => {
-    onFormChange({ recipe: recipe.id, inputs: initialInputs(recipe, view) });
+  const open = (recipe: Recipe) => onFormChange((current) => openForm(current, recipe, view));
+  // Back to all the buttons keeps what this form holds; a preview waiting for approval is withdrawn with it, so no
+  // Create is left standing for a form that is closed.
+  const waiting = view.stage === "preview";
+  const back = () => {
+    if (waiting) onDiscard();
+    onFormChange(leaveForm);
   };
   const change = (name: string, value: RecipeInputs[string]) => onFormChange((current) => ({
     ...current, inputs: { ...current.inputs, [name]: value },
@@ -268,13 +285,27 @@ function SafePanel({ recipes, view, busy, onPreview, form, onFormChange }: Props
             <h2 className="text-sm font-semibold text-ink">{chosen.label}</h2>
             <p className="mt-0.5 text-[13px] leading-snug text-ink-dim">{chosen.summary}</p>
           </div>
-          <button
-            type="button"
-            onClick={() => onFormChange({ recipe: null, inputs: {} })}
-            className="shrink-0 text-xs text-accent underline decoration-accent/40 underline-offset-2 hover:decoration-accent"
-          >
-            All buttons
-          </button>
+          <div className="flex shrink-0 items-center gap-3">
+            <Tip tip="Empties this form, as it was when it first opened">
+              <button
+                type="button"
+                onClick={() => onFormChange((current) => clearForm(current, chosen, view))}
+                className="text-xs text-accent underline decoration-accent/40 underline-offset-2 hover:decoration-accent"
+              >
+                Clear form
+              </button>
+            </Tip>
+            <Tip tip={waiting ? "Discards the preview and shows every button; this form keeps what you typed" : "Shows every button; this form keeps what you typed"}>
+              <button
+                type="button"
+                disabled={busy}
+                onClick={back}
+                className="text-xs text-accent underline decoration-accent/40 underline-offset-2 hover:decoration-accent disabled:pointer-events-none disabled:opacity-50"
+              >
+                All buttons
+              </button>
+            </Tip>
+          </div>
         </div>
         {chosen.fields.map((field) => (
           <FieldInput key={field.name} recipe={chosen} field={field} inputs={inputs} view={view} onChange={change} />

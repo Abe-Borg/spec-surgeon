@@ -49,6 +49,23 @@ What happens then is what happens to a plan in Default mode, with no model anywh
 - The button's sentence (what you pressed and what you typed) is your line in the chat, and the change sentences of
   its plan join the history the next request in either mode hears.
 
+Changing your mind (`DocumentTask.discard_preview`, `DocumentTask.undo`):
+
+- **Discard preview**, beside Create while a button's preview waits, withdraws it: nothing is created, and the window
+  shows again the copies and the Left untouched list it showed before the button was pressed (`_before_button`).
+  **All buttons** while a preview waits does the same. The form stays as you filled it; each button's form keeps what
+  you typed when you go back to all the buttons, until **Clear form**, New conversation or Start over (the page's
+  memory only).
+- **Undo the last button**, beside Start over, takes the working set back one run: each document builds on the copy
+  it had before that run (its original, when it was the first), the history and each copy's changes are as they were,
+  the copies and Left untouched list that run replaced show again, and the documents its ✗ put on the to-do list come
+  off it. A point is taken at each approval (`_undo_point`) and kept once the run delivers copies
+  (`_advance_generation`); the points are kept in the saved conversation (`undo`), so they survive a restart. Undo
+  waits while a preview is open ("Discard the preview first") and refuses when a copy it would go back to is no longer
+  where it was saved. No file is written or deleted: the copies an undone button made stay in their run folder. Start
+  over and removing the last working copy clear the points; a run whose approval took none (it resumed after a
+  restart) clears them too, so no undo reaches past a step it did not record.
+
 Tracked changes are off in Safe mode unless the form's *Show my changes as tracked changes in Word* is ticked (find
 and replace, remove hidden text, remove empty paragraphs); every other button's change is plain formatting or never
 tracked, as in Default mode. The template buttons tell a prepared template (yellow-highlighted or `{{NAME}}`

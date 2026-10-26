@@ -278,6 +278,7 @@ def test_a_second_job_while_one_runs_is_refused(tmp_path):
     assert state.busy and client.get("/api/state").json()["busy"] is True
     assert client.post("/api/send", json={"text": "again"}).status_code == 409
     assert client.post("/api/attach", json={"paths": []}).status_code == 409
+    assert client.post("/api/discard").status_code == 409 and client.post("/api/undo").status_code == 409
     gate.set()
     while True:
         event = events.get(timeout=30)
@@ -582,3 +583,31 @@ def test_safe_mode_routes_the_buttons_the_mode_and_the_hand_off(tmp_path, monkey
     assert load_settings().mode == "default"
     bad = client.post("/api/recipe", json={"recipe": "remove_highlight", "inputs": ["not", "a", "form"]})
     assert bad.status_code == 400
+
+
+def test_safe_mode_routes_discard_and_undo(tmp_path, monkeypatch):
+    from make_fixtures import build
+    monkeypatch.setenv("SPEC_SURGEON_CONFIG_DIR", str(tmp_path / "config"))
+    state, client = window(tmp_path)
+    client.post("/api/mode", json={"mode": "safe"})
+    spec = tmp_path / "21 13 13.docx"
+    spec.write_bytes(build("21 13 13", "WET-PIPE SPRINKLER SYSTEMS"))
+    client.post("/api/attach", json={"paths": [str(spec)]})
+    assert client.post("/api/discard").json() == {"error": "There is no preview to discard."}
+    assert client.post("/api/undo").json() == {"error": "There is nothing to undo."}
+
+    def press():
+        with client.stream("POST", "/api/recipe", json={"recipe": "remove_highlight", "inputs": {}}) as r:
+            return frames(r)[-1]["state"]
+    assert press()["stage"] == "preview"
+    view = client.post("/api/discard").json()
+    assert view["stage"] == "empty" and view["action"]["kind"] == "none" and view["samples"] == []
+    view = press()
+    with client.stream("POST", "/api/primary", json={"token": view["action"]["token"]}) as r:
+        view = frames(r)[-1]["state"]
+    assert view["working"]["generation"] == 1 and view["working"]["undo"] == "Remove highlighting"
+    assert view["working"]["undo_blocked"] == ""
+    view = client.post("/api/undo").json()
+    assert view["working"] == {"generation": 0, "from_originals": True, "can_start_over": False,
+                               "undo": "", "undo_blocked": ""}
+    assert view["results"] == [] and view["attachments"][0]["current"] == str(spec)

@@ -242,23 +242,30 @@ export const RUNTIME_CARDS: RuntimeCard[] = [
       "copy; its results are kept beside it.",
   },
   {
-    covers: ["A23", "A24", "A25"],
-    title: "Safe mode: choosing a mode, pressing a button, handing documents over",
+    covers: ["A23", "A24", "A25", "A29", "A30"],
+    title: "Safe mode: choosing a mode, pressing a button, changing your mind, handing documents over",
     you:
-      "Choose Safe or Default in the top bar; in Safe mode, pick a button, fill in its form and press Preview; Try " +
-      "these in Default mode beside what a button left untouched.",
+      "Choose Safe or Default in the top bar; in Safe mode, pick a button, fill in its form and press Preview; " +
+      "Discard preview, All buttons or Clear form; Undo the last button; Try these in Default mode beside what a " +
+      "button left untouched.",
     runs:
       "Choosing a mode keeps it in settings.json for the next start. Switching modes keeps your unsent message and " +
       "Safe-mode form in this window; an unsent message holds Create only in a conversation mode. A button builds its plan in code from your form " +
       "and your attachments; the plan passes the same gate as a conversation's (its settings, the files it reads, " +
       "every word it would place traced to what you typed) and the ordinary preview runs, without Claude's visual " +
-      "check. Create edited copies then makes and checks the copies as always. Handing over puts those documents on " +
-      "your to-do list and switches to Default mode.",
+      "check. Create edited copies then makes and checks the copies as always. Discard preview (or All buttons " +
+      "while a preview waits) withdraws it: nothing is created, and the window shows the copies it showed before. " +
+      "Each button's form keeps what you typed until Clear form, New conversation or Start over. Undo the last " +
+      "button makes the copies from before that button the ones the next button builds on again (your originals, " +
+      "when it was the first), and takes off the to-do list the documents its ✗ put there. Handing over puts " +
+      "documents on your to-do list and switches to Default mode.",
     sent: "Nothing. A button never reaches the network.",
     ai: NONE,
     bounds:
       "The buttons and what they do are fixed in the app. A document a button cannot change exactly is left " +
-      "untouched with the reason; nothing an AI does follows, neither a visual check nor recovery.",
+      "untouched with the reason; nothing an AI does follows, neither a visual check nor recovery. Discard and Undo " +
+      "write and delete no file: the copies an undone button made stay where they were saved. Undo goes back one " +
+      "button at a time, never while a preview waits, and refuses when a copy it would go back to is gone.",
   },
   {
     covers: ["A7"],

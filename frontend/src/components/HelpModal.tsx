@@ -95,15 +95,17 @@ function HowToUse({ stepsPerPause }: { stepsPerPause: number }) {
           },
           {
             t: "Pick a button, fill in its short form, press Preview",
-            d: "A button that cannot be used yet says why when you hover over it. Its form asks only for your words and choices: the words to find and their replacements, the watermark’s words, a template’s values. Tracked changes are off unless you tick the box.",
+            d: "A button that cannot be used yet says why when you hover over it. Its form asks only for your words and choices: the words to find and their replacements, the watermark’s words, a template’s values. Tracked changes are off unless you tick the box. Going back to All buttons keeps what you typed in each form; Clear form empties it.",
           },
           {
             t: "Look at the pages, then create the copies",
             d: (
               <>
-                <Tag>Left untouched</Tag> names any document the change cannot be made on, and why. After the copies
-                are created, <Tag>Try these in Default mode</Tag> puts those documents on your to-do list in Default
-                mode. Press another button to change the copies further.
+                <Tag>Left untouched</Tag> names any document the change cannot be made on, and why. Not what you
+                wanted? <Tag>Discard preview</Tag> withdraws it and nothing is created. After the copies are created,{" "}
+                <Tag>Try these in Default mode</Tag> puts those documents on your to-do list in Default mode. Press
+                another button to change the copies further, or <Tag>Undo the last button</Tag> to go back to the
+                copies from before it; nothing is deleted.
               </>
             ),
           },
@@ -309,6 +311,7 @@ function Workflows({ stepsPerPause }: { stepsPerPause: number }) {
           "After the copies are created, ask for the next change. It is made on those copies, and the assistant is told what was already done, so it plans only what is new.",
           "Each run’s copies go into their own folder, so earlier copies remain.",
           "Start over from the originals — a reply you can tap, or the link under the copies — goes back to your files.",
+          "In Safe mode, Undo the last button goes back one button at a time: the next button builds on the copies from before it, and the copies the undone button made stay in their folder.",
           "A document attached after a run is an original beside the copies, and gets only the next change.",
         ]}
       />
