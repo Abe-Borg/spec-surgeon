@@ -586,6 +586,10 @@ def _preview_sample(source: str, spec: Dict[str, Any], output: str, approved_md5
             stage = "plan"
             with diag.span("preview.sample.plan"):
                 plan, frags = plan_spec(pkg, spec, fingerprint(pkg)["pattern_id"])
+            if plan.output_name:
+                # V10 checks the actual output filename in preview just as in a run. Keep a directory per sample
+                # so two documents requesting one name cannot overwrite each other's preview evidence.
+                output = str(Path(output).parent / Path(output).stem / plan.output_name)
             stage = "apply"
             with diag.span("preview.sample.apply"):
                 out = apply_spec(pkg, frags).output_bytes()
@@ -817,6 +821,8 @@ def _make_chain_preview(chain: Dict[str, Any], inputs: Sequence[str], out_dir: P
             for f in picks:
                 sv = SampleView(source=f)
                 phase, data, produced = "open", None, False
+                source_name = str(f)
+                sample_dir = out_dir / "samples" / Path(names[str(f)]).stem
                 try:
                     data = Path(f).read_bytes()
                     if hashlib.md5(data).hexdigest() != token_inputs["files"][str(Path(f).resolve())][2]:
@@ -833,7 +839,7 @@ def _make_chain_preview(chain: Dict[str, Any], inputs: Sequence[str], out_dir: P
                             diag.span("preview.chain_stage"):
                         try:
                             phase = "plan"
-                            pkg = DocxPackage(data, name=str(f))
+                            pkg = DocxPackage(data, name=source_name)
                             with diag.span("preview.sample.plan"):
                                 plan, frags = plan_spec(pkg, spec, fingerprint(pkg)["pattern_id"])
                             if i > 1:                    # planned on the step before it: true for this sample
@@ -841,14 +847,16 @@ def _make_chain_preview(chain: Dict[str, Any], inputs: Sequence[str], out_dir: P
                             phase = "apply"
                             with diag.span("preview.sample.apply"):
                                 out = apply_spec(pkg, frags).output_bytes()
+                            output = sample_dir / (plan.output_name or Path(source_name).name)
                             produced = True
                             phase = "verify"
                             with diag.span("preview.sample.verify"):
-                                rec = run_suite(pkg.data, out, plan.to_dict(), str(f), str(out_dir / "samples" / names[str(f)]))
+                                rec = run_suite(pkg.data, out, plan.to_dict(), source_name, str(output))
                             checks = {c.id: c.status for c in rec.checks}
                             sv.stages.append({"stage": i, "name": label, "passed": rec.passed, "checks": checks})
                             _log_verification(log, f"{f.name} · stage {i} ({label})", rec)
                             data = out
+                            source_name = str(output)
                             sv.checks = checks
                             if not rec.passed:
                                 sv.passed = False
@@ -876,7 +884,7 @@ def _make_chain_preview(chain: Dict[str, Any], inputs: Sequence[str], out_dir: P
                     for entry in sv.outcomes:
                         log.detail(f"sample {f.name}: final requirement {entry['index']} {entry['status']}: {entry['summary']}")
                 if produced:
-                    sv.output = out_dir / "samples" / names[str(f)]
+                    sv.output = output
                     sv.output.parent.mkdir(parents=True, exist_ok=True)
                     sv.output.write_bytes(data)
                 pv.samples.append(sv)

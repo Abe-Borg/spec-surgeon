@@ -173,6 +173,8 @@ export interface Action {
   label: string;
   token: string;
   kind: ActionKind;
+  /** Why the server refuses this action, even with a current approval token. */
+  disabled_reason?: string;
   /** The previews can be marked: a document marked with the red X is set aside when the copies are created. */
   can_hold?: boolean;
 }

@@ -571,7 +571,7 @@ function Dossier() {
         />
         <Term
           word="Approved"
-          claim="You pressed Create edited copies (or Save ready copies) on a plan whose fingerprint covers the plan and the exact content of each file. A changed file or plan voids the approval."
+          claim="You pressed Create edited copies (or Save ready copies) on a plan whose fingerprint covers the plan and the exact content of each file. A changed file or plan voids the approval. In Safe and Default modes, Create also refuses a failed preview check. Save ready copies exports only the recovery's ready files."
           not={[
             "That you read every sentence of the plan.",
             "That Claude understood you — only that the engine will do exactly what is on screen.",

@@ -98,6 +98,11 @@ Rules the page relies on:
 - `action.kind`: `approve` → the one button "Create edited copies" (or "I reviewed the flagged pages — create
   copies" when `blocking`), `continue` → "Continue", `save` → "Save N ready copies", `none` → no button. The button
   lives in the conversation pane, above the composer; while `busy` the composer shows "Stop now" instead.
+  `action.disabled_reason` is empty when the action is available; otherwise the button is disabled and this reason
+  appears beside it and in its tooltip. Safe and Default refuse Create after a failed preview check; the server
+  enforces the same gate even if a caller submits a current token directly. Recovery can still save READY copies.
+  In Safe mode, `results` contains only the current button's copies; earlier copies remain in the working set and
+  on disk, so a later failed or refused button cannot present them as its results.
   `action.can_hold` is true when the previews can be marked: each preview card then carries a green checkmark
   (looks good) and a red X (needs more work). The page sends the X'd previews' `source` paths as `hold` with the
   primary action: those documents go on the to-do list and the others get their copies. It is false during a

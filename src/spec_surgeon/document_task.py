@@ -867,6 +867,9 @@ class DocumentTask:
             self.say(f"{recipe.label} cannot be used on these documents: " + "; ".join(errors[:3]))
             return
         s.end_conversation()
+        # Results describe this button's copies. Earlier copies remain in the working set and on disk, but must
+        # not be presented as if they carry a later change that could be refused or fail verification.
+        self.results, self.unverified = {}, {}
         self.say(built.request, "user")
         self.decisions = [built.request]
         self.word_sources.extend(w for w in built.sources if w not in self.word_sources)
@@ -1203,6 +1206,9 @@ class DocumentTask:
             raise ValueError("Answer the open question before continuing.")
         if outcome.kind != "preview" and not partial:
             raise ValueError("The documents or plan changed. Review the updated plan first.")
+        blocked = s.run_blocked_reason()
+        if blocked:
+            raise ValueError(blocked)
         held = self._held(hold)
         if held and s.recovery is not None:
             raise ValueError("A document cannot be set aside while files are being checked again; save the ready "
@@ -1301,10 +1307,12 @@ class DocumentTask:
         self._revision += 1
         n = len(self.results)
         if model_free:
-            self.say(f"{n} document {'copy is' if n == 1 else 'copies are'} ready. Open them, press another button "
-                     f"to change them further, or start over from the originals." +
+            ready = (f"{n} document {'copy is' if n == 1 else 'copies are'} ready. Open them, press another button "
+                     "to change them further, or start over from the originals." if n else
+                     "No copies were created. Choose another button or start over from the originals.")
+            self.say(ready +
                      (f" Left untouched: {', '.join(e['name'] for e in self.left_untouched)} — each one's reason is "
-                      f"beside the copies." if self.left_untouched else ""))
+                      "under Left untouched." if self.left_untouched else ""))
         else:
             shaky = sum(1 for k in self.results if k in self.unverified)
             self.say(f"{n} document {'copy is' if n == 1 else 'copies are'} ready. You can open them, describe "
@@ -1648,6 +1656,7 @@ class DocumentTask:
                 "warnings": list(dict.fromkeys(warnings)), "results": dict(self.results),
                 "unverified": {k: list(v) for k, v in self.unverified.items()},
                 "action": labels.get(self.stage, ""), "token": self.action_token(),
+                "blocked_reason": s.run_blocked_reason() if self.stage == "preview" else "",
                 "budget_paused": self.stage == "budget", "steps_per_pause": STEPS_PER_PAUSE,
                 "cost": self._budget.spent_usd,
                 "blocking": blocking}
