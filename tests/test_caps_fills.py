@@ -1,4 +1,4 @@
-"""Capitals like the template (docs/PLAN-2026-10-22-batch-consistency.md C4).
+"""Capitals like the template.
 
 From the owner's Division 21 run: 21 05 53's footer title showed in mixed case — the fill copies the file's own title
 as typed, and its first page types "Identification for Fire Suppression Systems" — while the template and the other

@@ -1,5 +1,4 @@
-"""Package-level hardening carried over from the Spec Template Normalizer's lessons (plan
-``docs/PLAN-2026-10-22-batch-consistency.md``, items C8–C10):
+"""Package-level hardening carried over from the Spec Template Normalizer's lessons:
 
 * C8 — the settings part is found as Word finds it, through the main part's relationship, never by its usual name
   (``DocxPackage.settings_part``): a renamed settings part is read, a stray ``word/settings.xml`` the document does not

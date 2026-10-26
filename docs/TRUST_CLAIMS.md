@@ -17,8 +17,8 @@ same day against `master` at 099ee91 (C2–C6, A1 and the licence change): every
 thread, timer, `/api` route and outside reference in the built page checked again; what changed is marked
 "(re-audit)". Updated 2026-10-22 after the 1.9.0 live run over test-set-2 (outcome planning's trigger in B8, the
 documents a request leaves out in B5, per-file wording in provenance); those lines say "(test-set-2)". Updated
-2026-10-23 for Safe mode (`docs/PLAN-2026-10-23-modes.md`, M1): A23–A25, the A8/B6/B9 exceptions for a Safe-mode
-button, `mode` in settings.json, T40, T52 and T53; and for its "match body formatting to template" button (M3), A24's
+2026-10-23 for Safe mode: A23–A25, the A8/B6/B9 exceptions for a Safe-mode
+button, `mode` in settings.json, T40, T52 and T53; and for its "match body formatting to template" button, A24's
 path and T52's test. Updated 2026-10-23 after the 1.10.0 live run over test-set-3 (a sample a later step refuses no
 longer starts B8); that line also says "(test-set-3)". Updated 2026-10-23 with the to-do list as the place
 documents wait (the chat's `set_aside` tool in §1d, A15, A26, A27, B18, T54, T55); those lines say "(to-do list)".

@@ -1,7 +1,7 @@
 # Text hygiene — items 41–44
 
 The report-only specification QA audits (items 45–49 and the structure audits) were a command-line feature and
-were removed with it on 2026-10-21; their guide is kept in `docs/history/`.
+were removed with it on 2026-10-21.
 
 Available starting in v0.8.0.
 

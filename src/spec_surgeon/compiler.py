@@ -1,5 +1,4 @@
-"""The compiler — a plain-English request → an EditSpec, once per batch (docs/history/NL_SURGICAL_EDITOR_PLAN.md §6,
-Appendix B; Phase 4).
+"""The compiler — a plain-English request → an EditSpec, once per batch.
 
 Claude reads the request, the batch's per-pattern profiles (profile.py), the op catalog (catalog.py), the
 template's profile when one is attached, and any prior pass's
@@ -640,9 +639,9 @@ CHAT_TOOLS = ([_streamed(ASK_USER_CHAT if t["name"] == "ask_user" else t) for t 
 
 
 UNGUARDED_PROMPT = """
-OBLITERATE MODE (the user's own choice, for this whole conversation; docs/PLAN-2026-10-23-modes.md M5): the rules
-above that every placed word must be the user's and that a custom method does formatting only are lifted, and the
-rules above say so where they apply. A custom method still runs in the sandbox, on copies, and the independent checks
+OBLITERATE MODE (the user's own choice, for this whole conversation): the rules above that every placed word
+must be the user's and that a custom method does formatting only are lifted, and the rules above say so where they
+apply. A custom method still runs in the sandbox, on copies, and the independent checks
 still run on every copy; their failures are shown to the user beside the copy instead of stopping it. Built-in
 operations still refuse what they cannot predict: a custom method is the way past such a refusal. Change only what
 the user asked for.

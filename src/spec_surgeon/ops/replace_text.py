@@ -30,7 +30,7 @@ Grammar implemented (all from the paid-for lessons):
   definition (``textedit.text_children`` / ``place_text``; the verifier's ``verify/edits.py`` with ``breaks``). They are
   no block text: V2's after-text leaves them out, and the block's structural counts after (V3) are declared. Any other
   control character is refused (``bad-params``).
-* Wording left elsewhere (docs/PLAN-2026-10-22-batch-consistency.md C3): the plan records every place ``find`` (the
+* Wording left elsewhere: the plan records every place ``find`` (the
   same matching) also occurs in the file and this op does not edit — a part kind outside the scope, a paragraph the
   selection leaves out, an occurrence after the first — and ``ops/elsewhere.flag_left_elsewhere`` flags those no
   ``replace_text`` of the spec edits ("also occurs in the body (1×)"). A refusal for want of ``find`` in the scope says where it occurs

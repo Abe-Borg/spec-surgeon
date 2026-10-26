@@ -1,4 +1,4 @@
-"""Every file of a batch side by side, the odd one named (docs/PLAN-2026-10-22-batch-consistency.md C2).
+"""Every file of a batch side by side, the odd one named.
 
 From the owner's Division 21 run: 21 05 53's footer showed its title in mixed case while the other files showed
 capitals, and File Properties titles from other projects sat in 21 12 00 and 21 31 13 — nothing compared the files,

@@ -1,5 +1,5 @@
 /**
- * Safe mode's buttons on the page (docs/PLAN-2026-10-23-modes.md, M1): which button can be pressed with what is
+ * Safe mode's buttons on the page (docs/CONVERSATIONAL_DESKTOP.md, Safe mode): which button can be pressed with what is
  * attached, the form each one starts with, and what the form still needs before Preview. The server decides
  * everything again (`recipes.build`, then the one gate every plan passes); these rules only keep the panel honest
  * about what it can send.

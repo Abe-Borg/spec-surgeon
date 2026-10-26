@@ -192,8 +192,8 @@ def test_contract_author_is_used_when_params_omit_it(scheme):
 
 
 def test_options_the_effect_verifier_does_not_model_are_neither_offered_nor_accepted(scheme):
-    """convert_numbering's counters and include_tables, convert_typed_numbers' match (docs/PLAN-2026-10-23-modes.md
-    M2) serve Safe mode's body button; the approved-effect verifier does not model them, so an outcome contract can
+    """convert_numbering's counters and include_tables, convert_typed_numbers' match serve Safe
+    mode's body button; the approved-effect verifier does not model them, so an outcome contract can
     neither see nor use them."""
     from spec_surgeon.goal_operations import operation_catalog, validate_operation_effect
     from spec_surgeon.goals import GoalError

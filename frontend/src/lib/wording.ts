@@ -1,5 +1,5 @@
 /**
- * A choice's wording edited before it is picked (docs/PLAN-2026-10-23-modes.md M4): Claude's draft is shown in a box,
+ * A choice's wording edited before it is picked: Claude's draft is shown in a box,
  * the user may change it, and the edited text is what picking approves. The server checks it again
  * (`conversation.edited_wording`); this only keeps the box honest about what it can send.
  *

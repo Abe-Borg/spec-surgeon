@@ -1,4 +1,4 @@
-"""Tier B — a generated transform for a request no op can express (docs/history/NL_SURGICAL_EDITOR_PLAN.md §8; Phase 5).
+"""Tier B — a generated transform for a request no op can express.
 
 Offered when it is needed (decided 2026-10-15): when the conversation ends with ``unsupported`` and Claude judged the
 request within the catalog's ``custom_transform_limits``, the conversation offers a one-off custom transform. The
@@ -26,7 +26,7 @@ Claude the whole conversation as its brief, read-only tools to look at the sampl
    to the model with the record; configurable ample attempts, stopping earlier when
    equivalent failures repeat without new inspection evidence.
 
-**Obliterate mode** (``unguarded``, docs/PLAN-2026-10-23-modes.md M5; never on a governed goal path): step 3 is
+**Obliterate mode** (``unguarded``, CLAUDE.md, Modes; never on a governed goal path): step 3 is
 skipped and the writer's prompt says any change Word stores is allowed; the whitelist (1) and the sandbox (2) are
 unchanged; the suite (4) still runs on every sample and every file, and a trial whose only failures are its checks
 — the verifier read the output, the source did not drift — passes with them listed (``FileTrial.unverified``),
@@ -103,7 +103,7 @@ GOAL_FROM = {
 
 def allowed_imports(goal_contract=None, unguarded: bool = False):
     """The import whitelist: plain formatting by default; a governed method (``goal_contract``) and an Obliterate
-    method (``unguarded``: any change Word stores, docs/PLAN-2026-10-23-modes.md M5) also get the ``GOAL_FROM``
+    method (``unguarded``: any change Word stores) also get the ``GOAL_FROM``
     helpers — text edits, tracked revisions, parts and relationships — under the same sandbox."""
     allowed = {name: set(values) for name, values in ALLOWED_FROM.items()}
     if goal_contract is not None:

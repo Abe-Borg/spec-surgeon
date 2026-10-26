@@ -18,7 +18,7 @@ are ops/deletion.py's docstring, read again here:
   with exactly one NEW ``w:trPr/w:del``. Each changed paragraph is compared whole with that expectation
   (``verified_blocks``), each row's ``w:trPr`` checked here and stripped of its ``w:del`` for the residual
   (``strip_tr``), which proves the rest.
-* **Tracked over someone's pending revisions** (docs/PLAN-2026-10-22-batch-consistency.md C6): a pending insertion is
+* **Tracked over someone's pending revisions**: a pending insertion is
   read through like a holder (its runs deleted inside it: the new ``w:del`` nested in the ``w:ins``), a pending deletion
   stays untouched, a mark someone inserted gets the NEW ``w:del`` beside it, one already deleted gets none, property
   changes stay. The op must refuse: a move (``w:moveFrom``, ``w:moveTo`` or a move range mark) in a changed paragraph,

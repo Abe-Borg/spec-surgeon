@@ -509,7 +509,7 @@ def test_nothing_numbered_is_a_noted_no_op_unless_allow_missing_false(tpl):
     assert src
 
 
-# ---- table cells left as they are, numbers that must keep their values (docs/PLAN-2026-10-23-modes.md E1, E3) -------
+# ---- table cells left as they are, numbers that must keep their values -------
 
 BY_STYLES = {"from": {"styles": [["Arch Part"], ["ArchArt"], ["ArchPara", "ArchParaAlt"], ["ArchSub"], ["ArchSub2"]]}}
 

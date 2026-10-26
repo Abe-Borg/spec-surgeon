@@ -349,7 +349,7 @@ class Conversation:
         # frozen for the whole conversation: rebuilding either between calls would invalidate the cache and the
         # model's earlier thinking
         self.tools = compiler.CHAT_TOOLS if mode == "chat" else compiler.TOOLS
-        # Obliterate mode (docs/PLAN-2026-10-23-modes.md M5), fixed for the whole conversation: Claude may write wording
+        # Obliterate mode (CLAUDE.md, Modes), fixed for the whole conversation: Claude may write wording
         # (no placed-words trace at the gate) and a custom method is offered whenever one could do the change at all
         self.unguarded = bool(unguarded)
         self.system = compiler.system_prompt(chat=(mode == "chat"), unguarded=self.unguarded)

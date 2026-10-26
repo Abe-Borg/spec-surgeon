@@ -1,5 +1,5 @@
-"""V10 kind ``numbering_labels`` — the label formatting of list levels a custom method names (docs/PLAN-2026-10-22-
-custom-envelope.md, A3). This module's own reading; nothing from ops/ (rule 1).
+"""V10 kind ``numbering_labels`` — the label formatting of list levels a custom method names.
+This module's own reading; nothing from ops/ (rule 1).
 
 A custom method names list levels — a ``w:abstractNum`` by its ``w:abstractNumId`` and a ``w:ilvl``, or a ``w:num`` by
 its ``w:numId`` and the ``w:ilvl`` of its one ``w:lvlOverride`` holding a ``w:lvl`` — and the label run properties it
