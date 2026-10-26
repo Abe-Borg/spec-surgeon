@@ -60,6 +60,7 @@ Paths are relative to `src/spec_surgeon/` unless they start with `frontend/`, `t
 | A21 | **Reload the window** (shown only when the page fails to draw) | `frontend/src/components/ErrorBoundary.tsx` | none |
 | A22 | Settings → **Fast responses**: on with the second click on the button that names the price, off with one click | `POST /api/settings` `{fast_mode}` → `llm.set_fast_mode`, kept in `settings.json` | none (changes the speed of later calls) |
 | A23 | Choose **Safe** or **Default** in the top bar | `POST /api/mode` → `DocumentTask.set_mode`; kept in settings.json (`Settings.mode`) | none |
+| A23a | Switch modes with an unsent message or staged form; explicitly reset the conversation | `App` owns both inputs across mode switches; successful A13/A14 clears both; a hidden message does not hold Safe Create | none; inputs remain in window memory only |
 | A24 | In Safe mode: a button, its short form, **Preview** | `POST /api/recipe` → `DocumentTask._recipe` → `recipes.build` → `compiler.compose_submission` (for *Match body formatting to template*, once per layout in `body_match.build_layouts`) → `Session.make_preview` (`model_free`: no visual check, no outcome planning) | none |
 | A25 | **Try these in Default mode** (beside what a button left untouched), **Go to Default mode** | `POST /api/handoff` → `DocumentTask.hand_off`; `POST /api/mode` | none |
 | A26 | (to-do list) **Put back** beside a document on the to-do list | `POST /api/put-back` → `DocumentTask.put_back` | none |

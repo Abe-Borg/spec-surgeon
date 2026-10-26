@@ -1,5 +1,5 @@
 // Adapted from Build-a-Spec's frontend/src/components/Composer.tsx (copy-based reuse).
-import { memo, useEffect, useRef, useState } from "react";
+import { memo, useEffect, useRef } from "react";
 import Tip from "./Tip";
 
 interface Props {
@@ -14,8 +14,9 @@ interface Props {
   /** External prefill (a starter card): sets the text and focuses. The
    *  nonce fires the effect even when the same text is requested twice. */
   prefill?: { text: string; nonce: number };
-  /** Reports whether an unsent draft is in the box (the action button holds while one is). */
-  onDraftChange?: (hasDraft: boolean) => void;
+  /** Owned by the window, so switching to Safe mode does not discard an unsent message. */
+  value: string;
+  onChange: (text: string) => void;
 }
 
 const MAX_HEIGHT = 220; // about nine lines
@@ -27,9 +28,9 @@ function Composer({
   onSend,
   onStop,
   prefill,
-  onDraftChange,
+  value,
+  onChange,
 }: Props) {
-  const [value, setValue] = useState("");
   const ref = useRef<HTMLTextAreaElement>(null);
 
   // Auto-grow up to ~9 lines; measured again when the pane changes width,
@@ -48,19 +49,10 @@ function Composer({
     return () => observer.disconnect();
   }, [value, busy, canSend]);
 
-  // Reported only when the answer changes, not on every keystroke.
-  const draftRef = useRef(false);
-  useEffect(() => {
-    const hasDraft = value.trim().length > 0;
-    if (hasDraft === draftRef.current) return;
-    draftRef.current = hasDraft;
-    onDraftChange?.(hasDraft);
-  }, [value, onDraftChange]);
-
-  // Prefill from a starter card and drop the caret at the end.
+  // The window stores a starter card's text; its nonce asks to focus it. Remounting after a mode switch must not
+  // replace a draft the user has since edited with an older starter's words.
   useEffect(() => {
     if (!prefill || prefill.nonce === 0) return;
-    setValue(prefill.text);
     const el = ref.current;
     if (el) {
       el.focus();
@@ -74,7 +66,7 @@ function Composer({
   const send = () => {
     const text = value.trim();
     if (!text || busy || !canSend) return;
-    setValue("");
+    onChange("");
     onSend(text);
   };
 
@@ -88,7 +80,7 @@ function Composer({
             ref={ref}
             rows={1}
             value={value}
-            onChange={(e) => setValue(e.target.value)}
+            onChange={(e) => onChange(e.target.value)}
             onKeyDown={(e) => {
               // Enter sends, and so does Ctrl+Enter; Shift+Enter is a new line.
               if (e.key !== "Enter" || e.shiftKey) return;
