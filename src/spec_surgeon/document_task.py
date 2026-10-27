@@ -746,7 +746,7 @@ class DocumentTask:
                                         "left_untouched": self.left_untouched, "pdfs": self.pdfs}
         return {"request": self.decisions[0] if self.decisions else "",
                 "working": dict(self.working), "generation": self.generation, "history": list(self.history),
-                "applied": {k: list(v) for k, v in self.applied.items()},
+                "applied": {k: list(v) for k, v in self.applied.items()}, "fresh": list(self.fresh),
                 "results": dict(shown["results"]), "pdfs": dict(shown.get("pdfs", {})),
                 "unverified": {k: list(v) for k, v in shown["unverified"].items()},
                 "left_untouched": [dict(e) for e in shown["left_untouched"]],
@@ -815,6 +815,12 @@ class DocumentTask:
         self.working, self.generation = working, point["generation"]
         self.history = list(point["history"])
         self.applied = {k: list(v) for k, v in point["applied"].items() if k in working}
+        # the documents attached before the undone run, and since it, arrived after the changes still made; a point
+        # from before ``fresh`` counts every original among the copies so
+        before = point.get("fresh")
+        before = [str(a.path) for a in self.attachments] if before is None else before
+        self.fresh = [k for k in dict.fromkeys([*before, *self.fresh]) if k in attached and k not in working] \
+            if working else []
         for key in point.get("todo_added", []):
             self.todo.pop(key, None)
         self._shown_again(point)
@@ -2131,12 +2137,14 @@ class DocumentTask:
                 isinstance(p, dict) and text(p.get("request", "")) and paths(p.get("working"))
                 and type(p.get("generation")) is int and texts(p.get("history")) and lists(p.get("applied"))
                 and paths(p.get("results")) and lists(p.get("unverified")) and texts(p.get("todo_added", []))
+                and texts(p.get("fresh", []))
                 and paths(p.get("pdfs", {}))
                 and isinstance(p.get("left_untouched"), list) and all(map(entry, p["left_untouched"]))
                 for p in points):
             return []
         return [{"request": p.get("request", ""), "working": dict(p["working"]), "generation": p["generation"],
                  "history": list(p["history"]), "applied": {k: list(v) for k, v in p["applied"].items()},
+                 **({"fresh": list(p["fresh"])} if "fresh" in p else {}),
                  "results": dict(p["results"]), "unverified": {k: list(v) for k, v in p["unverified"].items()},
                  "pdfs": dict(p.get("pdfs", {})),
                  "left_untouched": [{"path": e["path"], "name": e.get("name") or Path(e["path"]).name,
