@@ -71,7 +71,8 @@ def test_every_button_is_in_a_group_with_a_form_the_panel_can_render():
     # the owner's list (2026-10-23): first set and second set, nothing dropped back in; and the body button
     assert seen == {"headers_footers_template", "remove_headers_footers", "watermark", "swap_logo", "font_template",
                     "find_replace", "accept_changes", "remove_comments", "remove_highlight", "remove_hidden_text",
-                    "remove_empty_paragraphs", "name_files", "title_property", "track_changes_off", "body_formatting"}
+                    "remove_empty_paragraphs", "name_files", "title_property", "track_changes_off", "body_formatting",
+                    "clean_pdf"}
 
 
 def test_tracking_is_offered_only_where_the_operation_can_track_and_is_off_by_default():

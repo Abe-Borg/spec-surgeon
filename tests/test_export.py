@@ -89,7 +89,7 @@ def test_export_refuses_a_folder_where_a_copy_would_land_on_an_input(tmp_path, f
     assert len(task.unsaved_copies()) == 2 and _names(files[0].parent) == ["21 13 13.docx", "21 13 16.docx"]
     with pytest.raises(ValueError, match="is not a folder"):
         task.export(tmp_path / "missing")
-    with pytest.raises(ValueError, match="no edited copies"):
+    with pytest.raises(ValueError, match="no edited copies or clean PDFs"):
         safe_task(tmp_path / "other").export(tmp_path)
 
 
@@ -258,9 +258,11 @@ def test_closing_asks_once_before_unsaved_copies_are_deleted(tmp_path):
     assert on_closing(state) is False and not state.close_confirmed
     title, question = state.shell.questions[-1]
     assert title == "Copies not saved" and question == unsaved_copies_question(2)
-    assert question.startswith("2 edited copies have not been saved. Closing deletes them")
+    assert question.startswith("2 files made in this window (edited copies or clean PDFs) have not been saved. "
+                               "Closing deletes them")
     assert "Export → Save the copies…" in question and "Cancel goes back" in question
-    assert unsaved_copies_question(1).startswith("1 edited copy has not been saved. Closing deletes it")
+    assert unsaved_copies_question(1).startswith("1 file made in this window (an edited copy or a clean PDF) has not "
+                                                 "been saved. Closing deletes it")
     state.shell.answer = True
     assert on_closing(state) is True and state.close_confirmed and len(state.shell.questions) == 2
     # a shell that cannot ask answers no: the close is refused rather than the copies deleted

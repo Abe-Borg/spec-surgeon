@@ -97,6 +97,7 @@ class Built:
     outcome: Any = None
     left_out: Dict[str, str] = field(default_factory=dict)
     gated: bool = False
+    export: str = ""                   # "pdf": the run also saves a clean PDF of each verified copy (``pdf_export``)
 
 
 @dataclass(frozen=True)
@@ -105,7 +106,7 @@ class Recipe:
     label: str
     group: str
     summary: str                       # one sentence: what the button does
-    needs: Tuple[str, ...]             # "template", "picture"
+    needs: Tuple[str, ...]             # "template", "picture", "pdf" (a program that makes PDFs)
     fields: Tuple[Field, ...]
     build: Callable[[Dict[str, Any], Context], Built]
 
@@ -581,6 +582,34 @@ def _track_changes_off(inputs: Dict[str, Any], ctx: Context) -> Built:
                         "a document whose tracking is locked with a password is left untouched"]), [], request)
 
 
+def _clean_pdf(inputs: Dict[str, Any], ctx: Context) -> Built:
+    """Two ordered steps, in this order: the comments go first, so a comment anchored in text a tracked deletion takes
+    away no longer stops the tracked changes from being accepted; then every tracked change is accepted. The run saves
+    a PDF of each verified copy (``export``); the copies are not the working set (``DocumentTask._end_export``)."""
+    from .pdf_export import renderer
+    backend, why = renderer()
+    if backend is None:
+        raise RecipeError(f"Saving PDFs needs Microsoft Word or LibreOffice on this computer, and neither was found "
+                          f"({why}).")
+    request = "Save clean PDFs: every comment removed, every tracked change accepted"
+    stages = [
+        {"name": "Remove every comment",
+         "spec": _spec(request, "Remove every comment with its replies.", "formatting",
+                       [{"op": "remove_comments", "params": {"which": "all"}}],
+                       ["a document without comments is left as it is"])},
+        {"name": "Accept every tracked change",
+         "spec": _spec(request, "Accept every tracked change: insertions, deletions, moves and formatting changes.",
+                       "untracked", [{"op": "resolve_tracked_changes", "params": {"action": "accept"}}],
+                       ["the body, headers, footers, footnotes and endnotes",
+                        "a change Word must settle itself (a table cell inserted or merged, a change inside an "
+                        "equation) leaves the document without a PDF",
+                        "the PDFs are saved beside the clean copies; the Word documents the next button works on "
+                        "keep their comments and tracked changes"])},
+    ]
+    return Built({"summary": "Remove every comment, then accept every tracked change, then save a PDF of each copy.",
+                  "stages": stages}, [], request, export="pdf")
+
+
 def _title_property(inputs: Dict[str, Any], ctx: Context) -> Built:
     pattern = _text(inputs, "pattern", label="The title")
     if "{number}" not in pattern and "{title}" not in pattern:
@@ -672,6 +701,9 @@ RECIPES: Tuple[Recipe, ...] = (
            _title_property),
     Recipe("track_changes_off", "Turn off Track Changes", "Files & properties",
            "The copies open with Word's Track Changes setting off.", (), (), _track_changes_off),
+    Recipe("clean_pdf", "Save clean PDFs", "Files & properties",
+           "Saves a PDF of every document with its comments removed and its tracked changes accepted; your Word "
+           "documents stay as they are.", ("pdf",), (), _clean_pdf),
 )
 BY_ID: Dict[str, Recipe] = {r.id: r for r in RECIPES}
 

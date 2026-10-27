@@ -100,10 +100,12 @@ def serve(state: WindowState, port: int, *, dev: bool = False):
 
 
 def unsaved_copies_question(count: int) -> str:
-    """What the close asks when edited copies were never saved: closing deletes them with the scratch folder."""
-    copies = "1 edited copy has" if count == 1 else f"{count} edited copies have"
+    """What the close asks when edited copies or clean PDFs were never saved: closing deletes them with the scratch
+    folder."""
+    files = ("1 file made in this window (an edited copy or a clean PDF) has" if count == 1
+             else f"{count} files made in this window (edited copies or clean PDFs) have")
     them = "it" if count == 1 else "them"
-    return (f"{copies} not been saved. Closing deletes {them} with the window's scratch folder.\n\n"
+    return (f"{files} not been saved. Closing deletes {them} with the window's scratch folder.\n\n"
             f"OK closes anyway. Cancel goes back, so you can save {them} with Export → Save the copies…")
 
 

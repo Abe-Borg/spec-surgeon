@@ -11,6 +11,7 @@ import {
   kindTag,
   pageCount,
   parentFolder,
+  pdfFolder,
   planHasContent,
   referencesTitle,
   copiesNote,
@@ -174,4 +175,13 @@ test("the copies note says where they were saved, or that they are kept only in 
   assert.match(copiesNote({ results: [copy("a.docx")] }), /^Not saved yet: Export, in the top bar, saves them to a folder you choose\. Until then they live only in this window's scratch folder/);
   assert.match(copiesNote({ results: [copy("a.docx", "C:/Saved/a.docx"), copy("b.docx")] }), /^1 of 2 not saved yet: Export/);
   assert.equal(copiesNote({ results: [copy("a.docx", "C:/Saved/a.docx"), copy("b.docx", "C:/Saved/b.docx")] }), "Saved to C:/Saved.");
+});
+
+test("the PDF folder is the parent of the first clean PDF", () => {
+  assert.equal(pdfFolder({ pdfs: [] }), "");
+  assert.equal(pdfFolder({}), "");
+  assert.equal(
+    pdfFolder({ pdfs: [{ source: "C:/Specs/a.docx", output: "C:\\runs\\2\\run\\pdf\\a.pdf", name: "a.pdf" }] }),
+    "C:\\runs\\2\\run\\pdf",
+  );
 });

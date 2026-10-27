@@ -245,6 +245,10 @@ class WindowState:
         results = [{"source": source, "output": output, "name": Path(output).name,
                     "unverified": list(unverified.get(source, [])), "saved_to": exported.get(output, "")}
                    for source, output in raw["results"].items()]
+        pdf_marks = raw.get("pdf_unverified") or {}
+        pdfs = [{"source": source, "output": output, "name": Path(output).name,
+                 "unverified": list(pdf_marks.get(source, [])), "saved_to": exported.get(output, "")}
+                for source, output in raw.get("pdfs", {}).items()]
         return {"version": self.version, "busy": busy, "stage": stage, "mode": raw.get("mode", "default"),
                 "modes": task.available_modes(), "template": task.template_info(),
                 "left_untouched": [dict(e) for e in raw.get("left_untouched", [])],
@@ -252,12 +256,13 @@ class WindowState:
                 "cost": task._cost(), "attachments": attachments, "messages": messages, "plan": plan,
                 "questions": list(raw["questions"]), "choices": list(raw["choices"]), "chips": list(raw["chips"]),
                 "samples": samples, "warnings": list(raw["warnings"]), "blocking": bool(raw["blocking"]),
-                "results": results,
+                "results": results, "pdfs": pdfs, "pdf": task.pdf_info(),
                 "export": {"folder": raw.get("export_folder", ""), "unsaved": len(raw.get("unsaved") or []),
                            "copies": int(raw.get("copies") or 0)},
                 "action": {"label": label, "token": raw["token"], "kind": kind,
                            "disabled_reason": raw.get("blocked_reason", ""),
-                           "can_hold": kind == "approve" and bool(raw.get("can_hold"))},
+                           "can_hold": kind == "approve" and bool(raw.get("can_hold")),
+                           "export": raw.get("export", "") if kind == "approve" else ""},
                 "todo": [dict(item) for item in raw.get("todo", [])], "focus": list(raw.get("focus", [])),
                 "working": raw["working"], "budget": {"paused": bool(raw["budget_paused"]),
                                                       "reason": raw.get("pause_reason", "")},
@@ -645,8 +650,8 @@ def create_app(state: WindowState, *, dev: bool = False) -> FastAPI:
         dialog was dismissed; else the view."""
         if state.busy:
             return busy_error()
-        if not state.task.working:
-            return error("There are no edited copies to save yet.")
+        if not state.task.working and not state.task.pdfs:
+            return error("There are no edited copies or clean PDFs to save yet.")
         try:
             body = await request.json()
         except ValueError:

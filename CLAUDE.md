@@ -84,11 +84,14 @@ only when no file plans, a sample fails its check, or every sample is refused). 
 `set_aside` tool at the user's word (`Conversation.set_aside` → `DocumentTask._take_set_aside`), a file the plan
 refused once the others run, a run failure no recovery takes, and recovery's leftovers at `SET_ASIDE_REST`;
 `put_back` takes one off without a pass.
-Delivered copies are the working set the next request builds on. The window works in a scratch folder (`scratch.py`:
-one per window under `data_dir()\scratch`, locked while it runs, holding every session folder, dropped file and the
-journal; deleted at a clean close after one question when a copy was never saved, swept at the next start, a crashed
-window's taken over and restored), and writes a copy where the user chose only through **Export → Save the copies…**
-(`DocumentTask.export` → `guard.write_new`, never over an input; the engine and the verifier are untouched). In Safe mode, **Discard preview**
+Delivered copies are the working set the next request builds on, except Safe mode's **Save clean PDFs**, whose
+result is the PDFs (`DocumentTask.pdfs`, `_end_export`): no working copy, history line or undo point. The window
+works in a scratch folder (`scratch.py`: one per window under `data_dir()\scratch`, locked while it runs, holding
+every session folder, dropped file and the journal; deleted at a clean close after one question when a copy or a
+PDF was never saved, swept at the next start, a crashed window's taken over and restored), and writes a copy or a
+clean PDF where the user chose only through **Export → Save the copies…** (`DocumentTask.export` →
+`guard.write_new`, never over an input, never into the scratch tree; the engine and the verifier are untouched).
+In Safe mode, **Discard preview**
 (`DocumentTask.discard_preview`) withdraws a button's preview and shows again what `_recipe` set aside
 (`_before_button`); **Undo the last button** (`DocumentTask.undo`) pops `undo_points` (one per run that delivered
 copies, taken at approval, kept in the journal) to put the working set back one run. Neither writes or deletes a file.
@@ -126,12 +129,14 @@ jobs). Details: `docs/CONVERSATIONAL_DESKTOP.md`.
     it changes speed and price (`FAST_PRICES`), never the model, effort or prompt; a fast call the fast capacity
     cannot take is re-sent at standard speed. `compiler.compose_submission` is the one gate a submission passes.
   - `preview.py`, `codegen.py` + `sandbox_runner.py` (custom transforms), `goals.py`, `goal_contracts.py`,
-    `goal_operations.py` (reviewed outcome contracts), `recovery*.py`, `continuous_recovery.py`, `campaign_planner.py`
+    `goal_operations.py` (reviewed outcome contracts; a target with `all: true` is bound once, by count), `recovery*.py` (one checkpoint per model call, at the turn's end), `continuous_recovery.py`, `campaign_planner.py`
     (bounded investigation of set-aside files: the outcome plan is a choice the user picks, its words beneath it —
     `Session.outcome` auto-takes a custom transform only — and the documents the user left out of the request stay
     out of it, `Conversation.left_out`), `inventory.py` (the content digest that pins a file).
   - `recipes.py` — Safe mode's buttons: each a fixed EditSpec from its form (`build`), the header/footer template's kind
     (`template_kind`); the page's copy of the list (`frontend/mock/recipes.json`) is pinned to `catalog()`.
+    `pdf_export.py` (Save clean PDFs: a PDF of each copy that passed, rendered through `render` and its cache, then
+    `check_pdf`; the button's plan is a fixed chain, comments removed and then tracked changes accepted).
     `template_roles.py` (a template's style per role, page and font, read without a model) and `body_match.py` (match
     body formatting: one plan per document from its own structure, one layout per agreeing pattern, each through the
     gate; what it cannot match is left out with the reason, `Session.left_out_reasons`).

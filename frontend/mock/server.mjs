@@ -244,6 +244,8 @@ function emptyView() {
     warnings: [],
     blocking: false,
     results: [],
+    pdfs: [],
+    pdf: { available: true, renderer: "Microsoft Word", reason: "" },
     export: { folder: "", unsaved: 0, copies: 0 },
     action: { label: "", token: "", kind: "none", can_hold: false },
     todo: [],
@@ -439,6 +441,8 @@ let view = emptyView();
 let beforeButton = null;
 let undoStack = [];
 let lastRequest = "";
+/** The button waiting for approval saves clean PDFs (Save clean PDFs): the run gives PDFs, not working copies. */
+let exporting = false;
 function resetGoingBack() {
   beforeButton = null;
   undoStack = [];
@@ -725,9 +729,11 @@ async function planJob(res, userText, layouts = false) {
 async function recipeJob(res, recipe) {
   const s = startStream(res);
   view.messages.push(msg("user", recipe.label));
-  if (!beforeButton) beforeButton = { results: view.results, left_untouched: view.left_untouched };
+  if (!beforeButton) beforeButton = { results: view.results, left_untouched: view.left_untouched, pdfs: view.pdfs };
   lastRequest = recipe.label;
+  exporting = recipe.id === "clean_pdf";
   view.results = [];
+  view.pdfs = [];
   view.plan = null;
   view.samples = [];
   view.warnings = [];
@@ -748,7 +754,9 @@ async function recipeJob(res, recipe) {
   view.samples = samples();
   await s.emit({ type: "samples", samples: view.samples, warnings: [], blocking: false });
   view.stage = "preview";
-  view.action = { label: "Create edited copies", token: `tok-approve-${++seq}`, kind: "approve", can_hold: true };
+  view.action = exporting
+    ? { label: "Save clean PDFs", token: `tok-approve-${++seq}`, kind: "approve", can_hold: true, export: "pdf" }
+    : { label: "Create edited copies", token: `tok-approve-${++seq}`, kind: "approve", can_hold: true };
   view.working = { ...view.working, ...undoFields() };
   s.end();
 }
@@ -862,6 +870,23 @@ async function primaryJob(res, token, hold = []) {
       })
     : [];
   const fresh = results().filter((r) => running.some((a) => a.path === r.source) && !asideByButton.some((x) => x.path === r.source));
+  if (view.mode === "safe" && exporting) {
+    // Save clean PDFs: a PDF of each clean copy; the working set, the history and Undo are as they were.
+    exporting = false;
+    beforeButton = null;
+    view.pdfs = fresh.map((r) => ({ source: r.source, output: `${RUN_DIR}/pdf/${r.name.replace(/\.docx$/i, "")}.pdf`, name: r.name.replace(/\.docx$/i, ".pdf") }));
+    view.left_untouched = asideByButton.map((x) => ({ path: x.path, name: x.name, reason: x.reason }));
+    const left = view.left_untouched.length ? ` Without a PDF: ${view.left_untouched.map((x) => x.name).join(", ")} — each one's reason is under Left untouched.` : "";
+    const done = msg("app", `${view.pdfs.length} clean ${view.pdfs.length === 1 ? "PDF is" : "PDFs are"} ready, made by Microsoft Word: every comment removed and every tracked change accepted, each from a copy the checks passed. Your Word documents are as they were; the next button works on them, comments and tracked changes included.${left}`);
+    view.messages.push(done);
+    await s.emit({ type: "message", message: done });
+    view.stage = "done";
+    view.plan = null;
+    view.samples = [];
+    view.action = { label: "", token: "", kind: "none", can_hold: false };
+    view.working = { ...view.working, ...undoFields() };
+    return s.end();
+  }
   if (view.mode === "safe") {
     // A button's run: the app's own note, no AI words; what it left untouched waits beside the copies. What it
     // replaces is kept for Undo.
@@ -1146,8 +1171,10 @@ async function handle(req, res) {
       if (beforeButton) {
         view.results = beforeButton.results;
         view.left_untouched = beforeButton.left_untouched;
+        view.pdfs = beforeButton.pdfs ?? [];
       }
       beforeButton = null;
+      exporting = false;
       view.plan = null;
       view.samples = [];
       view.warnings = [];
@@ -1187,6 +1214,7 @@ async function handle(req, res) {
       view.samples = [];
       view.warnings = [];
       view.results = [];
+      view.pdfs = [];
       view.left_untouched = [];
       view.todo = [];
       view.focus = [];
@@ -1209,10 +1237,11 @@ async function handle(req, res) {
     }
     case "POST /api/export": {
       if (view.busy) return busyRefusal();
-      if (view.results.length === 0) return json(res, 400, { error: "There are no edited copies to save yet." });
+      if (view.results.length === 0 && view.pdfs.length === 0) return json(res, 400, { error: "There are no edited copies or clean PDFs to save yet." });
       const folder = "C:/Users/abe/Documents/Saved copies";
       view.results = view.results.map((r) => ({ ...r, saved_to: `${folder}/${r.name}` }));
-      view.export = { folder, unsaved: 0, copies: view.results.length };
+      view.pdfs = view.pdfs.map((p) => ({ ...p, saved_to: `${folder}/${p.name}` }));
+      view.export = { folder, unsaved: 0, copies: view.results.length + view.pdfs.length };
       view.messages.push(msg("app", `Saved ${view.results.length} copies to ${folder}.`));
       settings.export_folder = folder;
       return json(res, 200, view);

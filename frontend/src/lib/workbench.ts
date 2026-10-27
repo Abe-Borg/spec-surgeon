@@ -55,6 +55,12 @@ export function copiesNote(view: Pick<View, "results">): string {
   return `${count}: Export, in the top bar, saves them to a folder you choose. Until then they live only in this window's scratch folder, which goes when the window closes.`;
 }
 
+/** The folder of the clean PDFs: the parent of the first one, or "" with none. */
+export function pdfFolder(view: Partial<Pick<View, "pdfs">>): string {
+  const first = view.pdfs?.[0]?.output ?? "";
+  return first ? parentFolder(first) : "";
+}
+
 export interface PageCount {
   /** "Pages: 12 → 13 (+1)", or "" when a count is missing. */
   text: string;

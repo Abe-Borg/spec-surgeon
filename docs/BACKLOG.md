@@ -15,7 +15,6 @@ them was built; `git log --all -- 'docs/PLAN-*'` finds them, with their findings
 | Item | What the run showed | What to build |
 | --- | --- | --- |
 | S4 — what a run left open | Over test-set-2 (13 specifications, eight owners): the reference rules find no section number in seven of them (VA, Wisconsin, Port of Portland, Michigan layouts); a chain preview repeats the spec's summary and assumptions for each step; after an outcome-planner question the next reply still goes to that planner, not the assistant (seen again over test-set-3) | Reference rules for those layouts; a chain preview that says its summary once; the reply after an outcome-planner question goes back to the assistant |
-| P5 — recovery's pace | Recovery of 27 files took 30 minutes: one trial per file, serially (about 25 s each, 177 s for the largest), three checkpoints per model call (5–18 s each), and Stop waited 37 s for two of them | A checkpoint per model call instead of three; an `all` target's bindings kept once, not per paragraph in every checkpoint and in `set_aside.json`; trials of files with the same method in one run |
 
 ### Word as the judge of tracked changes (W1–W4)
 
@@ -137,6 +136,11 @@ specifications, Windows and Word, and only the owner can do them. Record what a 
   opened in Word. A request that needs a custom method using an attached file (a logo from an attached picture, a
   template's text box): its failed checks going back to the writer, any it keeps shown with its reason beside the
   copy, and the copy opened in Word.
+- **Save clean PDFs** (built 2026-10-27): over a real redlined and commented set, with Word. Each PDF shows no
+  comment balloon and no redline and matches Word's own *No Markup* print of the accepted document. The PDFs open in
+  Acrobat. A file with an inserted table cell is listed without a PDF. The Word documents still carry their comments
+  and tracked changes afterwards, and Undo goes back before the last button that changed them. Then once with
+  LibreOffice only.
 - **The chat streaming its words:** a question's or a plan's message appearing in the window as Claude writes it.
 - **The spending check and the kill switch:** a recovery or custom method that reaches a low check (say $5) pauses
   with the card's amounts, Continue goes on, and the request's spending in Anthropic's console agrees with the

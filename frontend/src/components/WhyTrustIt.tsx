@@ -61,8 +61,9 @@ export default function WhyTrustIt({ onDeepDive }: { onDeepDive: () => void }) {
             t: "Nothing is delivered without your click",
             d: (
               <>
-                <Tag>Create edited copies</Tag> approves exactly the plan and files on screen. If a document or the plan
-                changed since the preview, the click is refused until you have looked again.
+                <Tag>Create edited copies</Tag> (<Tag>Save clean PDFs</Tag> for that button) approves exactly the plan
+                and files on screen. If a document or the plan changed since the preview, the click is refused until you
+                have looked again.
                 {" "}In Safe and Default modes, a failed preview check also blocks Create; the reason appears beside it.
               </>
             ),

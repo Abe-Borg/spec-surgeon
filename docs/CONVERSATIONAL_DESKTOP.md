@@ -28,7 +28,7 @@ In Safe mode the box you type in gives way to buttons, in groups: headers and fo
 watermark, swap the logo), fonts and formatting (match body formatting to template, match font to template), text
 (find and replace), clean up (accept all tracked changes,
 remove comments, highlighting, hidden text or empty paragraphs) and files and properties (name the copies by section
-number and title, the document title property, Track Changes off). A button that cannot be pressed yet says why when
+number and title, the document title property, Track Changes off, save clean PDFs). A button that cannot be pressed yet says why when
 the pointer rests on it (no documents, no template, no picture). Pressing one opens a short form — the words to find
 and their replacements, the watermark's words, a template's values, a naming pattern — and **Preview**.
 
@@ -73,6 +73,33 @@ placeholders) from an ordinary specification used as one without a model (`recip
 template's section number and title placeholders are filled from each document and its other placeholders are typed
 in the form; an ordinary specification gives each document its own number and title wherever its headers and footers
 show its own; a template with nothing to fill is refused at the button.
+
+**Save clean PDFs** (`recipes._clean_pdf`, `pdf_export.py`) makes a PDF of every document with all its comments off and
+every tracked change accepted, ready to issue. Its plan is two ordered steps, fixed in this order: every comment is
+removed (`remove_comments`, its replies with it), then every tracked change is accepted (`resolve_tracked_changes`).
+The comments go first so that a comment anchored in text a tracked deletion takes away does not stop the deletion from
+being accepted. The plan passes the gate and the preview as any button's does, and the preview's after pages are the
+clean pages. Beside them the one button reads **Save clean PDFs**. Its run makes and checks the clean copies (each
+step a checked batch on the step before it); then `Session._export_pdfs` hands each copy that passed every check
+(an identical copy too: a document with nothing to clean still gets its PDF) to `pdf_export.export_pdfs`. That renders
+it with the renderer the preview and the run use: Word in a new, invisible instance, or LibreOffice when Word is not
+there. It goes through the render cache, so a copy the run rendered for its page checks is served again. Then it
+checks each PDF (`check_pdf`): it opens without a password, has at least one page, and no page carries a note. The
+PDFs go to the run's `pdf/` folder, with `PDF_REPORT.md` beside the run's other reports; a PDF that fails its check
+is kept apart in `pdf-failed/`. The window lists them under **Your clean PDFs** (the view's `pdfs`), each opening in
+the PDF viewer, with a button for their folder; like the copies they live in the window's scratch folder until
+**Export** saves them with the copies ("Export: saving the copies", below), and the close asks before deleting them. A PDF made from a document delivered UNVERIFIED earlier (Obliterate
+mode) is marked UNVERIFIED there with that copy's failed checks (`DocumentTask._pdf_marks`), as every later copy built
+on it is.
+
+The PDFs are the result and nothing else changes (`DocumentTask._end_export`): the Word documents the next button works
+on are the ones it worked on, comments and tracked changes included. No copy joins the working set, no line joins the
+history the assistant hears, and no undo point is taken, so **Undo the last button** still goes back before the last
+button that changed the documents. The clean copies stay in the run folder's `outputs/`. A document the plan cannot
+clean exactly (a change Word must settle itself: an inserted or merged table cell, a change inside an equation), or
+whose PDF cannot be made or fails its check, gets no PDF and is listed under **Left untouched by the last button** with
+the reason. The button needs Word or LibreOffice: without either it cannot be pressed, and says why (the view's
+`pdf`).
 
 **Match body formatting to template** (`template_roles.py`, `body_match.py`) plans
 each document on its own, in code. The form shows the template's style for each part of a section (the section

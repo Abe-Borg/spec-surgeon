@@ -6,7 +6,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import type { View } from "../src/types.ts";
-import { APPROVE_TIP, BLOCKING_TIP, DRAFT_TIP, STOP_TIP, actionButton, actionSentence, canDiscard, defaultLabel, heldTip } from "../src/lib/action.ts";
+import { APPROVE_TIP, BLOCKING_TIP, DRAFT_TIP, PDF_TIP, STOP_TIP, actionButton, actionSentence, canDiscard, defaultLabel, heldTip } from "../src/lib/action.ts";
 import { EMPTY_VIEW } from "../src/lib/view.ts";
 
 function view(overrides: Partial<View> = {}): View {
@@ -108,4 +108,22 @@ test("Discard shows only while a Safe-mode preview waits and no work runs", () =
   assert.equal(canDiscard(view({ mode: "safe", stage: "preview" }), true), false);
   assert.equal(canDiscard(view({ mode: "safe", stage: "done" }), false), false);
   assert.equal(canDiscard(view({ mode: "default", stage: "preview" }), false), false);
+});
+
+test("a Save clean PDFs preview says PDFs on its button, its tip and the sentence beside it", () => {
+  const pdf = view({ action: { label: "Save clean PDFs", token: "t", kind: "approve", can_hold: true, export: "pdf" } });
+  const button = actionButton(pdf, false, false);
+  assert.equal(button?.label, "Save clean PDFs");
+  assert.equal(button?.tip, PDF_TIP);
+  assert.ok(button && button.kind === "approve" && button.pdf);
+  if (button) assert.equal(actionSentence(button, 0), "If the pages look right, save the clean PDFs.");
+  const held = actionButton(pdf, false, false, 1);
+  assert.equal(held?.label, "Save clean PDFs (1 set aside)");
+  assert.equal(held?.tip, heldTip(1, true));
+  assert.match(heldTip(1, true), /^Saves a clean PDF of every document except the one marked with the red X/);
+  if (held) assert.match(actionSentence(held, 1), /the rest get their PDFs now\.$/);
+  // an ordinary preview is unchanged
+  const copies = actionButton(view({ action: { label: "Create edited copies", token: "t", kind: "approve" } }), false, false);
+  assert.equal(copies?.tip, APPROVE_TIP);
+  assert.ok(copies && copies.kind === "approve" && !copies.pdf);
 });
