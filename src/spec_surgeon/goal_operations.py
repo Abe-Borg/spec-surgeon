@@ -12,6 +12,7 @@ from pathlib import Path
 from .goals import GoalError
 from .ooxml import block_full_text, paragraphs
 from .ops import JobException, get_op
+from .ops.replace_text import default_author
 from .ops.selectors import (SCOPE_KINDS, StyleSheet, check_paragraph_selector,
                             paragraph_selected, scope_parts)
 
@@ -47,19 +48,19 @@ COUNTS = {
 }
 
 
-def operation_params(effect, author="Abraham Borg"):
+def operation_params(effect, author=None):
     params = copy.deepcopy(effect["params"])
     if "template" in effect:
         params["template"] = effect["template"]
     if effect["type"] in AUTHORED:
-        params.setdefault("author", author)
+        params.setdefault("author", author or default_author())
     if effect["type"] == "paragraph_borders":
         # Stable approval semantics independent of selector shape.
         params.setdefault("tracked", False)
     return params
 
 
-def operation_spec(effect, request, author="Abraham Borg"):
+def operation_spec(effect, request, author=None):
     params = operation_params(effect, author)
     mode = "formatting"
     if effect["type"] == "review_comments":
@@ -151,7 +152,7 @@ def validate_operation_effect(effect):
         raise GoalError(str(exc)) from exc
 
 
-def source_operation_count(pkg, effect, *, author="Abraham Borg"):
+def source_operation_count(pkg, effect, *, author=None):
     """Count the original eligible targets analytically, without applying edits.
 
 Planning is used only to establish source-side selection evidence for complex

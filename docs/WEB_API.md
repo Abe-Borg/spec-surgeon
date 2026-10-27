@@ -74,7 +74,10 @@ Rules the page relies on:
   `question`, under the latest assistant message. Choices with `words` show the words beneath the button.
   Each of the model's words shows once: the assistant message carries its reply without the questions, and
   `questions` never repeats that message (a reply with nothing to pick, plain words or a failure, is in `messages`
-  only; `questions` carries it only when the chat did not say it, as a recovery turn's).
+  only; `questions` carries it only when the chat did not say it, as a recovery turn's). An outcome plan (the
+  conversation's fallback when no ordinary plan fits) is one choice, **Use these outcomes and continue**, with the
+  words it would place beneath it and the outcomes in full in `questions`; the app carries it out only once it is
+  picked (`DocumentTask._take` approves the words as any pick does).
 - `mode` is the window's mode (docs/CONVERSATIONAL_DESKTOP.md, "Safe mode"). In `safe`, `action.kind` is only ever
   `approve` or `none` (no conversation to continue), `send` and `choose` end in `error`, and the page shows the
   buttons (`GET /api/recipes`) in place of the composer. `template` says what kind of header/footer template the

@@ -205,13 +205,15 @@ export const RUNTIME_CARDS: RuntimeCard[] = [
     automatic: true,
     you:
       "Nothing beyond your request: when no ordinary plan fits (Claude finds no operation for it, the plan covers no " +
-      "file, a sample fails its check, or every sample is refused), the app continues on its own. A file the plan " +
+      "file, a sample fails its check, or every sample is refused), the app asks Claude for a plan of outcomes on " +
+      "its own, then offers it to you as one choice, Use these outcomes and continue, with every word it would place " +
+      "beneath it; nothing is tried until you pick it. A file the plan " +
       "refuses while the others plan does not start it, nor does a sample a later step of the plan refuses: that " +
       "file waits under Left untouched beside the preview of the others, and goes on your to-do list when you " +
-      "create theirs.",
+      "create theirs. The documents you left out of the request stay out of the outcomes.",
     runs:
       "Claude proposes the outcomes to reach (what should change, where, with what wording). The app checks the " +
-      "proposal, carries it out without waiting for a pick, and tries methods on copies of your files: built-in " +
+      "proposal and shows it; once you pick it, the app tries methods on copies of your files: built-in " +
       "operations or, when they fall short, a custom method that may make exactly the changes the outcomes name, " +
       "their wording included (not only formatting). Each copy is checked by the independent checker against those " +
       "outcomes; the plan's effects and pages are shown before anything is delivered.",
@@ -220,8 +222,8 @@ export const RUNTIME_CARDS: RuntimeCard[] = [
     ai: recoveryModel,
     bounds:
       `Counts toward the pause; the trials get at most ${F.recoveryAttemptsPerGroup} attempts per group of files, ` +
-      "on copies only. The wording in Claude's proposed outcomes is treated as " +
-      "approved on this path without a separate pick: read the plan before you approve it.",
+      "on copies only. The wording in Claude's proposed outcomes is approved by your pick of the choice, as any " +
+      "choice's is: read it beneath the choice before you pick.",
   },
   {
     covers: ["A28"],
@@ -232,11 +234,13 @@ export const RUNTIME_CARDS: RuntimeCard[] = [
       "leaves it.",
     runs:
       "Showing it is kept in settings.json; being in it never is, so the next start opens in Safe or Default. While " +
-      "it is on, the conversation's gate stops tracing placed words to you (Claude may write wording; it is in the " +
-      "plan you approve), a custom method may change anything Word stores and use the files you attached (its " +
+      "it is on, the conversation's gate traces placed words to you or to the reply you read (Claude may write " +
+      "wording; every word it places must be in its reply, or the plan is refused), a custom method may change " +
+      "anything Word stores and use the files you attached (its " +
       `failed checks go back to Claude up to ${F.obliterateCheckRounds} times first), and a copy that fails its check is ` +
       "delivered marked UNVERIFIED instead of being held back, with no recovery after it; its preview page already " +
-      "says Did not pass, and the plan stands. Entering or leaving it " +
+      "says Did not pass, and the plan stands. The mark stays on every later copy built on it, in every mode, " +
+      "until Start over, Undo or removing the document. Entering or leaving it " +
       "voids the plan on screen.",
     sent: "Nothing when you choose it. The conversation then sends what it sends in Default mode.",
     ai: NONE,

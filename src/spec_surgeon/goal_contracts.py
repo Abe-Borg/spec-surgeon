@@ -13,7 +13,7 @@ import re
 from pathlib import Path
 from typing import Any, Dict
 
-from .goals import GoalError, NeedsInput, _digest, _visible_text
+from .goals import GoalError, NeedsInput, _digest, _visible_text, contract_author
 from .goal_operations import (OPERATIONS, operation_catalog, operation_spec,
                               source_operation_count, validate_operation_effect)
 from .ooxml import block_full_text, paragraphs
@@ -435,7 +435,7 @@ def resolve_goal(source, contract):
             if effect["type"] in OPERATIONS:
                 from .ops import JobException
                 try:
-                    count = source_operation_count(pkg, effect, author=contract.get("author", "Abraham Borg"))
+                    count = source_operation_count(pkg, effect, author=contract_author(contract))
                 except JobException as exc:
                     raise GoalMethodRequired(f"cannot bind original {effect['type']} targets: {exc}") from exc
                 expected_count = effect["expected_count"]
@@ -614,10 +614,10 @@ def compile_goal_candidate(source, contract, binding=None):
     try:
         for _, effect in effects:
             kind = effect["type"]
-            author = effect.get("author", contract.get("author", "Abraham Borg"))
+            author = effect.get("author", contract_author(contract))
             targets = bound["effects"][effect["id"]]["targets"]
             if kind in OPERATIONS:
-                spec = operation_spec(effect, request, contract.get("author", "Abraham Borg"))
+                spec = operation_spec(effect, request, contract_author(contract))
                 try:
                     validate_spec(spec)
                     plan_spec(pkg, spec)

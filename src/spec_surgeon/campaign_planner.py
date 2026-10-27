@@ -66,11 +66,19 @@ READ_NAMES = {"inspect_profile", "compare_files", "list_styles", "sample_paragra
               "list_parts", "read_paragraphs", "read_xml_page", "run_analysis", "read_analysis_result", "read_context_archive"}
 
 
-def inspect_goal_effect(documents, document_id, effect, *, template=None, author="Abraham Borg"):
+def contract_author(contract):
+    """The author a contract's tracked changes carry: the one the planner proposed, else the engine's own default
+    (``ops.replace_text.default_author``: ``SPEC_SURGEON_AUTHOR`` or the user's account name), never a literal name."""
+    from .ops.replace_text import default_author
+    return (contract.get("author") if isinstance(contract, dict) else None) or default_author()
+
+
+def inspect_goal_effect(documents, document_id, effect, *, template=None, author=None):
     """Read-only original-source preflight; it cannot save a goal or authorize execution."""
     from .goal_operations import COUNTS, OPERATIONS
     from .inventory import digest
 
+    author = author or contract_author(None)
     document = next((d for d in documents if d["id"] == document_id), None)
     if document is None or document.get("status") == "UNREADABLE":
         raise ValueError("Choose a readable document ID inside this project planning scope.")
@@ -197,6 +205,9 @@ def propose(project, documents, request, options, *, client=None, log=None, prio
                         if finished:
                             raise ValueError("A final plan or question was already accepted in this response; later tools cannot replace it.")
                         if name == "propose_plan":
+                            if isinstance(params.get("contract"), dict) and not params["contract"].get("author"):
+                                # the author its tracked changes carry: the user's own, as every built-in op's
+                                params["contract"] = {**params["contract"], "author": contract_author(None)}
                             goals.validate_contract(params.get("contract"))
                             for attachment in goals.goal_templates(params["contract"]):
                                 if template is None or Path(attachment).resolve() != Path(template).resolve():

@@ -56,7 +56,9 @@ from .resources import (DEFAULT_CONTEXT_TOKENS, DEFAULT_EFFORT, DEFAULT_MAX_ATTE
                         DEFAULT_STALL_REPETITIONS, InvestigationProgress, positive_integer)
 
 CHOICE_KINDS_FROM_CLAUDE = ("clarify", "alternative", "rephrase")   # built from Claude's own label and wording
-APP_CHOICE_KINDS = ("custom_transform", "recovery_plan", "recovery_target")   # carried out by the app, never sent
+APP_CHOICE_KINDS = ("custom_transform", "recovery_plan", "recovery_target")   # carried out by the app, never sent to
+# Claude as a reply: a custom transform the app takes on its own, an outcome plan once the user picks it (its words
+# beneath the choice), a recovery target by the window's numbered question
 MAX_CALLS_PER_TURN = compiler.MAX_TURNS
 NUDGE = "Finish by calling submit_editspec (or ask_user)."
 
@@ -340,6 +342,9 @@ class Conversation:
         # left ``files`` at once, and no later submission plans them; with the reason given for each
         self.set_aside: List[str] = []
         self.set_aside_reasons: Dict[str, str] = {}
+        # the documents the user left out of the last plan Claude submitted (``leave_out``, resolved paths): an
+        # outcome plan that follows a failed preview covers the others alone (``continuous_recovery.propose``)
+        self.left_out: List[str] = []
         self.prior_failures = list(prior_failures or [])
         # The words a spec may place: the request, the user's answers, and (on a replay of a saved conversation) the
         # words the user actually typed or accepted — never a choice's label; never an empty source.
@@ -533,6 +538,7 @@ class Conversation:
         return {"id": self.id, "request": self.request, "files": [str(f) for f in self.files],
                 "template": str(self.template) if self.template else None,
                 "input_files": [str(p) for p in self.batch.inputs], "set_aside": list(self.set_aside),
+                "left_out": list(self.left_out),
                 "model": self.model, "mode": self.mode,
                 "approved_words": list(self.sources), "answers": list(self.answers),
                 "entries": [e.to_dict() for e in self.entries], "turn": self.turn.to_dict() if self.turn else None,
@@ -761,7 +767,8 @@ class Conversation:
                             if not errs:
                                 outcome, errs = compiler.compose_submission(spec, self.batch, self.sources,
                                                                             leave_out=left_out + parked,
-                                                                            unguarded=self.unguarded)
+                                                                            unguarded=self.unguarded,
+                                                                            shown=[self.shown_text(said, inp, spec)])
                             record.update(accepted=not bool(errs), errors=errs,
                                           composed=bool(errs) is False and outcome is not spec)
                     except Exception as e:  # noqa: BLE001 — the call must be answered (rule 14): a spec the checks
@@ -906,6 +913,18 @@ class Conversation:
         return Turn("questions", message="\n\n".join(dict.fromkeys(messages)), understanding=" ".join(understanding),
                     questions=questions, choices=choices, errors=errors, images=images, chips=chips)
 
+    @staticmethod
+    def shown_text(said: str, inp: Dict[str, Any], spec: Any) -> str:
+        """What the user reads of a submission in the chat: Claude's plain text of the turn and the tool's message
+        (the spec's summary stands in for a model that wrote neither). The window shows no plan card, so this is the
+        one place the user can read what a plan will place — the text Obliterate's gate traces placed words to
+        (``compiler.compose_submission(shown=)``)."""
+        parts = [p for p in (str(said or "").strip(), str((inp or {}).get("message") or "").strip()) if p]
+        summary = ""
+        if isinstance(spec, dict):
+            summary = str(spec.get("summary") or spec.get("description") or spec.get("name") or "")
+        return "\n\n".join(dict.fromkeys(parts)) or summary
+
     def _spec_turn(self, spec, inp, rejections, images, said: str = "", leave_out=()) -> Turn:
         # The spec the app gets carries the USER's request, never the text Claude wrote in "request": the advisor and
         # the next pass (set_aside.json → retry) count it among the approved words. A copy — the history keeps the
@@ -924,9 +943,9 @@ class Conversation:
             summary = str(spec.get("summary") or "")
         # The user reads the model's words: its plain text of the turn and the tool's message (the summary stands in
         # for a model that wrote neither); the summary is the record's.
-        parts = [p for p in (said.strip(), str(inp.get("message") or "").strip()) if p]
-        message = "\n\n".join(dict.fromkeys(parts)) or summary
+        message = self.shown_text(said, inp, spec)
         left_out = [str(Path(p).resolve()) for p in leave_out]
+        self.left_out = list(left_out)
         # a question or an unsupported outcome is answered before any plan the submission also carries could run
         # (compose_submission refuses the two together; this order is the second guard)
         if isinstance(spec.get("layouts"), list) and not (spec.get("unsupported") or spec.get("questions")):

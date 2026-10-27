@@ -42,16 +42,20 @@ def propose(conversation):
 
     c = conversation
     c.recovery_active = True
-    paths = list(c.files) + ([c.template] if c.template else []) + list(c.batch.inputs)
+    planned, left_out = planned_files(c)
+    paths = planned + ([c.template] if c.template else []) + list(c.batch.inputs)
     # A draft based on stale inspection must not be presented as current.
     for path in paths:
         c.batch.check_source_pin(path)
     pins = {str(p.resolve()): digest(p) for p in paths}
     documents = [{"id": str(i), "source": str(p.resolve()), "source_sha256": pins[str(p.resolve())],
-                  "status": "UNRESOLVED"} for i, p in enumerate(c.files)]
+                  "status": "UNRESOLVED"} for i, p in enumerate(planned)]
     project = {"label": "this conversation", "context": {"request": c.request,
         "prior_failures": c.prior_failures, "built_in_refusal": c.unsupported,
-        "previous_approved_goal": getattr(c, "approved_recovery_contract", None)},
+        "previous_approved_goal": getattr(c, "approved_recovery_contract", None),
+        # the documents the user left out of the request: out of scope, out of every outcome, never asked about
+        "left_out_by_the_user": [f"{c.batch.label(p)}: the user left it out of this request; it is not in scope, "
+                                 "no outcome covers it, and it is not yours to ask about" for p in left_out]},
         "goal": {"template": str(c.template.resolve())} if c.template else {},
         "decisions": [{"text": s, "document_ids": [d["id"] for d in documents]} for s in c.sources]}
     if c.work_dir:
@@ -69,7 +73,7 @@ def propose(conversation):
     contract = copy.deepcopy(draft["contract"])
     contract["request"] = c.request
     snapshot = {"contract": contract, "pins": pins,
-                "files": [str(p.resolve()) for p in c.files],
+                "files": [str(p.resolve()) for p in planned],
                 "template": str(c.template.resolve()) if c.template else None}
     words = approved_goal_words(contract)
     try:
@@ -111,19 +115,28 @@ def approve(conversation, choice_id):
     return snapshot
 
 
+def planned_files(conversation):
+    """``(planned, left_out)``: the conversation's documents without those the user left out of the request
+    (``Conversation.left_out``), and those. An outcome plan covers the planned ones alone."""
+    out = set(getattr(conversation, "left_out", None) or [])
+    planned = [p for p in conversation.files if str(Path(p).resolve()) not in out]
+    return planned, [p for p in conversation.files if str(Path(p).resolve()) in out]
+
+
 def execute(conversation, snapshot, out_dir, *, render=False, options=None):
     from .inventory import digest
     from .recovery import prepare_recovery, resume_recovery
     if fingerprint(snapshot) != getattr(conversation, "approved_recovery_hash", None):
         raise ValueError("Recovery requires the exact outcomes reviewed in this conversation.")
-    if ([str(p.resolve()) for p in conversation.files] != snapshot["files"]
+    planned, _ = planned_files(conversation)
+    if ([str(p.resolve()) for p in planned] != snapshot["files"]
             or (str(conversation.template.resolve()) if conversation.template else None) != snapshot["template"]):
         raise ValueError("The approved source scope or template role changed before recovery.")
     for name, pin in snapshot["pins"].items():
         if digest(Path(name)) != pin:
             raise ValueError("An approved input changed before recovery.")
     selected_options = options or options_for(conversation, render=render)
-    result = prepare_recovery(conversation.files, conversation.request, out_dir,
+    result = prepare_recovery(planned, conversation.request, out_dir,
         template=conversation.template, prior_failures=conversation.prior_failures,
         approved_words=list(conversation.sources), adaptive_contract=copy.deepcopy(snapshot["contract"]),
         options=selected_options, log=conversation.log, input_files=list(conversation.batch.inputs))

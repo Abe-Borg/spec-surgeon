@@ -56,6 +56,7 @@ SET_ASIDE_REST = "Set the rest aside for later"
 WHY_HELD, WHY_ASKED, WHY_REFUSED, WHY_FAILED = "held", "asked", "refused", "failed"
 HELD_REASON = "You marked its preview as needing more work."
 ASKED_REASON = "You asked to set it aside for later."
+EARLIER_COPY = "in an earlier copy: "   # an UNVERIFIED mark a later copy builds on (``_mark_unverified``)
 CONVERSATION_EFFORT = "medium"   # the model's own default: fewer tool rounds per turn than high, measured by the owner
 RECOVERY_EFFORT = "high"         # the hard path keeps the depth
 RECOVERY_ATTEMPTS = 8            # candidate attempts per problem group (docs/RECOVERY.md), on every recovery path
@@ -590,6 +591,13 @@ class DocumentTask:
             missing = [Path(d).name for d in docs if d not in carrying]
             lines.append(f"{summary} (not in {', '.join(missing)})" if len(missing) <= len(carrying) else
                          f"{summary} (only in {', '.join(Path(d).name for d in carrying)})")
+        # a copy delivered UNVERIFIED (Obliterate mode), or built on one: the model plans on a copy whose content the
+        # checks could not vouch for, and must hear so — the mark says which checks failed, and where
+        for d in docs:
+            marks = self.unverified.get(d)
+            if marks:
+                lines.append(f"{Path(d).name} was delivered UNVERIFIED (Obliterate mode): {'; '.join(marks)} failed, "
+                             "so its copy may have lost or changed content; plan on it with that in mind")
         return lines
 
     def _focus_context(self) -> str:
@@ -708,7 +716,8 @@ class DocumentTask:
         attached = {str(a.path) for a in self.attachments if not a.template and not a.reference}
         keys = {_same_file_key(p) for p in attached}
         self.results = {k: v for k, v in shown["results"].items() if k in attached and Path(v).is_file()}
-        self.unverified = {k: list(v) for k, v in shown["unverified"].items() if k in self.results}
+        # a mark belongs to the working copy it was delivered with, shown among the results or not
+        self.unverified = {k: list(v) for k, v in shown["unverified"].items() if k in self.results or k in self.working}
         self.left_untouched = [dict(e) for e in shown["left_untouched"]
                                if _same_file_key(e["path"]) in keys and e["path"] not in self.todo]
 
@@ -999,8 +1008,9 @@ class DocumentTask:
                                    "unverified": {k: list(v) for k, v in self.unverified.items()},
                                    "left_untouched": [dict(e) for e in self.left_untouched]}
         # Results describe this button's copies. Earlier copies remain in the working set and on disk, but must
-        # not be presented as if they carry a later change that could be refused or fail verification.
-        self.results, self.unverified = {}, {}
+        # not be presented as if they carry a later change that could be refused or fail verification. An UNVERIFIED
+        # mark is the working copy's, not the button's: it stays (``_mark_unverified``).
+        self.results = {}
         self.say(built.request, "user")
         self.decisions = [built.request]
         self.word_sources.extend(w for w in built.sources if w not in self.word_sources)
@@ -1585,11 +1595,14 @@ class DocumentTask:
                 self._mark_unverified(str(self.origin_of(item.source)), getattr(item, "unverified", None))
 
     def _mark_unverified(self, origin: str, failed) -> None:
-        """A copy delivered with failed checks (Obliterate mode) keeps them beside it; a later verified copy clears it."""
-        if failed:
-            self.unverified[origin] = [str(x) for x in failed]
-        else:
-            self.unverified.pop(origin, None)
+        """A copy delivered with failed checks (Obliterate mode) keeps them beside it, and so does every later copy
+        that builds on it: a later PASS was checked against the unverified copy, not against the original, so from
+        then on the mark says "in an earlier copy" and leaves only with Start over, Undo or the document itself."""
+        earlier = [x if x.startswith(EARLIER_COPY) else EARLIER_COPY + x for x in self.unverified.get(origin, [])]
+        fresh = [str(x) for x in failed or []]
+        marks = fresh + [x for x in earlier if x not in fresh and x[len(EARLIER_COPY):] not in fresh]
+        if marks:
+            self.unverified[origin] = marks
 
     # ---- what the window shows ----
     def _groups(self):
@@ -1705,10 +1718,11 @@ class DocumentTask:
                 f"{i}. {value}" for i, value in enumerate(question["options"], 1)))
         elif self.stage == "question":
             questions.extend(outcome.questions)
-            if not questions and not choices:
+            if not questions and (not choices or any(c.kind == "recovery_plan" for c in choices)):
                 # A reply with nothing to pick (plain words, a failure) is the chat's, said there once; the card
                 # carries it only when the chat did not say that reply (a recovery turn's), whatever an older
-                # bubble said.
+                # bubble said. An outcome plan's message (the outcomes in full, the planner's reasons and risks) is
+                # the card's too: the user reads it above the choice that carries it out.
                 message = (outcome.message or "").strip()
                 if not message:
                     questions.append("Tell me what you’d like to change or clarify.")
@@ -1936,10 +1950,13 @@ class DocumentTask:
         if not isinstance(self.word_sources, list) or not all(isinstance(x, str) for x in self.word_sources):
             raise ValueError("The saved wording approvals could not be read.")
         self.results = data.get("results", {})
-        unverified = data.get("unverified", {})
-        self.unverified = ({k: [str(x) for x in v] for k, v in unverified.items()
-                            if k in self.results and isinstance(v, list)} if isinstance(unverified, dict) else {})
         working = data.get("working", {})
+        unverified = data.get("unverified", {})
+        # a mark belongs to a working copy (an earlier copy's, carried on) or to a result of the last run
+        self.unverified = ({k: [str(x) for x in v] for k, v in unverified.items()
+                            if (k in self.results or (isinstance(working, dict) and k in working))
+                            and isinstance(v, list) and all(isinstance(x, str) for x in v)}
+                           if isinstance(unverified, dict) else {})
         history = data.get("history", [])
         if (isinstance(working, dict) and all(isinstance(k, str) and isinstance(v, str) for k, v in working.items())
                 and isinstance(history, list) and all(isinstance(h, str) for h in history)

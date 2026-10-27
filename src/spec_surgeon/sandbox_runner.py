@@ -69,13 +69,20 @@ def install_guard(workdir) -> None:
     sys.dont_write_bytecode = True              # imports from here on never write .pyc files outside the folder
     sys.addaudithook(hook)
 
+# The builtins a generated op may use: values, containers, bytes (a method that reads a picture's bytes or writes
+# a media member needs them), the arithmetic, lookup and text exceptions it may catch. Never anything that reaches
+# the file system or the interpreter (open, exec, eval, getattr, __import__: refused by codegen.check_source too),
+# and never the exceptions that carry the sandbox's own refusals and limits (PermissionError/OSError from the audit
+# hook, MemoryError and RecursionError from the limits, SystemExit, KeyboardInterrupt): a method may not catch
+# those and carry on. codegen.CODEGEN_SYSTEM names this list to the writer.
 SAFE_BUILTINS = (
-    "abs", "all", "any", "bool", "dict", "enumerate", "filter", "float", "frozenset", "hasattr", "int",
-    "isinstance", "issubclass", "iter", "len", "list", "map", "max", "min", "next", "object", "print", "range",
-    "repr", "reversed", "round", "set", "slice", "sorted", "str", "sum", "super", "tuple", "zip", "classmethod",
-    "staticmethod", "property", "Exception", "ValueError", "KeyError", "IndexError", "TypeError", "StopIteration",
-    "AttributeError", "RuntimeError", "NotImplementedError", "True", "False", "None", "divmod", "chr", "ord",
-    "format", "hash", "callable",
+    "abs", "all", "any", "bool", "bytearray", "bytes", "dict", "enumerate", "filter", "float", "frozenset",
+    "hasattr", "int", "isinstance", "issubclass", "iter", "len", "list", "map", "max", "min", "next", "object",
+    "print", "range", "repr", "reversed", "round", "set", "slice", "sorted", "str", "sum", "super", "tuple", "zip",
+    "classmethod", "staticmethod", "property", "Exception", "ValueError", "KeyError", "IndexError", "TypeError",
+    "StopIteration", "AttributeError", "RuntimeError", "NotImplementedError", "AssertionError", "ArithmeticError",
+    "ZeroDivisionError", "OverflowError", "LookupError", "UnicodeError", "UnicodeDecodeError", "UnicodeEncodeError",
+    "True", "False", "None", "divmod", "chr", "ord", "hex", "bin", "oct", "pow", "format", "hash", "callable",
 )
 
 

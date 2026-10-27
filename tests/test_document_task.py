@@ -410,7 +410,16 @@ def test_recovery_plan_and_preview_stay_in_same_task_without_json(tmp_path, monk
     task.attach([source])
     before = source.read_bytes()
     view = task.perform("send", text=REQUEST)
-    assert view["stage"] == "preview", view   # the recovery plan is carried out internally; one decision remains
+    # the outcome plan is the user's to pick (F1): the card shows the outcomes in full and the choice that carries
+    # them out, with every word they would place beneath it; nothing is tried until the pick
+    assert view["stage"] == "question", view
+    [choice] = view["choices"]
+    assert choice["label"] == "Use these outcomes and continue" and '"exact_text": "FIRE SUPPRESSION"' in choice["detail"]
+    assert view["questions"] and '"b": true' in view["questions"][0] and "Format the title." in view["questions"][0]
+    assert len(fake.requests) == 2 and not task.results and view["action"] == ""
+    view = task.perform("choose", choice_id=choice["id"])
+    assert view["stage"] == "preview", view   # one decision remains
+    assert any(m["role"] == "user" and m["text"].startswith("Chose: Use these outcomes") for m in task.messages)
     assert view["effects"] and not task.results
     assert not any('"effects"' in message["text"] for message in view["messages"])
     assert view["action"] == "Create edited copies"
