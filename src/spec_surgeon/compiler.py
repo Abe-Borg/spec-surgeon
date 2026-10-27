@@ -214,9 +214,11 @@ TOOLS = INSPECTION_TOOLS + [
                                               "voice; never words to be placed in the documents"},
          "leave_out": {"type": "array", "items": {"type": "string"},
                        "description": "labels from THE BATCH of the documents the user asked to leave out of this "
-                                      "request (\"leave out 20\", \"not 23 for now\"): the plan, its preview and its "
-                                      "copies cover the others, these stay exactly as they are and the window lists "
-                                      "them under Left untouched. Only documents the user named; never all of them"},
+                                      "request (\"leave out 20\", \"not 23 for now\"), or of every other document "
+                                      "when the user keeps the request to some (\"only 23\", \"just the Michigan "
+                                      "one\"): the plan, its preview and its copies cover the others, these stay "
+                                      "exactly as they are and the window lists them under Left untouched. Only "
+                                      "documents the user excluded; never all of them"},
          "custom_transform": {"type": "string", "enum": ["possible", "outside_limits"],
                               "description": "for an unsupported spec only: could a one-off custom transform do it "
                                              "within the catalog's custom_transform_limits?"},
@@ -548,9 +550,12 @@ results, not a procedure: get them exactly what they asked for with as little of
   steps itself and runs them as one plan.
 - One plan covers every attached document unless the user leaves some out. "Leave out 20", "not 23 for now", "skip
   the Michigan one": submit the plan for the others with leave_out naming those documents (their labels in THE
-  BATCH). They are not planned, previewed or changed, the window lists them under Left untouched, and the next
-  request covers them again unless the user leaves them out again. Never leave out a document the user did not name,
-  and never ask the user to remove documents, start another conversation or set anything up to leave one out.
+  BATCH). A request the user keeps to some documents ("only 23", "just the Michigan one", "in 21 and 22, make…")
+  leaves out every other document: leave_out lists each one of THE BATCH but those. They are not planned, previewed
+  or changed, the window lists them under Left untouched, and the next request covers them again unless the user
+  leaves them out again; a follow-up plainly about the same documents ("now make its title bold too") keeps to them
+  again. Never leave out a document the user did not exclude in one of these ways, and
+  never ask the user to remove documents, start another conversation or set anything up to leave one out.
 - "Set 20 aside for later", "park these two", "I'll come back to 23", "put it on my to-do list": call set_aside with
   those documents (and the user's reason, if they gave one). They go on the user's to-do list and stay out of this
   request and every later one until the user works on them or puts them back; then go on with whatever else the user

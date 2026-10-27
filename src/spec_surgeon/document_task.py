@@ -301,6 +301,10 @@ class DocumentTask:
         # the changes each copy carries, by attached original: a run on part of the batch (the user set documents
         # aside) gives its copies changes the others never got, and the model is told per document
         self.applied: Dict[str, List[str]] = {}
+        # the documents attached beside copies since the last run, by attached original: they carry none of the
+        # changes and missed them by arriving later, which the model is told apart from a document an earlier run left
+        # out (``_fresh_documents``)
+        self.fresh: List[str] = []
         # the to-do list: documents the user set aside at approval (the preview did not look right for them), keyed
         # by the attached original — with the decisions they were set aside from and the plan they saw; and the
         # focus: the pass over them, once the user begins it (its documents, the plan they saw)
@@ -533,6 +537,7 @@ class DocumentTask:
                 self.attachments.append(triage(path) if path.suffix.lower() == ".docx" else triage_reference(path))
                 if self.working and path.suffix.lower() == ".docx":
                     fresh.append(path.name)
+                    self.fresh.append(str(path))
                 if self.focus and path.suffix.lower() == ".docx":
                     self.focus["documents"].append(str(path))      # attached during the pass: it joins the pass
         self._sync()
@@ -571,6 +576,7 @@ class DocumentTask:
         had_copies = bool(self.working)
         self.working.pop(str(path), None)
         self.applied.pop(str(path), None)
+        self.fresh = [k for k in self.fresh if k != str(path)]
         self.todo.pop(str(path), None)
         for shown in [*self.undo_points, self._before_button or {}]:
             # attached again later, it is an original: no undo or discard puts an old copy back in its place, or
@@ -597,7 +603,7 @@ class DocumentTask:
         if had_copies and not self.working:
             # the last working copy left with its original: the attached documents are originals again, and the
             # changes the history lists are in none of them
-            self.history, self.generation, self.results, self.applied = [], 0, {}, {}
+            self.history, self.generation, self.results, self.applied, self.fresh = [], 0, {}, {}, []
             self.unverified = {}
             self.undo_points, self._before_button = [], None
             self.stage = "resume" if self.decisions else "empty"
@@ -619,11 +625,13 @@ class DocumentTask:
                                  context=self._focus_context(), todo=self._todo_lines())
 
     def _history_in_scope(self) -> List[str]:
-        """The changes the copies in scope carry, one line each, in the order they were made: a change every copy
-        carries reads as it is; one that some copies got and others did not (a run on part of the batch) says which,
-        so the model never plans from a state a document is not in. A document with no copy yet (an original among
-        the copies, a set-aside document) carries nothing; the compiler tells those apart itself (``fresh``)."""
-        docs = [str(a.path) for a in self.attachments if self._in_scope(a) and str(a.path) in self.working]
+        """The changes the documents in scope carry, one line each, in the order they were made: a change every one
+        carries reads as it is; one that some got and others did not (a run on part of the batch: documents left out,
+        set aside or refused) says which, so the model never plans from a state a document is not in. A document with
+        no copy carries nothing; one attached since the last run is told apart by the compiler (``fresh``) and is not
+        counted here."""
+        docs = [str(a.path) for a in self.attachments if self._in_scope(a)
+                and (str(a.path) in self.working or str(a.path) not in self.fresh)]
         lines: List[str] = []
         for summary in dict.fromkeys(self.history):
             carrying = [d for d in docs if summary in self.applied.get(d, [])]
@@ -696,6 +704,7 @@ class DocumentTask:
         self.history.extend(done)
         for key in moved:
             self.applied.setdefault(key, []).extend(done)         # these copies carry the change; no other copy does
+        self.fresh = []                                           # every document now attached was there for this run
         self.generation += 1
         self.decisions = []
         self.focus = None                                         # a pass over set-aside documents ends with its copies
@@ -705,10 +714,12 @@ class DocumentTask:
 
     def _fresh_documents(self) -> List[str]:
         """Documents attached after the last run: originals among working copies, carrying none of the changes the
-        history lists (the model is told; the user was told when they attached them)."""
+        history lists (the model is told; the user was told when they attached them). An original an earlier run
+        left out is not one of them: ``_history_in_scope`` names it beside each change it lacks."""
         if not self.working:
             return []
-        return [a.path.name for a in self.attachments if self._in_scope(a) and str(a.path) not in self.working]
+        return [a.path.name for a in self.attachments if self._in_scope(a) and str(a.path) not in self.working
+                and str(a.path) in self.fresh]
 
     def start_over(self) -> None:
         """Back to the attached originals: the working copies are set aside (the files stay where they are), the
@@ -717,7 +728,7 @@ class DocumentTask:
             return
         self.working, self.generation, self.history, self.decisions = {}, 0, [], []
         self.results, self.unverified, self.pdfs = {}, {}, {}
-        self.applied, self.todo, self.focus, self._binned = {}, {}, None, []
+        self.applied, self.todo, self.focus, self._binned, self.fresh = {}, {}, None, [], []
         self.left_untouched = []
         self.undo_points, self._pending_undo, self._before_button = [], None, None
         self._sync()
@@ -735,7 +746,7 @@ class DocumentTask:
                                         "left_untouched": self.left_untouched, "pdfs": self.pdfs}
         return {"request": self.decisions[0] if self.decisions else "",
                 "working": dict(self.working), "generation": self.generation, "history": list(self.history),
-                "applied": {k: list(v) for k, v in self.applied.items()},
+                "applied": {k: list(v) for k, v in self.applied.items()}, "fresh": list(self.fresh),
                 "results": dict(shown["results"]), "pdfs": dict(shown.get("pdfs", {})),
                 "unverified": {k: list(v) for k, v in shown["unverified"].items()},
                 "left_untouched": [dict(e) for e in shown["left_untouched"]],
@@ -804,6 +815,12 @@ class DocumentTask:
         self.working, self.generation = working, point["generation"]
         self.history = list(point["history"])
         self.applied = {k: list(v) for k, v in point["applied"].items() if k in working}
+        # the documents attached before the undone run, and since it, arrived after the changes still made; a point
+        # from before ``fresh`` counts every original among the copies so
+        before = point.get("fresh")
+        before = [str(a.path) for a in self.attachments] if before is None else before
+        self.fresh = [k for k in dict.fromkeys([*before, *self.fresh]) if k in attached and k not in working] \
+            if working else []
         for key in point.get("todo_added", []):
             self.todo.pop(key, None)
         self._shown_again(point)
@@ -2053,19 +2070,31 @@ class DocumentTask:
                         str(self.session.recovery_checkpoint) if self.session.recovery_checkpoint else self._resume_recovery,
             "pending_layouts": [str(x) for x in self.session.pending_layout_recovery],
             "working": dict(self.working), "generation": self.generation, "history": list(self.history),
-            "applied": self.applied, "todo": self.todo, "focus": self.focus, "undo": self.undo_points,
+            "applied": self.applied, "fresh": self.fresh, "todo": self.todo, "focus": self.focus,
+            "undo": self.undo_points,
             "exported": self.exported, "export_folder": self.export_folder,
             "budget": self._budget.to_dict(), "request": self._request_budget.to_dict(), "in_progress": in_progress})
 
     def _restore_todo(self, data) -> None:
-        """The changes each copy carries, the to-do list and the pass over it, for the documents still attached; a
-        malformed record is refused. A journal from before per-copy histories had every copy carry every change."""
+        """The changes each copy carries, the documents attached since the last run, the to-do list and the pass over
+        it, for the documents still attached; a malformed record is refused. A journal from before per-copy histories
+        had every copy carry every change, and one from before ``fresh`` counted every original among copies as
+        attached since the last run."""
         strings = lambda value: isinstance(value, list) and all(isinstance(x, str) for x in value)  # noqa: E731
         applied = data.get("applied")
         if applied is None:
             self.applied = {k: list(self.history) for k in self.working}
         elif isinstance(applied, dict) and all(isinstance(k, str) and strings(v) for k, v in applied.items()):
             self.applied = {k: list(v) for k, v in applied.items() if k in self.working}
+        else:
+            raise ValueError("The saved conversation could not be read.")
+        known = {str(a.path) for a in self.attachments if not a.template and not a.reference}
+        fresh = data.get("fresh")
+        if fresh is None:
+            self.fresh = [str(a.path) for a in self.attachments if str(a.path) in known
+                          and str(a.path) not in self.working] if self.working else []
+        elif strings(fresh):
+            self.fresh = [k for k in fresh if k in known and k not in self.working]
         else:
             raise ValueError("The saved conversation could not be read.")
         todo = data.get("todo", {})
@@ -2083,7 +2112,6 @@ class DocumentTask:
                                       and all(isinstance(k, str) and isinstance(v, dict) and why_ok(v)
                                               for k, v in focus.get("why", {}).items())):
             raise ValueError("The saved conversation could not be read.")
-        known = {str(a.path) for a in self.attachments if not a.template and not a.reference}
         # a journal from before the to-do list said why holds only documents set aside with the red X
         self.todo = {k: {"name": v["name"], "decisions": list(v.get("decisions", [])), "seen": list(v.get("seen", [])),
                          "why": v.get("why", WHY_HELD), "reason": v.get("reason") or HELD_REASON}
@@ -2109,12 +2137,14 @@ class DocumentTask:
                 isinstance(p, dict) and text(p.get("request", "")) and paths(p.get("working"))
                 and type(p.get("generation")) is int and texts(p.get("history")) and lists(p.get("applied"))
                 and paths(p.get("results")) and lists(p.get("unverified")) and texts(p.get("todo_added", []))
+                and texts(p.get("fresh", []))
                 and paths(p.get("pdfs", {}))
                 and isinstance(p.get("left_untouched"), list) and all(map(entry, p["left_untouched"]))
                 for p in points):
             return []
         return [{"request": p.get("request", ""), "working": dict(p["working"]), "generation": p["generation"],
                  "history": list(p["history"]), "applied": {k: list(v) for k, v in p["applied"].items()},
+                 **({"fresh": list(p["fresh"])} if "fresh" in p else {}),
                  "results": dict(p["results"]), "unverified": {k: list(v) for k, v in p["unverified"].items()},
                  "pdfs": dict(p.get("pdfs", {})),
                  "left_untouched": [{"path": e["path"], "name": e.get("name") or Path(e["path"]).name,

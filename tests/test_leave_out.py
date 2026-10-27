@@ -1,9 +1,11 @@
 """Leaving documents out of a request (the 1.9.0 live run of 2026-10-22): the user wrote "leave out file 20. leave out
 file 23 for now. leave out 22." and was told to "set the project to the other 10 files". The plan now covers the
 others: a left-out document is not planned, previewed, run or changed, the window lists it under Left untouched with
-the reason, and the next request covers it again unless the user leaves it out again."""
+the reason, and the next request covers it again unless the user leaves it out again. A request kept to some documents
+("only 23") leaves out every other one, and the next request hears which documents carry the change."""
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -16,8 +18,9 @@ from spec_surgeon.gui import Session
 from test_document_task import REQUEST, SPEC, document
 
 
-def task_for(tmp_path, fake):
-    return DocumentTask(Session(client=fake, out_root=tmp_path / "out", visual_check=False), render=False)
+def task_for(tmp_path, fake, journal=None):
+    return DocumentTask(Session(client=fake, out_root=tmp_path / "out", visual_check=False), render=False,
+                        journal=journal)
 
 
 def three(tmp_path):
@@ -50,6 +53,69 @@ def test_documents_left_out_are_not_planned_previewed_run_or_changed(tmp_path):
     assert [p.read_bytes() for p in docs] == before
     assert not task.session.recovery                # nothing left out is "still needing work"
     assert list(task.applied) == [str(docs[1])]      # only 21 carries the change the model will hear of
+
+
+def test_a_request_kept_to_one_document_leaves_every_other_one_out(tmp_path):
+    # "Only 21": the plan names every other document of the batch in leave_out. The others stay exactly as they are,
+    # only 21 carries the change, and the next request hears so, which is what a follow-up about 21 keeps to.
+    docs = three(tmp_path) + [document(tmp_path / "23 Ohio.docx")]
+    others = ["20 Port.docx", "22 Michigan.docx", "23 Ohio.docx"]
+    assert compiler.resolve_leave_out(others, compiler._Batch(docs, None)) == ([docs[0], docs[2], docs[3]], [])
+    number = {**SPEC, "summary": "Make the section number bold",
+              "ops": [{"op": "set_properties", "select": {"paragraphs": {"text_regex": "^SECTION 21 13 13$"}},
+                       "params": {"run": {"b": True}, "tracked": False}}]}
+    fake = FakeClient(submit(leave_out=others, message="I'll make the title bold in 21 only; the others stay as they "
+                                                       "are."), submit(number, leave_out=others))
+    task = task_for(tmp_path, fake)
+    task.attach(docs)
+    before = {p: p.read_bytes() for p in docs}
+    view = task.perform("send", text="Make the FIRE SUPPRESSION title bold in 21 only.")
+    assert view["stage"] == "preview" and task.session.planned_files() == [docs[1]]
+    assert [Path(sv.source) for sv in view["samples"]] == [docs[1]]
+    assert view["set_aside"] == [{"name": name, "reason": LEFT_OUT_REASON} for name in others]
+    task.perform("primary", token=view["token"])
+    assert task.stage == "done" and list(task.results) == [str(docs[1])] and list(task.applied) == [str(docs[1])]
+    assert all(p.read_bytes() == before[p] for p in docs)
+    view = task.perform("send", text="Now make its section number bold too.")
+    assert view["stage"] == "preview" and task.session.planned_files() == [Path(task.working[str(docs[1])])]
+    told = repr(fake.requests[-1]["messages"][0])
+    assert "(only in 21 Keep.docx)" in told and "attached after those changes" not in told
+
+
+def test_an_original_left_out_is_told_apart_from_one_attached_after_the_changes(tmp_path):
+    # 22 was left out of the run: the model hears the change is not in it, never that it arrived later. 24, attached
+    # beside the copies afterwards, is the one the compiler names as an original attached after those changes.
+    docs = three(tmp_path)
+    journal = tmp_path / "conversation.json"
+    fake = FakeClient(submit(leave_out=["22 Michigan.docx"]), submit())
+    task = task_for(tmp_path, fake, journal=journal)
+    task.attach(docs)
+    view = task.perform("send", text=REQUEST + " Not 22.")
+    task.perform("primary", token=view["token"])
+    assert task._fresh_documents() == []
+    assert task._history_in_scope() == [f"{task.history[0]} (not in 22 Michigan.docx)"]
+    late = document(tmp_path / "24 Late.docx")
+    task.attach([late])
+    assert task._fresh_documents() == ["24 Late.docx"]
+    assert task._history_in_scope() == [f"{task.history[0]} (not in 22 Michigan.docx)"]
+    # the saved conversation keeps which original arrived later; one saved before it counts every original so
+    again = task_for(tmp_path, FakeClient(), journal=journal)
+    assert again.restore() and again.fresh == [str(late)] and again._fresh_documents() == ["24 Late.docx"]
+    data = json.loads(journal.read_text(encoding="utf-8"))
+    del data["fresh"]
+    journal.write_text(json.dumps(data), encoding="utf-8")
+    older = task_for(tmp_path, FakeClient(), journal=journal)
+    assert older.restore() and older._fresh_documents() == ["22 Michigan.docx", "24 Late.docx"]
+    data["fresh"] = "24 Late.docx"
+    journal.write_text(json.dumps(data), encoding="utf-8")
+    with pytest.raises(ValueError):
+        task_for(tmp_path, FakeClient(), journal=journal).restore()
+    task.perform("send", text="Make the title bold in every document.")
+    told = repr(fake.requests[-1]["messages"][0])
+    assert "(not in 22 Michigan.docx)" in told and "EXCEPT 24 Late.docx: attached after those changes" in told
+    assert "EXCEPT 22" not in told
+    task.perform("primary", token=task.view()["token"])               # a run with 24 in its batch: no longer fresh
+    assert task.stage == "done" and task.fresh == [] and task._fresh_documents() == []
 
 
 def test_a_left_out_document_cannot_be_set_aside_or_run_from_a_stale_page(tmp_path):
@@ -115,8 +181,14 @@ def test_the_prompts_teach_leaving_out_and_keep_procedures_from_the_user():
     assert "never ask the user to remove documents, start another conversation" in prompt
     assert "do not leave files out unasked" in prompt
     assert "(a pattern whose documents the user left out needs none)" in prompt
+    # a request kept to some documents ("only 23") leaves out every other one, and a follow-up about them keeps to them
+    assert '("only 23", "just the Michigan one", "in 21 and 22, make…")' in prompt
+    assert "leave_out lists each one of THE BATCH but those" in prompt
+    assert 'a follow-up plainly about the same documents ("now make its title bold too") keeps to them' in prompt
     tool = next(t for t in compiler.TOOLS if t["name"] == "submit_editspec")
     assert tool["input_schema"]["properties"]["leave_out"]["items"] == {"type": "string"}
+    assert "every other document when the user keeps the request to some (\"only 23\"" in \
+        tool["input_schema"]["properties"]["leave_out"]["description"]
     # the outcome planner's questions reach the user verbatim: no "project", no procedure (the live run's reply
     # asked the user to "set the project to the other 10 files" and offered "ten one-file projects")
     assert 'never "project", "contract", "effect", "scope" or\ndocument IDs' in campaign_planner.SYSTEM
