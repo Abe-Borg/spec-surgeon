@@ -197,6 +197,16 @@ function samples() {
     pages_before: 12 + i * 4,
     pages_after: 12 + i * 4 + (i === 1 ? 1 : 0),
     passed: true,
+    failures: [],
+    // the page-layout verdict (check V7), as docs/WEB_API.md describes it
+    geometry:
+      i === 0
+        ? { status: "PASS", note: "Page layout checked on the rendered pages: the words sit where they did." }
+        : {
+            status: "NA",
+            at: "run",
+            note: "Page layout of a plan done in steps is checked step by step when the copies are created; the preview renders the last step's pages only.",
+          },
   }));
 }
 
@@ -409,7 +419,12 @@ const SCENARIOS = {
     v.mode = "safe";
     v.samples[0].passed = false;
     v.samples[0].failures = [{ check: "V2", reason: "The copy's wording does not match the change predicted by the plan." }];
-    v.action.disabled_reason = `${v.samples[0].name} did not pass its preview checks (V2).`;
+    v.samples[0].geometry = {
+      status: "FAIL",
+      note: "Page layout differs from what the plan predicts: reference = source render; max |Δy| 11.60pt on asserted pages (tol 0.5pt); MOVED pages [3, 4]",
+    };
+    v.samples[0].failures.push({ check: "V7", reason: "The page layout does not match the layout predicted by the plan." });
+    v.action.disabled_reason = `${v.samples[0].name} did not pass its preview checks (V2, V7).`;
     return v;
   },
 };

@@ -217,11 +217,14 @@ class SampleView:
     stages: List[Dict[str, Any]] = field(default_factory=list)   # a chain's sample: each stage's verdict, in order
     outcomes: List[Dict[str, Any]] = field(default_factory=list)  # a chain's independent final requirements
     left_later: List[str] = field(default_factory=list)   # a chain's sample: its later steps' wording left elsewhere
+    plan: Optional[Dict[str, Any]] = None        # the plan the verdict is of (V6/V7 read its geometry reference); not saved
+    geometry: Optional[Dict[str, str]] = None    # the page-layout verdict: status PASS | FAIL | NA, and a note in plain words
 
     def to_dict(self):
         return {"source": str(self.source), "output": str(self.output) if self.output else None, "passed": self.passed,
                 "checks": self.checks, "images": [str(i) for i in self.images], "exception": self.exception,
                 "look_pages": self.look_pages, "pages_before": self.pages_before, "pages_after": self.pages_after,
+                "geometry": self.geometry,
                 **({"stages": self.stages} if self.stages else {}),
                 **({"outcomes": self.outcomes} if self.outcomes else {}),
                 **({"left_later": self.left_later} if self.left_later else {})}
@@ -238,6 +241,40 @@ class SampleView:
                 failed = [k for k, v in (st.get("checks") or {}).items() if v == "FAIL"]
                 parts.append(f"stage {st['stage']} FAIL {failed}")
         return " · ".join(parts)
+
+
+GEOMETRY_AT_RUN = {"status": "NA", "at": "run",
+                   "note": "Page layout is checked when the copies are created; no pages were rendered here."}
+GEOMETRY_AT_RUN_STEPS = {"status": "NA", "at": "run",
+                         "note": "Page layout of a plan done in steps is checked step by step when the copies are "
+                                 "created; the preview renders the last step's pages only."}
+
+
+def geometry_text(sv: Any) -> str:
+    """The page-layout verdict in a sample's line of the preview text: V7's status and note when the preview checked
+    it, else that the run will."""
+    g = sv.geometry
+    if not g:
+        return ""
+    if g.get("at") == "run":
+        return f"; page geometry (V7): checked at the run — {g['note']}"
+    return f"; page geometry (V7) {g['status']}: {g['note']}"
+
+
+def geometry_note(plan: Dict[str, Any], v7: Any) -> str:
+    """V7's verdict in plain words, for the window and the preview text."""
+    ref = plan.get("geometry_reference", "source")
+    if v7.status == "PASS":
+        return ("Page layout checked on the rendered pages: the headers and footers sit where the template's do."
+                if ref == "template" else
+                "Page layout checked on the rendered pages: the words sit where they did.")
+    if v7.status == "FAIL":
+        return "Page layout differs from what the plan predicts: " + diag.snip(v7.summary, 400)
+    if ref == "none":
+        return f"No page-layout reference by design: {plan.get('geometry_reason') or 'the plan reflows the text'}."
+    if plan.get("mode") in ("content", "untracked") and plan.get("diffs"):
+        return "Text reflows after a wording change; the page layout is recorded, not asserted."
+    return "Page layout not asserted here: " + diag.snip(v7.summary, 400)
 
 
 def sample_refused(sv: Any) -> bool:
@@ -298,7 +335,8 @@ class Preview:
             failed = [k for k, v in s.checks.items() if v == "FAIL"]
             out.append(f"   {lab}: verification {'PASS' if s.passed else 'FAIL ' + str(failed)}"
                        + (f"; pages: {s.pages_before} → {s.pages_after}" if s.pages_before is not None else "")
-                       + (f"; images: {[i.name for i in s.images]}" if s.images else ""))
+                       + (f"; images: {[i.name for i in s.images]}" if s.images else "")
+                       + geometry_text(s))
         if self.review is not None:
             out.append("")
             out.append(self.review.to_text())
@@ -355,8 +393,9 @@ def _preview_log(out_dir: Path, title: str):
 
 
 def _log_verification(log: Any, name: str, rec: Any) -> None:
-    """One sample's verification in the preview log: every check's status (V6/V7/V9 belong to a run) and each failed
-    check's specifics."""
+    """One sample's verification in the preview log: every check's status as the suite left them (V6 and V7 follow
+    once the sample's pages are rendered, ``_sample_geometry``; V9 belongs to a run) and each failed check's
+    specifics."""
     if log is None or rec is None:
         return
     diag.event("preview.verification", sample=name, passed=rec.passed,
@@ -400,6 +439,7 @@ def render_samples(samples: List[SampleView], out_dir: Path, renderer: str, do_r
         detail(f"renderer: {render_mod.describe(backend)}")
     done = [s for s in samples if s.output]
     if not (backend and done):
+        _sample_geometry(samples, Path(out_dir), None, None, sample_labels(samples), warn, detail, block)
         return backend
     rdir = Path(out_dir) / "render"
     # renderers name a PDF after its file's stem: samples whose names collide are rendered from numbered copies
@@ -451,7 +491,65 @@ def render_samples(samples: List[SampleView], out_dir: Path, renderer: str, do_r
             warn(f"{labels[str(Path(s.source))]}: the before/after pictures could not be made "
                  f"({type(e).__name__}: {e})")
             block(traceback.format_exc())
+    _sample_geometry(samples, Path(out_dir), backend, cache, labels, warn, detail, block)
     return backend
+
+
+class _GeometryLog:
+    """What ``batch.geometry_references`` logs with, over the preview log's lines."""
+
+    def __init__(self, detail, block):
+        self.detail, self.block = detail, block
+
+    def __call__(self, msg: str) -> None:
+        self.detail(msg)
+
+
+def _sample_geometry(samples: List[SampleView], out_dir: Path, backend: Optional[str], cache, labels: Dict[str, str],
+                     warn, detail, block) -> None:
+    """V6 and V7 on the samples that rendered, with the run's own code (``batch.compare_pair`` over the references
+    ``batch.geometry_references`` renders), so a sample's verdict here is the one the run will give: a layout that
+    moved fails the sample. A sample without a render, or whose plan the preview does not hold (a chain's step whose
+    reference is its own input; a custom method's trial), says the layout is checked at the run. A comparison the
+    preview cannot make is a warning beside the plan, never a failed sample: the run makes it again."""
+    from .batch import RenderPair, compare_pair, geometry_references
+    pairs: List[Tuple[SampleView, RenderPair]] = []
+    for s in samples:
+        if s.geometry is not None or s.exception is not None or not s.output:
+            continue
+        if s.plan is None or not s.source_pdf or not s.output_pdf or not backend:
+            s.geometry = dict(GEOMETRY_AT_RUN)
+            continue
+        pairs.append((s, RenderPair(Path(s.source), Path(s.output), s.plan, Path(s.source_pdf), Path(s.output_pdf),
+                                    Path(s.output).name)))
+    if not pairs:
+        return
+    log = _GeometryLog(detail, block)
+    try:
+        refs = geometry_references([pair for _, pair in pairs], out_dir, backend, 2, cache, detail, log)
+    except Exception as e:  # noqa: BLE001 — the references are the run's to make again
+        warn(f"the page-layout references could not be rendered ({type(e).__name__}: {e}); the layout is checked "
+             f"when the copies are created")
+        block(traceback.format_exc())
+        for s, _pair in pairs:
+            s.geometry = dict(GEOMETRY_AT_RUN)
+        return
+    for s, pair in pairs:
+        name = labels[str(Path(s.source))]
+        try:
+            v6, v7, _geometry = compare_pair(pair, refs, backend)
+        except Exception as e:  # noqa: BLE001
+            warn(f"{name}: the rendered pages could not be compared ({type(e).__name__}: {e}); the layout is "
+                 f"checked when the copies are created")
+            block(traceback.format_exc())
+            s.geometry = dict(GEOMETRY_AT_RUN)
+            continue
+        s.checks["V6"], s.checks["V7"] = v6.status, v7.status
+        s.geometry = {"status": v7.status, "note": geometry_note(pair.plan, v7)}
+        if v7.status == "FAIL":
+            s.passed = False
+        diag.event("preview.geometry", sample=str(s.source), v6=v6.status, v7=v7.status, summary=v7.summary)
+        detail(f"sample {name}: V6 {v6.status} — {v6.summary}; V7 {v7.status} — {v7.summary}")
 
 
 @dataclass
@@ -478,7 +576,8 @@ class GeneratedPreview:
             failed = [k for k, v in s.checks.items() if v == "FAIL"]
             out.append(f"   {labels[str(Path(s.source))]}: verification {'PASS' if s.passed else 'FAIL ' + str(failed)}"
                        + (f"; pages: {s.pages_before} → {s.pages_after}" if s.pages_before is not None else "")
-                       + (f"; images: {[i.name for i in s.images]}" if s.images else ""))
+                       + (f"; images: {[i.name for i in s.images]}" if s.images else "")
+                       + geometry_text(s))
         if self.review is not None:
             out += ["", self.review.to_text()]
         from .readable import REPORT_BYTES, bounded
@@ -576,7 +675,7 @@ def _preview_sample(source: str, spec: Dict[str, Any], output: str, approved_md5
     from .verify import run_suite
     f = Path(source)
     r: Dict[str, Any] = {"passed": None, "checks": {}, "record": None, "exception": None, "output": None,
-                         "changed": False}
+                         "changed": False, "plan": None}
     with diag.scope(source=str(f)), diag.span("preview.sample"):
         stage, data = "open", None
         try:
@@ -604,7 +703,8 @@ def _preview_sample(source: str, spec: Dict[str, Any], output: str, approved_md5
             stage = "verify"
             with diag.span("preview.sample.verify"):
                 rec = run_suite(pkg.data, out, plan.to_dict(), str(f), output)
-            r.update(passed=rec.passed, checks={c.id: c.status for c in rec.checks}, record=rec.to_dict())
+            r.update(passed=rec.passed, checks={c.id: c.status for c in rec.checks}, record=rec.to_dict(),
+                     plan=plan.to_dict())
         except Exception as e:  # noqa: BLE001 — a refusal, or the engine's own failure: the sample's record
             r["exception"] = diag.exception_record(e, stage, data)
             diag.event("preview.sample_failed", level="error", source=str(f), stage=stage, exception=r["exception"])
@@ -670,7 +770,8 @@ def _make_preview(spec: Dict[str, Any], inputs: Sequence[str], out_dir: Path, re
              str(diag.trace_path(out_dir, names[str(f)]).with_suffix(".events.jsonl")) if shared else None)
             for f in picks])
         for f, r in zip(picks, done):
-            sv = SampleView(source=f, passed=r["passed"], checks=r["checks"], exception=r["exception"])
+            sv = SampleView(source=f, passed=r["passed"], checks=r["checks"], exception=r["exception"],
+                            plan=r.get("plan"))
             if r["output"]:
                 sv.output = Path(r["output"])
             input_changed = input_changed or r["changed"]
@@ -740,7 +841,8 @@ class ChainPreview(Preview):
             failed = [k for k, v in sv.checks.items() if v == "FAIL"]
             out.append(f"   {lab}: {sv.stages_text()} → verification {'PASS' if sv.passed else 'FAIL ' + str(failed)}"
                        + (f"; pages: {sv.pages_before} → {sv.pages_after}" if sv.pages_before is not None else "")
-                       + (f"; images: {[i.name for i in sv.images]}" if sv.images else ""))
+                       + (f"; images: {[i.name for i in sv.images]}" if sv.images else "")
+                       + geometry_text(sv))
             out += [f"     final requirement {entry['index']} {entry['status']}: {entry['summary']}"
                     for entry in sv.outcomes]
         later = [(labels[str(Path(sv.source))], what) for sv in self.samples for what in sv.left_later]
@@ -825,6 +927,7 @@ def _make_chain_preview(chain: Dict[str, Any], inputs: Sequence[str], out_dir: P
                 sv = SampleView(source=f)
                 phase, data, produced = "open", None, False
                 source_name = str(f)
+                last_plan, done_stages = None, 0
                 sample_dir = out_dir / "samples" / Path(names[str(f)]).stem
                 try:
                     data = Path(f).read_bytes()
@@ -845,6 +948,7 @@ def _make_chain_preview(chain: Dict[str, Any], inputs: Sequence[str], out_dir: P
                             pkg = DocxPackage(data, name=source_name)
                             with diag.span("preview.sample.plan"):
                                 plan, frags = plan_spec(pkg, spec, fingerprint(pkg)["pattern_id"])
+                            last_plan, done_stages = plan.to_dict(), i
                             if i > 1:                    # planned on the step before it: true for this sample
                                 sv.left_later += left_notes(plan.flags, _replaced_after(stages, i))
                             phase = "apply"
@@ -890,6 +994,13 @@ def _make_chain_preview(chain: Dict[str, Any], inputs: Sequence[str], out_dir: P
                     sv.output = output
                     sv.output.parent.mkdir(parents=True, exist_ok=True)
                     sv.output.write_bytes(data)
+                    # the page layout of the last step the sample went through: checked here when its reference
+                    # is the template or none (no earlier render needed), or when that step read the source itself
+                    reference = (last_plan or {}).get("geometry_reference", "source")
+                    if done_stages == 1 or reference in ("template", "none"):
+                        sv.plan = last_plan
+                    else:
+                        sv.geometry = dict(GEOMETRY_AT_RUN_STEPS)
                 pv.samples.append(sv)
                 input_changed = (input_changed or changed_since_preview(key, files, token, token_inputs) is not None
                                  or bool(changed_inputs(snapshots)))

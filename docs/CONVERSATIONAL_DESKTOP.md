@@ -306,7 +306,14 @@ sentence: attach it on its own, or ask for a plan that covers it.
 Each sample document gets a card **Preview · name** with rendered before/after pages; click a page to enlarge
 it. The card shows the page count before and after and flags growth ("Pages: 12 → 13 (+1)"). Samples are
 applied and verified in memory; sources are never touched. Rendering is requested automatically and uses
-Microsoft Word when available, otherwise LibreOffice. If no renderer can provide usable page evidence, a card
+Microsoft Word when available, otherwise LibreOffice. The rendered pages are then compared as the run compares
+them (checks V6 and V7, `batch.compare_pair` over the same references: the source render, the template's headers
+and footers rendered alone, the independent header/footer-removal reference), so a sample's **Checked** covers its
+page layout: a layout that moved is a sample that did not pass, and the plan goes the way a failed check sends it.
+The card says in one line what the layout check found, or why it is not asserted (no layout reference by design, a
+wording change that reflows the text), or that it waits for the run: no pages were rendered, or the plan is done
+in steps and only its last step's pages are rendered (a step whose reference is its own input is checked step by
+step when the copies are created). If no renderer can provide usable page evidence, a card
 says that page appearance was not checked and asks you to check the edited copies in Word.
 
 The pages are those of the plan in front of you, and nothing older. Sending a message or picking a choice takes
