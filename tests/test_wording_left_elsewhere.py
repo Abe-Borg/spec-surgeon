@@ -250,14 +250,16 @@ def test_a_chain_names_what_its_later_steps_leave_and_drops_what_they_change(tmp
     bold = {"request": "Bold PART 1.", "summary": "bold", "mode": "formatting",
             "ops": [{"op": "set_properties", "select": {"paragraphs": {"text_regex": "^PART 1"}},
                      "params": {"run": {"b": True}, "tracked": False}}]}
-    # a later step renames the footer: the samples say the body keeps the old title, and that the others were not
-    # planned that far
+    # a later step renames the footer: every file says the body keeps the old title (every step is planned on every
+    # file, backlog Q2), the note naming the step
     pv = make_chain_preview(_chain(bold, spec_of(rename())), [str(folder)], tmp_path / "p1", renderer="none",
                             do_render=False)
     later = [w for w in pv.warnings if "also occurs in the body" in w]
-    assert later and all(w.endswith("this change leaves it as it is.") for w in later)
-    assert any(w.startswith("The later steps were checked on the sample documents only") for w in pv.warnings)
-    assert "WORDING LEFT ELSEWHERE BY THE LATER STEPS" in pv.to_text()
+    assert later and all(w.endswith("this change leaves it as it is.") and "after step 2: " in w for w in later)
+    assert {w.split(":")[0] for w in later} == {"21 05 53.docx", "21 05 54.docx"}
+    assert not any("sample documents only" in w for w in pv.warnings)
+    text = pv.batch_plan.to_text(per_file=False)
+    assert "WORDING LEFT ELSEWHERE —" in text and text.count("after step 2: ") == 2
     # step 1 renames the footer, step 2 the body: step 1's note no longer holds and is not shown, step 2 leaves none
     pv = make_chain_preview(_chain(spec_of(rename()), spec_of(rename(scope=("document",)))), [str(folder)],
                             tmp_path / "p2", renderer="none", do_render=False)

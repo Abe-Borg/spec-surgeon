@@ -18,12 +18,6 @@ them was built; `git log --all -- 'docs/PLAN-*'` finds them, with their findings
 | S4 — what a run left open | Over test-set-2 (13 specifications, eight owners): the reference rules find no section number in seven of them (VA, Wisconsin, Port of Portland, Michigan layouts); a chain preview repeats the spec's summary and assumptions for each step; after an outcome-planner question the next reply still goes to that planner, not the assistant (seen again over test-set-3) | Reference rules for those layouts; a chain preview that says its summary once; the reply after an outcome-planner question goes back to the assistant |
 | P5 — recovery's pace | Recovery of 27 files took 30 minutes: one trial per file, serially (about 25 s each, 177 s for the largest), three checkpoints per model call (5–18 s each), and Stop waited 37 s for two of them | A checkpoint per model call instead of three; an `all` target's bindings kept once, not per paragraph in every checkpoint and in `set_aside.json`; trials of files with the same method in one run |
 
-### Sequences: what the chained request left open
-
-| Item | What the run showed | What to build |
-| --- | --- | --- |
-| Q2 — a chain's later steps planned on every file before the run | The preview plans step 1 on every file and the later steps on the samples only (`preview._make_chain_preview`, up to `resources.DEFAULT_SAMPLE_FILES` of them), so a later step that cannot be planned on a file that was not a sample is found at the run: the file stops at that step and goes to recovery or the to-do list instead of waiting under Left untouched before anything runs | Dry-plan every stage on every file in the preview (apply in memory, never written; `plan_chain` already does it per file), in the planner's worker processes as the single-spec preview does from `planner.PLAN_PROCESS_MIN_FILES` files; a later-step refusal lists the file under Left untouched with the step and the reason, as a first-step refusal does today. The samples' verification stays as it is |
-
 ### Word as the judge of tracked changes (W1–W4)
 
 Real Word checks the revisions the engine writes and the redlines it reads, as Build-a-Spec does (its own

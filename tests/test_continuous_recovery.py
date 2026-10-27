@@ -269,12 +269,14 @@ def _a_later_step_refuses(tmp_path, *responses):
 def test_a_sample_a_later_step_refuses_leaves_the_preview_of_the_others_standing(tmp_path):
     # The 1.10.0 live run (2026-10-23): a chain's font step refused two samples' list numbering (numbering-unsupported)
     # and the nineteen-file preview, sixteen of its samples passed, went to the outcome planner — twice in one morning.
-    # A later step's refusal on a sample is a refused file like a first step's: Left untouched, the preview stands.
+    # A later step's refusal is a refused file like a first step's: Left untouched, the preview stands. Every step is
+    # planned on every file now (backlog Q2), so the refusal is the batch plan's, naming its step.
     from spec_surgeon.preview import refusals
     s, client, source, easy = _a_later_step_refuses(tmp_path)
     s.make_preview(False, lambda _: None)
     assert s.spec is not None and s.preview is not None and s.outcome().kind == "preview"
-    assert not s.preview.batch_plan.exceptions                 # the first step planned on both
+    [refused] = s.preview.batch_plan.exceptions                 # the first step planned on both, the second not
+    assert refused.source.name == "source.docx" and refused.exception["chain_stage"] == 2
     assert [p.name for p, _ in refusals(s.preview)] == ["source.docx"]
     assert not s.conversation.recovery_active and len(client.requests) == 1
     note = s.conversation.notes[-1]

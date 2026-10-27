@@ -19,7 +19,8 @@ from spec_surgeon.chain import (ChainError, chain_from_specs, chain_intent, chai
 from spec_surgeon.editspec import load_spec, plan_spec
 from spec_surgeon.ops import JobException
 from spec_surgeon.package import DocxPackage
-from spec_surgeon.preview import approval_token, changed_since_preview, key_templates, make_chain_preview
+from spec_surgeon.preview import (approval_token, changed_since_preview, key_templates, make_chain_preview,
+                                  refusals)
 
 SPECS = Path(__file__).resolve().parent.parent / "examples" / "specs"
 FONT_SPEC = SPECS / "match-template-spec-font.json"
@@ -273,14 +274,16 @@ def test_the_chain_preview_runs_every_stage_on_the_samples_and_its_token_covers_
     other = json.loads(json.dumps(chain))
     other["stages"][0]["spec"]["params" if False else "summary"] = "something else"
     assert approval_token(chain_key(other), files) != approval_token(chain_key(chain), files)
-    # a sample that stops at a stage says where, and the preview goes on
+    # a file a later stage refuses is refused in the batch plan, every stage being planned on every file (backlog
+    # Q2): it waits under Left untouched before anything runs, and is no sample
     chain2 = chain_from_specs([("strip", _remove()), ("refuse", _refuse())])
     pv2 = make_chain_preview(chain2, [str(folder)], tmp_path / "preview2", renderer="none", do_render=False)
-    for s in pv2.samples:
-        assert s.exception["code"] == "not-found" and s.exception["chain_stage"] == 2
-        assert s.exception["reason"].startswith("stage 2 (refuse): ") and s.stages_text() == "stage 1 PASS · stage 2 EXCEPTION [not-found]"
-        assert s.output.is_file() and _header_texts(s.output) == []           # the file as stage 1 left it
-    assert "stage 1 PASS · stage 2 EXCEPTION [not-found] — EXCEPTION [not-found] stage 2 (refuse)" in pv2.to_text()
+    assert pv2.samples == [] and len(pv2.batch_plan.exceptions) == len(pv2.batch_plan.files) >= 2
+    for f in pv2.batch_plan.exceptions:
+        assert f.exception["code"] == "not-found" and f.exception["chain_stage"] == 2
+        assert f.exception["reason"].startswith("step 2: ")
+    assert "EXCEPTION 21 13 13 – WET-PIPE.docx: [not-found] step 2: " in pv2.to_text()
+    assert {"21 13 13 – WET-PIPE.docx", "21 13 16 – DRY-PIPE.docx"} <= {Path(p).name for p, _ in refusals(pv2)}
 
 
 # ---- no window for the engine ----------------------------------------------------------------------------------------

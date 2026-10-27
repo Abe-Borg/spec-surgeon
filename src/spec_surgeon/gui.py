@@ -731,8 +731,8 @@ class Session:
         self._note_preview()
         c = self.conversation
         # A failed preview is one the plan cannot stand on: no file plans, a sample fails its check, or no sample got
-        # through. A file the plan refuses while others plan — at its first step, or a sample at a later step of a
-        # chain — is set aside under Left untouched (docs/CONVERSATIONAL_DESKTOP.md) and the preview stands: the
+        # through. A file the plan refuses while others plan — at any step of a chain, every step being planned on
+        # every file — is set aside under Left untouched (docs/CONVERSATIONAL_DESKTOP.md) and the preview stands: the
         # conversation hears why, the user decides. Outcome planning never takes the conversation over for refused
         # files (the 1.9.0 live run of 2026-10-22: one file's even-page footers voided a twelve-file preview; the 1.10.0
         # run of 2026-10-23: two samples' list numbering, refused by the font step, voided a nineteen-file one).

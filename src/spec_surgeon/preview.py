@@ -45,7 +45,7 @@ from . import diagnostics as diag
 from .editspec import apply_spec, plan_spec
 from .fingerprint import fingerprint
 from .package import DocxPackage
-from .planner import LEFT_WARNINGS, BatchPlan, left_elsewhere_warnings, left_notes, plan_batch
+from .planner import BatchPlan, left_elsewhere_warnings, left_notes, plan_batch, plan_batch_chain
 
 
 def key_templates(key: Any) -> List[Path]:
@@ -279,15 +279,16 @@ def geometry_note(plan: Dict[str, Any], v7: Any) -> str:
 
 def sample_refused(sv: Any) -> bool:
     """A sample the plan refused (a ``JobException`` with its code: a case the op cannot predict), not one the engine
-    failed on or whose output failed its checks. A chain plans its later steps on the samples only, on the bytes the
-    step before made, so a later step's refusal shows here and nowhere in the batch plan."""
+    failed on or whose output failed its checks. A chain's every step is planned on every file in the batch plan
+    (``planner.plan_batch_chain``), so a sample refused here is one whose bytes the sample run read otherwise."""
     return (getattr(sv, "exception", None) or {}).get("kind") == "refusal"
 
 
 def refusals(pv: Any) -> List[Tuple[Path, Dict[str, Any]]]:
-    """The documents a preview refused, each with its refusal: every one the plan refused, then each sample a later
-    step refused. They wait under Left untouched while the others are previewed (the owner's 1.10.0 run of 2026-10-23:
-    two samples whose list numbering the font step refused handed a nineteen-file preview to outcome planning)."""
+    """The documents a preview refused, each with its refusal: every one the plan refused — at any step of a chain,
+    every step being planned on every file — then any sample a step refused when it ran. They wait under Left
+    untouched while the others are previewed (the owner's 1.10.0 run of 2026-10-23: two samples whose list numbering
+    the font step refused handed a nineteen-file preview to outcome planning)."""
     out = [(Path(f.source), f.exception or {}) for f in getattr(getattr(pv, "batch_plan", None), "exceptions", None)
            or []]
     seen = {p.resolve() for p, _ in out}
@@ -804,10 +805,9 @@ def _make_preview(spec: Dict[str, Any], inputs: Sequence[str], out_dir: Path, re
 # ---- chains: several specs, one after another (chain.py) ----------------------------------------------------------
 
 def _replaced_after(stages: Sequence[Dict[str, Any]], n: int) -> List[str]:
-    """The find texts a replacement in a chain's steps after step ``n`` (1-based) replaces: a step's note that the
-    same words remain elsewhere may not hold once those run (C3)."""
-    return [op["params"]["find"] for st in stages[n:] for op in (st.get("spec") or {}).get("ops") or []
-            if op.get("op") == "replace_text" and (op.get("params") or {}).get("find")]
+    """``planner.replaced_after``: the find texts the steps after step ``n`` replace again (C3)."""
+    from .planner import replaced_after
+    return replaced_after(stages, n)
 
 
 @dataclass
@@ -828,8 +828,9 @@ class ChainPreview(Preview):
             out += [f"     assumption: {a}" for a in spec.get("assumptions") or []]
         out += [f"WARNING: {w}" for w in self.warnings]
         out.append("")
-        out.append("STAGE 1 planned on every file (each later stage is planned on a file once the stage before it ran; "
-                   "the samples below went through every stage):")
+        out.append("EVERY STEP planned on every file (each later step on the bytes the step before it would make; a "
+                   "file a step refuses is an EXCEPTION naming the step; the samples below were applied and verified "
+                   "through every step):")
         out.append(self.batch_plan.to_text(per_file=False))
         out.append("\nSAMPLES (every stage applied and verified in memory, one after another; sources untouched):")
         labels = sample_labels(self.samples)
@@ -845,11 +846,6 @@ class ChainPreview(Preview):
                        + geometry_text(sv))
             out += [f"     final requirement {entry['index']} {entry['status']}: {entry['summary']}"
                     for entry in sv.outcomes]
-        later = [(labels[str(Path(sv.source))], what) for sv in self.samples for what in sv.left_later]
-        if later:
-            out.append("\nWORDING LEFT ELSEWHERE BY THE LATER STEPS — on the sample files only (the later steps run on "
-                       "the others once the step before them did; tell the user, and offer to change them too):")
-            out += [f"   {lab}: {what}" for lab, what in later]
         if self.review is not None:
             out.append("")
             out.append(self.review.to_text())
@@ -872,8 +868,9 @@ def make_chain_preview(chain: Dict[str, Any], inputs: Sequence[str], out_dir: Pa
 
 def _make_chain_preview(chain: Dict[str, Any], inputs: Sequence[str], out_dir: Path, renderer: str,
                         do_render: bool, continue_failed: bool = False) -> ChainPreview:
-    """``make_preview`` for a chain: stage 1 planned on every file, the samples (``_pick_samples`` of that plan) run
-    through every stage in memory — plan → apply → verify, each stage on the bytes the stage before it verified; a
+    """``make_preview`` for a chain: every stage planned on every file (``planner.plan_batch_chain``: a file a later
+    stage refuses is an exception of the batch plan, under Left untouched), the samples (``_pick_samples`` of that
+    plan) run through every stage in memory — plan → apply → verify, each stage on the bytes the stage before it verified; a
     stage that refuses or fails verification stops that sample there (``continue_failed``, Obliterate mode: a failed
     check marks the sample failed and the next stage reads its output, as ``run_chain(deliver_unverified=True)`` will
     do) —, the final output written under
@@ -903,9 +900,8 @@ def _make_chain_preview(chain: Dict[str, Any], inputs: Sequence[str], out_dir: P
         try:
             execution_chain, snapshots = _snapshot_preview_inputs(chain, token_inputs, out_dir)
             stages = execution_chain["stages"]
-            bp = plan_batch([str(f) for f in files], stages[0]["spec"])
+            bp = plan_batch_chain([str(f) for f in files], execution_chain)
             bp.spec = chain["stages"][0]["spec"]
-            bp.superseded = _replaced_after(stages, 1)
             pv = ChainPreview(out_dir=out_dir, batch_plan=bp, chain=chain, log_path=log.path,
                               token=token, token_inputs=token_inputs, input_snapshots=snapshots)
             pv.warnings += left_elsewhere_warnings(bp)     # stage 1's, on every file, as far as they hold (C3)
@@ -913,14 +909,16 @@ def _make_chain_preview(chain: Dict[str, Any], inputs: Sequence[str], out_dir: P
                              bool(changed_inputs(snapshots)) or
                              {str(f.source.resolve()) for f in bp.files} != set(token_inputs["files"]) or
                              any(f.source_md5 != token_inputs["files"][str(f.source.resolve())][2] for f in bp.files))
-            log.detail(f"stage 1 ({stage_name(stages[0], 1)}) planned on {len(bp.files)} file(s) in {bp.seconds:.2f}s: "
+            log.detail(f"every step ({len(stages)}) planned on {len(bp.files)} file(s) in {bp.seconds:.2f}s: "
                        f"{len(bp.files) - len(bp.exceptions)} plan cleanly, {len(bp.exceptions)} exception(s)")
             for fpl in bp.files:
                 if fpl.status == "planned":
-                    log.detail(f"  {fpl.source.name}: planned [{fpl.ms:.0f} ms] — " + " · ".join(fpl.summary))
+                    log.detail(f"  {fpl.source.name}: planned [{fpl.ms:.0f} ms] — " + " · ".join(fpl.summary)
+                               + (" · " + " · ".join(fpl.later_notes) if fpl.later_notes else ""))
                 else:
                     e = fpl.exception or {}
-                    log.detail(f"  {fpl.source.name}: EXCEPTION [{e.get('code')}] at {e.get('stage')}: {e.get('reason')}")
+                    log.detail(f"  {fpl.source.name}: EXCEPTION [{e.get('code')}] at {e.get('stage')}"
+                               + (f" (step {e['chain_stage']})" if e.get("chain_stage") else "") + f": {e.get('reason')}")
             picks = _pick_samples(bp)
             names = output_names(picks)
             for f in picks:
@@ -1006,12 +1004,6 @@ def _make_chain_preview(chain: Dict[str, Any], inputs: Sequence[str], out_dir: P
                                  or bool(changed_inputs(snapshots)))
                 diag.event("preview.sample_finished", source=str(f), passed=sv.passed,
                            exception=sv.exception, checks=sv.checks, stages=sv.stages)
-            labels = sample_labels(pv.samples)
-            later = [f"{labels[str(Path(sv.source))]}: {what}" for sv in pv.samples for what in sv.left_later]
-            if later or bp.superseded:
-                pv.warnings += later[:LEFT_WARNINGS] + [
-                    "The later steps were checked on the sample documents only: the others may keep the same words "
-                    "elsewhere too; ask in the chat to look."]
             pv.renderer = render_samples(pv.samples, out_dir, renderer, do_render, pv.warnings, log=log)
             if input_changed or changed_since_preview(key, files, token, token_inputs) is not None or changed_inputs(snapshots):
                 pv.token = ""
