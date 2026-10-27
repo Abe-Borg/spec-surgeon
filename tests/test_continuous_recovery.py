@@ -1,4 +1,6 @@
 """Ordinary chat reaches outcome recovery without a separate project workflow."""
+import json
+
 import pytest
 
 from fake_claude import FakeClient, resp, tool
@@ -173,7 +175,9 @@ def test_the_outcome_plan_is_a_choice_the_user_picks_and_leaves_out_what_they_le
     # the failed sample sent the request to the outcome planner, which was given source.docx alone
     assert s.spec is None and s.preview is None and len(client.requests) == 2
     asked = client.requests[-1]["messages"][0]["content"]
-    assert '"documents": [{"id": "0", "source": "' + str(source.resolve()) in asked and str(easy.resolve()) not in asked
+    # the paths as the message's JSON writes them (a Windows path's backslashes escaped)
+    source_json, easy_json = (json.dumps(str(p.resolve()), ensure_ascii=False) for p in (source, easy))
+    assert '"documents": [{"id": "0", "source": ' + source_json in asked and easy_json[1:-1] not in asked
     assert "easy.docx: the user left it out of this request" in asked
     outcome = s.outcome()
     assert outcome.kind == "question" and [c.kind for c in outcome.choices] == ["recovery_plan"]
