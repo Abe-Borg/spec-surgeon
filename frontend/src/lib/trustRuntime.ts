@@ -116,8 +116,9 @@ export const RUNTIME_CARDS: RuntimeCard[] = [
       "paragraph text, XML, table rows, and page images rendered on your computer.",
     ai: conversationModel,
     bounds:
-      `No spending ceiling. Every call counts toward a pause after ${F.stepsPerPause} AI steps. Stop now cuts the ` +
-      "running call off. A call that fails appends nothing to the conversation; the error is shown, and Continue " +
+      "Your spending check (Settings): an AI step that could take this request past it is not started, and the work " +
+      "waits for Continue. Stop cuts the running call off. A call that fails appends nothing to the conversation; " +
+      "the error is shown, and Continue " +
       "goes on from where it stopped. If Claude declines to answer, the chat says so in plain words and nothing is " +
       "changed. When it declines a follow-up reply straight away, before reading anything, that reply is taken back " +
       "out of the conversation, so it is not sent again with your next one; a first request, or a reply declined " +
@@ -134,7 +135,7 @@ export const RUNTIME_CARDS: RuntimeCard[] = [
       "approved wording: it was written by Claude.",
     sent: "The same as sending a request: your answer joins the conversation's history.",
     ai: conversationModel,
-    bounds: `As for a request: the ${F.stepsPerPause}-step pause, Stop now, and nothing changes in a file.`,
+    bounds: "As for a request: an answer is a request of its own for the spending check, Stop, and nothing changes in a file.",
   },
   {
     covers: ["B5", "B16"],
@@ -317,20 +318,30 @@ export const RUNTIME_CARDS: RuntimeCard[] = [
     bounds: "Only copies that passed the independent checker. A later save goes to another new folder.",
   },
   {
-    covers: ["A10"],
-    title: "Continue",
-    you: "Continue, after a pause, a Stop or a failed call.",
+    covers: ["A10", "A31"],
+    title: "Your spending check, and Continue",
+    you:
+      "Settings → Spending check → type an amount in US dollars → Apply, or Turn off. Continue, after a pause at the " +
+      "check, a Stop or a failed call.",
     runs:
-      `After a pause the allowance grows by ${F.stepsPerPause} more AI steps. Then the work goes on where it stopped: ` +
-      "the conversation, a custom method being prepared, or a recovery.",
-    sent: "What the step that resumes sends (see the cards above).",
-    ai: `${MODEL_NAME} by default, at the effort of the work it resumes.`,
-    bounds: "The same pause, Stop now and copies-only rules. A recovery goes on only if its files have not changed since it started.",
+      "The amount is kept in settings.json and applies from the next request (a message, a pick, an approval, a " +
+      "button). Before each AI step the app adds the most that step could cost (its whole input and the longest " +
+      "answer it may write) to what the request has spent; a step that could pass the amount is not started, and the " +
+      "work pauses with its progress saved. Continue lets the request spend the amount again on top of what it spent " +
+      "(when the price table cannot estimate the model that answered, it goes on without a check), and the work goes " +
+      "on where it stopped: the conversation, a custom method being prepared, or a recovery.",
+    sent: "Nothing when you set it. Continue: what the step that resumes sends (see the cards above).",
+    ai: `None to set it. Continue: ${MODEL_NAME} by default, at the effort of the work it resumes.`,
+    bounds:
+      `$${F.spendingCheckDefaultUsd} a request until you change it. The amounts are estimates from the app's price ` +
+      "table, never a bill; Anthropic's console is the exact figure. Off, nothing pauses the work for its spending. " +
+      "Stop and the copies-only rules hold either way, and a recovery goes on only if its files have not changed " +
+      "since it started.",
   },
   {
     covers: ["A11"],
-    title: "Stop now, or closing the window while work runs",
-    you: "Stop now, or the window's ✕.",
+    title: "Stop (the kill switch), or closing the window while work runs",
+    you: "Stop beside the spending in the top bar, the stop button in the chat, or the window's ✕.",
     runs:
       `The running AI call is cut off: the app checks for a stop every ${F.stopPollSeconds} s and closes the ` +
       "connection, so Anthropic stops writing. No further call starts. Your progress is saved; Continue picks it up. " +

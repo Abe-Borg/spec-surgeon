@@ -81,7 +81,7 @@ try {
   // 6. A pause, an update and no key: canned views.
   await scenario("paused");
   await page.reload();
-  await page.getByText("Work paused; your progress is saved").waitFor();
+  await page.getByText("Paused at your spending check").waitFor();
   await page.waitForTimeout(1000);
   await shot(page, "paused");
   await scenario("update-available");

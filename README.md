@@ -211,16 +211,21 @@ Besides Word documents you can attach pictures and tables for the edit to use, s
 insert, a schedule to place as a table, or a spreadsheet of project values to fill in; Claude is told about them and can read the tables, and nothing
 beside your documents is ever looked for.
 
-For Default mode, connect an Anthropic API key once in **Settings**. There is no spending limit: every AI step runs Claude Opus 5.5
+For Default mode, connect an Anthropic API key once in **Settings**. Every AI step runs Claude Opus 5.5
 with room for its full 128,000-token answer (the conversation, and the visual check it runs inside a turn, at medium
 effort; writing a custom method, here or in recovery, at extra-high (`xhigh`), after which the next call goes back to
 its own effort; the outcome planning when no ordinary plan fits (no operation for the request, a plan that
 covers no file, a sample that fails its check, or a preview whose every sample is refused), and recovery, at high;
 no step at max; every operation's settings ride the cached prompt, so a plan is one or two calls; that prompt is cached for an
 hour, so a follow-up request reads it instead of paying for it again). While Claude asks you something or writes a
-plan, its words reach the chat as they are written. Instead, the
-header shows the estimated spending as it accrues, **Stop now** cuts off the AI step that is running at once, and
-work pauses after every 48 AI steps until you press **Continue**, which picks the conversation up where it stopped. A call that fails for a
+plan, its words reach the chat as they are written. The
+header shows the estimated spending as it accrues, and while work runs a **Stop** button beside it is the kill
+switch: it cuts off the AI step that is running at once and starts no other (the stop button in the chat does the
+same). **Settings → Spending check** is the most one request (a message, a pick, an approval) may spend, as the app
+estimates it: $20 until you type another amount, or **Turn off** for none. Before each AI step the app adds the most
+that step could cost to what the request has spent, and a step that could pass the amount is not started: the work
+pauses with its progress saved, and **Continue** allows the amount again and picks the request up where it stopped.
+The amounts are estimates from the app's price table, never a bill. A call that fails for a
 passing reason (an overloaded service, a dropped connection) is sent again automatically. Every request needs
 the key: without one the window keeps your draft and asks you to connect one in Settings.
 

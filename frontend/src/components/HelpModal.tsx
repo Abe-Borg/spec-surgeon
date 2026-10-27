@@ -23,7 +23,6 @@ interface Props {
   onNavigate: (topic: HelpTopic) => void;
   /** The view's version, until /api/about answers. */
   version: string;
-  stepsPerPause: number;
   busy: boolean;
   update: Update | null;
   /** About started a check while this window was open; its answer is shown, whenever About is reopened. */
@@ -49,7 +48,7 @@ const MARKDOWN_COMPONENTS = {
 
 /* --- per-topic content --- */
 
-function HowToUse({ stepsPerPause }: { stepsPerPause: number }) {
+function HowToUse() {
   return (
     <div className="space-y-4">
       <Lead>
@@ -202,7 +201,7 @@ function HowToUse({ stepsPerPause }: { stepsPerPause: number }) {
           <Tag>.docm</Tag> or <Tag>~$</Tag> lock file is not attached at all.
         </p>
       </Guide>
-      <Guide title="Spending, stopping and pauses" tagline="Every AI step is yours to watch and to stop.">
+      <Guide title="Spending, stopping and pauses" tagline="Every AI step is yours to watch, to limit and to stop.">
         <Points
           items={[
             {
@@ -210,12 +209,12 @@ function HowToUse({ stepsPerPause }: { stepsPerPause: number }) {
               d: "The pill in the top bar shows the estimated spending of this conversation as it accrues — an estimate from a built-in price table, never a bill. While work runs the chat shows the assistant’s words, a summary of its thinking and one plain sentence per thing it is doing.",
             },
             {
-              t: "Stop now",
-              d: "While work runs, the button cuts off the AI step that is running at once and starts no other. Your progress is saved; Continue picks the conversation up where it stopped.",
+              t: "Stop — the kill switch",
+              d: "While work runs, Stop beside the spending in the top bar (and the stop button in the chat) cuts off the AI step that is running at once and starts no other. Your progress is saved; Continue picks the conversation up where it stopped.",
             },
             {
-              t: `A pause every ${stepsPerPause} AI steps`,
-              d: `There is no spending limit. Instead, work pauses after every ${stepsPerPause} AI steps with its progress saved, and the button reads Continue.`,
+              t: "Your spending check",
+              d: "Settings → Spending check is the most one request (a message, a pick, an approval) may spend, as the app estimates it. An AI step that could take the request past it is not started: the work pauses with its progress saved, and Continue allows the amount again. You type the amount, or turn it off.",
             },
           ]}
         />
@@ -229,7 +228,7 @@ function HowToUse({ stepsPerPause }: { stepsPerPause: number }) {
   );
 }
 
-function Workflows({ stepsPerPause }: { stepsPerPause: number }) {
+function Workflows() {
   return (
     <div className="space-y-4">
       <Lead>
@@ -332,8 +331,8 @@ function Workflows({ stepsPerPause }: { stepsPerPause: number }) {
         title="Stopped, paused or closed"
         tagline="Stop and pause keep your place; closing ends the conversation."
         steps={[
-          "Stop now cuts off the running AI step at once; Continue picks up where it stopped.",
-          `Work pauses after every ${stepsPerPause} AI steps until you press Continue.`,
+          "Stop cuts off the running AI step at once; Continue picks up where it stopped.",
+          "Work pauses before a request could spend more than your spending check (Settings) until you press Continue.",
           "Closing the app ends the conversation: the next start is a clean one. Copies already created stay in their folder.",
         ]}
       />
@@ -667,7 +666,6 @@ export default function HelpModal({
   onClose,
   onNavigate,
   version,
-  stepsPerPause,
   busy,
   update,
   updateAsked,
@@ -751,8 +749,8 @@ export default function HelpModal({
 
         {/* Scrollable body */}
         <div ref={bodyRef} role="tabpanel" aria-label={HELP_TITLES[topic]} className="overflow-y-auto px-6 py-5">
-          {topic === "how-to-use" && <HowToUse stepsPerPause={stepsPerPause} />}
-          {topic === "workflows" && <Workflows stepsPerPause={stepsPerPause} />}
+          {topic === "how-to-use" && <HowToUse />}
+          {topic === "workflows" && <Workflows />}
           {topic === "how-it-works" && <HowItWorks />}
           {topic === "why-trust-it" && <WhyTrustIt onDeepDive={() => setDeepDive(true)} />}
           {topic === "about" && (

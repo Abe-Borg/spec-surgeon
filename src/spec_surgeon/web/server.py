@@ -29,9 +29,10 @@ from fastapi.staticfiles import StaticFiles
 from .. import __version__, about, credentials, llm, recipes
 from ..ui_feedback import failed_preview_checks
 from .. import diagnostics as diag
-from ..document_task import LAUNCH_MODES, STEPS_PER_PAUSE, DocumentTask
+from ..document_task import LAUNCH_MODES, DocumentTask
 from ..gui import Session
-from ..settings import THEMES, Settings, config_dir, data_dir, default_run_root, logs_dir, save_settings
+from ..settings import (DEFAULT_SPENDING_LIMIT_USD, THEMES, Settings, config_dir, data_dir, default_run_root, logs_dir,
+                        save_settings, spending_check)
 from .watch import WindowWatch
 
 STATIC = Path(__file__).resolve().parent / "static"
@@ -156,6 +157,7 @@ class WindowState:
         self.watch = WindowWatch(job_status=self.job_status)
         self._last_view: Optional[Dict[str, Any]] = None
         llm.set_fast_mode(settings.fast_mode)          # the user's choice, for every call from the window's start
+        task.set_spending_limit(settings.spending_limit_usd)   # the user's spending check, per request (0: off)
         self._environment_key = os.environ.get(credentials.ENV)
         self._credential_store_expected = credentials.available() or sys.platform == "win32"
         self.key_origin = "environment" if self._environment_key else "none"
@@ -244,7 +246,7 @@ class WindowState:
                            "can_hold": kind == "approve" and bool(raw.get("can_hold"))},
                 "todo": [dict(item) for item in raw.get("todo", [])], "focus": list(raw.get("focus", [])),
                 "working": raw["working"], "budget": {"paused": bool(raw["budget_paused"]),
-                                                      "steps_per_pause": STEPS_PER_PAUSE},
+                                                      "reason": raw.get("pause_reason", "")},
                 "update": self.updates.state() if self.updates else _no_update()}
 
     def image_url(self, path) -> str:
@@ -360,7 +362,7 @@ class WindowState:
         session = Session(out_root=task.session.out_root, client=task.session.client,
                           visual_check=task.session.visual_check)
         self.task = DocumentTask(session, journal=task.journal, render=task.render, mode=task.mode,
-                                 obliterate_allowed=task.obliterate_allowed)
+                                 obliterate_allowed=task.obliterate_allowed, spending_limit=task.spending_limit)
         self.task.save()
 
     def save_settings(self) -> None:
@@ -641,7 +643,8 @@ def create_app(state: WindowState, *, dev: bool = False) -> FastAPI:
         return {"key_present": state.task.session.claude_ready(), "origin": state.key_origin,
                 "can_remove_key": state.key_origin in {"saved", "session"},
                 "can_remember": credentials.available(), "out_root": str(state.task.session.out_root),
-                "logs_dir": str(logs_dir()), "steps_per_pause": STEPS_PER_PAUSE, "theme": state.settings.theme,
+                "logs_dir": str(logs_dir()), "theme": state.settings.theme,
+                "spending_limit_usd": state.task.spending_limit, "spending_default_usd": DEFAULT_SPENDING_LIMIT_USD,
                 "fast_mode": state.settings.fast_mode, "fast": fast_offer(),
                 "show_obliterate": state.settings.show_obliterate}
 
@@ -662,6 +665,15 @@ def create_app(state: WindowState, *, dev: bool = False) -> FastAPI:
             state.task.obliterate_allowed = body["show_obliterate"]
             if not body["show_obliterate"] and state.task.mode == "obliterate":
                 state.task.set_mode("default")        # hidden again: the window leaves it
+            state.save_settings()
+        if "spending_limit_usd" in body:
+            # The next request uses it; one paused at the check goes on at the new limit when continued.
+            try:
+                limit = spending_check(body["spending_limit_usd"])
+            except ValueError as exc:
+                return error(str(exc))
+            state.settings.spending_limit_usd = 0.0 if limit is None else limit
+            state.task.set_spending_limit(limit)
             state.save_settings()
         if "fast_mode" in body:
             if not isinstance(body["fast_mode"], bool):

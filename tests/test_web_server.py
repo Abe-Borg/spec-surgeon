@@ -193,7 +193,21 @@ def test_settings_about_updates_and_new_conversation(tmp_path, monkeypatch):
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     state, client = window(tmp_path)
     s = client.get("/api/settings").json()
-    assert s["key_present"] is True and "steps_per_pause" in s          # a scripted client counts as connected
+    assert s["key_present"] is True and "steps_per_pause" not in s     # a scripted client counts as connected
+    # the spending check: $20 a request until the user changes it, 0 or null for off, nothing else accepted
+    assert s["spending_limit_usd"] == s["spending_default_usd"] == 20.0 == state.task.spending_limit
+    assert client.post("/api/settings", json={"spending_limit_usd": 7.5}).status_code == 200
+    assert state.task.spending_limit == 7.5 == load_settings().spending_limit_usd
+    for bad in (-1, "ten", True, float("inf")):
+        r = client.post("/api/settings", content=json.dumps({"spending_limit_usd": bad}).replace("Infinity", "1e999"),
+                        headers={"content-type": "application/json"})
+        assert r.status_code == 400 and state.task.spending_limit == 7.5
+    assert client.get("/api/settings").json()["spending_limit_usd"] == 7.5
+    client.post("/api/settings", json={"spending_limit_usd": None})
+    assert state.task.spending_limit is None and load_settings().spending_limit_usd == 0.0
+    assert client.get("/api/settings").json()["spending_limit_usd"] is None
+    state.new_conversation()
+    assert state.task.spending_limit is None                            # a new conversation keeps the user's check
     s = client.post("/api/settings", json={"api_key": "sk-ant-test", "remember": False}).json()
     assert s["origin"] == "session" and s["theme"] == "clay"
     assert client.post("/api/settings", json={"theme": "linen"}).json()["theme"] == "linen"
@@ -417,17 +431,19 @@ def test_the_app_log_says_a_job_ended_on_a_question(tmp_path, job_log):
     assert question not in line and REQUEST not in line
 
 
-def test_the_app_log_says_a_job_paused_at_the_call_allowance(tmp_path, job_log):
+def test_the_app_log_says_a_job_paused_at_the_spending_check(tmp_path, job_log):
     fake = FakeClient(resp(tool("ask_user", {"questions": ["Which title?"]})),
                       resp(tool("submit_editspec", {"spec": SPEC})))
     state, client = window(tmp_path, fake)
     client.post("/api/attach", json={"paths": [str(document(tmp_path / "Spec.docx"))]})
-    state.task._budget.max_calls = 1
     with client.stream("POST", "/api/send", json={"text": REQUEST}) as response:
         assert frames(response)[-1]["state"]["stage"] == "question"
+    state.task.set_spending_limit(0.01)             # less than one call's largest answer: the next request pauses
     with client.stream("POST", "/api/send", json={"text": "FIRE SUPPRESSION"}) as response:
         done = frames(response)[-1]
     assert done["type"] == "done" and done["state"]["stage"] == "budget" and done["state"]["budget"]["paused"]
+    assert done["state"]["budget"]["reason"] == "limit" and done["state"]["cost"]["limit"] == 0.01
+    assert len(fake.requests) == 1
     first, paused = job_log()
     assert "Job send ended: stage question; stopped no" in first
     assert "Job send ended: stage budget; stopped no; 1 model call so far; estimated cost " in paused

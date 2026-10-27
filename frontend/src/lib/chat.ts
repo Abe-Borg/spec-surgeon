@@ -5,7 +5,7 @@
  *
  * Pure, so `node --test` can pin every rule.
  */
-import type { Choice, Message, TodoItem, View } from "../types.ts";
+import type { Choice, Message, PauseReason, TodoItem, View } from "../types.ts";
 import type { Aside, LiveReply, Step, UiState } from "./view.ts";
 
 /** Every item carries the key the chat renders it under. Messages are keyed by their place in the conversation,
@@ -17,7 +17,16 @@ export type ChatItem =
   | { kind: "live"; key: string; live: LiveReply; leaving?: boolean }
   | { kind: "error"; key: string; text: string }
   | { kind: "prompts"; key: string; questions: string[]; choices: Choice[]; chips: string[] }
-  | { kind: "pause"; key: string; stepsPerPause: number; costText: string; canContinue: boolean }
+  | {
+      kind: "pause";
+      key: string;
+      reason: Exclude<PauseReason, "">;
+      /** The conversation's estimated spending, this request's, and the spending check ("" when it is off). */
+      costText: string;
+      requestText: string;
+      limitText: string;
+      canContinue: boolean;
+    }
   | { kind: "todo"; key: string; items: TodoItem[] };
 
 /** The key of the conversation's entry at `index` (a message, or the live bubble after the last one). */
@@ -60,11 +69,14 @@ export function pauseFor(state: UiState): ChatItem | null {
   const { view } = state;
   if (view.busy) return null;
   if (view.stage !== "budget" && !view.budget?.paused) return null;
+  const limit = view.cost?.limit;
   return {
     kind: "pause",
     key: "pause",
-    stepsPerPause: view.budget?.steps_per_pause ?? 48,
+    reason: view.budget?.reason || "interrupted",
     costText: spentText(view.cost),
+    requestText: spentText(view.cost ? { ...view.cost, usd: view.cost.request ?? null } : null),
+    limitText: typeof limit === "number" ? dollars(limit) : "",
     canContinue: view.action?.kind === "continue" && !!view.action.token,
   };
 }
@@ -155,6 +167,19 @@ export function spentText(cost: View["cost"] | null | undefined): string {
     return cost?.text || "an amount the price table cannot estimate";
   }
   return usd < 0.005 ? "less than $0.01" : `about $${usd.toFixed(2)}`;
+}
+
+/** An amount as the spending check says it: "$20.00". */
+export function dollars(usd: number): string {
+  return `$${usd.toFixed(2)}`;
+}
+
+/** Beside the cost pill while a request runs: "this request ≈ $0.40 of $20.00" ("" with the check off). */
+export function requestPill(cost: View["cost"] | null | undefined): string {
+  const limit = cost?.limit;
+  if (typeof limit !== "number") return "";
+  const spent = cost?.request;
+  return `this request ${typeof spent === "number" && !Number.isNaN(spent) ? `≈ ${dollars(spent)}` : "≈ ?"} of ${dollars(limit)}`;
 }
 
 /** The cost pill: "≈ $0.12" (or "≈ $0.00" before anything was spent). */
