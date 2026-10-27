@@ -31,6 +31,12 @@ def check(source: Path, expected_prompts=None):
     examples = [json.loads(expected[name]) for name in sorted(expected)]
     assert catalog.worked_examples() == examples
     assert catalog.op_catalog()["worked_examples"] == examples
+    # the guided tour's bundled showcase ships beside the worked examples (examples/tutorial/, tutorial.py)
+    from spec_surgeon import tutorial
+    showcase = {name: path.read_bytes() for name, path in tutorial.showcase_files().items()}
+    checkout_showcase = source.resolve().parents[1] / "src" / "spec_surgeon" / "examples" / "tutorial"
+    source_showcase = {p.name: p.read_bytes() for p in checkout_showcase.iterdir() if p.is_file()}
+    assert showcase == source_showcase, "Installed tour showcase differs from the source inventory"
     prompts = prompt_fingerprints()
     if expected_prompts is not None:
         assert prompts == expected_prompts, "Installed compiler prompts differ from the source checkout"

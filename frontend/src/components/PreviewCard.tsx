@@ -35,7 +35,7 @@ function ReviewMarks({ name, mark, onMark }: { name: string; mark?: Mark; onMark
   const base =
     "flex h-7 w-7 items-center justify-center rounded-full border transition-colors disabled:pointer-events-none";
   return (
-    <div role="group" aria-label={`Review ${name}`} className="flex items-center gap-1">
+    <div role="group" aria-label={`Review ${name}`} className="flex items-center gap-1" data-tour="review-marks" data-capability="preview.marks">
       <button
         type="button"
         aria-pressed={mark === "good"}
@@ -71,6 +71,7 @@ export default function PreviewCard({ sample, mark, canReview, onMark, onZoom }:
   const name = sample.name || sample.source.split(/[\\/]/).pop() || "";
   const title = `Preview · ${name}`;
   return (
+    <div data-tour="preview-card">
     <PaperCard
       title={title}
       subtitle={
@@ -135,6 +136,7 @@ export default function PreviewCard({ sample, mark, canReview, onMark, onZoom }:
                 type="button"
                 onClick={() => onZoom(src, title)}
                 title="Enlarge these pages"
+                data-capability="preview.pages"
                 className="group overflow-hidden rounded-lg border border-paper-edge bg-white transition-colors hover:border-accent"
               >
                 <img src={src} alt={`Before and after pages of ${sample.name}`} className="block w-full" loading="lazy" />
@@ -149,5 +151,6 @@ export default function PreviewCard({ sample, mark, canReview, onMark, onZoom }:
         </p>
       )}
     </PaperCard>
+    </div>
   );
 }

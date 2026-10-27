@@ -212,9 +212,57 @@ tab strip:
   with **Download and install**), **Open diagnostic logs** and **Save a diagnostic bundle** (below, "When the window
   has a problem"). These replace the old Help menu and About box.
 
-On the right: the estimated spending of the conversation, the connection pill (it opens Settings),
+Before the guide's tabs, **Tour** starts the guided tour (below). On the right: the estimated spending of the
+conversation, the connection pill (it opens Settings),
 **New conversation** and the gear. An update set aside with the banner's **Not now** stays in the top bar as a pill
 ("v1.7.0 available — install") from 1280 px wide; below that, About offers it.
+
+## The guided tour
+
+The tour (adapted from Build-a-Spec's) walks through every part of the window on bundled practice documents, in a
+workspace of its own. Three ways in: **Tour** in the top bar, the chip at the top of an empty conversation (it pulses
+a few times until this computer has finished the tour once), and **Help → How to use**, which starts it at the
+beginning or at any chapter. Everything about it is built so that nothing is pretended and nothing of yours is
+touched:
+
+- **A practice workspace, not your conversation.** When the tour starts, the window's conversation is set aside
+  untouched (`web/server.py`, `WindowState.original_task`; its journal is not written to, its settings — the mode,
+  the folders — are not changed) and a `TutorialTask` (`tutorial.py`) takes its place over the showcase shipped in
+  `examples/tutorial/`: four short specifications (21 13 13, 21 13 16, 21 05 00 and another firm's clean agent
+  section with no section number line), a table of contents saved as text that triage refuses, a prepared
+  header/footer template with one typed placeholder, a logo and a table of project values. The copies and previews
+  the tour makes go to a practice folder under the app's data folder (`data_dir()\tutorial\`), deleted when the
+  tour ends and replaced at the next start. **New conversation** during a tour ends it first; the conversation comes
+  back, then starts afresh.
+- **Real where it can be, recorded where it cannot, and labelled.** Each chapter asks the server for its state
+  (`POST /api/tutorial/scenario`), and the server builds it from the showcase through the production code paths:
+  triage on arrival, a Safe-mode button (**Headers and footers from the template**, the placeholder filled with
+  "ISSUED FOR CONSTRUCTION 2026-03-01") through `recipes.build` and the gate to a real preview, the real run that
+  writes checked copies with one document held by the red X and the other firm's left untouched, and in Default mode
+  a plan from a worked EditSpec (every font to Arial, 21 05 00 left out) through the same gate, preview and run. No
+  model call anywhere, in any chapter. The conversation chapters' messages and the question under them are a
+  recording: an app note at the top of each says so, **Send**, the answer buttons and the suggested replies are held
+  still with one sentence saying why, and the server refuses a send or a choice in the practice workspace before
+  anything could reach Claude. A step whose control is not on screen (a Continue card, say) says that beside the
+  workbench rather than showing a pretend one, and a step whose subject would spend money is marked optional and
+  explained without being run.
+- **A fixed track you only watch.** The tour highlights one control at a time with a card beside it: Continue, Back,
+  and End the tour at every step; the mode switch is held while it runs (the tour switches modes as its chapters
+  need). Escape asks before ending. The last step's Continue is **Finish and return to my conversation**. The chapters,
+  in order: your practice workspace, the documents, Safe mode's buttons, the preview (checkmarks and the red X, Left
+  untouched, the one button), the copies (the working set, the hand-off to Default mode, the to-do list), the
+  conversation, questions and suggested replies, a plan in Default mode, the to-do list's pass, Help and About, and the
+  finish.
+- **Picked back up, and remembered.** The page keeps its place (chapter and step, with the tour's id, in the
+  browser's local storage under `spec-surgeon:tour-progress`, discarded when the tour's version changes); a reload
+  while the practice workspace is up resumes there, and a reload with no place to go back to ends the tour and brings
+  the conversation back. Finishing writes `tutorial_version` to `settings.json` (`POST /api/settings`), which is what
+  stops the chip pulsing and makes it read "Take the guided tour again"; nothing else about the tour is kept.
+- **Pinned.** `tests/test_tutorial.py` builds every chapter state and checks it (the showcase bytes match their
+  builder, the sources stay byte-identical, the original task is returned as it was, the practice folder is gone);
+  `frontend/tests/tour.test.ts` keeps the manifest, the page and the server in step (every end-user control carries a
+  `data-capability` some step teaches, every step's anchor exists, every chapter's scenario is one the server builds,
+  the form the tour prepares is the one the server ran).
 
 ## Attachments and triage
 

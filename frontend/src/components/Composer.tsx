@@ -1,5 +1,6 @@
 // Adapted from Build-a-Spec's frontend/src/components/Composer.tsx (copy-based reuse).
 import { memo, useEffect, useRef } from "react";
+import { TOUR_HOLD } from "../lib/tour";
 import Tip from "./Tip";
 
 interface Props {
@@ -17,6 +18,8 @@ interface Props {
   /** Owned by the window, so switching to Safe mode does not discard an unsent message. */
   value: string;
   onChange: (text: string) => void;
+  /** The guided tour runs: Send is held still (its conversation is a recording). */
+  tourActive?: boolean;
 }
 
 const MAX_HEIGHT = 220; // about nine lines
@@ -30,6 +33,7 @@ function Composer({
   prefill,
   value,
   onChange,
+  tourActive = false,
 }: Props) {
   const ref = useRef<HTMLTextAreaElement>(null);
 
@@ -65,15 +69,15 @@ function Composer({
 
   const send = () => {
     const text = value.trim();
-    if (!text || busy || !canSend) return;
+    if (!text || busy || !canSend || tourActive) return;
     onChange("");
     onSend(text);
   };
 
-  const sendTip = !canSend ? reason : value.trim() ? "Send · Enter" : "Type a request first";
+  const sendTip = tourActive ? TOUR_HOLD : !canSend ? reason : value.trim() ? "Send · Enter" : "Type a request first";
 
   return (
-    <div className="border-t border-edge bg-surface p-4">
+    <div className="border-t border-edge bg-surface p-4" data-tour="composer">
       <div className="mx-auto max-w-3xl">
         <div className="flex items-end gap-2 rounded-2xl border border-edge bg-bg p-2 focus-within:border-accent/70">
           <textarea
@@ -88,6 +92,7 @@ function Composer({
               send();
             }}
             aria-label="Describe a change or answer a question"
+            data-capability="chat.composer"
             placeholder={
               busy
                 ? "Type your next message; send it when the current work ends…"
@@ -101,6 +106,7 @@ function Composer({
                 type="button"
                 onClick={onStop}
                 aria-label="Stop now"
+                data-capability="chat.stop"
                 className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-accent text-on-accent transition-colors hover:bg-accent-hover"
               >
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
@@ -113,7 +119,7 @@ function Composer({
               <button
                 type="button"
                 onClick={send}
-                disabled={!canSend || !value.trim()}
+                disabled={!canSend || !value.trim() || tourActive}
                 aria-label="Send"
                 className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-accent text-on-accent transition-colors hover:bg-accent-hover disabled:pointer-events-none disabled:opacity-30"
               >
@@ -136,7 +142,9 @@ function Composer({
           )}
         </div>
         <p className="mt-2 flex items-baseline justify-between gap-3 px-1 text-[11px] text-ink-faint">
-          {canSend ? (
+          {tourActive ? (
+            <span>{TOUR_HOLD}</span>
+          ) : canSend ? (
             <>
               <span>Edited copies are saved separately. Your originals stay intact.</span>
               <span className="shrink-0 text-ink-faint/70" title="Shift+Enter starts a new line">

@@ -44,7 +44,13 @@ export default function ObliterateWarning({ keyReady, onCancel, onConfirm }: Pro
           <button type="button" className={quietBtn} onClick={onCancel}>
             Stay in this mode
           </button>
-          <button type="button" className={primaryBtn} disabled={!understood || !keyReady} onClick={onConfirm}>
+          <button
+            type="button"
+            className={primaryBtn}
+            disabled={!understood || !keyReady}
+            onClick={onConfirm}
+            data-capability="obliterate.warning"
+          >
             Turn on Obliterate
           </button>
         </div>

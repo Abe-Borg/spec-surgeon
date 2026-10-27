@@ -102,6 +102,7 @@ export const EMPTY_VIEW: View = {
   modes: ["safe", "default"],
   template: { kind: "none", typed_slots: [], reason: "" },
   left_untouched: [],
+  tutorial: { active: false, id: null, scenario: null, finished_version: 0 },
 };
 
 export const INITIAL_STATE: UiState = {
@@ -168,6 +169,21 @@ export function normalizeView(raw: unknown): View {
     modes: list<string>(v.modes).filter((m): m is View["mode"] => m === "safe" || m === "default" || m === "obliterate"),
     template: obj(v.template, EMPTY_VIEW.template),
     left_untouched: list(v.left_untouched),
+    tutorial: normalizeTutorial(v.tutorial),
+  };
+}
+
+/** The tour block as the page reads it: a server without one, or a malformed one, means no tour and never finished. */
+export function normalizeTutorial(raw: unknown): View["tutorial"] {
+  const t = (raw && typeof raw === "object" ? raw : {}) as Partial<View["tutorial"]> & Record<string, unknown>;
+  return {
+    active: t.active === true,
+    id: typeof t.id === "string" && t.id ? t.id : null,
+    scenario: typeof t.scenario === "string" && t.scenario ? t.scenario : null,
+    finished_version:
+      typeof t.finished_version === "number" && Number.isInteger(t.finished_version) && t.finished_version >= 0
+        ? t.finished_version
+        : 0,
   };
 }
 

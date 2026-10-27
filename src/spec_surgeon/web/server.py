@@ -33,6 +33,7 @@ from ..document_task import LAUNCH_MODES, DocumentTask
 from ..gui import Session
 from ..settings import (DEFAULT_SPENDING_LIMIT_USD, THEMES, Settings, config_dir, data_dir, default_run_root, logs_dir,
                         save_settings, spending_check)
+from ..tutorial import SCENARIOS, Tutorial
 from .watch import WindowWatch
 
 STATIC = Path(__file__).resolve().parent / "static"
@@ -156,6 +157,11 @@ class WindowState:
         self.job: Optional[Dict[str, Any]] = None       # the running job's clock, for the watch (``job_status``)
         self.watch = WindowWatch(job_status=self.job_status)
         self._last_view: Optional[Dict[str, Any]] = None
+        # The guided tour (``tutorial``): while it runs, ``task`` is the practice workspace and the user's own task
+        # waits in ``original_task``, untouched; a chapter's build holds ``_transition`` so no job starts over it
+        self.tutorial = Tutorial()
+        self.original_task: Optional[DocumentTask] = None
+        self._transition = False
         llm.set_fast_mode(settings.fast_mode)          # the user's choice, for every call from the window's start
         task.set_spending_limit(settings.spending_limit_usd)   # the user's spending check, per request (0: off)
         self._environment_key = os.environ.get(credentials.ENV)
@@ -185,14 +191,88 @@ class WindowState:
             self.key_origin = "none"
         self._forget_cached_credentials()
 
+    def _tasks(self) -> List[DocumentTask]:
+        """The task on screen and, during a tour, the user's own waiting behind it. A setting that reaches a task (a
+        changed key, the spending check, Obliterate shown or hidden) reaches both, so the conversation comes back
+        from the tour as current as Settings says it is (Codex review on #122)."""
+        return [self.task] if self.original_task is None else [self.task, self.original_task]
+
     def _forget_cached_credentials(self) -> None:
-        conversation = self.task.session.conversation
-        if conversation is not None:
-            conversation.forget_cached_credentials()
+        for task in self._tasks():
+            conversation = task.session.conversation
+            if conversation is not None:
+                conversation.forget_cached_credentials()
 
     @property
     def busy(self) -> bool:
-        return self.thread is not None and self.thread.is_alive()
+        return self._transition or (self.thread is not None and self.thread.is_alive())
+
+    @property
+    def settings_task(self) -> DocumentTask:
+        """The user's own task: what settings.json remembers (its folder, its mode) and whose journal is saved. The
+        tour's practice task, while one stands in, is never it."""
+        return self.original_task if self.original_task is not None else self.task
+
+    def tutorial_block(self) -> Dict[str, Any]:
+        """The view's ``tutorial`` block (docs/WEB_API.md): whether the tour runs, its id and the chapter state on
+        screen, and the tour version this computer finished (``Settings.tutorial_version``)."""
+        return {**self.tutorial.status(), "finished_version": int(self.settings.tutorial_version)}
+
+    # ---- the guided tour ----
+    def begin_tutorial(self, request_id: Optional[str] = None) -> Dict[str, Any]:
+        """Set the user's task aside and put the practice workspace in its place (``tutorial.Tutorial.begin``). A
+        repeated start with the same ``request_id`` joins the running tour; another start while one runs is a
+        conflict (``LookupError``); a running job or build is ``RuntimeError`` (busy)."""
+        with self.lock:
+            if self.busy:
+                raise RuntimeError("busy")
+            if self.tutorial.active and not (request_id and request_id == self.tutorial.request_id):
+                raise LookupError("A tour is already running; end it before starting another.")
+            self._transition = True
+        try:
+            keep = self.settings_task
+            task = self.tutorial.begin(render=keep.render, spending_limit=keep.spending_limit, request_id=request_id)
+            if self.original_task is None:
+                self.original_task = self.task
+            self.task = task
+            self._last_view = None
+        finally:
+            self._transition = False
+        return self.view()
+
+    def tutorial_scenario(self, tutorial_id: str, kind: str) -> Dict[str, Any]:
+        """The chapter state ``kind`` on screen, built afresh from the showcase."""
+        with self.lock:
+            if self.busy:
+                raise RuntimeError("busy")
+            if not self.tutorial.active or tutorial_id != self.tutorial.id:
+                raise LookupError("This tour is no longer running.")
+            if kind not in SCENARIOS:
+                raise ValueError(f"There is no tutorial chapter state named {kind!r}.")
+            self._transition = True
+        try:
+            keep = self.settings_task
+            self.task = self.tutorial.show(tutorial_id, kind, render=keep.render, spending_limit=keep.spending_limit)
+            self._last_view = None
+        finally:
+            self._transition = False
+        return self.view()
+
+    def restore_tutorial(self, tutorial_id: Optional[str] = None) -> Dict[str, Any]:
+        """The one ending: the user's own task is on screen again, the very object that was set aside, and the
+        practice folder is removed. With no tour running there is nothing to do (the call is idempotent)."""
+        with self.lock:
+            if self.busy:
+                raise RuntimeError("busy")
+            if not self.tutorial.active:
+                return self.view()
+            if tutorial_id is not None and tutorial_id != self.tutorial.id:
+                raise LookupError("This tour is no longer running.")
+            if self.original_task is not None:
+                self.task, self.original_task = self.original_task, None
+            self._last_view = None
+            self.tutorial.end()
+        return self.view()
 
     def job_status(self) -> Optional[Dict[str, Any]]:
         """The running job's clock for the watch (``web/watch.py``): None when no job runs."""
@@ -252,6 +332,7 @@ class WindowState:
                 "todo": [dict(item) for item in raw.get("todo", [])], "focus": list(raw.get("focus", [])),
                 "working": raw["working"], "budget": {"paused": bool(raw["budget_paused"]),
                                                       "reason": raw.get("pause_reason", "")},
+                "tutorial": self.tutorial_block(),
                 "update": self.updates.state() if self.updates else _no_update()}
 
     def image_url(self, path) -> str:
@@ -333,9 +414,7 @@ class WindowState:
                 else:
                     terminal = {"type": "done", "state": self._payload(task.view(), busy=False)}
                 try:
-                    self.settings.out_root = str(task.session.out_root)
-                    self.settings.mode = launch_mode(task.mode)
-                    save_settings(self.settings)
+                    self.remember_settings()
                     task.save()
                 except Exception:  # noqa: BLE001
                     pass
@@ -362,6 +441,8 @@ class WindowState:
         return True
 
     def new_conversation(self) -> None:
+        if self.tutorial.active:
+            raise RuntimeError("End the tour first; New conversation then starts your own conversation afresh.")
         task = self.task
         task.archive()
         session = Session(out_root=task.session.out_root, client=task.session.client,
@@ -370,12 +451,18 @@ class WindowState:
                                  obliterate_allowed=task.obliterate_allowed, spending_limit=task.spending_limit)
         self.task.save()
 
-    def save_settings(self) -> None:
-        self.settings.out_root = str(self.task.session.out_root)
-        self.settings.mode = launch_mode(self.task.mode)
+    def remember_settings(self) -> None:
+        """settings.json takes the user's own task's folder and mode (``settings_task``), never the tour's practice
+        task's while one stands in."""
+        keep = self.settings_task
+        self.settings.out_root = str(keep.session.out_root)
+        self.settings.mode = launch_mode(keep.mode)
         save_settings(self.settings)
+
+    def save_settings(self) -> None:
+        self.remember_settings()
         if not self.busy:
-            self.task.save()
+            self.settings_task.save()
 
 
 def _no_update() -> Dict[str, Any]:
@@ -624,8 +711,65 @@ def create_app(state: WindowState, *, dev: bool = False) -> FastAPI:
     def new_conversation():
         if state.busy:
             return busy_error()
-        state.new_conversation()
+        try:
+            state.new_conversation()
+        except RuntimeError as exc:
+            return error(str(exc), 409)
         return state.view()
+
+    # ---- the guided tour (docs/WEB_API.md, "The guided tour"; ``tutorial.py``) ----
+    async def tour_body(request: Request) -> Dict[str, Any]:
+        try:
+            body = await request.json()
+        except ValueError:
+            return {}
+        return body if isinstance(body, dict) else {}
+
+    @app.get("/api/tutorial/status")
+    def tutorial_status():
+        return state.tutorial_block()
+
+    @app.post("/api/tutorial/start")
+    async def tutorial_start(request: Request):
+        body = await tour_body(request)
+        request_id = str(body.get("request_id") or "") or None
+        try:
+            return state.begin_tutorial(request_id)
+        except RuntimeError:
+            return busy_error()
+        except LookupError as exc:
+            return error(str(exc), 409)
+        except (OSError, ValueError) as exc:
+            diag.app_log().error(f"The tour could not start\n{traceback.format_exc()}")
+            return error(f"The tour could not start: {exc}", 500)
+
+    @app.post("/api/tutorial/scenario")
+    async def tutorial_scenario(request: Request):
+        body = await tour_body(request)
+        tutorial_id = str(body.get("tutorial_id") or "")
+        kind = str(body.get("kind") or "")
+        try:
+            return state.tutorial_scenario(tutorial_id, kind)
+        except RuntimeError:
+            return busy_error()
+        except LookupError as exc:
+            return error(str(exc), 409)
+        except ValueError as exc:
+            return error(str(exc))
+        except Exception as exc:  # noqa: BLE001 — the chapter's build failed: the tour stays, the page may retry
+            diag.app_log().error(f"The tour's chapter {kind!r} could not be prepared\n{traceback.format_exc()}")
+            return error(f"The chapter could not be prepared: {exc}", 500)
+
+    @app.post("/api/tutorial/restore")
+    async def tutorial_restore(request: Request):
+        body = await tour_body(request)
+        tutorial_id = str(body.get("tutorial_id") or "") or None
+        try:
+            return state.restore_tutorial(tutorial_id)
+        except RuntimeError:
+            return busy_error()
+        except LookupError as exc:
+            return error(str(exc), 409)
 
     @app.post("/api/open")
     async def open_result(request: Request):
@@ -651,7 +795,8 @@ def create_app(state: WindowState, *, dev: bool = False) -> FastAPI:
                 "logs_dir": str(logs_dir()), "theme": state.settings.theme,
                 "spending_limit_usd": state.task.spending_limit, "spending_default_usd": DEFAULT_SPENDING_LIMIT_USD,
                 "fast_mode": state.settings.fast_mode, "fast": fast_offer(),
-                "show_obliterate": state.settings.show_obliterate}
+                "show_obliterate": state.settings.show_obliterate,
+                "tutorial_version": state.settings.tutorial_version}
 
     @app.post("/api/settings")
     async def set_settings(request: Request):
@@ -664,12 +809,13 @@ def create_app(state: WindowState, *, dev: bool = False) -> FastAPI:
         if "show_obliterate" in body:
             if not isinstance(body["show_obliterate"], bool):
                 return error("Show Obliterate mode is on or off.")
-            if state.busy and not body["show_obliterate"] and state.task.mode == "obliterate":
+            if state.busy and not body["show_obliterate"] and any(t.mode == "obliterate" for t in state._tasks()):
                 return busy_error()
             state.settings.show_obliterate = body["show_obliterate"]
-            state.task.obliterate_allowed = body["show_obliterate"]
-            if not body["show_obliterate"] and state.task.mode == "obliterate":
-                state.task.set_mode("default")        # hidden again: the window leaves it
+            for task in state._tasks():
+                task.obliterate_allowed = body["show_obliterate"]
+                if not body["show_obliterate"] and task.mode == "obliterate":
+                    task.set_mode("default")        # hidden again: the window leaves it
             state.save_settings()
         if "spending_limit_usd" in body:
             # The next request uses it; one paused at the check goes on at the new limit when continued.
@@ -678,7 +824,15 @@ def create_app(state: WindowState, *, dev: bool = False) -> FastAPI:
             except ValueError as exc:
                 return error(str(exc))
             state.settings.spending_limit_usd = 0.0 if limit is None else limit
-            state.task.set_spending_limit(limit)
+            for task in state._tasks():
+                task.set_spending_limit(limit)
+            state.save_settings()
+        if "tutorial_version" in body:
+            # the guided tour's version this computer finished: the page's number, kept for the next start
+            version = body["tutorial_version"]
+            if isinstance(version, bool) or not isinstance(version, int) or version < 0:
+                return error("The finished tour's version is a whole number.")
+            state.settings.tutorial_version = version
             state.save_settings()
         if "fast_mode" in body:
             if not isinstance(body["fast_mode"], bool):

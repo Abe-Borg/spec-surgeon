@@ -28,20 +28,26 @@ export default function ActionBar({ button, held, onAct, onDiscard }: Props) {
   return (
     <Collapse open={shown}>
       {shown && (
-        <div className="border-t border-edge bg-surface/70 px-4 py-2.5" role="region" aria-label="Your decision">
+        <div className="border-t border-edge bg-surface/70 px-4 py-2.5" role="region" aria-label="Your decision" data-tour="action-bar">
           <div className="mx-auto flex max-w-3xl items-center justify-between gap-4">
             <p className="text-xs leading-snug text-ink-dim">{primary ? actionSentence(primary, held) : DISCARD_ONLY}</p>
             <div className="flex shrink-0 items-center gap-2">
               {onDiscard && (
                 <Tip tip={DISCARD_TIP}>
-                  <button type="button" className={quietBtn} onClick={onDiscard}>
+                  <button type="button" className={quietBtn} onClick={onDiscard} data-capability="action.discard">
                     Discard preview
                   </button>
                 </Tip>
               )}
               {primary && (
                 <Tip tip={primary.tip}>
-                  <button type="button" className={primaryBtn} disabled={primary.disabled} onClick={() => onAct(primary.token)}>
+                  <button
+                    type="button"
+                    className={primaryBtn}
+                    disabled={primary.disabled}
+                    onClick={() => onAct(primary.token)}
+                    data-capability="action.primary"
+                  >
                     {primary.label}
                   </button>
                 </Tip>

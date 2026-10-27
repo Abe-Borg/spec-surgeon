@@ -90,6 +90,7 @@ export default function WhyTrustIt({ onDeepDive }: { onDeepDive: () => void }) {
         <button
           type="button"
           onClick={onDeepDive}
+          data-capability="help.trust"
           className="mt-3 rounded-lg border border-accent/60 bg-accent/10 px-3 py-1.5 text-xs font-medium text-accent transition-colors hover:bg-accent/20"
         >
           I’m not convinced — show me exactly what runs →

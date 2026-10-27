@@ -11,6 +11,7 @@ import { getAbout } from "../lib/api";
 import { useDialogFocus } from "../lib/dialogFocus";
 import { HELP_TITLES, HELP_TOPICS, modelLabel, releaseNotesBody, updateStatus, type HelpTopic } from "../lib/help";
 import { OBLITERATE_COSTS, OBLITERATE_GRANTS, OBLITERATE_KEPT } from "../lib/modes";
+import { TOUR } from "../lib/tour";
 import {
   DEFAULT_LIMITS,
   DEFAULT_OPERATIONS,
@@ -48,6 +49,8 @@ interface Props {
   onSaveBundle: () => void;
   /** What the last Save a diagnostic bundle said ("" before one). */
   bundleNote: string;
+  /** Start the guided tour at a chapter (lib/tour.ts ids); the dialog closes first. */
+  onStartTourAt: (chapter: string) => void;
 }
 
 /** A link from the About page opens in the system browser: in the native window a plain anchor would navigate the
@@ -60,7 +63,7 @@ const MARKDOWN_COMPONENTS = {
 
 /* --- per-topic content --- */
 
-function HowToUse() {
+function HowToUse({ onStartTourAt }: { onStartTourAt: (chapter: string) => void }) {
   return (
     <div className="space-y-4">
       <Lead>
@@ -197,6 +200,31 @@ function HowToUse() {
           },
         ]}
       />
+      <section className="rounded-xl border border-edge bg-raised/40 p-4" data-capability="tour.start">
+        <h4 className="font-[family-name:var(--font-display)] text-[15px] font-semibold text-ink">The guided tour</h4>
+        <p className="mt-1 text-xs leading-relaxed text-ink-dim">
+          A fixed track through every part of the window, shown on bundled practice documents in a workspace of its
+          own: real previews and real copies from the same engine, no AI call, and nothing of yours touched. Your
+          conversation is set aside when it starts and comes back exactly as it was when it ends. Start at the
+          beginning or at any chapter.
+        </p>
+        <button type="button" onClick={() => onStartTourAt(TOUR[0].id)} className={`${primaryBtn} mt-3`}>
+          Start the guided tour
+        </button>
+        <div className="mt-3 flex flex-wrap gap-1.5" aria-label="Tour chapters">
+          {TOUR.map((chapter, index) => (
+            <button
+              key={chapter.id}
+              type="button"
+              onClick={() => onStartTourAt(chapter.id)}
+              className="rounded-md border border-edge bg-surface px-2 py-1 text-[11px] text-ink-dim transition-colors hover:border-accent hover:text-accent"
+              title={`Start at chapter ${index + 1}: ${chapter.title}`}
+            >
+              {index + 1}. {chapter.title}
+            </button>
+          ))}
+        </div>
+      </section>
       <Guide
         title="When a file arrives"
         tagline="Each file is listed by its name; only a refusal says more."
@@ -553,16 +581,17 @@ function AboutTopic({
             onClick={onCheckUpdate}
             disabled={checkingUpdate}
             className={quietBtn}
+            data-capability="about.updates"
           >
             Check for updates
           </button>
           <Tip tip="Opens the folder of the app’s logs, to send to whoever diagnoses a problem. They never contain your documents, though an error message in them can quote a line of one.">
-            <button type="button" onClick={onOpenLogs} className={quietBtn}>
+            <button type="button" onClick={onOpenLogs} className={quietBtn} data-capability="about.diagnostics">
               Open diagnostic logs
             </button>
           </Tip>
           <Tip tip="Saves one zip with the app’s logs, its settings, your recent conversations and the logs and records of your recent runs, and shows it in Explorer: the one file to send when something went wrong. Folders of copies and page pictures are left out, but conversations and records can quote your words and your documents’ text, and a conversation’s saved history can hold page images.">
-            <button type="button" onClick={onSaveBundle} className={quietBtn}>
+            <button type="button" onClick={onSaveBundle} className={quietBtn} data-capability="about.diagnostics">
               Save a diagnostic bundle
             </button>
           </Tip>
@@ -734,6 +763,7 @@ export default function HelpModal({
   onOpenLogs,
   onSaveBundle,
   bundleNote,
+  onStartTourAt,
 }: Props) {
   // The "I'm not convinced" dossier stacks above this dialog. Local state, so leaving the topic or closing help drops
   // it too.
@@ -807,7 +837,7 @@ export default function HelpModal({
 
         {/* Scrollable body */}
         <div ref={bodyRef} role="tabpanel" aria-label={HELP_TITLES[topic]} className="overflow-y-auto px-6 py-5">
-          {topic === "how-to-use" && <HowToUse />}
+          {topic === "how-to-use" && <HowToUse onStartTourAt={onStartTourAt} />}
           {topic === "workflows" && <Workflows />}
           {topic === "how-it-works" && <HowItWorks />}
           {topic === "why-trust-it" && <WhyTrustIt onDeepDive={() => setDeepDive(true)} />}

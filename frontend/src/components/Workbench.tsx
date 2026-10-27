@@ -127,6 +127,7 @@ function Workbench({
       ref={scrollRef}
       className="flex min-w-[480px] flex-1 basis-[54%] flex-col overflow-y-auto bg-bg"
       aria-label="Your documents and the pages"
+      data-tour="workbench"
     >
       <div className="mx-auto flex w-full max-w-4xl flex-col gap-5 px-6 py-6">
         <DocumentsTray
@@ -150,7 +151,7 @@ function Workbench({
         )}
 
         {view.samples.length > 0 && (
-          <div ref={previewsRef} className="flex scroll-mt-6 flex-col gap-5">
+          <div ref={previewsRef} className="flex scroll-mt-6 flex-col gap-5" data-tour="previews">
             {canReview && (
               <p className="-mb-2 px-1 text-[12px] text-ink-faint">
                 Look at each preview. The green checkmark says it looks right; the red X sets that document aside for
@@ -194,6 +195,7 @@ function Workbench({
         )}
 
         {setAside.length > 0 && (
+          <div data-tour="left-untouched" data-capability="preview.left-untouched">
           <PaperCard
             title="Left untouched"
             subtitle={
@@ -213,9 +215,11 @@ function Workbench({
               ))}
             </ul>
           </PaperCard>
+          </div>
         )}
 
         {untouched.length > 0 && (
+          <div data-tour="left-untouched-button">
           <PaperCard
             title="Left untouched by the last button"
             subtitle={`These documents got no ${pdfs.length > 0 ? "PDF" : "copy"} from it; each line says why. Default mode can plan them with an AI model.`}
@@ -227,7 +231,13 @@ function Workbench({
                     : "Puts these documents on your to-do list and switches to Default mode, where you describe what should be different"
                 }
               >
-                <button type="button" className={paperBtn} disabled={busy} onClick={() => onHandOff(untouched.map((u) => u.path))}>
+                <button
+                  type="button"
+                  className={paperBtn}
+                  disabled={busy}
+                  onClick={() => onHandOff(untouched.map((u) => u.path))}
+                  data-capability="results.hand-off"
+                >
                   Try these in Default mode
                 </button>
               </Tip>
@@ -244,10 +254,11 @@ function Workbench({
               ))}
             </ul>
           </PaperCard>
+          </div>
         )}
 
         {view.results.length > 0 && (
-          <div ref={resultsRef} className="scroll-mt-6">
+          <div ref={resultsRef} className="scroll-mt-6" data-tour="results">
           <PaperCard
             title="Your edited copies"
             subtitle={
@@ -262,6 +273,7 @@ function Workbench({
                     type="button"
                     onClick={() => onOpen(folder)}
                     aria-label="Open the folder with these copies"
+                    data-capability="results.folder"
                     className="flex h-8 w-8 items-center justify-center rounded-lg border border-paper-edge bg-white/60 text-paper-dim transition-colors hover:border-accent hover:text-accent"
                   >
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
@@ -279,6 +291,7 @@ function Workbench({
                     type="button"
                     onClick={() => onOpen(result.output)}
                     title={result.output}
+                    data-capability="results.copies"
                     className="flex w-full items-center gap-2 py-2 text-left text-sm text-paper-ink transition-colors hover:text-accent"
                   >
                     <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden className="shrink-0 text-paper-dim">
@@ -321,6 +334,7 @@ function Workbench({
                       type="button"
                       onClick={() => onOpen(pdfsAt)}
                       aria-label="Open the folder with these PDFs"
+                      data-capability="results.folder"
                       className="flex h-8 w-8 items-center justify-center rounded-lg border border-paper-edge bg-white/60 text-paper-dim transition-colors hover:border-accent hover:text-accent"
                     >
                       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
@@ -338,6 +352,7 @@ function Workbench({
                       type="button"
                       onClick={() => onOpen(pdf.output)}
                       title={pdf.output}
+                      data-capability="results.copies"
                       className="flex w-full items-center gap-2 py-2 text-left text-sm text-paper-ink transition-colors hover:text-accent"
                     >
                       <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden className="shrink-0 text-paper-dim">
@@ -369,6 +384,7 @@ function Workbench({
         )}
 
         {todo.length > 0 && (
+          <div data-tour="todo-list">
           <PaperCard
             title="Set aside for more work"
             subtitle={
@@ -391,6 +407,7 @@ function Workbench({
                       onClick={() => onPutBack(item.path)}
                       disabled={busy}
                       aria-label={`Put back ${item.name}`}
+                      data-capability="todo.put-back"
                       className="shrink-0 text-xs text-accent underline decoration-accent/40 underline-offset-2 transition-colors hover:decoration-accent disabled:pointer-events-none disabled:opacity-50"
                     >
                       Put back
@@ -400,10 +417,11 @@ function Workbench({
               ))}
             </ul>
           </PaperCard>
+          </div>
         )}
 
         {view.working?.generation > 0 && (
-          <p className="text-[12px] text-ink-faint">
+          <p className="text-[12px] text-ink-faint" data-tour="working-line">
             {safe ? "The next button builds on these copies." : "Your next request builds on these copies."}
             {view.working.can_start_over && (
               <>
@@ -413,6 +431,7 @@ function Workbench({
                     type="button"
                     onClick={onStartOver}
                     disabled={busy}
+                    data-capability="results.start-over"
                     className="text-accent underline decoration-accent/40 underline-offset-2 transition-colors hover:decoration-accent disabled:pointer-events-none disabled:opacity-50"
                   >
                     Start over from the originals
@@ -428,6 +447,7 @@ function Workbench({
                     type="button"
                     onClick={onUndo}
                     disabled={undo.disabled}
+                    data-capability="results.undo"
                     className="text-accent underline decoration-accent/40 underline-offset-2 transition-colors hover:decoration-accent disabled:pointer-events-none disabled:opacity-50"
                   >
                     Undo the last button

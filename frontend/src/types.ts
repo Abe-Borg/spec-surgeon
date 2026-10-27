@@ -265,6 +265,15 @@ export interface Update {
   manual_result?: string;
 }
 
+/** The guided tour (docs/WEB_API.md): whether its practice workspace stands in for the user's conversation, the
+ *  tour's id and the chapter state on screen, and the tour version this computer finished (settings.json). */
+export interface Tutorial {
+  active: boolean;
+  id: string | null;
+  scenario: string | null;
+  finished_version: number;
+}
+
 export interface View {
   version: string;
   busy: boolean;
@@ -300,6 +309,8 @@ export interface View {
   template: TemplateInfo;
   /** What the last Safe-mode button left untouched (after its copies were created). */
   left_untouched: Untouched[];
+  /** The guided tour's state; absent from an older server. */
+  tutorial: Tutorial;
 }
 
 /** The kinds the `status` frame names; anything else renders as "Working…". */
@@ -357,6 +368,8 @@ export interface Settings {
   spending_limit_usd?: number | null;
   /** The amount the check starts at until the user changes it. */
   spending_default_usd?: number;
+  /** The guided tour's version this computer finished (0: never). Absent from an older server. */
+  tutorial_version?: number;
 }
 
 /** What Settings says about fast mode, from the server's own price table (llm.PRICES / llm.FAST_PRICES): the model

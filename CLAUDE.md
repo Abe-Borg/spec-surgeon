@@ -134,10 +134,25 @@ jobs). Details: `docs/CONVERSATIONAL_DESKTOP.md`.
     `template_roles.py` (a template's style per role, page and font, read without a model) and `body_match.py` (match
     body formatting: one plan per document from its own structure, one layout per agreeing pattern, each through the
     gate; what it cannot match is left out with the reason, `Session.left_out_reasons`).
+  - `tutorial.py` — the guided tour's practice workspace (`docs/CONVERSATIONAL_DESKTOP.md`, "The guided tour"):
+    `TutorialTask` (a `DocumentTask` without a journal over the bundled showcase in `examples/tutorial/`, which
+    `tests/make_tutorial_showcase.py` builds byte-stable; `send`/`choose` refused, `NO_CONVERSATION`) and `Tutorial`
+    (the lease `web/server.py` swaps the window's task for: `begin`, `show(kind)`, `end`; the original task waits
+    untouched in `WindowState.original_task`). Each chapter state (`SCENARIOS`) is built through the production
+    paths — triage, `recipes.build` and the gate, `Session.make_preview`, `Session.run` — with no model call; the
+    conversation chapters are recordings that say so (`RECORDED`, `TutorialTask.scripted`). The page's side:
+    `frontend/src/lib/tour.ts` (the manifest: chapters, steps, `data-tour` anchors, the capabilities each teaches),
+    `capabilities.ts` (every end-user control carries a `data-capability`), `useTour.ts`, `tourStorage.ts`,
+    `components/TourOverlay.tsx`. `frontend/tests/tour.test.ts` fails on a `data-capability` the vocabulary lacks, a
+    capability no control carries or no step teaches, an anchor the page lacks, a scenario the server does not build,
+    or a form value the server's chapter did not run: **a new control needs its capability and its tour step in the
+    same change** (the test cannot see a control that carries no capability; the reviewer can).
   - `document_task.py`, `review_display.py`, `gui.py` (`Session`, `main`; `python -m spec_surgeon` runs it), `web/`
     (`server.py`, `shell.py`, `watch.py`: the page's own reports and the watchdog over the page and the job),
     `updater.py`, `settings.py`, `credentials.py`, `winapp.py`.
-  - `render/` (Word COM, LibreOffice), `schemas/` (ECMA-376 XSDs), `skill/`, `examples/`.
+  - `render/` (Word COM, LibreOffice), `schemas/` (ECMA-376 XSDs), `skill/`, `examples/` (the worked EditSpecs, and
+    `examples/tutorial/`, the tour's showcase, shipped in the wheel and the app; `packaging/installed_wheel_smoke.py`
+    checks the installed bytes against the checkout).
 - `tests/` — pytest; `make_fixtures.py` and `fx_*.py` build synthetic documents; `fake_claude.py` scripts Claude;
   `conftest.py` seals keys, config dir and model; `describe_cases/` feeds `test_describe.py`.
 - `docs/` — `BACKLOG.md` (the open work), design notes (`BUILTIN_OPS_BATCH*_DESIGN.md`), `releases/`;
@@ -186,7 +201,7 @@ the newest runs' records.
 Help → **Why trust it?** (`frontend/src/components/WhyTrustIt.tsx`) and the "I'm not convinced" dossier it opens
 (`TrustDossier.tsx`, its cards in `lib/trustRuntime.ts`, its diagram in `TrustDiagram.tsx`) describe what the app does
 action by action. **The trust surfaces are a contract. Any change to a behaviour they describe updates them in the same
-change:** a new user action or button, a new network call or destination, a new automatic behaviour (a model call
+change:** a new user action or button (which also needs its capability and tour step, above), a new network call or destination, a new automatic behaviour (a model call
 without its own click, a timer, a background job), a model, effort or caching change, a new or changed limit, or
 anything new kept on disk. Update `docs/TRUST_CLAIMS.md` (the ledger: every claim, its source, its test) with it. Every
 number the copy quotes lives in `frontend/src/lib/trustFacts.ts`, and `tests/test_trust_facts.py` pins each to its

@@ -1,5 +1,6 @@
 // Adapted from Build-a-Spec's frontend/src/components/SuggestedPrompts.tsx (copy-based reuse).
 import { useId, useState } from "react";
+import { TOUR_HOLD } from "../lib/tour";
 import { checkWording } from "../lib/wording";
 import type { Choice } from "../types";
 import Markdown from "./Markdown";
@@ -14,6 +15,8 @@ interface Props {
   choices: Choice[];
   chips: string[];
   busy: boolean;
+  /** The guided tour runs: the choices and chips are held still (its conversation is a recording). */
+  tourActive?: boolean;
   /** A choice carries approval semantics: picking one may approve its exact words — or, ``wording``, the user's edit
    *  of its one drafted wording, which is then approved instead of the draft. */
   onChoose: (choice: Choice, wording?: string) => void;
@@ -85,10 +88,16 @@ function WordingEditor({ choice, busy, onChoose, onCancel }: {
  * answers (the reducer drops it on `job_started`). The questions and the
  * choices' labels are the model's text, rendered as markdown.
  */
-export default function Prompts({ questions, choices, chips, busy, onChoose, onSend }: Props) {
+export default function Prompts({ questions, choices, chips, busy, tourActive = false, onChoose, onSend }: Props) {
   const [editing, setEditing] = useState<string | null>(null);
+  const held = busy || tourActive;
   return (
-    <div className="chat-in rounded-2xl border border-edge bg-surface/60 px-4 py-3" role="group" aria-label="One thing to clarify">
+    <div
+      className="chat-in rounded-2xl border border-edge bg-surface/60 px-4 py-3"
+      role="group"
+      aria-label="One thing to clarify"
+      data-tour="prompts"
+    >
       {questions.length > 0 && (
         <div className="mb-3">
           <p className="text-[11px] font-medium tracking-wide text-ink-faint uppercase">
@@ -100,15 +109,17 @@ export default function Prompts({ questions, choices, chips, busy, onChoose, onS
         </div>
       )}
       {choices.length > 0 && (
-        <div className="flex flex-col gap-2">
+        <div className="flex flex-col gap-2" data-capability="chat.choices">
           {choices.map((choice, index) => (
             <div key={choice.id || `${index}-${choice.label}`}>
               <button
                 type="button"
                 onClick={() => onChoose(choice)}
-                disabled={busy || editing === choice.id}
+                disabled={held || editing === choice.id}
                 title={
-                  editing === choice.id
+                  tourActive
+                    ? TOUR_HOLD
+                    : editing === choice.id
                     ? "You are editing its wording: press Use this wording below, or Cancel to pick the draft as offered"
                     : choice.detail || (choice.words.length ? "Picking this approves exactly the words beneath it" : "")
                 }
@@ -135,7 +146,7 @@ export default function Prompts({ questions, choices, chips, busy, onChoose, onS
                       <button
                         type="button"
                         onClick={() => setEditing(choice.id)}
-                        disabled={busy}
+                        disabled={held}
                         className="ml-2 text-[11px] text-accent underline decoration-accent/40 underline-offset-2 hover:decoration-accent disabled:opacity-40"
                       >
                         Edit wording
@@ -157,6 +168,8 @@ export default function Prompts({ questions, choices, chips, busy, onChoose, onS
         <div
           role="group"
           aria-label="Suggested replies"
+          data-tour="prompt-chips"
+          data-capability="chat.chips"
           className={`flex flex-wrap items-center gap-2 ${choices.length > 0 || questions.length > 0 ? "mt-3" : ""}`}
         >
           <span aria-hidden className="text-xs text-ink-faint">
@@ -167,8 +180,8 @@ export default function Prompts({ questions, choices, chips, busy, onChoose, onS
               key={chip}
               type="button"
               onClick={() => onSend(chip, true)}
-              disabled={busy}
-              title={chip}
+              disabled={held}
+              title={tourActive ? TOUR_HOLD : chip}
               style={stagger(choices.length + index)}
               className="prompt-chip-in max-w-full truncate rounded-full border border-accent/50 bg-accent/10 px-3 py-1 text-xs text-ink transition-colors hover:border-accent hover:bg-accent/15 disabled:pointer-events-none disabled:opacity-40"
             >
@@ -178,7 +191,7 @@ export default function Prompts({ questions, choices, chips, busy, onChoose, onS
         </div>
       )}
       <p className="mt-3 text-[11px] text-ink-faint">
-        Pick an answer, or describe what you want in your own words below.
+        {tourActive ? TOUR_HOLD : "Pick an answer, or describe what you want in your own words below."}
       </p>
     </div>
   );
