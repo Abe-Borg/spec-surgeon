@@ -467,8 +467,9 @@ A file can be left out at four points, each time with one sentence that names th
   this request"), and come back with the next request unless you leave them out again. "Set 20 aside for later"
   puts it on the to-do list instead (above), out of every request until you come back to it.
 - At plan time, when the operation cannot predict its result on that file, or when no layout covers its
-  structure; in a plan done in steps, also a sample whose later step cannot predict its result (the later steps are
-  planned on the samples alone). These appear under **Left untouched** before anything runs; no paid investigation
+  structure; in a plan done in steps, at whichever step cannot predict its result (every step is planned on every
+  document, each later step on what the step before it would make). These appear under **Left untouched** before
+  anything runs; no paid investigation
   precedes them. The preview of the other documents stands, and the assistant names each one with its reason in its
   next reply; **Create edited copies** leaves them as they are (they are not run, so no recovery follows for them)
   and puts them on the to-do list with their reason. Only a plan that covers no file at all, a sample that fails its

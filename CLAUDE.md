@@ -76,8 +76,9 @@ each preview carries a checkmark and an X: X'd documents are `hold` on the prima
 every approved pin), wait on `DocumentTask.todo`, and the reply `WORK_TODO` begins a pass over them alone (`focus`, one
 request at a time); `applied` keeps the changes each copy carries, so the history the model hears is per document.
 Documents the user leaves out of a request (`submit_editspec.leave_out` → `Session.left_out`) are not planned,
-previewed or run (`planned_files`) and wait under Left untouched; a file the plan refuses does too, as does a sample
-a chain's later step refuses (`preview.refusals`), and the preview of the others stands (outcome planning starts
+previewed or run (`planned_files`) and wait under Left untouched; a file the plan refuses does too, at any step of a
+chain (`planner.plan_batch_chain` plans every step on every file; `preview.refusals`), and the preview of the others
+stands (outcome planning starts
 only when no file plans, a sample fails its check, or every sample is refused). The to-do list
 (`DocumentTask.todo`, each entry with `why` and `reason`) is where documents wait for later: the red X, the chat's
 `set_aside` tool at the user's word (`Conversation.set_aside` → `DocumentTask._take_set_aside`), a file the plan
