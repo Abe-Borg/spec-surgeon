@@ -53,8 +53,8 @@ Paths are relative to `src/spec_surgeon/` unless they start with `frontend/`, `t
 | A7 | Mark a preview ✓ / ✗ | page state only; ✗ is sent as `hold` with A8 | none |
 | A8 | **Create edited copies** (or **I reviewed the flagged pages — create copies**) | `POST /api/primary` → `DocumentTask._primary` → `Session.run` | none to make and check the copies; recovery afterwards if a copy fails (never after a Safe-mode button: `Session.model_free`) |
 | A9 | **Save N ready copies** | `POST /api/primary` during recovery | none |
-| A10 | **Continue** (after a pause, a stop, a failure or a restored conversation) | `POST /api/primary` → `_resume` | conversation or recovery |
-| A11 | **Stop now**, and closing the window while work runs | `POST /api/stop`; `web/shell.on_closing` | cuts the running call off |
+| A10 | **Continue** (after a pause at the spending check, a stop, a failure or a restored conversation) | `POST /api/primary` → `_primary` (stage `budget`: the request's limit becomes its spending plus the amount, or none for `unpriced`) → `_resume` | conversation or recovery |
+| A11 | **Stop** beside the spending in the top bar, the stop button in the chat, and closing the window while work runs | `POST /api/stop`; `web/shell.on_closing` | cuts the running call off |
 | A12 | Open a copy, or the copies' folder | `POST /api/open` → `os.startfile` | none |
 | A13 | **Start over from the originals** | `POST /api/start-over` (or the typed reply) | none |
 | A14 | **New conversation** | `POST /api/new-conversation` | none |
@@ -77,6 +77,7 @@ Paths are relative to `src/spec_surgeon/` unless they start with `frontend/`, `t
 
 | A29 | In Safe mode: **Discard preview** beside Create, or **All buttons** while a button's preview waits | `POST /api/discard` → `DocumentTask.discard_preview` (Safe mode, a preview waiting); the window shows again what `_recipe` set aside in `_before_button` | none |
 | A30 | In Safe mode: **Undo the last button**, beside Start over | `POST /api/undo` → `DocumentTask.undo`: the newest of `undo_points` (each taken at approval in `_primary`, kept by `_advance_generation` once the run delivers) restores `working`, `generation`, `history`, `applied`, the copies and Left untouched shown, and takes the run's ✗ entries off the to-do list; refused while a preview waits or a request is open (`_undo_blocked`) and when a copy it would go back to is gone | none |
+| A31 | Settings → **Spending check**: type an amount in US dollars and **Apply**, or **Turn off** | `POST /api/settings` `{spending_limit_usd}` → `settings.spending_check` → `DocumentTask.set_spending_limit`, kept in `settings.json` (`Settings.spending_limit_usd`; 0 is off); the next request uses it | none |
 
 Count: 30 actions.
 
@@ -278,8 +279,21 @@ How each is labelled:
 
 ### 1h. Bounds and failure behaviour
 
-- **No spending ceiling.** Work pauses after every 48 model calls; failed attempts count (`STEPS_PER_PAUSE`,
-  `CallBudget.calls`).
+- **The user's spending check, per request** (the owner's decision of 2026-10-27, replacing the pause after every 48
+  model calls). Settings → Spending check (`Settings.spending_limit_usd`, `DEFAULT_SPENDING_LIMIT_USD` = $20 until
+  the user changes it; 0 turns it off; `settings.spending_check` refuses anything but a positive amount or off).
+  Each request — a message, a pick, an approval, a button — gets its own ledger (`DocumentTask._new_request`, an
+  `llm.CallBudget` with `max_cost_usd` the limit) inside the conversation's (`_new_budget`, no limit of its own,
+  `llm.UNLIMITED_CALLS`). Before a call, `CallBudget._preflight` adds the call's largest possible cost (the
+  conservative input estimate at the dearest cache-write rate, and `max_tokens` of output) to what the request has
+  spent and refuses a call that could pass the limit; the request pauses (stage `budget`,
+  `DocumentTask.pause_reason` `limit`) and Continue sets the ledger's limit to its spending plus the amount. A model
+  the price table cannot estimate pauses it too (`unpriced`): Continue then goes on without a check for that request.
+  The estimates are listed prices, not a bill: a server-side refusal re-run inside one call can exceed its
+  reservation. Recovery's own call cap is `resources.DEFAULT_MAX_CALLS` (`DocumentTask._recovery_options`).
+- **The kill switch.** While work runs, Stop beside the spending in the top bar (`Header.tsx`, "Stop all AI work")
+  and the stop button in the chat both post `/api/stop`: the running call is cut off (`llm._stop_on_cancel`) and no
+  other starts.
 - **Up to 6 internal steps per user action** (`AUTO_STEPS`).
 - **Recovery:** 8 attempts per group of files (`document_task.RECOVERY_ATTEMPTS`, on every recovery path since #77,
   the outcome plan's included). A group pauses after 3 equivalent
@@ -399,7 +413,7 @@ Lv1 marks a claim in "Why trust it?"; D marks one in the dossier (section in bra
 | T11 | Checking a file when it arrives makes no AI call and no network call | Lv1, D(no AI, runtime A3) | `triage.py` docstring and imports | manual |
 | T12 | The key lives in Windows Credential Manager under `Spec Surgeon/ANTHROPIC_API_KEY` (if you tick Remember), never in `settings.json`, and is sent only to the Anthropic API | Lv1, D(security) | `credentials.py`, `settings.Settings` fields, `llm.client` | facts (`credentialTarget`) + existing: `tests/test_settings.py` |
 | T13 | The key is scrubbed from logs | D(security) | `telemetry.redact_text` | existing: `tests/test_diagnostics*.py` |
-| T14 | No spending limit; a pause every 48 AI steps; Stop cuts off the running call | Lv1, D(money, runtime A11) | `STEPS_PER_PAUSE`, `llm._stop_on_cancel` | facts (`stepsPerPause`, `stopPollSeconds`) + existing: `tests/test_llm*.py` |
+| T14 | Your spending check: $20 a request until you change it or turn it off; an AI step that could take a request past it is not started, and Continue allows the amount again; Stop, beside the spending, cuts off the running call | Lv1, D(money, runtime A10, A11, A31), flows (2, 3b, 9d) | `settings.DEFAULT_SPENDING_LIMIT_USD`, `DocumentTask._new_request`/`pause_reason`/`_primary`, `llm.CallBudget._preflight`, `llm._stop_on_cancel` | facts (`spendingCheckDefaultUsd`, `stopPollSeconds`), `tests/test_document_task.py` (the check stops a request, afresh each request, off, unpriced, reopened), `tests/test_web_server.py` (Settings and the job log) + existing: `tests/test_llm*.py` |
 | T15 | The spending shown is an estimate from a built-in price table; Anthropic bills the key | Lv1, D(money) | `llm.PRICES`, `CallBudget.spent_usd` | manual |
 | T16 | Model: Claude Opus 5.5 (`claude-opus-5-5`) by default (`SPEC_SURGEON_MODEL` replaces it; About and the records then name it), up to 128,000 output tokens per call, medium effort for the conversation and its visual check, xhigh while it writes a custom method (here or in recovery; the next call is back at its own effort), high for outcome planning and recovery, never max | D(engine) | `llm.DEFAULT_MODEL`, `resources.DEFAULT_MAX_OUTPUT_TOKENS`, `document_task.CONVERSATION_EFFORT`/`RECOVERY_EFFORT`, `resources.CODEGEN_EFFORT`, `llm.effort_scope`, `llm._call` budget override | facts (`codegenEffort`), `tests/test_agent_resources.py::test_an_effort_scope_sets_the_calls_inside_and_only_those`, `tests/test_document_task.py::test_custom_method_is_prepared_internally_but_only_delivered_after_review` |
 | T17 | A declined request may be answered by another model the provider chooses; the record names it | D(engine, limits) | `llm.FALLBACK_BETA`, `fallbacks="default"`, `llm.served` | facts (presence) |

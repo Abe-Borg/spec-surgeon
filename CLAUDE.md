@@ -114,6 +114,9 @@ jobs). Details: `docs/CONVERSATIONAL_DESKTOP.md`.
     (`resources.CODEGEN_EFFORT`, 2026-10-26: `generate_op` enters `llm.effort_scope`, after which calls are back at
     their own effort). The chat's `ask_user` and `submit_editspec` stream their input unbuffered
     (`compiler.STREAMED_TOOLS`, `eager_input_streaming`); `llm` checks it and re-sends a call whose input is broken.
+    The window's only spending limit is the user's spending check per request (Settings → Spending check,
+    `DocumentTask._new_request` inside the conversation's ledger; the owner's decision of 2026-10-27, which removed the
+    pause after 48 calls); Stop is the kill switch (`llm.cancellation_scope`).
     Fast mode (`speed="fast"`, Settings → Fast responses, `llm.set_fast_mode`) is the user's choice, off by default:
     it changes speed and price (`FAST_PRICES`), never the model, effort or prompt; a fast call the fast capacity
     cannot take is re-sent at standard speed. `compiler.compose_submission` is the one gate a submission passes.

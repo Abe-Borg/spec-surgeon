@@ -457,6 +457,7 @@ export default function App() {
         onOpenSettings={onOpenSettings}
         onOpenHelp={setHelpTopic}
         onMode={onMode}
+        onStop={onStop}
       />
       {updateShown && (
         <UpdateBanner
@@ -529,7 +530,6 @@ export default function App() {
       />
       {settingsOpen && (
         <SettingsModal
-          stepsPerPause={view.budget?.steps_per_pause ?? 48}
           onClose={() => setSettingsOpen(false)}
           onSaved={() => void refresh()}
         />
@@ -539,7 +539,6 @@ export default function App() {
         onClose={() => setHelpTopic(null)}
         onNavigate={setHelpTopic}
         version={view.version}
-        stepsPerPause={view.budget?.steps_per_pause ?? 48}
         busy={busy}
         update={view.update}
         updateAsked={updateAsked}

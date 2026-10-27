@@ -383,9 +383,10 @@ what it does. Its label says what it does:
   anything can be approved.
 - **Save N ready copies**: during recovery, save the copies that are already verified while a question about
   other files is still open.
-- **Continue** after a pause: the conversation has used 48 AI steps since you last said to go on, or the app
-  closed while work was running (see below).
-- **Stop now**, while work runs: the kill switch, in the composer (see below).
+- **Continue** after a pause: the request reached your spending check, the price table cannot estimate the model
+  that answered, or the app closed while work was running (see below).
+- **Stop now**, while work runs: the kill switch, in the composer and as **Stop** beside the spending in the top bar
+  (see below).
 
 The button is tied to what is on screen. If a document, the template, the plan, a preview or a visual finding
 changes, the displayed action is void and the window says "The documents or plan changed. Review the updated
@@ -452,11 +453,12 @@ you accept it.
 Typed requests need an Anthropic API key. **Settings** opens one dialog. **AI connection**: paste the key and
 tick **Remember securely on this computer** to keep it in Windows Credential Manager. **Appearance**: the window's
 colour scheme, one of Warm Clay (the default), Blueprint, Graphite & Teal, Carbon & Hi-Vis and Linen (the light
-one); a click recolours the window at once and `settings.json` keeps it, so the next start opens in it. **Fast
-responses**: Claude's fast mode, off until you turn it on (below). Nothing else is configurable there. Without a key the composer keeps your draft, **Send** stays disabled and the footer
+one); a click recolours the window at once and `settings.json` keeps it, so the next start opens in it. **Spending
+check**: the most one request may spend (below). **Fast responses**: Claude's fast mode, off until you turn it on
+(below). Nothing else is configurable there. Without a key the composer keeps your draft, **Send** stays disabled and the footer
 says "Connect your Anthropic API key in Settings to start."
 
-There is no spending limit. Every AI step (one call to Claude Opus 5.5, whether for the conversation, a
+Every AI step (one call to Claude Opus 5.5, whether for the conversation, a
 custom method, the visual check or recovery) may write up to 128,000 tokens, the most the model writes. The
 conversation runs at medium reasoning effort (its sentences and plans are short and the operations' settings ride the
 cached prompt, so a plan is one or two calls), and so does the visual check it runs inside a turn, because the
@@ -465,26 +467,36 @@ fits (no operation for the request, a plan that covers no file, a sample that fa
 conversation's and wins. Writing a custom method — the one place Claude writes the code that edits the documents,
 from the conversation or inside recovery — thinks at `xhigh` (`resources.CODEGEN_EFFORT`, the owner's decision,
 2026-10-26): `codegen.generate_op` enters `llm.effort_scope`, an effort-only budget with no limits of its own (the
-pause and the spending still count every call), and when the method is written the next call is back at its own
+spending check and the spending shown still count every call), and when the method is written the next call is back at its own
 effort; the method's conversation is separate from the chat, so the chat's cache is untouched. No step runs at max:
 `resources.EFFORTS` refuses it (the owner's decision, 2026-10-22). The
 instructions and the operations' settings (the same for every conversation) are cached for an hour, so the next
 request after a run, a start over or a changed attachment reads them instead of paying for them again; the
 conversation itself is cached for five minutes between its calls, and the one-call checks (the visual check, the
-recovery critic) are not cached at all beyond the instructions. Three things keep the spending in your hands instead:
+recovery critic) are not cached at all beyond the instructions. Three things keep the spending in your hands:
 
 - **You see it.** While work runs the chat shows the assistant's words and its thinking summary as they are
   written, a sentence per step, and the top bar the estimated spending so far. A question or a plan's message streams
   as Claude writes it (`compiler.STREAMED_TOOLS` carry `eager_input_streaming`); since the server then no longer
   checks that tool input is complete JSON, `llm` does, and a broken one is sent again instead of being acted on. A step that is still running is
   counted when it ends. The amounts are estimates from a built-in price table, not provider bills.
-- **Stop now.** While work runs the button is the kill switch. It cuts off the AI step that is running at
-  once, so Claude stops writing, and starts no other; a document check or file operation already running
-  finishes first, since it costs nothing. A step that was cut off is counted from the input it reported and at
-  most what it could have written in the time it ran. Your progress is saved, and **Continue** picks the
-  conversation up where it stopped.
-- **A pause every 48 AI steps.** Work pauses with its progress saved and the button reads **Continue**;
-  continuing allows 48 more and the conversation goes on where it stopped, with everything it had found.
+- **Stop now.** While work runs the button is the kill switch, in the composer and as **Stop** beside the spending
+  in the top bar. It cuts off the AI step that is running at once, so Claude stops writing, and starts no other; a
+  document check or file operation already running finishes first, since it costs nothing. A step that was cut off
+  is counted from the input it reported and at most what it could have written in the time it ran. Your progress is
+  saved, and **Continue** picks the conversation up where it stopped.
+- **Your spending check.** Settings → **Spending check** is the most one request — a message, a pick, an approval,
+  a button — may spend, as the app estimates it: $20 until you type another amount and **Apply**, or **Turn off**
+  for none (`Settings.spending_limit_usd`, 0 off; the owner's decision of 2026-10-27, in place of a pause after
+  every 48 AI steps). Each request gets its own ledger inside the conversation's (`DocumentTask._new_request`).
+  Before each AI step `CallBudget._preflight` adds the most the step could cost (the conservative input estimate at
+  the dearest cache-write rate, and the longest answer it may write) to what the request has spent, and a step that
+  could pass the amount is not started: the work pauses with its progress saved and the card says what the request
+  spent; **Continue (up to $N more)** allows the amount again on top of it and the request goes on where it
+  stopped, with everything it had found. While a request runs the top bar shows its spending beside the check
+  ("this request ≈ $0.40 of $20.00"). A model the price table cannot estimate pauses the request too, since the
+  check cannot be kept; Continue then goes on without a check for that request. The check counts estimates, not
+  Anthropic's bill; a refusal re-run on another model inside one call can go past a step's reservation.
 
 **Fast responses** (Settings) is the one way to trade money for time, and it is yours to choose: off until you turn
 it on, with both sides on screen first. On, every call to a model Anthropic serves fast (`llm.FAST_PRICES`) asks for

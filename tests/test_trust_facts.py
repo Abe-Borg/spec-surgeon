@@ -111,7 +111,7 @@ def expected() -> dict:
         "codegenEffort": const("resources.py", "CODEGEN_EFFORT"),
         "fastSpeedup": const("llm.py", "FAST_SPEEDUP"),
         "fastPriceFactor": const("llm.py", "FAST_PRICE_FACTOR"),
-        "stepsPerPause": const("document_task.py", "STEPS_PER_PAUSE"),
+        "spendingCheckDefaultUsd": const("settings.py", "DEFAULT_SPENDING_LIMIT_USD"),
         "autoSteps": const("document_task.py", "AUTO_STEPS"),
         "retries": const("llm.py", "RETRIES"),
         "retryDelaysSeconds": [int(s) for s in const("llm.py", "RETRY_DELAYS")],
@@ -264,7 +264,7 @@ def test_the_ledger_covers_the_facts_and_the_rule():
     assert "The trust surfaces are a contract" in ledger
     claude = (ROOT / "CLAUDE.md").read_text(encoding="utf-8")
     assert "The trust surfaces are a contract" in claude
-    for key in ("STEPS_PER_PAUSE", "AUTO_STEPS", "CHECK_INTERVAL", "SANDBOX_TIMEOUT", "DEFAULT_MEMORY_MB",
+    for key in ("DEFAULT_SPENDING_LIMIT_USD", "AUTO_STEPS", "CHECK_INTERVAL", "SANDBOX_TIMEOUT", "DEFAULT_MEMORY_MB",
                 "MAX_CASES", "STOPPED_OUTPUT_RATE", "RETRY_DELAYS", "CONVERSATION_EFFORT", "RECOVERY_EFFORT",
                 "CODEGEN_EFFORT", "UNGUARDED_CHECK_ROUNDS", "STREAMED_TOOLS"):
         assert key in ledger, f"the ledger names no source for {key}"

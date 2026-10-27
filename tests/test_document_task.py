@@ -9,9 +9,10 @@ import pytest
 from docx import Document
 
 from fake_claude import FakeClient, api_error, raise_on_enter, resp, text, tool
-from spec_surgeon.document_task import STEPS_PER_PAUSE, DocumentTask
+from spec_surgeon.document_task import DocumentTask
 from spec_surgeon.gui import Session
-from spec_surgeon import review_display
+from spec_surgeon import llm, review_display
+from spec_surgeon.resources import DEFAULT_MAX_CALLS
 
 
 REQUEST = "Make the FIRE SUPPRESSION title bold."
@@ -36,6 +37,16 @@ def document(path, duplicate=False):
 
 def client(spec=None):
     return FakeClient(resp(tool("submit_editspec", {"spec": spec or SPEC})))
+
+
+def check_after(task, monkeypatch, calls):
+    """Set the spending check so that a request makes ``calls`` scripted model calls and stops before the next: a call
+    reserves its largest answer (128,000 output tokens at $20 per million, $2.56) and, here, no input; a scripted call
+    costs $0.0008 (100 input and 20 output tokens)."""
+    from spec_surgeon import llm
+    monkeypatch.setattr(llm, "estimate_input_tokens", lambda **_: 0)
+    task.set_spending_limit(2.56 + 0.0008 * calls - 0.0004)
+    return task.spending_limit
 
 
 def task_for(tmp_path, fake=None, **kwargs):
@@ -252,14 +263,13 @@ def test_interrupted_call_pauses_before_new_spending(tmp_path):
     task.save(in_progress=True)
     restored = task_for(tmp_path, journal=journal)
     restored.restore()
-    assert restored.stage == "budget"
+    assert restored.stage == "budget" and restored.pause_reason() == "interrupted"
     view = restored.view()
-    assert view["action"] == "Continue" and view["budget_paused"]
+    assert view["action"] == "Continue" and view["budget_paused"] and view["pause_reason"] == "interrupted"
     restored.perform("primary", token=view["token"])
     assert len(restored.session.client.requests) == 1
-    assert restored._budget.max_calls == 2 * STEPS_PER_PAUSE
     assert restored._budget.max_cost_usd is None and restored._budget.max_total_tokens is None
-    assert restored.stage == "preview"
+    assert restored.stage == "preview" and restored.messages[-2]["text"] == "Continuing where the work stopped."
 
 
 def test_every_desktop_call_gets_the_models_full_output_at_medium_effort_with_no_spending_ceiling(tmp_path):
@@ -271,10 +281,14 @@ def test_every_desktop_call_gets_the_models_full_output_at_medium_effort_with_no
     task.perform("send", text=REQUEST)
     request = task.session.client.requests[0]
     assert request["max_tokens"] == 128000 and request["output_config"] == {"effort": "medium"}
-    assert (task._budget.max_cost_usd, task._budget.max_total_tokens, task._budget.max_calls) == (None, None, 48)
+    # no call-count pause (the owner's decision of 2026-10-27): the conversation's ledger has no limit of its own,
+    # and the spending check is the user's (off here: the window applies Settings')
+    assert (task._budget.max_cost_usd, task._budget.max_total_tokens, task._budget.max_calls) == (
+        None, None, llm.UNLIMITED_CALLS)
+    assert task.spending_limit is None and task._request_budget.max_cost_usd is None
     options = task._recovery_options()
     options.validate()
-    assert (options.max_output_tokens, options.effort) == (128000, "high")
+    assert (options.max_output_tokens, options.effort, options.max_calls) == (128000, "high", DEFAULT_MAX_CALLS)
     assert (options.max_cost_usd, options.max_total_tokens) == (None, None)
     task.save()
     restored = task_for(tmp_path, journal=journal)
@@ -302,17 +316,84 @@ def test_a_journal_from_the_allowance_version_keeps_its_spending_but_not_its_cei
     assert restored.view()["cost"] == pytest.approx(10.2)
 
 
-def test_budget_covers_all_conversation_turns(tmp_path):
+def test_each_request_gets_the_spending_check_afresh(tmp_path, monkeypatch):
+    """The check is per request: a message, a pick, an approval. Two one-call requests under a one-call check both
+    run; the conversation's ledger counts them both."""
     fake = FakeClient(resp(tool("ask_user", {"questions": ["Which title?"]})),
                       resp(tool("submit_editspec", {"spec": SPEC})))
     task = task_for(tmp_path, fake)
     task.attach([document(tmp_path / "Spec.docx")])
-    task._budget.max_calls = 1
-    task.perform("send", text=REQUEST)
+    check_after(task, monkeypatch, 1)
+    assert task.perform("send", text=REQUEST)["stage"] == "question"
     view = task.perform("send", text="FIRE SUPPRESSION")
-    assert view["stage"] == "budget"
-    assert len(task.session.client.requests) == 1
-    assert not task.results
+    assert view["stage"] == "preview" and len(fake.requests) == task._budget.calls == 2
+    assert task._request_budget.calls == 1 and view["cost"] == pytest.approx(0.0016)
+
+
+def test_the_spending_check_stops_a_request_before_a_call_that_could_pass_it(tmp_path, monkeypatch):
+    fake = FakeClient(resp(tool("list_styles", {"file": "Spec.docx"}, "t1")),
+                      resp(tool("submit_editspec", {"spec": SPEC}, "t2")))
+    task = task_for(tmp_path, fake)
+    task.attach([document(tmp_path / "Spec.docx")])
+    limit = check_after(task, monkeypatch, 1)
+    view = task.perform("send", text=REQUEST)
+    assert view["stage"] == "budget" and view["pause_reason"] == "limit" and view["action"] == "Continue"
+    assert len(fake.requests) == 1 and not task.results                       # the second call never started
+    assert task._cost()["request"] == pytest.approx(0.0008) and task._cost()["limit"] == limit
+    # the user's go-ahead allows the limit again on top of what the request spent, and the work goes on
+    view = task.perform("primary", token=view["token"])
+    assert view["stage"] == "preview" and len(fake.requests) == 2
+    assert task._request_budget.max_cost_usd == pytest.approx(0.0008 + limit)
+    assert "may spend up to $" in [m["text"] for m in task.messages if m["role"] == "app"][-1]
+
+
+def test_with_the_check_off_nothing_pauses_and_settings_apply_from_the_next_request(tmp_path, monkeypatch):
+    fake = FakeClient(*[resp(tool("list_styles", {"file": "Spec.docx"}, f"t{i}")) for i in range(60)],
+                      resp(tool("submit_editspec", {"spec": SPEC}, "done")))
+    task = task_for(tmp_path, fake)
+    task.attach([document(tmp_path / "Spec.docx")])
+    assert task.perform("send", text=REQUEST)["stage"] == "preview" and len(fake.requests) == 61   # no 48-call pause
+    task.set_spending_limit(0)
+    assert task.spending_limit is None
+    with pytest.raises(ValueError, match="US dollars"):
+        task.set_spending_limit(-1)
+    check_after(task, monkeypatch, 0)
+    assert task._request_budget.max_cost_usd is None                 # the open request keeps its check; the next gets this one
+
+
+def test_a_model_the_price_table_cannot_estimate_pauses_the_check_and_continue_goes_on_without_it(tmp_path):
+    from spec_surgeon import llm
+    fake = FakeClient(resp(tool("list_styles", {"file": "Spec.docx"}, "t1"), model="claude-unpriced-9"),
+                      resp(tool("submit_editspec", {"spec": SPEC}, "t2")))
+    task = task_for(tmp_path, fake)
+    task.attach([document(tmp_path / "Spec.docx")])
+    task.set_spending_limit(50)
+    view = task.perform("send", text=REQUEST)
+    assert view["stage"] == "budget" and view["pause_reason"] == "unpriced" and len(fake.requests) == 1
+    view = task.perform("primary", token=view["token"])
+    assert view["stage"] == "preview" and task._request_budget.max_cost_usd is None
+    assert "price table cannot estimate" in [m["text"] for m in task.messages if m["role"] == "app"][-1]
+    assert llm.UNLIMITED_CALLS == task._request_budget.max_calls
+
+
+def test_a_request_paused_at_the_check_reopens_paused_and_goes_on(tmp_path, monkeypatch):
+    journal = tmp_path / "conversation.json"
+    fake = FakeClient(resp(tool("list_styles", {"file": "Spec.docx"}, "t1")),
+                      resp(tool("submit_editspec", {"spec": SPEC}, "t2")))
+    task = task_for(tmp_path, fake, journal=journal)
+    task.attach([document(tmp_path / "Spec.docx")])
+    limit = check_after(task, monkeypatch, 1)
+    assert task.perform("send", text=REQUEST)["stage"] == "budget"
+    restored = task_for(tmp_path, fake, journal=journal, spending_limit=limit)
+    assert restored.restore()
+    assert restored.stage == "budget" and restored.pause_reason() == "limit"
+    assert restored._request_budget.spent_usd == pytest.approx(0.0008)
+    restored.perform("primary", token=restored.action_token())
+    assert restored._request_budget.max_cost_usd == pytest.approx(0.0008 + limit)
+    # the check turned off in the meantime: nothing to ask on reopening
+    off = task_for(tmp_path, fake, journal=journal)
+    task.save()
+    assert off.restore() and off.stage == "resume"
 
 
 def test_simple_prompt_keeps_drafting_behind_exact_wording_approval(tmp_path):
@@ -560,7 +641,7 @@ def test_only_attached_files_are_inspected_not_neighboring_project_data(tmp_path
 
 
 @pytest.mark.parametrize("change_source", [False, True])
-def test_more_budget_continues_pending_custom_preparation(tmp_path, change_source):
+def test_more_budget_continues_pending_custom_preparation(tmp_path, change_source, monkeypatch):
     from test_codegen import GOOD_OP
     from spec_surgeon.gui import TransformFailed
     request = "Set the header distance to 900 twips."
@@ -571,7 +652,7 @@ def test_more_budget_continues_pending_custom_preparation(tmp_path, change_sourc
     task = task_for(tmp_path, fake)
     source = document(tmp_path / "Spec.docx")
     task.attach([source])
-    task._budget.max_calls = 1
+    check_after(task, monkeypatch, 1)
     with pytest.raises(TransformFailed):
         task.perform("send", text=request)
     assert task.stage == "budget" and task.session.pending_custom_transform
@@ -602,12 +683,12 @@ def test_more_budget_resumes_unadopted_recovery_checkpoint(tmp_path, reopen, mon
     task = task_for(tmp_path, fake, journal=tmp_path / "journal.json")
     task.attach([source])
     task.decisions = task.word_sources = [goal["request"]]
-    task._budget.max_calls = 1
     # Model execution pauses after a failed candidate has been recorded. The coordinator
     # has the checkpoint path, as it does when interrupted before adopting the result.
     checkpoint = tmp_path / "recovery"
     task.session.recovery_checkpoint = checkpoint
-    with llm.budget_scope(task._budget):
+    one_call = llm.CallBudget(max_calls=1, max_cost_usd=None, max_total_tokens=None)
+    with llm.budget_scope(task._budget), llm.budget_scope(one_call):
         paused = recovery.recover([source], goal["request"], checkpoint, spec=goal,
             options=opts(critic_review=False, visual_review=False), client=fake)
     assert paused.paused_reason and len(paused.attempts) == 1
@@ -841,13 +922,13 @@ def _tool_results(messages):
             for b in m["content"] if isinstance(b, dict) and b.get("type") == "tool_result"]
 
 
-def test_continue_after_the_pause_picks_the_conversation_up_where_it_stopped(tmp_path):
+def test_continue_after_the_pause_picks_the_conversation_up_where_it_stopped(tmp_path, monkeypatch):
     fake = FakeClient(resp(tool("list_styles", {"file": "Spec.docx"}, "t1")),
                       resp(tool("list_styles", {"file": "Spec.docx"}, "t2")),
                       resp(tool("submit_editspec", {"spec": SPEC}, "t3")))
     task = task_for(tmp_path, fake)
     task.attach([document(tmp_path / "Spec.docx")])
-    task._budget.max_calls = 2
+    limit = check_after(task, monkeypatch, 2)
     view = task.perform("send", text=REQUEST)
     assert view["stage"] == "budget" and view["action"] == "Continue" and len(fake.requests) == 2
     conversation = task.session.conversation
@@ -856,7 +937,7 @@ def test_continue_after_the_pause_picks_the_conversation_up_where_it_stopped(tmp
     assert task.session.conversation is conversation                     # the same investigation, not a new one
     third = fake.requests[2]["messages"]
     assert third[0] == fake.requests[0]["messages"][0] and _tool_results(third) == ["t1", "t2"]
-    assert task._budget.max_calls == 2 + STEPS_PER_PAUSE
+    assert task._request_budget.max_cost_usd == pytest.approx(0.0016 + limit)
 
 
 def test_continue_after_a_stop_sends_the_stopped_turn_again_as_it_was(tmp_path):

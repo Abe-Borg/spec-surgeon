@@ -12,6 +12,8 @@ off at every start), the conversation with Claude and any acknowledgement of Cla
 preview, never to the next start). ``theme`` is one of ``THEMES``, the window's colour schemes; any other value (a
 v0.4.x file's ``"dark"``) reads as the first. ``fast_mode`` is Claude's fast mode (Settings → "Fast responses"), off
 until the user turns it on; the window applies it to every call from its start (``llm.set_fast_mode``).
+``spending_limit_usd`` is the spending check (Settings → "Spending check"): the estimated dollars one request may spend
+before the work pauses for the user's go-ahead, ``DEFAULT_SPENDING_LIMIT_USD`` until the user changes it, 0 for off.
 ``show_obliterate`` only makes Obliterate mode a choice in the top bar (Settings → Advanced); being IN Obliterate mode
 is never stored — ``mode`` is Safe or Default, and a window left in Obliterate opens in Default. Not settings
 at all (since the GUI rework after v0.4.1): the automatic update check (once a day, always;
@@ -22,6 +24,7 @@ from __future__ import annotations
 
 import dataclasses
 import json
+import math
 import os
 import sys
 from dataclasses import dataclass, field
@@ -102,6 +105,20 @@ def settings_path() -> Path:
 # frontend/src/index.css (tests/test_settings.py keeps the three in step).
 THEMES = ("clay", "blueprint", "graphite", "carbon", "linen")
 MODES = ("safe", "default")     # the window's modes a launch may start in (CLAUDE.md, Modes); Safe first
+# The spending check (Settings → Spending check; document_task.DocumentTask.spending_limit): the estimated US dollars
+# one request may spend before the work pauses for the user's go-ahead. The owner's decision of 2026-10-27, in place of
+# the pause after a fixed number of AI steps; 0 in settings.json turns it off.
+DEFAULT_SPENDING_LIMIT_USD = 20.0
+
+
+def spending_check(value: Any) -> Optional[float]:
+    """The spending check as the task keeps it: a positive amount in US dollars, or None (off) for None or 0. Anything
+    else is refused: a limit the user typed is never guessed at."""
+    if value is None or (isinstance(value, (int, float)) and not isinstance(value, bool) and value == 0):
+        return None
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value < 0:
+        raise ValueError("The spending check is an amount in US dollars, or off.")
+    return float(value)
 
 
 @dataclass
@@ -117,6 +134,7 @@ class Settings:
     theme: str = THEMES[0]                        # the window's colour scheme, one of THEMES
     mode: str = MODES[0]                          # the mode the window opens in, one of MODES (the last one used)
     fast_mode: bool = False                       # Claude's fast mode (llm.set_fast_mode): faster answers, twice the price
+    spending_limit_usd: float = DEFAULT_SPENDING_LIMIT_USD   # the spending check per request (0: off; spending_check)
     show_obliterate: bool = False                 # Settings → Advanced: the top bar offers Obliterate mode (its warning
                                                   # each time; the mode itself is never kept: see MODES)
     last_update_check: float = 0.0                # epoch seconds of the last automatic attempt (success or not)
@@ -132,6 +150,12 @@ def _coerce(name: str, value: Any, default: Any) -> Any:
     """The stored value when it has the field's type, else the default (a hand-edited file never crashes the app)."""
     if isinstance(default, bool):
         return value if isinstance(value, bool) else default
+    if name == "spending_limit_usd":
+        try:
+            limit = spending_check(value)
+        except ValueError:
+            return default                        # a hand-edited amount that is not one: the default check
+        return 0.0 if limit is None else limit
     if isinstance(default, float):
         return float(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else default
     if isinstance(default, int):

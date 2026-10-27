@@ -52,17 +52,20 @@ try {
   check("the refused request is back in the composer", (await box.inputValue()) === "please fail", await box.inputValue());
   await box.fill("");
 
-  // 2. A pause: the card with Continue; Continue runs the primary job.
+  // 2. A pause at the spending check: the card says what the request spent and the check, with Continue; Continue
+  // allows the amount again and runs the primary job.
   await box.fill("pause please");
   await box.press("Enter");
-  await page.getByText("Work paused; your progress is saved").waitFor({ timeout: 20000 });
+  await page.getByText("Paused at your spending check").waitFor({ timeout: 20000 });
+  check("the card names the check", await page.getByText(/past your \$20\.00 spending check/).isVisible());
   const cont = page.getByRole("button", { name: "Continue" });
   check("the pause card offers Continue", await cont.isEnabled());
   check("exactly one Continue while paused", (await cont.count()) === 1);
+  check("…which says what it allows", (await cont.innerText()) === "Continue (up to $20.00 more)", await cont.innerText());
   await cont.click();
-  await page.getByText("Continuing where the conversation stopped.").waitFor({ timeout: 20000 });
+  await page.getByText(/this request may spend up to \$20\.00 more/).waitFor({ timeout: 20000 });
   await page.waitForTimeout(800);
-  check("after Continue the pause card is gone", (await page.getByText("Work paused; your progress is saved").count()) === 0);
+  check("after Continue the pause card is gone", (await page.getByText("Paused at your spending check").count()) === 0);
 
   // 3. Stop now mid-job, with typing ahead.
   await box.fill("plan it");
@@ -75,6 +78,19 @@ try {
   await page.getByText("Stopped. No AI step runs until you continue").waitFor({ timeout: 20000 });
   await page.waitForTimeout(500);
   check("Stop ends the job and the page is idle", await page.getByRole("button", { name: "Send" }).isVisible());
+  await box.fill("");
+
+  // 3b. The kill switch beside the spending in the top bar: there while work runs, and it stops the job.
+  check("no kill switch while idle", (await page.getByRole("button", { name: "Stop all AI work" }).count()) === 0);
+  await box.fill("plan it");
+  await box.press("Enter");
+  const kill = page.locator("header").getByRole("button", { name: "Stop all AI work" });
+  await kill.waitFor({ timeout: 10000 });
+  check("the top bar shows the kill switch while busy", await kill.isVisible());
+  await kill.click();
+  await page.getByText("Stopped. No AI step runs until you continue").last().waitFor({ timeout: 20000 });
+  await page.waitForTimeout(500);
+  check("the kill switch ends the job", await page.getByRole("button", { name: "Send" }).isVisible());
   await box.fill("");
 
   // 4. A chip click sends its text and clears the chips.
@@ -221,6 +237,21 @@ try {
   await page.getByRole("button", { name: "Settings" }).click();
   await Promise.all([savedTheme(), fastSwitch.click()]);
   check("one click turns it off", (await fastSwitch.getAttribute("aria-checked")) === "false");
+
+  // 9d. Settings → Spending check: the amount the user types, kept by the server; Turn off; back to $20.
+  check("the check starts at $20 a request", await page.getByText("Now: $20.00 per request.").isVisible());
+  const amount = page.getByLabel("Spending check in US dollars per request");
+  await amount.fill("7.5");
+  await Promise.all([savedTheme(), page.getByRole("button", { name: "Apply", exact: true }).click()]);
+  await page.getByText("Now: $7.50 per request.").waitFor();
+  const keptLimit = await (await fetch(`${BASE}/api/settings`, { headers: { "X-Spec-Surgeon-Token": TOKEN } })).json();
+  check("the server keeps the amount typed", keptLimit.spending_limit_usd === 7.5, String(keptLimit.spending_limit_usd));
+  await Promise.all([savedTheme(), page.getByRole("button", { name: "Turn off" }).click()]);
+  await page.getByText("Now: off. Nothing pauses the work.").waitFor();
+  check("Turn off leaves no check", true);
+  await amount.fill("20");
+  await Promise.all([savedTheme(), page.getByRole("button", { name: "Apply", exact: true }).click()]);
+  await page.getByText("Now: $20.00 per request.").waitFor();
   await page.keyboard.press("Escape");
 
   // 10. The top bar's help topics: one dialog, a tab strip, Escape closes it.

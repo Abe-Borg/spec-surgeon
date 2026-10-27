@@ -1237,7 +1237,7 @@ def budget_scope(budget: CallBudget):
         _CALL_BUDGETS.reset(token)
 
 
-EFFORT_SCOPE_CALLS = 2 ** 31                       # an effort scope adds no call limit of its own
+UNLIMITED_CALLS = 2 ** 31                          # a budget that adds no call limit of its own
 
 
 @contextmanager
@@ -1251,6 +1251,6 @@ def effort_scope(effort: str):
     if not _CALL_BUDGETS.get():
         yield None
         return
-    with budget_scope(CallBudget(effort=effort, max_calls=EFFORT_SCOPE_CALLS, max_total_tokens=None,
+    with budget_scope(CallBudget(effort=effort, max_calls=UNLIMITED_CALLS, max_total_tokens=None,
                                  max_cost_usd=None)) as budget:
         yield budget

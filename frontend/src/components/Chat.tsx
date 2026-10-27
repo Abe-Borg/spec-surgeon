@@ -232,8 +232,10 @@ export default function Chat({
                     return (
                       <PauseCard
                         key={item.key}
-                        stepsPerPause={item.stepsPerPause}
+                        reason={item.reason}
                         costText={item.costText}
+                        requestText={item.requestText}
+                        limitText={item.limitText}
                         canContinue={item.canContinue}
                         busy={busy}
                         onContinue={onContinue}

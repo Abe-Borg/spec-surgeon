@@ -31,6 +31,22 @@ def test_missing_wrong_types_and_unknown_keys(tmp_path):
     assert s == Settings(log_open=True)
 
 
+def test_the_spending_check_is_an_amount_or_off_and_a_hand_edited_one_never_breaks_it(tmp_path):
+    """The owner's decision of 2026-10-27: a spending check per request the user types, in place of a pause after a
+    fixed number of AI steps. $20 until changed; 0 (or null) is off; anything else in the file reads as the default."""
+    assert Settings().spending_limit_usd == st.DEFAULT_SPENDING_LIMIT_USD == 20.0
+    assert st.spending_check(None) is None and st.spending_check(0) is None and st.spending_check(7) == 7.0
+    for bad in (-1, True, "20", float("nan"), float("inf")):
+        with pytest.raises(ValueError, match="US dollars"):
+            st.spending_check(bad)
+    p = tmp_path / "settings.json"
+    for stored, read in ((12.5, 12.5), (0, 0.0), (None, 0.0), (-3, 20.0), ("lots", 20.0), (True, 20.0)):
+        p.write_text(json.dumps({"spending_limit_usd": stored}), encoding="utf-8")
+        assert load_settings(p).spending_limit_usd == read, stored
+    save_settings(Settings(spending_limit_usd=0.0), p)
+    assert load_settings(p).spending_limit_usd == 0.0
+
+
 def test_the_update_check_is_not_a_setting():
     """The GUI rework after v0.4.1 removed the Updates panel: the window checks for updates once a day without being
     told to. A settings.json from v0.4.x still loads."""

@@ -215,6 +215,12 @@ export async function saveShowObliterate(on: boolean): Promise<Settings> {
 }
 
 /** Turn Claude's fast mode on or off: the next AI step uses it, and settings.json keeps it for the next start. */
+/** Settings → Spending check: the estimated dollars one request may spend before the work pauses; null turns it off.
+ *  The next request uses it. */
+export async function saveSpendingLimit(limit: number | null): Promise<Settings> {
+  return post<Settings>("/api/settings", { spending_limit_usd: limit });
+}
+
 export async function saveFastMode(on: boolean): Promise<Settings> {
   return post<Settings>("/api/settings", { fast_mode: on });
 }
