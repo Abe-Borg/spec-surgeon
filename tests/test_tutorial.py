@@ -8,6 +8,7 @@ from __future__ import annotations
 import io
 import json
 import zipfile
+from types import SimpleNamespace
 from pathlib import Path
 
 import pytest
@@ -223,6 +224,33 @@ def test_the_tour_sets_the_users_task_aside_and_restore_returns_the_same_object(
     assert journal.read_bytes() == journal_before
     # with no tour running, restore is nothing to do
     assert client.post("/api/tutorial/restore", json={}).status_code == 200
+
+
+def test_a_setting_changed_during_the_tour_reaches_the_users_waiting_task(tmp_path):
+    """Settings stays open during a tour. A changed spending check, Obliterate shown or hidden, and a replaced key
+    reach the user's own task waiting behind the practice one, not the practice one alone, so the conversation
+    comes back as current as Settings says (Codex review on #122)."""
+    state, client = tour_window(tmp_path)
+    original = state.task
+    forgotten = []
+    original.session.conversation = SimpleNamespace(forget_cached_credentials=lambda: forgotten.append("user's"))
+    assert original.spending_limit == 20.0 and not original.obliterate_allowed
+    tutorial_id = client.post("/api/tutorial/start", json={}).json()["tutorial"]["id"]
+    practice = state.task
+    assert practice is not original and state.original_task is original
+
+    assert client.post("/api/settings", json={"spending_limit_usd": 1.5}).status_code == 200
+    assert original.spending_limit == 1.5 == practice.spending_limit
+    assert client.post("/api/settings", json={"api_key": "sk-ant-test", "remember": False}).status_code == 200
+    assert forgotten == ["user's"]
+    assert client.post("/api/settings", json={"show_obliterate": True}).status_code == 200
+    assert original.obliterate_allowed and practice.obliterate_allowed
+    original.set_mode("obliterate", acknowledged=True)          # the user's window had been left in Obliterate
+    assert client.post("/api/settings", json={"show_obliterate": False}).status_code == 200
+    assert original.mode == "default" and not original.obliterate_allowed and not practice.obliterate_allowed
+
+    client.post("/api/tutorial/restore", json={"tutorial_id": tutorial_id})
+    assert state.task is original and original.spending_limit == 1.5 and original.mode == "default"
 
 
 def test_the_routes_refuse_what_they_must(tmp_path):

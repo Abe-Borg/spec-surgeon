@@ -197,7 +197,11 @@ test("the conversation's controls are held still during the tour, in one wording
   // The server refuses a send or choice in the practice workspace too; the page's hold is the first line.
   assert.match(tutorialPy, /if action in \("send", "choose"\):\s*\n\s*raise ValueError\(NO_CONVERSATION\)/);
   // New conversation ends a running tour first.
-  assert.match(read("../src/App.tsx"), /if \(tourActive\) \{\s*void tour\.abort\(\)/);
+  const app = read("../src/App.tsx");
+  assert.match(app, /if \(tourActive\) \{\s*void tour\.abort\(\)/);
+  // The X marks on the user's own previews survive the tour: set aside as it begins, put back with the same previews.
+  assert.match(app, /tourReviewsRef\.current = \{ key: keyRef\.current, reviews: reviewsRef\.current \}/);
+  assert.match(app, /const kept = keptAcrossTour\(tourReviewsRef\.current, keyRef\.current\);\s*tourReviewsRef\.current = null;\s*if \(kept\) setReviews\(kept\);/);
 });
 
 test("the tour's dialogs carry the marker its Escape guard reads, and the chip's pulse honours reduced motion", () => {

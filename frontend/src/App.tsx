@@ -5,7 +5,7 @@ import type { Attachment, Choice, JobEvent, Mode, Recipe, RecipeInputs, Update, 
 import * as api from "./lib/api";
 import { actionButton, canDiscard } from "./lib/action";
 import { composerState, transcript } from "./lib/chat";
-import { canReview, heldSources, reviewKey, setMark, type Mark, type Reviews } from "./lib/review";
+import { canReview, heldSources, keptAcrossTour, reviewKey, setMark, type KeptReviews, type Mark, type Reviews } from "./lib/review";
 import { INITIAL_STATE, reduce } from "./lib/view";
 import { ACCEPT } from "./lib/workbench";
 import { checkSettled, updatePill, type HelpTopic } from "./lib/help";
@@ -159,6 +159,11 @@ export default function App() {
     keyRef.current = key;
     setReviews({});
   }, [key]);
+  // The guided tour takes the view and gives it back: the marks on the user's own previews are set aside with the
+  // key they belong to when it starts (below, once the tour exists) and put back when that key returns.
+  const reviewsRef = useRef(reviews);
+  reviewsRef.current = reviews;
+  const tourReviewsRef = useRef<KeptReviews | null>(null);
   const onMark = useCallback((source: string, mark: Mark) => setReviews((r) => setMark(r, source, mark)), []);
   const reviewing = canReview(view, busy);
   const held = useMemo(() => (reviewing ? heldSources(reviews, view.samples) : []), [reviewing, reviews, view.samples]);
@@ -365,6 +370,16 @@ export default function App() {
   );
   const tour = useTour({ applyView: applyTourView, tutorial: view.tutorial, loaded: state.loaded, prepare: prepareTourStep });
   const tourActive = tour.active;
+  useEffect(() => {
+    if (tourActive) {
+      // taken as the tour begins, before any practice view arrives
+      tourReviewsRef.current = { key: keyRef.current, reviews: reviewsRef.current };
+      return;
+    }
+    const kept = keptAcrossTour(tourReviewsRef.current, keyRef.current);
+    tourReviewsRef.current = null;
+    if (kept) setReviews(kept);
+  }, [tourActive]);
   const tourFinished = state.loaded ? view.tutorial.finished_version >= TOUR_COMPLETION_VERSION : null;
   newConversationRef.current = () => {
     if (busyRef.current) return;

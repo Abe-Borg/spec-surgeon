@@ -191,10 +191,17 @@ class WindowState:
             self.key_origin = "none"
         self._forget_cached_credentials()
 
+    def _tasks(self) -> List[DocumentTask]:
+        """The task on screen and, during a tour, the user's own waiting behind it. A setting that reaches a task (a
+        changed key, the spending check, Obliterate shown or hidden) reaches both, so the conversation comes back
+        from the tour as current as Settings says it is (Codex review on #122)."""
+        return [self.task] if self.original_task is None else [self.task, self.original_task]
+
     def _forget_cached_credentials(self) -> None:
-        conversation = self.task.session.conversation
-        if conversation is not None:
-            conversation.forget_cached_credentials()
+        for task in self._tasks():
+            conversation = task.session.conversation
+            if conversation is not None:
+                conversation.forget_cached_credentials()
 
     @property
     def busy(self) -> bool:
@@ -797,12 +804,13 @@ def create_app(state: WindowState, *, dev: bool = False) -> FastAPI:
         if "show_obliterate" in body:
             if not isinstance(body["show_obliterate"], bool):
                 return error("Show Obliterate mode is on or off.")
-            if state.busy and not body["show_obliterate"] and state.task.mode == "obliterate":
+            if state.busy and not body["show_obliterate"] and any(t.mode == "obliterate" for t in state._tasks()):
                 return busy_error()
             state.settings.show_obliterate = body["show_obliterate"]
-            state.task.obliterate_allowed = body["show_obliterate"]
-            if not body["show_obliterate"] and state.task.mode == "obliterate":
-                state.task.set_mode("default")        # hidden again: the window leaves it
+            for task in state._tasks():
+                task.obliterate_allowed = body["show_obliterate"]
+                if not body["show_obliterate"] and task.mode == "obliterate":
+                    task.set_mode("default")        # hidden again: the window leaves it
             state.save_settings()
         if "spending_limit_usd" in body:
             # The next request uses it; one paused at the check goes on at the new limit when continued.
@@ -811,7 +819,8 @@ def create_app(state: WindowState, *, dev: bool = False) -> FastAPI:
             except ValueError as exc:
                 return error(str(exc))
             state.settings.spending_limit_usd = 0.0 if limit is None else limit
-            state.task.set_spending_limit(limit)
+            for task in state._tasks():
+                task.set_spending_limit(limit)
             state.save_settings()
         if "tutorial_version" in body:
             # the guided tour's version this computer finished: the page's number, kept for the next start
