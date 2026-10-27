@@ -62,7 +62,7 @@ Changing your mind (`DocumentTask.discard_preview`, `DocumentTask.undo`):
   off it. A point is taken at each approval (`_undo_point`) and kept once the run delivers copies
   (`_advance_generation`); the points are kept in the saved conversation (`undo`), so they survive a restart. Undo
   waits while a preview is open ("Discard the preview first") and refuses when a copy it would go back to is no longer
-  where it was saved. No file is written or deleted: the copies an undone button made stay in their run folder. Start
+  where it was saved. No file is written or deleted: the copies an undone button made stay in the scratch folder until the window closes. Start
   over and removing the last working copy clear the points; a run whose approval took none (it resumed after a
   restart) clears them too, so no undo reaches past a step it did not record.
 
@@ -377,7 +377,7 @@ instance. The engine's own work is shared the same way: a batch of three or more
 the app's worker processes (one per core, at most eight; each document whole in one of them, so its copy and record
 are those it would have alone), and a preview plans twelve or more documents, and checks three or more samples, side
 by side (`docs/RUNTIME_RELIABILITY.md`, "Desktop-safe workers"). LibreOffice keeps its user profiles under the app's config folder (`render-profiles`) instead of
-creating one per run. Rendered pages are kept in a cache beside the session folders (`<output root>/.render-cache`,
+creating one per run. Rendered pages are kept in a cache beside the window's scratch folders (`%LOCALAPPDATA%\Spec Surgeon\scratch\.render-cache`,
 at most 2 GB, oldest first out), keyed by the document's exact bytes and the renderer's version: the run does not
 render again what the preview rendered, and a source you attach again unchanged is not rendered again either — a
 file whose content differs in any way is always rendered afresh. The preview and run logs say how many pages came
@@ -407,9 +407,10 @@ belong to the displayed plan too: a new plan or preview starts the review over.
 
 ## What is left untouched, and why
 
-Originals are never written; the window always creates copies. Each run's copies go into a timestamped folder
-under the app's local data (`%LOCALAPPDATA%\Spec Surgeon\runs` on Windows), so earlier copies remain. **Your
-edited copies** lists them; click one to open it in Word.
+Originals are never written; the window always creates copies. Each run's copies go into a timestamped session
+folder inside the window's scratch folder (`%LOCALAPPDATA%\Spec Surgeon\scratch\<start>-<pid>` on Windows), which
+is deleted when the window closes. **Your edited copies** lists them; click one to open it in Word, and **Export** in
+the top bar saves them to a folder you choose ("Export: saving the copies", below).
 
 A file can be left out at four points, each time with one sentence that names the file and the reason:
 
@@ -532,22 +533,45 @@ asking Claude to reveal its own reasoning), the chat says so in plain words and 
 conversation, its wording no longer approved, so it does not go out again with the next message; rephrase it and
 send it again.
 
+## Export: saving the copies
+
+Nothing of a session is written anywhere but the window's scratch folder until you press **Export** in the top bar
+(enabled once there are edited copies; its label counts the copies not saved yet). The native folder dialog opens
+where you last saved (Settings shows the folder), and every copy the next request builds on — one per attached
+document, the working set — is written into the chosen folder under its planned name, byte for byte the copy the
+checker passed, each written whole and then renamed into place (`DocumentTask.export`, `guard.write_new`). All or
+nothing: every copy is read and every destination settled before the first write. A file already there with the
+same content is that copy, saved, and nothing is written over it; a different file under a copy's name is left alone
+and the copy is numbered beside it (`name (2).docx`); a folder where a copy would land on one of the files this
+conversation works on — an attached document, a working copy — refuses the whole export. The copies list then marks
+each copy **SAVED** (its hover says where), the chat says how many were saved, and the journal keeps what was saved
+where, so a later run's new copies read as unsaved again and Undo's older copies as saved. Saving the records beside
+the copies, saving beside the originals and writing back over the originals are not offered (backlog H4).
+
 ## Conversations and a clean start
 
-The window writes `conversation.json` in its configuration folder (`%APPDATA%\Spec Surgeon` on Windows, or
-`SPEC_SURGEON_CONFIG_DIR` when set) as the conversation goes: the attachments with their triage state, the
-messages, your decisions and approved wording, the result locations, the working set (which copy stands for each
-original, and the changes already made to it), the to-do list and the pass over it, the spending ledger and the
-location of a recovery checkpoint. It can contain document text. It never contains the API key, an approval to
-deliver, or an acknowledgement of a visual finding; those belong to one displayed preview only.
+The window works in a scratch folder of its own, `%LOCALAPPDATA%\Spec Surgeon\scratch\<start>-<pid>` on Windows
+(under `SPEC_SURGEON_CONFIG_DIR\data` when that is set; `scratch.py`), locked while it runs: every session folder
+(the conversation's records, previews, runs, recovery checkpoints, custom-method attempts), every file dropped on the
+window (`attachments\`) and the conversation's journal, `conversation.json`, go under it. The journal is written as
+the conversation goes: the attachments with their triage state, the messages, your decisions and approved wording,
+the result locations, the working set (which copy stands for each original, and the changes already made to it),
+what Export saved where, the to-do list and the pass over it, the spending ledger and the location of a recovery
+checkpoint. It can contain document text. It never contains the API key, an approval to deliver, or an
+acknowledgement of a visual finding; those belong to one displayed preview only.
 
-Every start of the app is a clean one: an empty conversation, nothing attached. The last conversation's journal
-is moved under `conversations\` (named by the time it was set aside) and never reopened; the edited copies stay
-in their run folders. **New conversation** does the same mid-session. A journal that cannot be moved (another
-program holds the file open) is left exactly as it is, and that session keeps no journal of its own rather than
-write over it. After a crash the first message says the
-previous session ended unexpectedly, where Python's fault handler wrote what it saw, and where its conversation
-was archived.
+Every start of the app is a clean one: an empty conversation, nothing attached, in a new scratch folder. A clean
+close deletes the scratch folder whole — after one native question when an edited copy was never saved with Export
+(OK closes and gives the copies up, Cancel keeps the window open; the only time a close is refused); what Export
+saved stays where you put it, and so do the render cache, the logs and `settings.json`. **New conversation** starts
+an empty one over the same scratch folder, its journal written over (the page asks the same question first; the old
+conversation's copies stay in the scratch folder until the window closes). A window that never closed — a crash, a
+kill, a power cut — leaves its folder behind: the next start takes that folder over, restores the conversation and
+its copies, and says so in its first message, with where Python's fault handler wrote what it saw; every other
+leftover folder under `scratch\` is swept, and a folder another open window holds is left alone. A folder a clean
+close could not delete whole (a copy held open in Word) loses its journal first, so it is swept, never restored. The
+browser fallback cannot ask the close question, so a window closed there with unsaved copies keeps its folder for
+the next start to restore.
 
 ## When the window has a problem
 
@@ -573,9 +597,9 @@ folder (`%LOCALAPPDATA%\Spec Surgeon\logs`): `spec-surgeon.log` for a person, `a
   (the last events of its journal) and whether its crash log caught a native crash; an empty crash log means the
   process was ended from outside (Task Manager, signing out, a power cut) or stopped answering and was closed.
 - **Save a diagnostic bundle** (About, or the error screen) writes `spec-surgeon-diagnostics-<time>.zip` under
-  `%LOCALAPPDATA%\Spec Surgeon\diagnostics` and shows it in Explorer: the logs folder, `settings.json`, the current
-  and last three conversations, and from the five newest run folders their logs, records, reports and conversation
-  records. `MANIFEST.txt` lists what is in it and what was left out. The folders
+  `%LOCALAPPDATA%\Spec Surgeon\diagnostics` and shows it in Explorer: the logs folder, `settings.json`, this
+  conversation's journal from the scratch folder, and from its five newest session folders their logs, records,
+  reports and conversation records. `MANIFEST.txt` lists what is in it and what was left out. The folders
   that hold documents and pictures (`outputs`, `failed`, `samples`, `pages`, `images` and the like) are left out, but
   conversations and records can quote your words and your documents' text, and a conversation's saved provider
   history (`chat\context\*.json`) can hold the page images Claude was shown: treat a bundle like your documents.

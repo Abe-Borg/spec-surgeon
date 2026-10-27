@@ -63,7 +63,7 @@ render checks are recorded as N/A with the reason.
 | `ANTHROPIC_API_KEY` | typed requests, Claude's visual check, custom transforms and recovery; or enter it in Settings |
 | `SPEC_SURGEON_MODEL` | the model every Claude call uses (default `claude-opus-5-5`) |
 | `SPEC_SURGEON_NO_UPDATE_CHECK` | any value: the window never checks for updates on its own |
-| `SPEC_SURGEON_CONFIG_DIR` | where the app keeps `settings.json`, the current and archived conversations, downloaded updates and its logs |
+| `SPEC_SURGEON_CONFIG_DIR` | where the app keeps `settings.json` and, under `data`, its scratch folders (one per window, deleted when it closes), the render cache, downloaded updates and its logs |
 
 ## The window: documents and a conversation
 
@@ -147,9 +147,12 @@ previews cover at least one sample of each. One button still approves all of the
 from every layout the plan covers is left untouched with a sentence.
 
 Keep chatting: the next thing you ask for is made on the copies the last run created, your originals stay as they
-are, and **Start over from the originals** is one tap away. Each run's copies go into their own folder, so earlier
-copies remain. Every start of the app is a clean one: the last conversation is archived on this computer (the
-`conversations` folder beside `settings.json`) and never reopened, and the copies stay where they were saved.
+are, and **Start over from the originals** is one tap away. The copies live in the window's scratch folder until
+you save them: **Export**, in the top bar, writes them to a folder you choose (a file already there with the same
+content counts as saved; a different file under a copy's name is left alone and the copy is numbered beside it; a
+folder where a copy would land on one of your attached files is refused). Closing the window deletes its scratch
+folder, after one question if a copy was never saved, so every start is a clean one; a window that never closed is
+restored at the next start instead, once.
 
 ![The plan in the conversation and before/after pages, with one action](docs/conversation-preview.png)
 
@@ -255,8 +258,8 @@ four cores, creating the copies (before rendering) took 1.6 s instead of 4.6 s. 
 `SPEC_SURGEON_WORD_INSTANCES=1` keeps Word to one instance.
 
 **When something goes wrong.** **About → Save a diagnostic bundle** writes one zip (and shows it in Explorer) with
-everything a diagnosis reads: the app's log and its event journals, crash logs, its settings, your current and last
-conversations, and the logs, records and reports of your recent runs. Folders of copies and
+everything a diagnosis reads: the app's log and its event journals, crash logs, its settings, this conversation,
+and the logs, records and reports of its runs. Folders of copies and
 page pictures are left out, but conversations and records can quote your words and your documents' text, and a
 conversation's saved history can hold the page images Claude was shown, so it is yours to share or not. The
 log says what the window itself went through: each request and job as it starts and ends, every error in the window's

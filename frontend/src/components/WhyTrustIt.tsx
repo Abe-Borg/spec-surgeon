@@ -23,8 +23,9 @@ export default function WhyTrustIt({ onDeepDive }: { onDeepDive: () => void }) {
             t: "Your originals are never written",
             d: (
               <>
-                The window only creates copies, each run in its own folder. The code that delivers them refuses to
-                write over a source file, and a file that changed since you approved it is refused, not guessed at.
+                The window only creates copies, in its own scratch folder, and writes them where you choose only when
+                you press Export. The code that delivers them refuses to write over a source file, and a file that
+                changed since you approved it is refused, not guessed at.
               </>
             ),
           },

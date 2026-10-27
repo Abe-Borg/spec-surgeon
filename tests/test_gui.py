@@ -461,95 +461,162 @@ def test_every_entry_point_of_the_window_goes_through_run():
     assert "from spec_surgeon.gui import run" in launcher and "    run()" in launcher and "main()" not in launcher
 
 
-@pytest.mark.parametrize("crashed", [False, True])
-def test_every_start_is_clean_and_the_last_conversation_is_archived(monkeypatch, crashed):
-    """The window never reopens the last conversation: at start its journal moves under ``conversations/`` (kept,
-    never read) and the task is empty, with nothing attached and nothing said. After a crash the one message says
-    where that conversation went."""
+def _start(monkeypatch, run_window):
+    """``gui.main()`` with the window replaced by ``run_window(state)``; the app log's file handlers closed after."""
     import logging
-    pytest.importorskip("fastapi")
     from spec_surgeon import gui, winapp
-    from spec_surgeon.settings import config_dir, logs_dir
     from spec_surgeon.web import shell
-    journal = config_dir() / "conversation.json"
-    journal.parent.mkdir(parents=True, exist_ok=True)
-    saved = {"version": 2, "attachments": [{"path": "C:/Specs/21 13 13.docx", "template": False}],
+    pytest.importorskip("fastapi")
+    monkeypatch.setenv("SPEC_SURGEON_NO_UPDATE_CHECK", "1")
+    monkeypatch.setattr(winapp, "hold_app_mutex", lambda: False)
+    monkeypatch.setattr(shell, "run_window", run_window)
+    logger = logging.getLogger("spec_surgeon")
+    try:
+        assert gui.main() == 0
+    finally:
+        for h in [h for h in logger.handlers if isinstance(h, logging.FileHandler)]:
+            logger.removeHandler(h)
+            h.close()
+
+
+def _scratch_folders():
+    from spec_surgeon.settings import scratch_root
+    return sorted(p.name for p in scratch_root().iterdir() if not p.name.startswith("."))
+
+
+def test_a_clean_start_works_in_a_fresh_scratch_folder_that_a_clean_close_deletes(monkeypatch):
+    """The window's session folders, dropped files and journal live in one scratch folder under the app's local
+    data, locked while the window runs; a clean close with nothing unsaved deletes it whole, and nothing is written
+    beside settings.json."""
+    from spec_surgeon.settings import config_dir, scratch_root
+    seen = {}
+
+    def run_window(state, **kw):
+        task = state.task
+        scratch = Path(task.session.out_root)
+        seen["scratch"], seen["journal"] = scratch, task.journal
+        seen["locked"] = (scratch / ".window.lock").is_file()
+        seen["clean"] = task.attachments == [] and task.messages == [] and task.stage == "empty"
+        task.say("hello")
+        task.save()
+        seen["journal_written"] = task.journal.is_file()
+        return 0
+    _start(monkeypatch, run_window)
+    scratch = seen["scratch"]
+    assert scratch.parent == scratch_root() and seen["journal"] == scratch / "conversation.json"
+    assert seen["locked"] and seen["clean"] and seen["journal_written"]
+    assert not scratch.exists() and _scratch_folders() == []
+    assert not (config_dir() / "conversation.json").exists() and not (config_dir() / "conversations").exists()
+
+
+@pytest.mark.parametrize("crashed", [False, True])
+def test_a_session_that_never_closed_is_restored_from_its_scratch_folder_and_the_rest_is_swept(monkeypatch, tmp_path,
+                                                                                               crashed):
+    """A window that never closed leaves its scratch folder with its journal: the next start takes that folder over,
+    restores the conversation and says so (whether or not the crash watch saw a marker), and deletes every other
+    leftover. The restored folder goes with this window's clean close."""
+    from spec_surgeon.settings import logs_dir, scratch_root
+    root = scratch_root()
+    spec = tmp_path / "21 13 13.docx"
+    spec.write_bytes(build("21 13 13", "WET-PIPE SPRINKLER SYSTEMS"))
+    left = root / "20261001-120000-111"
+    left.mkdir(parents=True)
+    saved = {"version": 2, "attachments": [{"path": str(spec), "template": False}],
              "messages": [{"role": "user", "text": "Change every font to Arial"}],
              "decisions": ["Change every font to Arial"], "results": {}, "budget": {}}
-    journal.write_text(json.dumps(saved), encoding="utf-8")
-    if crashed:                                    # the last session left its marker: it never closed cleanly
+    (left / "conversation.json").write_text(json.dumps(saved), encoding="utf-8")
+    remnant = root / "20260901-090000-222"                 # a close that could not delete everything
+    (remnant / "preview").mkdir(parents=True)
+    (remnant / "preview" / "preview.json").write_text("{}", encoding="utf-8")
+    if crashed:                                            # the crash watch's marker: the session never closed
         logs_dir().mkdir(parents=True, exist_ok=True)
         (logs_dir() / "session-1.json").write_text(json.dumps({"version": "1.7.0"}), encoding="utf-8")
     seen = {}
 
     def run_window(state, **kw):
-        seen["task"] = state.task
-        seen["messages"] = [dict(m) for m in state.task.messages]
+        task = state.task
+        seen["scratch"] = Path(task.session.out_root)
+        seen["attachments"] = [str(a.path) for a in task.attachments]
+        seen["decisions"] = list(task.decisions)
+        seen["messages"] = [dict(m) for m in task.messages]
+        seen["stage"] = task.stage
         return 0
-    monkeypatch.setenv("SPEC_SURGEON_NO_UPDATE_CHECK", "1")
-    monkeypatch.setattr(winapp, "hold_app_mutex", lambda: False)
-    monkeypatch.setattr(shell, "run_window", run_window)
-    logger = logging.getLogger("spec_surgeon")
-    try:
-        assert gui.main() == 0
-    finally:
-        for h in [h for h in logger.handlers if isinstance(h, logging.FileHandler)]:
-            logger.removeHandler(h)
-            h.close()
-    archived = list((config_dir() / "conversations").glob("*.json"))
-    assert len(archived) == 1 and json.loads(archived[0].read_text(encoding="utf-8")) == saved
-    task = seen["task"]
-    assert task.attachments == [] and task.decisions == [] and task.stage == "empty" and task.results == {}
+    _start(monkeypatch, run_window)
+    assert seen["scratch"] == left and seen["attachments"] == [str(spec)]
+    assert seen["decisions"] == ["Change every font to Arial"] and seen["stage"] == "resume"
+    assert not remnant.exists() and not left.exists() and _scratch_folders() == []
+    texts = [m["text"] for m in seen["messages"]]
+    assert texts[0] == "Change every font to Arial" and any("Your conversation is restored" in t for t in texts)
+    assert texts[-1].startswith("The previous session ended unexpectedly")
+    assert "Its conversation and copies are restored" in texts[-1] and "Export" in texts[-1]
     log = (logs_dir() / "spec-surgeon.log").read_text(encoding="utf-8")
     assert " started — " in log and "; event journal app-events-" in log
     if crashed:
-        assert len(seen["messages"]) == 1 and seen["messages"][0]["role"] == "app"
-        assert "ended unexpectedly" in seen["messages"][0]["text"] and str(archived[0]) in seen["messages"][0]["text"]
-        # the app log says it too, for whoever reads the log rather than the window
         assert " WARNING " in log and "The previous session (pid ?, Spec Surgeon 1.7.0, started ?) ended without " \
                                       "closing. Its event journal has nothing to say" in log
     else:
-        assert seen["messages"] == [] and "The previous session" not in log
+        assert "The previous session (pid" not in log
 
 
-def test_a_conversation_that_cannot_be_archived_is_never_written_over(monkeypatch):
-    """When the last conversation cannot be moved aside (Windows holds the file open for a backup or a scanner), the
-    clean session keeps no journal: its saves, and New conversation, leave that file as it was."""
-    import logging
-    pytest.importorskip("fastapi")
-    from spec_surgeon import gui, winapp
-    from spec_surgeon.document_task import DocumentTask
-    from spec_surgeon.settings import config_dir
-    from spec_surgeon.web import shell
-    journal = config_dir() / "conversation.json"
-    journal.parent.mkdir(parents=True, exist_ok=True)
-    journal.write_text('{"version": 2, "messages": [{"role": "user", "text": "keep me"}]}', encoding="utf-8")
-    before = journal.read_bytes()
-
-    def locked(self):                               # the one file that is held open cannot be moved
-        if self.journal == journal:
-            raise PermissionError(13, "The process cannot access the file because it is being used by another process")
-        return None
+def test_a_leftover_without_a_conversation_is_swept_and_the_start_is_clean(monkeypatch):
+    """A leftover scratch folder whose journal holds nothing (or none) is not a session to restore: it is deleted
+    and the window starts empty in a folder of its own."""
+    from spec_surgeon.settings import scratch_root
+    stale = scratch_root() / "20261001-120000-333"
+    (stale / "20261001-120100" / "run").mkdir(parents=True)
+    (stale / "conversation.json").write_text(json.dumps({"version": 2, "messages": [], "decisions": [], "results": {},
+                                                         "budget": {}}), encoding="utf-8")
     seen = {}
 
     def run_window(state, **kw):
-        state.task.say("A new message")
-        state.save_settings()                       # what closing the window does
-        state.new_conversation()
-        seen["journal"] = state.task.journal
+        seen["scratch"] = Path(state.task.session.out_root)
+        seen["messages"] = list(state.task.messages)
+        seen["stage"] = state.task.stage
         return 0
-    monkeypatch.setattr(DocumentTask, "archive", locked)
-    monkeypatch.setenv("SPEC_SURGEON_NO_UPDATE_CHECK", "1")
-    monkeypatch.setattr(winapp, "hold_app_mutex", lambda: False)
-    monkeypatch.setattr(shell, "run_window", run_window)
-    logger = logging.getLogger("spec_surgeon")
-    try:
-        assert gui.main() == 0
-    finally:
-        for h in [h for h in logger.handlers if isinstance(h, logging.FileHandler)]:
-            logger.removeHandler(h)
-            h.close()
-    assert journal.read_bytes() == before and seen["journal"] is None
+    _start(monkeypatch, run_window)
+    assert seen["scratch"] != stale and not stale.exists() and seen["messages"] == [] and seen["stage"] == "empty"
+    assert _scratch_folders() == []
+
+
+@pytest.mark.parametrize("confirmed", [False, True])
+def test_unsaved_copies_are_deleted_only_once_the_close_was_confirmed(monkeypatch, tmp_path, confirmed):
+    """With edited copies never saved by Export, the scratch folder is deleted only when the user said so at the
+    close (``close_confirmed``); a close that asked nothing (the browser fallback) keeps it, and the next start
+    restores the conversation and its copies from it."""
+    from spec_surgeon.settings import scratch_root
+    seen = {}
+
+    def run_window(state, **kw):
+        task = state.task
+        scratch = Path(task.session.out_root)
+        copy = scratch / "20261001-120000" / "run" / "outputs" / "Spec.docx"
+        copy.parent.mkdir(parents=True)
+        copy.write_bytes(build("21 13 13", "WET-PIPE SPRINKLER SYSTEMS"))
+        task.working = {str(tmp_path / "Spec.docx"): str(copy)}
+        task.results, task.generation = dict(task.working), 1
+        task.save()
+        assert task.unsaved_copies() == [str(copy)] and not state.close_confirmed
+        state.close_confirmed = confirmed
+        seen["scratch"], seen["copy"] = scratch, copy
+        return 0
+    _start(monkeypatch, run_window)
+    scratch = seen["scratch"]
+    if confirmed:
+        assert not scratch.exists() and _scratch_folders() == []
+        return
+    assert scratch.is_dir() and (scratch / "conversation.json").is_file() and seen["copy"].is_file()
+    assert _scratch_folders() == [scratch.name]
+
+    def run_again(state, **kw):
+        seen["again"] = Path(state.task.session.out_root)
+        seen["working"] = dict(state.task.working)
+        seen["unsaved"] = state.task.unsaved_copies()
+        state.close_confirmed = True                   # this time the user lets them go
+        return 0
+    _start(monkeypatch, run_again)
+    assert seen["again"] == scratch and seen["working"] == {str(tmp_path / "Spec.docx"): str(seen["copy"])}
+    assert seen["unsaved"] == [str(seen["copy"])]
+    assert not scratch.exists() and _scratch_folders() == []
 
 
 def test_the_engine_never_loads_the_window():

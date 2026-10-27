@@ -52,7 +52,7 @@ On the owner's machine (Windows, Word): the W3 judge over every case, each failu
 behaviour recorded here with its evidence; the W4 recipe run once, its files and Word's resolutions checked in. The
 judge cannot see a repair prompt or how the Reviewing Pane draws the changes; those stay a manual look.
 
-### Hold the work in memory; write only on export (H1–H4)
+### Hold the work in memory; write only on export (H2–H4)
 
 Owner question (2026-10-27): the window leaves many folders and files behind, several in one session — why, and can
 it work as Build-a-Spec does, which holds the document in memory while the user works and writes a file only when
@@ -71,8 +71,8 @@ was a batch tool with a results folder and the window was added over it:
 | The custom-method sandbox's copies, requests and results | `codegen\` | the sandbox runs in another process and may write only in its own folder |
 | The app log, event journals, crash logs, session markers | `data_dir()\logs\` | the window's trail; Build-a-Spec writes the same kind of thing to its state dir |
 
-What never gets deleted is the owner's own earlier decision (T31, F5): run folders, conversations, attachments copies
-and bundles. Build-a-Spec's shape, for reference only: the document and its versions live in `SessionState`
+What never got deleted was the owner's own earlier decision (T31, F5): run folders, conversations, attachments copies
+and bundles — reversed by H1, built 2026-10-27 (below). Build-a-Spec's shape, for reference only: the document and its versions live in `SessionState`
 (undo and redo in memory), one explicit **Save** writes the `.baspec`, **Export** offers the Word exports and the
 review report, and nothing of the document is on disk otherwise; its logs and traces still go to disk.
 
@@ -93,40 +93,40 @@ Rules for this work:
    list, `docs/CONVERSATIONAL_DESKTOP.md`, `docs/DEVELOPER_DIAGNOSTICS.md` (the bundle reads the scratch folder's
    logs and records, not "the five newest run folders") and `docs/WEB_API.md`.
 
+H1 — the scratch folder and Export — is built (2026-10-27): `scratch.py`, `DocumentTask.export`, `POST /api/export`,
+the close question, the restore of a window that never closed; its real-file run waits under "Waiting on the owner's
+machine". What is left:
+
 | Item | What to build |
 | --- | --- |
-| H1 — the scratch folder and Export (first; the engine untouched) | `Session.out_root` becomes the window's scratch folder; every session, preview, run, recovery, codegen and chat folder, every upload and the journal go under it, in the layout they have today. A clean exit deletes it (after one question when delivered copies were never exported: save or discard); the next start sweeps every earlier scratch folder except one a crashed session left, which it offers once (restore or discard) and then deletes. **Export** (the top bar, beside New conversation) → **Save the copies…** (`webview.FOLDER_DIALOG`): the delivered set — every copy the next request builds on, named as planned — copied into the chosen folder through `guard` (refused over any input; a name already there is numbered, never replaced), and the copies list says *saved to <folder>*. Settings' Output folder becomes the folder the dialog opens in. "Open in Word" keeps opening the scratch copy, and the copies list says it is not saved until exported. `image_allowed` serves PNGs from the scratch root. Tests: nothing under `data_dir()` but `logs\`, `.render-cache` and settings after a closed window (`tests/test_going_back.py`'s `on_disk` over the scratch), an export's bytes equal to the verified copy's (`verified_bytes`), the export refused over an input, the crash offer |
 | H2 — the working set as bytes | `_transform_one` returns the copy's bytes with its record and plan (workers send them back over the pool; `FileResult.output` becomes a name plus bytes); the delivered set, `results`, `working` and `undo_points` are versions in memory (bytes, name, record, plan, the `applied` sentences), the approval token hashes them, a chain hands bytes between steps (`chain._deliver` already holds them) and a preview writes a sample to scratch for the renderer only. `/api/open` takes a result id and writes the copy to scratch on demand; `results[].output` becomes an id in `docs/WEB_API.md`. Recovery's checkpoints stay files in scratch (their lock and resume design holds). Records are written only by an export |
 | H3 — a session file | **Save this session…** / **Open a session…**: one file (a zip: the conversation, decisions and approved wording, the working set's versions with their records, the to-do list, undo points, spending; never the API key) in place of `config_dir()\conversation.json` and the `conversations\` archive. The crash journal of H1 is this file, autosaved under scratch after every step, removed at a clean exit |
 | H4 — more export choices | **Save the copies with their records…** (`records\`, `BATCH_REPORT.md`, `DIAGNOSTICS.md` beside the copies: the audit trail that today sits in the run folder); **Save beside the originals** (each copy in its original's folder under its planned name, refused where that name is an input's); the diagnostic bundle built from the scratch folder and memory. Write-back over the originals (`guard.write_back`, invariant 4, never bypassed) is possible as a further choice and is the owner's call: it reverses T1 |
 
-Decisions for the owner before H1 is built (the recommendation first):
-
-- **Crash resume.** Keep it: the scratch journal carries the working set (H1 keeps the copies as files under scratch,
-  H3 the session file), and the next start offers the crashed session once. The alternative is Build-a-Spec's:
-  nothing survives a crash but what was saved.
-- **The records.** On export, the copies alone by default and the records as a second choice (H4); the bundle
-  keeps carrying the session's logs and records for a diagnosis. The alternative writes `records\` beside every
-  export.
-- **Write-back over the originals** as an export choice: no, unless asked for; T1 is the claim most of the trust
-  copy rests on.
-
-Acceptance, on the owner's machine: a real batch attached, previewed, run, undone and exported from the installed
-app; the exported copies open in Word; after the window closes nothing of the session is under
-`%LOCALAPPDATA%\Spec Surgeon` or `%APPDATA%\Spec Surgeon` but the logs, the render cache and `settings.json`; the
-process killed mid-session and the next start's offer restoring the copies.
+Decisions taken (the owner, 2026-10-27): crash resume is kept through the scratch journal — the next start restores
+a window that never closed, once (H1); on export the copies alone, the records as a second choice (H4); no
+write-back over the originals unless asked for (T1 is the claim most of the trust copy rests on).
 
 ## Waiting on the owner's machine
 
 Everything else is built and tested on fixtures; nothing is done on fixtures alone. These runs need real
 specifications, Windows and Word, and only the owner can do them. Record what a run finds as a new item above.
 
+- **The scratch folder and Export (H1, built 2026-10-27):** a real batch attached, previewed, run, undone and
+  saved with Export from the installed app (the dialog opening where the last export went; a second export of the
+  same copies writing nothing; a different file under a copy's name left alone and the copy numbered; the originals'
+  folder refused); the saved copies open in Word; closing with an unsaved copy asks once in a native dialog, Cancel
+  keeps the window open and OK closes; after the window closes nothing of the session is under
+  `%LOCALAPPDATA%\Spec Surgeon\scratch` but `.render-cache`, and `%APPDATA%\Spec Surgeon` holds only
+  `settings.json`; the process killed mid-session and the next start restoring the conversation and its copies from
+  the scratch folder, then sweeping it at that window's clean close; a copy left open in Word at the close and the
+  remainder swept at the next start.
 - **Safe mode:** a real mixed batch (several projects, good and badly built files) through each button with Word
   rendering. Match body formatting to template over office masters, MasterSpec ("1.01", "PART 1 –") and
   Heading-styled files. Record the Left untouched reasons. The copies open in Word without a repair prompt. Then
   change your mind on that batch in the installed app: Discard a preview, go back to a button and find its form as
   you left it, run two buttons and Undo twice (the next button builds on the right copies each time, and every copy
-  is still in its run folder), and Undo after a restart.
+  is still in its session folder under the scratch folder), and Undo after a crash's restore.
 - **Default mode:** a choice's drafted wording edited before it is picked, and the copy carrying the edit.
 - **The outcome planner with documents left out** (P2, built 2026-10-27): over test-set-3 again, leave out several
   documents and let a failed preview send the request to the outcome planner. The left-out documents stay under

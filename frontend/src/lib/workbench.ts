@@ -20,6 +20,41 @@ export function runFolder(view: Pick<View, "results">): string {
   return first ? parentFolder(first) : "";
 }
 
+/** The Export button's label: "Export", with the count of working copies not saved yet when there are any. */
+export function exportLabel(view: Pick<View, "export">): string {
+  const unsaved = view.export?.unsaved ?? 0;
+  return unsaved > 0 ? `Export · ${unsaved} unsaved` : "Export";
+}
+
+/** The Export button's hover text: what it does, and how many copies it would save. */
+export function exportTip(view: Pick<View, "export">, busy: boolean): string {
+  if (busy) return "Finish or stop the current work first";
+  const state = view.export ?? { folder: "", unsaved: 0, copies: 0 };
+  if (state.copies === 0) {
+    return "Nothing to save yet: create edited copies first. Copies are kept only while this window is open, until you save them.";
+  }
+  const head = "Save the edited copies to a folder you choose.";
+  if (state.unsaved === 0) {
+    return `${head} All ${state.copies === 1 ? "1 copy is" : `${state.copies} copies are`} saved${state.folder ? ` to ${state.folder}` : ""}.`;
+  }
+  const count = `${state.unsaved} of ${state.copies} ${state.copies === 1 ? "copy" : "copies"} ${state.unsaved === 1 ? "is" : "are"} not saved yet`;
+  return `${head} ${count}, and only a saved copy survives closing the window.`;
+}
+
+/** The line under "Your edited copies": where they were saved, or that they are not saved yet. */
+export function copiesNote(view: Pick<View, "results">): string {
+  const results = view.results ?? [];
+  const saved = results.filter((r) => !!r.saved_to);
+  if (results.length === 0) return "";
+  if (saved.length === results.length) {
+    const folder = parentFolder(saved[0].saved_to ?? "");
+    return folder ? `Saved to ${folder}.` : "Saved.";
+  }
+  const left = results.length - saved.length;
+  const count = saved.length === 0 ? "Not saved yet" : `${left} of ${results.length} not saved yet`;
+  return `${count}: Export, in the top bar, saves them to a folder you choose. Until then they live only in this window's scratch folder, which goes when the window closes.`;
+}
+
 export interface PageCount {
   /** "Pages: 12 → 13 (+1)", or "" when a count is missing. */
   text: string;

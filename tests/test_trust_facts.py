@@ -166,7 +166,6 @@ def expected() -> dict:
         "renderCacheGB": const("render/cache.py", "DEFAULT_LIMIT_BYTES") // 1024 ** 3,
         "repairMemoryCases": const("repair_memory.py", "MAX_CASES"),
         "bundleRecentRuns": const("diagnostics.py", "BUNDLE_RECENT_RUNS"),
-        "bundleRecentConversations": const("diagnostics.py", "BUNDLE_RECENT_CONVERSATIONS"),
         "installLogsKept": default("updater.py", "cleanup_downloads", "keep_logs"),
         "pageBeatSeconds": const("web/watch.py", "PAGE_BEAT_S"),
         "pageSilentSeconds": const("web/watch.py", "PAGE_SILENT_S"),

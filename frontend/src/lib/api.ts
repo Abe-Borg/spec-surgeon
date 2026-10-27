@@ -151,6 +151,15 @@ export async function openPath(path: string): Promise<void> {
   await post<unknown>("/api/open", { path });
 }
 
+/** Export → Save the copies…: the working copies written into the folder the native dialog asks for (it opens where
+ *  the last export went). null when the dialog was dismissed; an ApiError from a window without a dialog (501), with
+ *  nothing to save or a folder that refuses (400), or while work runs (409). */
+export async function exportCopies(): Promise<View | null> {
+  const answer = await post<unknown>("/api/export");
+  if (answer && typeof answer === "object" && (answer as { cancelled?: unknown }).cancelled === true) return null;
+  return normalizeView(answer);
+}
+
 /** Stop the running model call; the job's stream then ends with `done`. A
  *  409 (nothing running) means it likely already finished — safe to ignore. */
 export async function stop(): Promise<void> {

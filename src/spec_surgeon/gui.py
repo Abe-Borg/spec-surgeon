@@ -1279,7 +1279,8 @@ def main(argv=None) -> int:
     the ``gui`` extra it says how to install it and returns 2."""
     from . import __version__, winapp
     from .document_task import DocumentTask
-    from .settings import config_dir, load_settings, logs_dir
+    from .scratch import open_window
+    from .settings import load_settings, logs_dir
     diag.setup_app_logging(logs_dir())           # also records an import failure before the window can start
     try:
         from .web.server import WindowState, new_token, release_notes_text
@@ -1309,24 +1310,29 @@ def main(argv=None) -> int:
                    version=gone.get("version"), started=gone.get("started"), crash_log=gone.get("crash_log"),
                    crash_log_found=gone.get("crash_log_found"), last_events=gone.get("last_events"))
     with diag.span("gui.application") as completion:
-        session = Session()
-        if settings.out_root:
-            session.out_root = Path(settings.out_root)
+        # The window works in its scratch folder (``scratch``): every session folder, dropped file and the journal go
+        # under it, and a clean close deletes it. A crashed window's folder is taken over so its conversation and
+        # copies come back; every other leftover is swept.
+        scratch = open_window()
+        session = Session(out_root=scratch.path)
         # a launch opens in Safe or Default (settings.MODES): Obliterate is never restored, only chosen again
-        task = DocumentTask(session, journal=config_dir() / "conversation.json", mode=settings.mode,
+        task = DocumentTask(session, journal=scratch.journal, mode=settings.mode,
                             obliterate_allowed=settings.show_obliterate)
-        # Every start is clean: the last conversation is archived under conversations\, never reopened.
-        try:
-            archived = task.archive()
-        except OSError as exc:
-            archived = None
-            task.journal = None          # this session never writes over a conversation that could not be set aside
-            diag.app_log().warning(f"The last conversation could not be archived ({exc}); this session keeps no journal")
-        if previous:
-            last = previous[-1]
+        restored = False
+        if scratch.adopted:
+            try:
+                restored = task.restore()
+            except (OSError, ValueError) as exc:
+                diag.app_log().warning(f"The previous session's conversation could not be restored ({exc}); this "
+                                       "session starts clean")
+                task = DocumentTask(session, journal=scratch.journal, mode=settings.mode,
+                                    obliterate_allowed=settings.show_obliterate)
+        if previous or restored:
+            last = previous[-1] if previous else {}
             task.say("The previous session ended unexpectedly"
                      + (f"; Python's fault handler wrote what it saw to {last['crash_log']}." if last.get("crash_log") else ".")
-                     + (f" Its conversation is saved in {archived}." if archived else ""))
+                     + (" Its conversation and copies are restored; New conversation discards them, and nothing is "
+                        "kept after this window closes unless you save it with Export." if restored else ""))
         state = WindowState(task, settings, token=new_token(), version=__version__)
         state.updates = UpdateFlow(settings, release_notes=lambda: release_notes_text(__version__),
                                    quit_app=lambda: state.shell.close(), is_busy=lambda: state.busy)
@@ -1340,6 +1346,17 @@ def main(argv=None) -> int:
         if job is not None and job.is_alive():   # shutdown's wait ran out; the process cannot end before the job does
             diag.app_log().warning("The window closed while a job was still running; waiting for it to stop")
             job.join()
+        # A clean close deletes the scratch folder: nothing of the session outlives the window but what Export saved.
+        # Copies never saved are deleted only once the user said so at the close (``web.shell.on_closing``); a close
+        # that asked nothing (the browser fallback) keeps the folder, and the next start restores it.
+        unsaved = len(state.task.unsaved_copies())
+        if unsaved and not state.close_confirmed:
+            scratch.release()
+            diag.app_log().info(f"The window closed with {unsaved} unsaved cop{'y' if unsaved == 1 else 'ies'}; its "
+                                f"scratch folder is kept for the next start: {scratch.path}")
+        elif not scratch.discard():
+            diag.app_log().warning(f"The scratch folder could not be deleted whole (a file is held open?): "
+                                   f"{scratch.path}; the next start removes what is left")
         diag.app_log().info("Spec Surgeon closed")
         watch.stop()                     # a clean exit: no "closed unexpectedly" at the next start
         return code

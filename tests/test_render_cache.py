@@ -142,7 +142,11 @@ def test_the_environment_switch_turns_the_cache_off(tmp_path, monkeypatch):
 
 
 def test_the_cache_lives_beside_the_session_folders(tmp_path):
-    runs = default_run_root()                                                # the window's default out_root
+    from spec_surgeon.settings import scratch_root
+    scratch = scratch_root()                                                 # the window's scratch folders: one cache
+    assert cache_mod.cache_root_for(scratch / "20261027-090000-7" / "20261027-090100" / "preview") == scratch / ".render-cache"
+    assert cache_mod.cache_root_for(scratch / "20261027-090000-7" / "20261027-090100-2" / "run") == scratch / ".render-cache"
+    runs = default_run_root()                                                # a library caller's default out_root
     assert cache_mod.cache_root_for(runs / "20261019-235959" / "preview") == runs / ".render-cache"
     assert cache_mod.cache_root_for(runs / "20261019-235959-2" / "run") == runs / ".render-cache"
     custom = tmp_path / "My Specs" / "runs"                                  # a root the user chose: beside its sessions

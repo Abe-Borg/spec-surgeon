@@ -290,10 +290,26 @@ export default function App() {
     setReviews({});
   }, []);
 
+  const unsavedCopies = view.export?.unsaved ?? 0;
   const onNewConversation = useCallback(() => {
     if (busyRef.current) return;
+    // Copies never saved with Export outlive a new conversation only until the window closes: say so first.
+    if (
+      unsavedCopies > 0 &&
+      !window.confirm(
+        `${unsavedCopies === 1 ? "1 edited copy has" : `${unsavedCopies} edited copies have`} not been saved. A new conversation leaves ${unsavedCopies === 1 ? "it" : "them"} behind in the window's scratch folder, which goes when the window closes.\n\nOK starts the new conversation anyway. Cancel goes back, so you can save ${unsavedCopies === 1 ? "it" : "them"} with Export first.`,
+      )
+    ) {
+      return;
+    }
     applyView(api.newConversation(), resetInputs);
-  }, [applyView, resetInputs]);
+  }, [applyView, resetInputs, unsavedCopies]);
+
+  // Export → Save the copies…: a dismissed dialog changes nothing (the view is fetched again, which is harmless).
+  const onExport = useCallback(() => {
+    if (busyRef.current) return;
+    applyView(api.exportCopies().then((next) => next ?? api.getState()));
+  }, [applyView]);
 
   const onStartOver = useCallback(() => applyView(api.startOver(), resetInputs), [applyView, resetInputs]);
   // Safe mode's ways back: Discard withdraws a button's preview (the form keeps what was typed); Undo takes the
@@ -453,6 +469,7 @@ export default function App() {
         busy={busy}
         updatePill={updatePill(view.update, updateShown)}
         onDownloadUpdate={onDownloadUpdate}
+        onExport={onExport}
         onNewConversation={onNewConversation}
         onOpenSettings={onOpenSettings}
         onOpenHelp={setHelpTopic}

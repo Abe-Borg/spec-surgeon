@@ -28,7 +28,7 @@ FILE_TYPES = {"documents": ("Word documents (*.docx)",), "template": ("Word docu
 
 
 class WebviewShell(Shell):
-    """pywebview's window: native file dialogs, and closing."""
+    """pywebview's window: native file and folder dialogs, a native yes/no question, and closing."""
 
     def __init__(self):
         self.window = None
@@ -42,6 +42,28 @@ class WebviewShell(Shell):
         if not result:
             return []
         return [str(p) for p in (result if isinstance(result, (list, tuple)) else [result])]
+
+    def pick_folder(self, start: str = "") -> Optional[str]:
+        if self.window is None:
+            return None
+        import webview
+        kwargs = {"directory": start} if start else {}
+        result = self.window.create_file_dialog(webview.FOLDER_DIALOG, **kwargs)
+        if not result:
+            return ""
+        chosen = result[0] if isinstance(result, (list, tuple)) else result
+        return str(chosen)
+
+    def confirm(self, title: str, message: str) -> bool:
+        """A native OK / Cancel dialog; OK is True. A dialog the window cannot show answers no: a question that could
+        not be asked never lets a copy be deleted."""
+        if self.window is None:
+            return False
+        try:
+            return bool(self.window.create_confirmation_dialog(title, message))
+        except Exception as exc:  # noqa: BLE001 — an older pywebview, a backend without the dialog
+            diag.app_log().warning(f"The close question could not be shown ({exc}); the copies are kept")
+            return False
 
     def close(self) -> None:
         if self.window is not None:
@@ -77,14 +99,35 @@ def serve(state: WindowState, port: int, *, dev: bool = False):
     raise RuntimeError("the window's server did not start")
 
 
+def unsaved_copies_question(count: int) -> str:
+    """What the close asks when edited copies were never saved: closing deletes them with the scratch folder."""
+    copies = "1 edited copy has" if count == 1 else f"{count} edited copies have"
+    them = "it" if count == 1 else "them"
+    return (f"{copies} not been saved. Closing deletes {them} with the window's scratch folder.\n\n"
+            f"OK closes anyway. Cancel goes back, so you can save {them} with Export → Save the copies…")
+
+
 def on_closing(state: WindowState) -> bool:
-    """The window's X while work runs: the running AI step is cut off, as Stop now does (its progress is saved), a
-    download is cancelled, and the close goes ahead. True: pywebview closes the window."""
+    """The window's X. With edited copies never saved by Export, one native question first: OK closes and lets the
+    scratch folder (the copies in it) be deleted, Cancel keeps the window open — the only time a close is refused.
+    While work runs the running AI step is cut off, as Stop now does (its progress is saved), and a download is
+    cancelled. True: pywebview closes the window."""
+    try:
+        unsaved = len(state.task.unsaved_copies())
+    except Exception:  # noqa: BLE001 — a count that cannot be taken never deletes a copy
+        unsaved = -1
+    if unsaved:
+        if unsaved < 0 or not state.shell.confirm("Copies not saved", unsaved_copies_question(unsaved)):
+            diag.event("window.close_refused", unsaved=unsaved)
+            diag.app_log().info(f"Window close cancelled: {unsaved} unsaved cop{'y' if unsaved == 1 else 'ies'}")
+            return False
+    state.close_confirmed = True
     try:
         job = state.job_status()
-        diag.event("window.closing", job=job["action"] if job else None)
+        diag.event("window.closing", job=job["action"] if job else None, unsaved=unsaved)
         diag.app_log().info("Window closing" + (f" while job {job['action']} runs: stopping it" if job else
-                                                " (no job running)"))
+                                                " (no job running)")
+                            + (f"; {unsaved} unsaved cop{'y' if unsaved == 1 else 'ies'} given up" if unsaved else ""))
     except Exception:  # noqa: BLE001 — closing is never refused over bookkeeping
         pass
     try:

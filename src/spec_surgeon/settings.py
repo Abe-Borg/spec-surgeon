@@ -1,6 +1,9 @@
 """What the window remembers between sessions, and where the app keeps its own files.
 
-    %APPDATA%\\Spec Surgeon\\settings.json        folders, options, the colour scheme, update preferences (this module)
+    %APPDATA%\\Spec Surgeon\\settings.json        the export folder, options, the colour scheme, update preferences (this module)
+    %LOCALAPPDATA%\\Spec Surgeon\\scratch\\        the window's scratch folder (``scratch``): one per window, with every session
+                                               folder, dropped file and the conversation's journal, deleted when the window
+                                               closes; beside them the render cache (``.render-cache``), which stays
     %LOCALAPPDATA%\\Spec Surgeon\\updates\\        downloaded installers and install logs (``updater``)
     %LOCALAPPDATA%\\Spec Surgeon\\logs\\           the window's error log
 
@@ -14,6 +17,8 @@ v0.4.x file's ``"dark"``) reads as the first. ``fast_mode`` is Claude's fast mod
 until the user turns it on; the window applies it to every call from its start (``llm.set_fast_mode``).
 ``spending_limit_usd`` is the spending check (Settings → "Spending check"): the estimated dollars one request may spend
 before the work pauses for the user's go-ahead, ``DEFAULT_SPENDING_LIMIT_USD`` until the user changes it, 0 for off.
+``export_folder`` is where Export → Save the copies… last saved, and where its folder dialog opens next time; the
+copies themselves are kept nowhere but the window's scratch folder until they are saved there.
 ``show_obliterate`` only makes Obliterate mode a choice in the top bar (Settings → Advanced); being IN Obliterate mode
 is never stored — ``mode`` is Safe or Default, and a window left in Obliterate opens in Default. Not settings
 at all (since the GUI rework after v0.4.1): the automatic update check (once a day, always;
@@ -60,8 +65,14 @@ def logs_dir() -> Path:
     return data_dir() / "logs"
 
 
+def scratch_root() -> Path:
+    """The window's scratch folders live here, one per window (``scratch.open_window``), beside the render cache."""
+    return data_dir() / "scratch"
+
+
 def default_run_root() -> Path:
-    """Persist delivered copies locally; run results must never use a disposable cache."""
+    """Where a library caller's ``gui.Session`` delivers by default (the window never: it works in its scratch folder,
+    ``scratch_root()``, and keeps nothing after it closes but what Export saved)."""
     if os.environ.get(CONFIG_ENV) or sys.platform.startswith("win"):
         return data_dir() / "runs"
     if sys.platform == "darwin":
@@ -126,7 +137,7 @@ class Settings:
     schema: int = 1
     folder: str = ""
     template: str = ""
-    out_root: str = ""
+    export_folder: str = ""                       # where Export → Save the copies… last saved; its dialog opens there
     render: bool = True
     request_draft: str = ""
     window_geometry: str = ""                     # hex of QWidget.saveGeometry()

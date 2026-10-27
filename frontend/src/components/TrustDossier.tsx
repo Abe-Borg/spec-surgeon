@@ -468,10 +468,10 @@ function Dossier() {
           rightTitle="Stays on your machine"
           right={[
             "Your originals: read, never written.",
-            "Edited copies, failed copies, previews, page pictures and PDFs, each run in its own folder.",
+            "Edited copies, failed copies, previews, page pictures and PDFs, in the window’s scratch folder while it is open; the copies you save with Export, where you chose.",
             "The verification records, the conversation’s records (every request sent and every answer), logs and event journals.",
             "Your API key, in Windows Credential Manager when you ask it to be remembered.",
-            "The repair memory, the render cache, settings.json, archived conversations and copies of files you dropped on the window.",
+            "The repair memory, the render cache and settings.json; the conversation’s journal and copies of files you dropped on the window, in the scratch folder while it is open.",
             <>
               The window’s own traffic: the page talks to the app’s server on <Mono>{F.loopback}</Mono>, which no other
               computer can reach, and every request needs this session’s token.
@@ -594,10 +594,10 @@ function Dossier() {
         />
         <Term
           word="Copies only"
-          claim="The window never writes to a file you attached. Every run delivers into a new folder."
+          claim="The window never writes to a file you attached. Every run delivers into the window’s scratch folder, and Export writes the copies where you choose, never over an input."
           not={[
-            "That copies are cleaned up: they stay until you delete them.",
-            "That the folder is private: it is wherever the app’s data lives, or the folder you chose.",
+            "That copies are kept: the scratch folder is deleted when the window closes, after one question if a copy was never saved.",
+            "That the folder is private: the scratch folder is under the app’s local data, and the saved copies are wherever you chose.",
           ]}
         />
         <Term
@@ -689,11 +689,11 @@ function Dossier() {
             ],
             [
               "What is kept, and for how long",
-              `Run folders (copies, previews, page pictures, the conversation’s records with page images), archived conversations, copies of files you dropped on the window and saved bundles are never deleted by the app. The repair memory keeps up to ${grouped(F.repairMemoryCases)} cases, your requests and wording included, with no button to clear it; the render cache ${F.renderCacheGB} GiB. All of it is in the app’s folders under your Windows profile.`,
+              `The window’s scratch folder (copies, previews, page pictures, the conversation’s journal and records with page images, copies of files you dropped on the window) is deleted when the window closes — after one question if a copy was never saved — and swept at the next start; the folder of a window that never closed is restored first. What you save with Export stays where you put it, and saved bundles are never deleted. The repair memory keeps up to ${grouped(F.repairMemoryCases)} cases, your requests and wording included, with no button to clear it; the render cache ${F.renderCacheGB} GiB. All of it but the saved copies is in the app’s folders under your Windows profile.`,
             ],
             [
               "Diagnostic bundles",
-              "Made only when you ask, saved on your computer, never sent. They leave out folders of copies and pictures, but the conversations’ saved histories they include can hold page images and document text.",
+              "Made only when you ask, saved on your computer, never sent. They leave out folders of copies and pictures, but the conversation’s saved history they include can hold page images and document text.",
             ],
           ]}
         />
@@ -793,11 +793,11 @@ function Dossier() {
             ],
             [
               "Read a copy’s verification record.",
-              "In the run’s folder (the folder button beside Your edited copies), records holds one .record.md per file: each check, PASS or FAIL, with what was predicted and what was found. DIAGNOSTICS.md says why a file did not pass.",
+              "In the run’s folder (the folder button beside Your edited copies), records holds one .record.md per file: each check, PASS or FAIL, with what was predicted and what was found. DIAGNOSTICS.md says why a file did not pass. The run’s folder is in the window’s scratch folder, so read it before the window closes, or save a diagnostic bundle, which carries the records.",
             ],
             [
               "Read what was sent to Claude.",
-              "The session folder’s conversation.json keeps every request as sent and every answer, with the model that answered, its tokens and its request id. visual_review.json does the same for the visual check (without the images).",
+              "The session folder’s conversation.json (in the window’s scratch folder) keeps every request as sent and every answer, with the model that answered, its tokens and its request id. visual_review.json does the same for the visual check (without the images).",
             ],
             [
               "Compare the spending.",

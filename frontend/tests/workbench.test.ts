@@ -13,6 +13,9 @@ import {
   parentFolder,
   planHasContent,
   referencesTitle,
+  copiesNote,
+  exportLabel,
+  exportTip,
   runFolder,
   scopeTag,
   sectionAttachments,
@@ -143,4 +146,32 @@ test("Undo the last button shows in Safe mode when there is something to undo, w
   assert.equal(undoLink({ mode: "default", working }, false), null);
   // an older server sends no undo: no link
   assert.equal(undoLink({ mode: "safe", working: { generation: 1, from_originals: false, can_start_over: true } }, false), null);
+});
+
+test("the Export button says how many copies are not saved yet, and its hover text says what it would do", () => {
+  assert.equal(exportLabel({ export: { folder: "", unsaved: 0, copies: 0 } }), "Export");
+  assert.equal(exportLabel({ export: { folder: "", unsaved: 2, copies: 3 } }), "Export · 2 unsaved");
+  assert.equal(exportTip({ export: { folder: "", unsaved: 0, copies: 0 } }, true), "Finish or stop the current work first");
+  assert.match(exportTip({ export: { folder: "", unsaved: 0, copies: 0 } }, false), /^Nothing to save yet/);
+  assert.equal(
+    exportTip({ export: { folder: "", unsaved: 1, copies: 1 } }, false),
+    "Save the edited copies to a folder you choose. 1 of 1 copy is not saved yet, and only a saved copy survives closing the window.",
+  );
+  assert.equal(
+    exportTip({ export: { folder: "", unsaved: 2, copies: 3 } }, false),
+    "Save the edited copies to a folder you choose. 2 of 3 copies are not saved yet, and only a saved copy survives closing the window.",
+  );
+  assert.equal(
+    exportTip({ export: { folder: "C:/Saved", unsaved: 0, copies: 3 } }, false),
+    "Save the edited copies to a folder you choose. All 3 copies are saved to C:/Saved.",
+  );
+  assert.equal(exportTip({ export: { folder: "", unsaved: 0, copies: 1 } }, false), "Save the edited copies to a folder you choose. All 1 copy is saved.");
+});
+
+test("the copies note says where they were saved, or that they are kept only in the scratch folder", () => {
+  const copy = (name: string, saved_to = "") => ({ source: `s/${name}`, output: `C:/scratch/run/outputs/${name}`, name, saved_to });
+  assert.equal(copiesNote({ results: [] }), "");
+  assert.match(copiesNote({ results: [copy("a.docx")] }), /^Not saved yet: Export, in the top bar, saves them to a folder you choose\. Until then they live only in this window's scratch folder/);
+  assert.match(copiesNote({ results: [copy("a.docx", "C:/Saved/a.docx"), copy("b.docx")] }), /^1 of 2 not saved yet: Export/);
+  assert.equal(copiesNote({ results: [copy("a.docx", "C:/Saved/a.docx"), copy("b.docx", "C:/Saved/b.docx")] }), "Saved to C:/Saved.");
 });

@@ -221,9 +221,9 @@ export default function SettingsModal({ onClose, onSaved }: Props) {
         </section>
         {settings && (
           <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-[11px] text-ink-faint">
-            <dt>Edited copies</dt>
-            <dd className="truncate text-ink-dim" title={settings.out_root}>
-              {settings.out_root || "—"}
+            <dt>Copies are saved to</dt>
+            <dd className="truncate text-ink-dim" title={settings.export_folder || "Export asks for the folder"}>
+              {settings.export_folder || "the folder you choose at Export"}
             </dd>
             <dt>Diagnostic logs</dt>
             <dd className="truncate text-ink-dim" title={settings.logs_dir}>

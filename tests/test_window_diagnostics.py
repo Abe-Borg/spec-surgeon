@@ -414,42 +414,44 @@ def _tree(root, files):
         p.write_bytes(data if isinstance(data, bytes) else data.encode("utf-8"))
 
 
-def test_the_bundle_holds_logs_conversations_and_run_records_but_no_document(tmp_path):
-    logs_dir, config, runs = tmp_path / "logs", tmp_path / "config", tmp_path / "runs"
+def test_the_bundle_holds_logs_the_journal_and_run_records_but_no_document(tmp_path):
+    """The window's scratch folder is the run root: its session folders' text records go in, the journal in it goes
+    in as ``scratch/conversation.json``, and nothing of the documents, the pages or the folders that hold them."""
+    logs_dir, config, scratch = tmp_path / "logs", tmp_path / "config", tmp_path / "scratch" / "20261027-090000-7"
     _tree(logs_dir, {"spec-surgeon.log": "started", "spec-surgeon.log.1": "older", "app-events-1.jsonl": "{}",
                      "crash-20261022-1.log": "", "session-1.json": "{}", "unrelated.txt": "no"})
     _tree(config, {"settings.json": "{}", "conversation.json": "{}",
-                   **{f"conversations/{i}.json": "{}" for i in range(5)}})
-    for i in range(5):
-        os.utime(config / "conversations" / f"{i}.json", (1000 + i, 1000 + i))
+                   **{f"conversations/{i}.json": "{}" for i in range(2)}})   # an older version's archive: not read
+    _tree(scratch, {"conversation.json": "{}", ".window.lock": "0"})
     for i in range(7):
-        _tree(runs, {f"2026102{i}-0000/compile.json": "{}"})
-        os.utime(runs / f"2026102{i}-0000", (2000 + i, 2000 + i))
-    _tree(runs / "20261026-0000", {
+        _tree(scratch, {f"2026102{i}-0000/compile.json": "{}"})
+        os.utime(scratch / f"2026102{i}-0000", (2000 + i, 2000 + i))
+    _tree(scratch / "20261026-0000", {
         "conversation.json": "{}", "DIAGNOSTICS.md": "#", "logs/events.jsonl": "{}", "logs/run.log": "x",
         "records/Spec.record.json": "{}", "preview/logs/preview.log": "p", "plans/spec.json": "{}",
         "outputs/Spec.docx": b"PK", "outputs/notes.json": "{}", "samples/Spec/page-1.png": b"\x89PNG",
         "samples/Spec/meta.json": "{}", "render/Spec.pdf": b"%PDF", "generated/op.py": "print()"})
+    _tree(scratch / "attachments" / "20261026-0001", {"Dropped.docx": b"PK", "notes.json": "{}"})
     target = tmp_path / "out" / "bundle.zip"
-    made = diag.diagnostic_bundle(target, logs=logs_dir, config=config, run_roots=[runs, runs],
-                                  header=["Spec Surgeon 9.9.9"])
+    made = diag.diagnostic_bundle(target, logs=logs_dir, config=config, run_roots=[scratch, scratch],
+                                  journal=scratch / "conversation.json", header=["Spec Surgeon 9.9.9"])
     assert made["path"] == target and target.is_file() and not (tmp_path / "out" / "bundle.zip.part").exists()
     with zipfile.ZipFile(target) as z:
         names = set(z.namelist())
         manifest = z.read("MANIFEST.txt").decode("utf-8")
     assert {"logs/spec-surgeon.log", "logs/spec-surgeon.log.1", "logs/app-events-1.jsonl", "logs/crash-20261022-1.log",
-            "logs/session-1.json", "config/settings.json", "config/conversation.json", "config/conversations/4.json",
-            "config/conversations/3.json", "config/conversations/2.json", "runs/20261026-0000/compile.json",
-            "runs/20261026-0000/conversation.json", "runs/20261026-0000/DIAGNOSTICS.md",
-            "runs/20261026-0000/logs/events.jsonl", "runs/20261026-0000/logs/run.log",
-            "runs/20261026-0000/records/Spec.record.json", "runs/20261026-0000/preview/logs/preview.log",
-            "runs/20261026-0000/plans/spec.json", "MANIFEST.txt"} <= names
-    assert not any(n.endswith((".docx", ".png", ".pdf", ".py")) for n in names)
-    assert not any("/outputs/" in n or "/samples/" in n for n in names)          # not even their JSON
-    assert "logs/unrelated.txt" not in names and "config/conversations/1.json" not in names
+            "logs/session-1.json", "config/settings.json", "scratch/conversation.json",
+            "runs/20261026-0000/compile.json", "runs/20261026-0000/conversation.json",
+            "runs/20261026-0000/DIAGNOSTICS.md", "runs/20261026-0000/logs/events.jsonl",
+            "runs/20261026-0000/logs/run.log", "runs/20261026-0000/records/Spec.record.json",
+            "runs/20261026-0000/preview/logs/preview.log", "runs/20261026-0000/plans/spec.json",
+            "MANIFEST.txt"} <= names
+    assert not any(n.endswith((".docx", ".png", ".pdf", ".py", ".lock")) for n in names)
+    assert not any("/outputs/" in n or "/samples/" in n or "attachments" in n for n in names)   # not even their JSON
+    assert "logs/unrelated.txt" not in names and not any(n.startswith("config/conversation") for n in names)
     assert {n.split("/")[1] for n in names if n.startswith("runs/")} == {f"2026102{i}-0000" for i in range(2, 7)}
     assert manifest.startswith("Spec Surgeon 9.9.9\n") and "runs/20261026-0000/outputs/ (documents or pages)" in manifest
-    assert "No document, picture or page image is in it" in manifest
+    assert "No document, picture or page image is in it" in manifest and "the current conversation" in manifest
 
 
 def test_the_bundle_leaves_out_what_is_too_large(tmp_path, monkeypatch):

@@ -1,7 +1,7 @@
 import { memo, useEffect, useRef } from "react";
 import type { Attachment, View } from "../types";
 import type { Mark, Reviews } from "../lib/review";
-import { planHasContent, runFolder, undoLink } from "../lib/workbench";
+import { copiesNote, planHasContent, runFolder, undoLink } from "../lib/workbench";
 import { unverifiedLine } from "../lib/modes";
 import DocumentsTray from "./DocumentsTray";
 import Markdown from "./Markdown";
@@ -249,13 +249,14 @@ function Workbench({
           <PaperCard
             title="Your edited copies"
             subtitle={
-              view.results.some((r) => (r.unverified ?? []).length > 0)
-                ? "Each copy was checked against the plan. A copy marked UNVERIFIED failed a check and was delivered anyway (Obliterate mode): check it in Word before you use it. Your originals stay intact."
-                : "Each copy was checked against the plan, word for word. Click one to open it in Word; your originals stay intact."
+              (view.results.some((r) => (r.unverified ?? []).length > 0)
+                ? "Each copy was checked against the plan. A copy marked UNVERIFIED failed a check and was delivered anyway (Obliterate mode): check it in Word before you use it. Your originals stay intact. "
+                : "Each copy was checked against the plan, word for word. Click one to open it in Word; your originals stay intact. ") +
+              copiesNote(view)
             }
             aside={
               folder ? (
-                <Tip tip={`Open the folder with these copies: ${folder}`}>
+                <Tip tip={`Open the folder holding these copies (the window's scratch folder, kept only while it is open): ${folder}`}>
                   <button
                     type="button"
                     onClick={() => onOpen(folder)}
@@ -284,6 +285,14 @@ function Workbench({
                       <path d="M14 3v5h5" />
                     </svg>
                     <span className="truncate">{result.name || result.output.split(/[\\/]/).pop()}</span>
+                    {result.saved_to && (
+                      <span
+                        className="ml-auto flex-none rounded-full border border-ok/50 bg-ok/10 px-2 py-0.5 text-[10px] font-semibold tracking-wide text-ok"
+                        title={`Saved to ${result.saved_to}`}
+                      >
+                        SAVED
+                      </span>
+                    )}
                     {(result.unverified ?? []).length > 0 && (
                       <span
                         className="ml-auto flex-none rounded-full border border-err/50 bg-err/10 px-2 py-0.5 text-[10px] font-semibold tracking-wide text-err"

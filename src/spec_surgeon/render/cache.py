@@ -41,22 +41,25 @@ def enabled() -> bool:
 
 def cache_root_for(out_dir: Path) -> Path:
     """Where the cache for a preview or run folder lives: beside the session folders, so every session of the window
-    shares one — ``<default run root>/.render-cache`` when the folder is under the app's run root; ``<out_root>/
-    .render-cache`` when its parent is a session folder (``gui.Session`` stamps them ``YYYYMMDD-HHMMSS``) under a root
-    the user chose; otherwise (a folder the caller named, a test's folder) a ``.render-cache`` beside the output
-    folder itself — never anywhere above a folder the caller named."""
-    from ..settings import default_run_root
+    shares one — ``<scratch root>/.render-cache`` when the folder is under the app's scratch root (the window's
+    scratch folders are deleted when they close; the cache beside them stays), ``<default run root>/.render-cache``
+    when it is under the library's run root; ``<out_root>/.render-cache`` when its parent is a session folder
+    (``gui.Session`` stamps them ``YYYYMMDD-HHMMSS``) under a root the caller chose; otherwise (a folder the caller
+    named, a test's folder) a ``.render-cache`` beside the output folder itself — never anywhere above a folder the
+    caller named."""
+    from ..settings import default_run_root, scratch_root
     out = Path(out_dir)
     try:
         resolved = out.resolve()
     except OSError:
         resolved = out.absolute()
-    try:
-        root = default_run_root().resolve()
-        if root in resolved.parents:
-            return root / CACHE_DIR_NAME
-    except OSError:
-        pass
+    for shared in (scratch_root, default_run_root):
+        try:
+            root = shared().resolve()
+            if root in resolved.parents:
+                return root / CACHE_DIR_NAME
+        except OSError:
+            pass
     parent = resolved.parent
     if _SESSION_FOLDER.match(parent.name) and parent.parent != parent:
         return parent.parent / CACHE_DIR_NAME

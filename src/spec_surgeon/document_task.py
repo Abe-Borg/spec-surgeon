@@ -279,6 +279,10 @@ class DocumentTask:
         self.word_sources: List[str] = []
         self.results: Dict[str, str] = {}
         self.unverified: Dict[str, List[str]] = {}   # original → the failed checks its copy was delivered with
+        # Export → Save the copies…: copy path → where it was saved, and the folder of the last export. A copy is
+        # kept nowhere but the window's scratch folder until it is in here (``unsaved_copies``).
+        self.exported: Dict[str, str] = {}
+        self.export_folder = ""
         self.attachments: List[Attachment] = []
         self.stage = "empty"
         self.problem = ""
@@ -1856,24 +1860,86 @@ class DocumentTask:
                 "samples": samples, "set_aside": set_aside,
                 "warnings": list(dict.fromkeys(warnings)), "results": dict(self.results),
                 "unverified": {k: list(v) for k, v in self.unverified.items()},
+                "exported": dict(self.exported), "export_folder": self.export_folder,
+                "unsaved": self.unsaved_copies(), "copies": len(self.working),
                 "action": labels.get(self.stage, ""), "token": self.action_token(),
                 "blocked_reason": s.run_blocked_reason() if self.stage == "preview" else "",
                 "budget_paused": self.stage == "budget", "pause_reason": self.pause_reason(),
                 "cost": self._budget.spent_usd,
                 "blocking": blocking}
 
-    # ---- the journal ----
-    def archive(self) -> Optional[Path]:
-        """Set the journal aside under ``conversations/`` beside it, kept for inspection and never reopened; returns
-        where it went (None when there was none). The window starts every launch and every New conversation clean."""
-        if not self.journal or not self.journal.exists():
-            return None
-        folder = self.journal.parent / "conversations"
-        folder.mkdir(parents=True, exist_ok=True)
-        target = folder / f"{time.time_ns()}.json"
-        self.journal.replace(target)
-        return target
+    # ---- Export: the one place a copy is written where the user chose ----
+    def unsaved_copies(self) -> List[str]:
+        """The working copies Export has not saved (their paths): what closing the window would delete. Read over a
+        copy of the working set, so the close question can be asked while a job is still running."""
+        return [current for current in dict(self.working).values() if current not in self.exported]
 
+    def export(self, folder) -> Dict[str, Any]:
+        """Export → Save the copies…: every copy the next request builds on (the working set, one per attached
+        original) written into ``folder`` under its planned name, each through ``guard.write_new``. All or nothing:
+        every copy is read and every destination settled before the first write. A destination that is one of the
+        inputs (an attached file, a working copy) refuses the export; a file already there with the same bytes is
+        that copy, saved (nothing written); one with other bytes is left alone and the copy is numbered beside it.
+        Returns ``{"folder", "saved", "already"}``."""
+        from . import guard
+        folder = Path(folder)
+        if not self.working:
+            raise ValueError("There are no edited copies to save yet.")
+        if not folder.is_dir():
+            raise ValueError(f"{folder} is not a folder.")
+        folder = folder.resolve()
+        inputs = set()
+        for a in self.attachments:
+            inputs.add(_same_file_key(a.path))
+        for original, current in self.working.items():
+            inputs.add(_same_file_key(original))
+            inputs.add(_same_file_key(current))
+        plan: List[tuple] = []                       # (copy path, destination, bytes, already there)
+        taken: set = set()
+        for current in self.working.values():
+            try:
+                data = Path(current).read_bytes()
+            except OSError as exc:
+                raise ValueError(f"A copy is no longer where it was made ({Path(current).name}: {exc}); create the "
+                                 "copies again before saving them.") from exc
+            name = Path(current).name
+            dest, n = folder / name, 2
+            while True:
+                key = _same_file_key(dest)
+                if key in inputs:
+                    raise ValueError(f"{dest} is one of the files this conversation works on; nothing was saved. "
+                                     "Choose another folder.")
+                if key in taken:
+                    pass
+                elif not dest.exists():
+                    break
+                elif dest.is_file() and dest.read_bytes() == data:
+                    break                          # the same copy, saved already
+                dest, n = folder / f"{Path(name).stem} ({n}){Path(name).suffix}", n + 1
+            taken.add(_same_file_key(dest))
+            plan.append((current, dest, data, dest.exists()))
+        saved = already = 0
+        for current, dest, data, there in plan:
+            if there:
+                already += 1
+            else:
+                try:
+                    guard.write_new(dest, data)
+                except OSError as exc:
+                    self.save()
+                    raise ValueError(f"{dest.name} could not be written to {folder} ({exc}); "
+                                     f"{saved} cop{'y was' if saved == 1 else 'ies were'} saved before it.") from exc
+                saved += 1
+            self.exported[current] = str(dest)
+        self.export_folder = str(folder)
+        total = saved + already
+        self.say(f"Saved {total} cop{'y' if total == 1 else 'ies'} to {folder}"
+                 + (f" ({already} already there, unchanged)" if already else "") + ".")
+        made = {"folder": str(folder), "saved": saved, "already": already}
+        self.save()
+        return made
+
+    # ---- the journal ----
     def save(self, *, in_progress=False):
         if not self.journal:
             return
@@ -1887,6 +1953,7 @@ class DocumentTask:
             "pending_layouts": [str(x) for x in self.session.pending_layout_recovery],
             "working": dict(self.working), "generation": self.generation, "history": list(self.history),
             "applied": self.applied, "todo": self.todo, "focus": self.focus, "undo": self.undo_points,
+            "exported": self.exported, "export_folder": self.export_folder,
             "budget": self._budget.to_dict(), "request": self._request_budget.to_dict(), "in_progress": in_progress})
 
     def _restore_todo(self, data) -> None:
@@ -2024,6 +2091,10 @@ class DocumentTask:
                          "change starts from your originals.")
         self._restore_todo(data)
         self.undo_points = self._restored_undo(data.get("undo", [])) if self.working or self.history else []
+        exported = data.get("exported", {})
+        self.exported = ({k: v for k, v in exported.items() if isinstance(k, str) and isinstance(v, str)}
+                         if isinstance(exported, dict) else {})
+        self.export_folder = data.get("export_folder") if isinstance(data.get("export_folder"), str) else ""
         self._sync()
         self._resume_recovery = data.get("recovery")
         layouts = data.get("pending_layouts", [])

@@ -188,7 +188,7 @@ def _gui(request, result):
     spec = json.loads((catalog.EXAMPLES_DIR / "remove-all-headers-footers.json").read_text(encoding="utf-8"))
     session = Session(out_root=Path(request["output_dir"]), client=_offline_client(spec), visual_check=False)
     task = DocumentTask(session, render=False)
-    state = WindowState(task, Settings(out_root=str(session.out_root)), token=new_token(), version=__version__)
+    state = WindowState(task, Settings(), token=new_token(), version=__version__)
     port = free_port()
     server = serve(state, port)
     try:
@@ -203,7 +203,7 @@ def _gui(request, result):
         update = api.get("/api/update")
         assert update["state"] == "none", update                  # no update flow is attached to the smoke's window
         settings = api.get("/api/settings")
-        assert settings["can_remember"] is True and settings["out_root"] == str(session.out_root), settings
+        assert settings["can_remember"] is True and settings["export_folder"] == "", settings
         # the page's own reports reach the frozen app's watch (web/watch.py), as the WebView2 page sends them
         taken = api.post("/api/diagnostics", {"reports": [{"kind": "loaded", "visible": True, "user_agent": "smoke"},
                                                           {"kind": "beat", "visible": True}]})
@@ -287,7 +287,7 @@ def _update(request, result):
         started.append(proc.pid)
         return proc
     quit_called = []
-    flow = UpdateFlow(Settings(out_root=request["output_dir"]), launcher=launcher,
+    flow = UpdateFlow(Settings(), launcher=launcher,
                       quit_app=lambda: quit_called.append(True))
     assert flow.install_downloaded(dl), "the installer was not started"
     assert quit_called and started and flow.state()["state"] == "installing"

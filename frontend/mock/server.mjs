@@ -215,7 +215,7 @@ const OBLITERATE_ON = "Obliterate mode is on. Claude may write wording and custo
 const OBLITERATE_OFF = "Obliterate mode is off: every placed word is yours again, custom methods are formatting only, and a copy whose checks fail is held back. What was planned in Obliterate mode is void.";
 
 function results() {
-  return DOCS.map((d) => ({ source: d.path, output: `${RUN_DIR}/${name(d.path)}`, name: name(d.path) }));
+  return DOCS.map((d) => ({ source: d.path, output: `${RUN_DIR}/${name(d.path)}`, name: name(d.path), saved_to: "" }));
 }
 
 const WARNINGS = [
@@ -244,6 +244,7 @@ function emptyView() {
     warnings: [],
     blocking: false,
     results: [],
+    export: { folder: "", unsaved: 0, copies: 0 },
     action: { label: "", token: "", kind: "none", can_hold: false },
     todo: [],
     focus: [],
@@ -287,6 +288,7 @@ const SCENARIOS = {
     v.stage = "done";
     v.messages = [msg("user", "Remove highlighting"), msg("app", "2 document copies are ready. Open them, press another button to change them further, or start over from the originals. Left untouched: 21 31 13 Electric-Drive, Centrifugal Fire Pumps.docx — each one's reason is beside the copies.")];
     v.results = results().slice(0, 2);
+    v.export = { folder: "", unsaved: v.results.length, copies: v.results.length };
     v.working = { generation: 1, from_originals: false, can_start_over: true };
     v.left_untouched = [{ path: DOCS[2].path, name: name(DOCS[2].path), reason: "Editing is restricted in this file (Review → Restrict Editing); remove the restriction in Word, then run again." }];
     return v;
@@ -347,6 +349,7 @@ const SCENARIOS = {
     v.cost = { usd: 0.34, text: "about $0.34", calls: 8 };
     v.messages = [...v.messages, msg("app", "3 edited copies created and verified · 14:35")];
     v.results = results();
+    v.export = { folder: "", unsaved: v.results.length, copies: v.results.length };
     v.action = { label: "", token: "", kind: "none", can_hold: false };
     v.working = { generation: 1, from_originals: false, can_start_over: true };
     v.attachments = v.attachments.map((a) =>
@@ -361,6 +364,7 @@ const SCENARIOS = {
     v.mode = "obliterate";
     v.modes = ["safe", "default", "obliterate"];
     v.results = results().map((r, i) => (i === 1 ? { ...r, unverified: ["V2 (Text preservation)"] } : r));
+    v.export = { folder: "", unsaved: v.results.length, copies: v.results.length };
     v.messages = [
       ...v.messages.slice(0, -1),
       msg("app", "3 document copies are ready. You can open them, describe another change to make on top of them, or start over from the originals. 1 was delivered UNVERIFIED: a check failed, and each one's failed checks are beside it."),
@@ -443,7 +447,7 @@ function undoFields() {
   const top = undoStack[undoStack.length - 1];
   return { undo: top ? top.request : "", undo_blocked: top && view.stage === "preview" ? "Discard the preview first." : "" };
 }
-let settings = { key_present: true, origin: "saved", can_remember: true, out_root: "C:/Users/abe/AppData/Local/Spec Surgeon/runs", logs_dir: "C:/Users/abe/AppData/Roaming/Spec Surgeon/logs", theme: "clay", fast_mode: false, show_obliterate: false, spending_limit_usd: 20, spending_default_usd: 20, fast: { model: "claude-opus-5-5", available: true, speedup: 2.5, price_factor: 2, standard_usd_per_mtok: [4, 20], fast_usd_per_mtok: [8, 40], refused: null } };
+let settings = { key_present: true, origin: "saved", can_remember: true, export_folder: "", logs_dir: "C:/Users/abe/AppData/Roaming/Spec Surgeon/logs", theme: "clay", fast_mode: false, show_obliterate: false, spending_limit_usd: 20, spending_default_usd: 20, fast: { model: "claude-opus-5-5", available: true, speedup: 2.5, price_factor: 2, standard_usd_per_mtok: [4, 20], fast_usd_per_mtok: [8, 40], refused: null } };
 const THEMES = ["clay", "blueprint", "graphite", "carbon", "linen"];
 function keySettings() { return { ...settings, can_remove_key: ["saved", "session"].includes(settings.origin) }; }
 let running = null; // { stop: boolean }
@@ -1201,6 +1205,16 @@ async function handle(req, res) {
       view.update = keep;
       view.mode = mode;
       view.modes = modes;
+      return json(res, 200, view);
+    }
+    case "POST /api/export": {
+      if (view.busy) return busyRefusal();
+      if (view.results.length === 0) return json(res, 400, { error: "There are no edited copies to save yet." });
+      const folder = "C:/Users/abe/Documents/Saved copies";
+      view.results = view.results.map((r) => ({ ...r, saved_to: `${folder}/${r.name}` }));
+      view.export = { folder, unsaved: 0, copies: view.results.length };
+      view.messages.push(msg("app", `Saved ${view.results.length} copies to ${folder}.`));
+      settings.export_folder = folder;
       return json(res, 200, view);
     }
     case "POST /api/open": {

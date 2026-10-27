@@ -190,8 +190,9 @@ function HowToUse() {
             d: (
               <>
                 Ask for the next change and it is made on those copies. <Tag>Start over from the originals</Tag> is one
-                tap away, and <Tag>New conversation</Tag> in the top bar archives this one and starts empty. The app
-                also starts empty each time you open it; the copies stay where they were saved.
+                tap away, and <Tag>New conversation</Tag> in the top bar starts an empty one. The copies live in the
+                window’s scratch folder until you save them: <Tag>Export</Tag> in the top bar writes them to a folder
+                you choose, and closing the window deletes what was never saved, after asking once.
               </>
             ),
           },
@@ -365,9 +366,9 @@ function Workflows() {
         steps={[
           "Several changes in one request are fine: “remove the headers and footers, empty the articles, then Arial 12 pt.” Changes that touch the same parts of a file become ordered steps, in the order you asked, each planned and checked on the step before it; you still see one plan and press one button. There is no limit on how many.",
           "After the copies are created, ask for the next change. It is made on those copies, and the assistant is told what was already done, so it plans only what is new.",
-          "Each run’s copies go into their own folder, so earlier copies remain.",
+          "The copies live in the window’s scratch folder until you save them: Export, in the top bar, writes them to a folder you choose.",
           "Start over from the originals — a reply you can tap, or the link under the copies — goes back to your files.",
-          "In Safe mode, Undo the last button goes back one button at a time: the next button builds on the copies from before it, and the copies the undone button made stay in their folder.",
+          "In Safe mode, Undo the last button goes back one button at a time: the next button builds on the copies from before it, and the copies the undone button made stay in the scratch folder until the window closes.",
           "A document attached after a run is an original beside the copies, and gets only the next change.",
         ]}
       />
@@ -390,7 +391,7 @@ function Workflows() {
         steps={[
           "Stop cuts off the running AI step at once; Continue picks up where it stopped.",
           "Work pauses before a request could spend more than your spending check (Settings) until you press Continue.",
-          "Closing the app ends the conversation: the next start is a clean one. Copies already created stay in their folder.",
+          "Closing the app ends the conversation and deletes its scratch folder, after one question if a copy was never saved: save what you want to keep with Export first. A window that never closed is restored at the next start.",
         ]}
       />
     </div>
@@ -415,7 +416,7 @@ function HowItWorks() {
           },
           {
             t: "Copies, never originals",
-            d: "The window always creates copies, each run in its own timestamped folder under the app’s local data, so earlier copies remain. A file left out is named with the reason.",
+            d: "The window always creates copies, in its scratch folder under the app’s local data, and writes them where you choose only when you press Export. A file left out is named with the reason.",
           },
           {
             t: "One plan, even when changes overlap",
@@ -443,7 +444,7 @@ function HowItWorks() {
           },
           {
             t: "A clean start every time",
-            d: "Each start opens an empty conversation. The last one is archived on this computer, in the conversations folder beside settings.json, and never reopened; your edited copies stay where they were saved. Your API key is never saved with it.",
+            d: "Each start opens an empty conversation in a fresh scratch folder; the last one’s folder went when its window closed, and the copies you saved with Export stay where you put them. A window that never closed is restored instead, once. Your API key is never saved with the conversation.",
           },
           {
             t: "Five colour schemes",
@@ -560,7 +561,7 @@ function AboutTopic({
               Open diagnostic logs
             </button>
           </Tip>
-          <Tip tip="Saves one zip with the app’s logs, its settings, your recent conversations and the logs and records of your recent runs, and shows it in Explorer: the one file to send when something went wrong. Folders of copies and page pictures are left out, but conversations and records can quote your words and your documents’ text, and a conversation’s saved history can hold page images.">
+          <Tip tip="Saves one zip with the app’s logs, its settings, this conversation and the logs and records of its runs, and shows it in Explorer: the one file to send when something went wrong. Folders of copies and page pictures are left out, but the conversation and the records can quote your words and your documents’ text, and the conversation’s saved history can hold page images.">
             <button type="button" onClick={onSaveBundle} className={quietBtn}>
               Save a diagnostic bundle
             </button>
