@@ -6,3 +6,7 @@ src/spec_surgeon/web/static/** text eol=lf
 # The page's sources are the build's input: checked out with CRLF they would reach the built index.html, which is
 # compared byte for byte with the Linux build.
 frontend/** text eol=lf
+# The guided tour's showcase is compared byte for byte with its builder (tests/test_tutorial.py) and with the
+# installed wheel (packaging/installed_wheel_smoke.py); its plain-text members (the refused table of contents, the
+# table of values) must not be converted to CRLF on a Windows checkout.
+src/spec_surgeon/examples/tutorial/** binary

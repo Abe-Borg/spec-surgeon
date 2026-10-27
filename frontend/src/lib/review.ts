@@ -13,6 +13,19 @@ export type Mark = "good" | "hold";
 /** Marks by the sample's `source`. */
 export type Reviews = Record<string, Mark>;
 
+/** The marks set aside while the guided tour holds the view, with the key of the previews they belong to. */
+export interface KeptReviews {
+  key: string;
+  reviews: Reviews;
+}
+
+/** The marks to put back once the tour has returned the view: the kept ones when the view's key is the one they
+ *  belong to and there is anything to put back; otherwise null, and the review starts over as for any new preview. */
+export function keptAcrossTour(kept: KeptReviews | null, key: string): Reviews | null {
+  if (!kept || kept.key !== key || Object.keys(kept.reviews).length === 0) return null;
+  return kept.reviews;
+}
+
 /** The previews a set of marks belongs to: the action token and the samples' sources. */
 export function reviewKey(view: Pick<View, "samples" | "action">): string {
   return [view.action?.token ?? "", ...view.samples.map((s) => s.source)].join("\n");

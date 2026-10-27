@@ -5,7 +5,7 @@ import type { Attachment, Choice, JobEvent, Mode, Recipe, RecipeInputs, Update, 
 import * as api from "./lib/api";
 import { actionButton, canDiscard } from "./lib/action";
 import { composerState, transcript } from "./lib/chat";
-import { canReview, heldSources, reviewKey, setMark, type Mark, type Reviews } from "./lib/review";
+import { canReview, heldSources, keptAcrossTour, reviewKey, setMark, type KeptReviews, type Mark, type Reviews } from "./lib/review";
 import { INITIAL_STATE, reduce } from "./lib/view";
 import { ACCEPT } from "./lib/workbench";
 import { checkSettled, updatePill, type HelpTopic } from "./lib/help";
@@ -18,9 +18,12 @@ import SettingsModal from "./components/SettingsModal";
 import HelpModal from "./components/HelpModal";
 import ZoomModal from "./components/ZoomModal";
 import SafePanel from "./components/SafePanel";
-import { EMPTY_SAFE_FORM, type SafeFormState } from "./lib/recipes";
+import { EMPTY_SAFE_FORM, openForm, type SafeFormState } from "./lib/recipes";
 import ObliterateWarning from "./components/ObliterateWarning";
 import { modeChoice } from "./lib/modes";
+import TourOverlay from "./components/TourOverlay";
+import { TOUR_COMPLETION_VERSION, TOUR_FORM, type TourStep } from "./lib/tour";
+import { useTour } from "./lib/useTour";
 
 type PickKind = "documents" | "template" | "references";
 
@@ -33,6 +36,8 @@ export default function App() {
   const { view } = state;
   const busy = view.busy;
   const busyRef = useRef(false);
+  const viewRef = useRef(view);
+  viewRef.current = view;
 
   const [notice, setNotice] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
@@ -154,6 +159,11 @@ export default function App() {
     keyRef.current = key;
     setReviews({});
   }, [key]);
+  // The guided tour takes the view and gives it back: the marks on the user's own previews are set aside with the
+  // key they belong to when it starts (below, once the tour exists) and put back when that key returns.
+  const reviewsRef = useRef(reviews);
+  reviewsRef.current = reviews;
+  const tourReviewsRef = useRef<KeptReviews | null>(null);
   const onMark = useCallback((source: string, mark: Mark) => setReviews((r) => setMark(r, source, mark)), []);
   const reviewing = canReview(view, busy);
   const held = useMemo(() => (reviewing ? heldSources(reviews, view.samples) : []), [reviewing, reviews, view.samples]);
@@ -290,20 +300,10 @@ export default function App() {
     setReviews({});
   }, []);
 
-  const unsavedCopies = view.export?.unsaved ?? 0;
-  const onNewConversation = useCallback(() => {
-    if (busyRef.current) return;
-    // Copies never saved with Export outlive a new conversation only until the window closes: say so first.
-    if (
-      unsavedCopies > 0 &&
-      !window.confirm(
-        `${unsavedCopies === 1 ? "1 edited copy has" : `${unsavedCopies} edited copies have`} not been saved. A new conversation leaves ${unsavedCopies === 1 ? "it" : "them"} behind in the window's scratch folder, which goes when the window closes.\n\nOK starts the new conversation anyway. Cancel goes back, so you can save ${unsavedCopies === 1 ? "it" : "them"} with Export first.`,
-      )
-    ) {
-      return;
-    }
-    applyView(api.newConversation(), resetInputs);
-  }, [applyView, resetInputs, unsavedCopies]);
+  // Declared below, once the tour exists: New conversation ends a running tour first (the conversation comes back,
+  // then starts afresh).
+  const newConversationRef = useRef<() => void>(() => {});
+  const onNewConversation = useCallback(() => newConversationRef.current(), []);
 
   // Export → Save the copies…: a dismissed dialog changes nothing (the view is fetched again, which is harmless).
   const onExport = useCallback(() => {
@@ -356,6 +356,64 @@ export default function App() {
   );
 
   const onPutBack = useCallback((path: string) => applyView(api.putBack(path)), [applyView]);
+
+  // --- The guided tour -------------------------------------------------------
+  // The server builds each chapter's state on bundled practice documents and answers with the view; the page shows
+  // it like any other. The one page-side preparation is the Safe-mode form a step points at (lib/tour.ts TOUR_FORM).
+  const applyTourView = useCallback((next: View) => dispatch({ type: "view", view: next }), []);
+  const prepareTourStep = useCallback(
+    (step: TourStep) => {
+      if (step.prepare !== "safe-form") return;
+      const recipe = recipes.find((r) => r.id === TOUR_FORM.recipe);
+      if (!recipe) return;
+      setSafeForm((form) => {
+        const opened = openForm(form, recipe, viewRef.current);
+        const slots = { ...((opened.inputs.slots as Record<string, string> | undefined) ?? {}), [TOUR_FORM.slot]: TOUR_FORM.value };
+        return { ...opened, inputs: { ...opened.inputs, slots } };
+      });
+    },
+    [recipes],
+  );
+  const tour = useTour({ applyView: applyTourView, tutorial: view.tutorial, loaded: state.loaded, prepare: prepareTourStep });
+  const tourActive = tour.active;
+  useEffect(() => {
+    if (tourActive) {
+      // taken as the tour begins, before any practice view arrives
+      tourReviewsRef.current = { key: keyRef.current, reviews: reviewsRef.current };
+      return;
+    }
+    const kept = keptAcrossTour(tourReviewsRef.current, keyRef.current);
+    tourReviewsRef.current = null;
+    if (kept) setReviews(kept);
+  }, [tourActive]);
+  const tourFinished = state.loaded ? view.tutorial.finished_version >= TOUR_COMPLETION_VERSION : null;
+  const unsavedCopies = view.export?.unsaved ?? 0;
+  newConversationRef.current = () => {
+    if (busyRef.current) return;
+    if (tourActive) {
+      void tour.abort().then((returned) => {
+        if (returned) applyView(api.newConversation(), resetInputs);
+      });
+      return;
+    }
+    // Copies never saved with Export outlive a new conversation only until the window closes: say so first.
+    if (
+      unsavedCopies > 0 &&
+      !window.confirm(
+        `${unsavedCopies === 1 ? "1 file made in this window (an edited copy or a clean PDF) has" : `${unsavedCopies} files made in this window (edited copies or clean PDFs) have`} not been saved. A new conversation leaves ${unsavedCopies === 1 ? "it" : "them"} behind in the window's scratch folder, which goes when the window closes.\n\nOK starts the new conversation anyway. Cancel goes back, so you can save ${unsavedCopies === 1 ? "it" : "them"} with Export first.`,
+      )
+    ) {
+      return;
+    }
+    applyView(api.newConversation(), resetInputs);
+  };
+  const onStartTourAt = useCallback(
+    (chapter: string) => {
+      setHelpTopic(null);
+      tour.startAtChapter(chapter);
+    },
+    [tour],
+  );
 
   const onOpen = useCallback((path: string) => {
     api.openPath(path).catch((failure: unknown) => setNotice(failureText(failure)));
@@ -475,6 +533,8 @@ export default function App() {
         onOpenHelp={setHelpTopic}
         onMode={onMode}
         onStop={onStop}
+        tourActive={tourActive}
+        onStartTour={tour.start}
       />
       {updateShown && (
         <UpdateBanner
@@ -519,6 +579,9 @@ export default function App() {
           panel={panel}
           onMode={onMode}
           onDiscard={discard}
+          tourActive={tourActive}
+          tourFinished={tourFinished}
+          onStartTour={tour.start}
         />
         <Workbench
           view={view}
@@ -566,7 +629,9 @@ export default function App() {
         onOpenLogs={onOpenLogs}
         onSaveBundle={onSaveBundle}
         bundleNote={bundleNote}
+        onStartTourAt={onStartTourAt}
       />
+      <TourOverlay tour={tour} view={view} busy={busy} />
       {zoom && <ZoomModal src={zoom.src} title={zoom.title} onClose={() => setZoom(null)} />}
       {warning && (
         <ObliterateWarning

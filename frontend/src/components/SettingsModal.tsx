@@ -179,7 +179,7 @@ export default function SettingsModal({ onClose, onSaved }: Props) {
   return (
     <ModalShell title="Settings" onClose={onClose} wide>
       <div className="flex flex-col gap-4">
-        <section>
+        <section data-capability="settings.api-key">
           <h3 className="font-[family-name:var(--font-display)] text-sm font-semibold text-ink">
             AI connection
           </h3>
@@ -278,7 +278,7 @@ export default function SettingsModal({ onClose, onSaved }: Props) {
             onSet={(on) => void setFast(on)}
           />
         )}
-        <section className="border-t border-edge pt-4">
+        <section className="border-t border-edge pt-4" data-capability="settings.appearance">
           <h3 className="font-[family-name:var(--font-display)] text-sm font-semibold text-ink">Appearance</h3>
           <p className="mt-0.5 text-xs text-ink-dim">The colour scheme changes at once and is kept for the next start.</p>
           <div role="radiogroup" aria-label="Colour scheme" className="mt-3 grid grid-cols-5 gap-2">
@@ -364,7 +364,7 @@ function SpendingSection({
   const valid = text.trim() !== "" && Number.isFinite(typed) && typed > 0;
   const unchanged = valid && limit !== null && Math.abs(typed - limit) < 0.005;
   return (
-    <section className="border-t border-edge pt-4">
+    <section className="border-t border-edge pt-4" data-capability="settings.spending-check">
       <h3 className="font-[family-name:var(--font-display)] text-sm font-semibold text-ink">Spending check</h3>
       <p className="mt-0.5 text-xs leading-relaxed text-ink-dim">
         The most one request (a message, a pick, an approval) may spend, as the app estimates it. An AI step that could
@@ -451,7 +451,7 @@ function FastSection({
 }) {
   const status = fastStatus(on, words);
   return (
-    <section className="border-t border-edge pt-4">
+    <section className="border-t border-edge pt-4" data-capability="settings.fast-responses">
       <div className="flex items-center justify-between gap-3">
         <h3 className="font-[family-name:var(--font-display)] text-sm font-semibold text-ink">Fast responses</h3>
         <button
@@ -535,7 +535,7 @@ function AdvancedSection({
   onSet: (on: boolean) => void;
 }) {
   return (
-    <section className="border-t border-edge pt-4">
+    <section className="border-t border-edge pt-4" data-capability="settings.advanced">
       <h3 className="font-[family-name:var(--font-display)] text-sm font-semibold text-ink">Advanced</h3>
       <div className="mt-2 flex items-center justify-between gap-3">
         <span className="text-sm text-ink">Show Obliterate mode</span>

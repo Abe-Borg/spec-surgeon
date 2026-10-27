@@ -20,7 +20,10 @@ before the work pauses for the user's go-ahead, ``DEFAULT_SPENDING_LIMIT_USD`` u
 ``export_folder`` is where Export → Save the copies… last saved, and where its folder dialog opens next time; the
 copies themselves are kept nowhere but the window's scratch folder until they are saved there.
 ``show_obliterate`` only makes Obliterate mode a choice in the top bar (Settings → Advanced); being IN Obliterate mode
-is never stored — ``mode`` is Safe or Default, and a window left in Obliterate opens in Default. Not settings
+is never stored — ``mode`` is Safe or Default, and a window left in Obliterate opens in Default. ``tutorial_version``
+is the version of the guided tour this computer finished (0: never): the empty chat's tour chip stops inviting once it
+is the page's current version (``frontend/src/lib/tour.ts``); the page owns what a version means, the file keeps the
+number. Not settings
 at all (since the GUI rework after v0.4.1): the automatic update check (once a day, always;
 ``SPEC_SURGEON_NO_UPDATE_CHECK`` is the only off switch). Keys an older ``settings.json`` still holds for it
 (``native_style``, ``auto_check_updates``) are ignored.
@@ -148,6 +151,7 @@ class Settings:
     spending_limit_usd: float = DEFAULT_SPENDING_LIMIT_USD   # the spending check per request (0: off; spending_check)
     show_obliterate: bool = False                 # Settings → Advanced: the top bar offers Obliterate mode (its warning
                                                   # each time; the mode itself is never kept: see MODES)
+    tutorial_version: int = 0                     # the guided tour's version this computer finished (0: never)
     last_update_check: float = 0.0                # epoch seconds of the last automatic attempt (success or not)
     skipped_version: str = ""
     pending_update: Dict[str, Any] = field(default_factory=dict)   # {"version", "log", "started"} while installing

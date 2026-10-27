@@ -1,7 +1,7 @@
 // Adapted from Build-a-Spec's frontend/src/lib/api.ts (copy-based reuse):
 // the fetch helpers and `streamChat`'s shape, against Spec Surgeon's own
 // contract (docs/WEB_API.md).
-import type { About, BundleSaved, JobEvent, Mode, Recipe, RecipeInputs, Settings, Update, View } from "../types.ts";
+import type { About, BundleSaved, JobEvent, Mode, Recipe, RecipeInputs, Settings, Tutorial, Update, View } from "../types.ts";
 import type { Report } from "./diagnostics.ts";
 import {
   apiHeaders,
@@ -169,6 +169,35 @@ export async function stop(): Promise<void> {
     if (failure instanceof ApiError && failure.status === 409) return;
     throw failure;
   }
+}
+
+// --- The guided tour -------------------------------------------------------
+
+/** Whether the tour's practice workspace stands in for the user's conversation (docs/WEB_API.md, the tour). */
+export async function getTutorialStatus(): Promise<Tutorial> {
+  const raw = await request<unknown>("/api/tutorial/status");
+  return normalizeView({ tutorial: raw }).tutorial;
+}
+
+/** Set the user's conversation aside and open the practice workspace on the bundled showcase. A repeated start with
+ *  the same `requestId` joins the running tour; the answer is the view, its `tutorial` block naming the tour. */
+export async function startTutorial(requestId: string): Promise<View> {
+  return normalizeView(await post<unknown>("/api/tutorial/start", { request_id: requestId }));
+}
+
+/** The chapter state `kind` on screen, built afresh from the showcase (tutorial.SCENARIOS). */
+export async function tutorialScenario(tutorialId: string, kind: string): Promise<View> {
+  return normalizeView(await post<unknown>("/api/tutorial/scenario", { tutorial_id: tutorialId, kind }));
+}
+
+/** The one ending: the user's own conversation back, the practice workspace discarded. Idempotent with no tour. */
+export async function restoreTutorial(tutorialId: string | null): Promise<View> {
+  return normalizeView(await post<unknown>("/api/tutorial/restore", tutorialId ? { tutorial_id: tutorialId } : {}));
+}
+
+/** Remember that this computer finished the tour (settings.json `tutorial_version`). */
+export async function saveTutorialVersion(version: number): Promise<Settings> {
+  return post<Settings>("/api/settings", { tutorial_version: version });
 }
 
 // --- The job stream --------------------------------------------------------

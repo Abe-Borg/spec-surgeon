@@ -117,7 +117,7 @@ def on_closing(state: WindowState) -> bool:
     While work runs the running AI step is cut off, as Stop now does (its progress is saved), and a download is
     cancelled. True: pywebview closes the window."""
     try:
-        unsaved = len(state.task.unsaved_copies())
+        unsaved = len(state.settings_task.unsaved_copies())      # the user's own task's, never the tour's practice
     except Exception:  # noqa: BLE001 — a count that cannot be taken never deletes a copy
         unsaved = -1
     if unsaved:

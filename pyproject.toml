@@ -40,7 +40,8 @@ spec-surgeon-gui = "spec_surgeon.gui:run"
 where = ["src"]
 
 [tool.setuptools.package-data]
-spec_surgeon = ["schemas/**/*.xsd", "skill/**/*.md", "legal/*.txt", "web/static/**/*", "examples/specs/*.json"]
+spec_surgeon = ["schemas/**/*.xsd", "skill/**/*.md", "legal/*.txt", "web/static/**/*", "examples/specs/*.json",
+                "examples/tutorial/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

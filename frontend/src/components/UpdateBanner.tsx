@@ -81,7 +81,7 @@ export default function UpdateBanner({ update, busy, onDownload, onInstall, onDi
         )}
       </div>
       {update.state === "available" && (
-        <button type="button" className={primaryBtn} onClick={onDownload}>
+        <button type="button" className={primaryBtn} onClick={onDownload} data-capability="update.banner">
           Download
         </button>
       )}

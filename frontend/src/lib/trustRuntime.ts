@@ -54,6 +54,26 @@ export const RUNTIME_CARDS: RuntimeCard[] = [
       "changes nothing.",
   },
   {
+    covers: ["A33"],
+    title: "Taking the guided tour",
+    you: "Tour in the top bar, the chip at the top of an empty conversation, or Help → How to use → Start the guided tour (or a chapter); then Continue, Back, End the tour, and at the end Finish and return to my conversation.",
+    runs:
+      "Your conversation is set aside untouched and a practice workspace takes its place: copies of the bundled " +
+      "practice documents (four short specifications, a file the app refuses, a header/footer template, a logo and " +
+      "a table of values) in a folder of their own under the app's data folder. Each chapter's state is built there " +
+      "by the same engine as your own work — triage on arrival, a real Safe-mode button through the same gate to a " +
+      "real preview, a real run that writes checked copies — and the conversation chapters show a recorded example " +
+      "that says so, with Send and the answer buttons held still. When the tour ends, your conversation comes back " +
+      "exactly as it was and the practice folder is deleted. Finishing it is remembered in settings.json, so the chip " +
+      "stops inviting; a reload during the tour picks it up where it was from the browser's local storage.",
+    sent: NONE + " Nothing leaves the computer; the tour needs no API key.",
+    ai: NONE,
+    bounds:
+      "No model call in any chapter, and none possible: the practice workspace refuses a message or a choice before " +
+      "anything could be sent. No file of yours is read or written; the practice copies are the app's own. New " +
+      "conversation during a tour ends it first.",
+  },
+  {
     covers: ["A1"],
     title: "Saving or removing your API key",
     you: "Settings → paste your key → Save, with or without “Remember securely on this computer”; Remove app key to forget it.",
@@ -401,7 +421,7 @@ export const RUNTIME_CARDS: RuntimeCard[] = [
       "there goes with the scratch folder when the window closes; save it with Export to keep it.",
   },
   {
-    covers: ["A33"],
+    covers: ["A34"],
     title: "Export → Save the copies…",
     you: "Export in the top bar, then choose a folder in the dialog (it opens where you last saved).",
     runs:

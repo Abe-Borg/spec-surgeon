@@ -77,6 +77,17 @@ the usual jobs), **How it works** and **About** (the version, the model, the rel
 documents · 1 template · building on your copies"), the estimated spending, the connection, **New conversation**
 and Settings.
 
+**New to the window? Take the guided tour.** **Tour** in the top bar, the chip at the top of an empty conversation,
+or **Help → How to use → Start the guided tour** walks through every part of the window, chapter by chapter, on
+bundled practice documents: four short specifications, a file triage refuses, a prepared header/footer template, a
+logo and a table of values. The tour has a workspace of its own. Your conversation is set aside the moment it starts
+and comes back exactly as it was when it ends; nothing of yours is read or written, and no AI call is made at any
+point. Its Safe-mode chapters press a real button through the real engine on the practice copies (a preview, then
+checked copies, in a practice folder under the app's data folder that is deleted when the tour ends), so what you see
+is what the app does; its conversation chapters show a recorded example, labelled as one, with Send and the answer
+buttons held still. You only watch: Continue, Back or End the tour at any step, a reload picks the tour back up where
+it was, and once you have finished it the chip stops inviting. Help → How to use starts it at any chapter.
+
 1. **Add Word documents.** Drop `.docx` files anywhere in the window, or use **Add Word documents**. Files can come
    from different folders, including files with the same name. Only the files you attach are edited; nothing is
    picked up from their folders.

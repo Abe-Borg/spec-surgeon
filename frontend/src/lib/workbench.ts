@@ -26,8 +26,9 @@ export function exportLabel(view: Pick<View, "export">): string {
   return unsaved > 0 ? `Export · ${unsaved} unsaved` : "Export";
 }
 
-/** The Export button's hover text: what it does, and how many copies it would save. */
-export function exportTip(view: Pick<View, "export">, busy: boolean): string {
+/** The Export button's hover text: what it does, and how many copies it would save; held still during the tour. */
+export function exportTip(view: Pick<View, "export"> & Partial<Pick<View, "tutorial">>, busy: boolean): string {
+  if (view.tutorial?.active) return "Held still during the tour: the practice copies are not yours to save.";
   if (busy) return "Finish or stop the current work first";
   const state = view.export ?? { folder: "", unsaved: 0, copies: 0 };
   if (state.copies === 0) {

@@ -156,6 +156,12 @@ specifications, Windows and Word, and only the owner can do them. Record what a 
   table rows, table grid and cells, sections, fields and comments, moving) over real specifications, opened in Word;
   "shade every other row of the equipment schedules light grey" and "make the list numbers Arial 10 where the list
   text is Arial", offered as custom methods, pass and look as asked in Word.
+- **The guided tour in the installed app, with Word** (built 2026-10-27): take it end to end in WebView2 — the
+  Safe-mode chapters' preview and copies render through Word, the practice folder under `%LOCALAPPDATA%\Spec
+  Surgeon\tutorial\` appears at the start and is gone at the end, the conversation that was open comes back exactly
+  as it was (its journal untouched, its mode and folders unchanged), a reload mid-tour resumes at the same step, New
+  conversation during a tour ends it first, and after Finish the chip reads "Take the guided tour again" across a
+  restart. Record a chapter whose card sits badly at 1280 px wide as a new item above.
 - **The installed app:** a walkthrough in WebView2 (window states and errors, a frozen page's diagnostics, nothing
   outliving the window, fast responses, files side by side, the colour schemes), and the private real-file corpus
   (`tests/real`, `SPEC_SURGEON_REAL_CORPUS`, `SPEC_SURGEON_REAL_RENDERER=word`).

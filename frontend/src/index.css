@@ -554,6 +554,21 @@ body {
   z-index: 60;
 }
 
+/* The tour chip on the empty conversation invites once: a few pulses of the accent until the tour has been taken
+   (the page knows from the view's tutorial block). */
+.chip-pulse {
+  animation: chip-pulse 1.3s ease-in-out 3;
+}
+@keyframes chip-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--color-accent) 0%, transparent);
+  }
+  50% {
+    box-shadow: 0 0 0 4px color-mix(in srgb, var(--color-accent) 35%, transparent);
+  }
+}
+
 /* The update strip above the panes. */
 .update-progress {
   height: 4px;
@@ -579,7 +594,8 @@ body {
   .work-label,
   .work-label.is-working,
   .work-step,
-  .said-in {
+  .said-in,
+  .chip-pulse {
     animation: none;
   }
   .fold,
