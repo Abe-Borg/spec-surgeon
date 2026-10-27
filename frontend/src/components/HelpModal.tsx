@@ -3,7 +3,7 @@
 // Why trust it (WhyTrustIt.tsx) opens the "I'm not convinced" dossier (TrustDossier.tsx), which stacks on this dialog;
 // both are pinned to the code by docs/TRUST_CLAIMS.md and its tests. About takes over the old About box (release
 // notes, license) and the old Help menu's Check for updates and Open diagnostic logs.
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { About, Update } from "../types";
@@ -11,6 +11,18 @@ import { getAbout } from "../lib/api";
 import { useDialogFocus } from "../lib/dialogFocus";
 import { HELP_TITLES, HELP_TOPICS, modelLabel, releaseNotesBody, updateStatus, type HelpTopic } from "../lib/help";
 import { OBLITERATE_COSTS, OBLITERATE_GRANTS, OBLITERATE_KEPT } from "../lib/modes";
+import {
+  DEFAULT_LIMITS,
+  DEFAULT_OPERATIONS,
+  EVERY_MODE,
+  OBLITERATE_INTRO,
+  OBLITERATE_OPERATIONS,
+  SAFE_LIMITS,
+  SAFE_OPERATIONS,
+  TYPICAL_INTRO,
+  verdictTone,
+  type TypicalOperation,
+} from "../lib/typicalOperations";
 import { primaryBtn, quietBtn } from "./ModalShell";
 import Tip from "./Tip";
 import { Guide, Lead, Points, Recipe, Steps, Tag } from "./helpParts";
@@ -228,13 +240,93 @@ function HowToUse() {
   );
 }
 
+/** The verdict column: the words as written, coloured by their first word (lib/typicalOperations.verdictTone). */
+function Verdict({ can }: { can: string }) {
+  const tone = verdictTone(can);
+  const cls = tone === "err" ? "text-err" : tone === "warn" ? "text-warn" : "text-ok";
+  return <span className={`font-medium ${cls}`}>{can}</span>;
+}
+
+/** One mode's typical operations: the job, (Safe) the buttons that do it, whether the app can, and what to know. */
+function OperationsTable({ rows, withButtons }: { rows: readonly TypicalOperation[]; withButtons?: boolean }) {
+  return (
+    <div className="mt-3 overflow-x-auto">
+      <table className="w-full table-fixed border-collapse text-xs leading-relaxed">
+        <thead>
+          <tr className="border-b border-edge text-left text-[11px] uppercase tracking-wide text-ink-faint">
+            <th scope="col" className={`${withButtons ? "w-[26%]" : "w-[32%]"} py-1.5 pr-3 font-medium`}>
+              Typical operation
+            </th>
+            {withButtons ? (
+              <th scope="col" className="w-[22%] py-1.5 pr-3 font-medium">
+                Buttons
+              </th>
+            ) : null}
+            <th scope="col" className="w-[14%] py-1.5 pr-3 font-medium">
+              Can it?
+            </th>
+            <th scope="col" className="py-1.5 font-medium">
+              What to know
+            </th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row) => (
+            <tr key={row.task} className="border-b border-edge/60 align-top">
+              <td className="py-2 pr-3 text-ink">{row.task}</td>
+              {withButtons ? (
+                <td className="py-2 pr-3">
+                  <div className="flex flex-wrap gap-1">
+                    {(row.buttons ?? []).map((b) => (
+                      <Tag key={b}>{b}</Tag>
+                    ))}
+                  </div>
+                </td>
+              ) : null}
+              <td className="py-2 pr-3">
+                <Verdict can={row.can} />
+              </td>
+              <td className="py-2 text-ink-dim">{row.note}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+/** A heading between a mode's table and the next. */
+function ModeHeading({ children }: { children: ReactNode }) {
+  return <h5 className="mt-5 text-sm font-semibold text-ink">{children}</h5>;
+}
+
 function Workflows() {
   return (
     <div className="space-y-4">
       <Lead>
-        Every request ends the same way — a plan you can read, pages you can look at, one button. Pick the recipe that
-        matches the job in front of you.
+        Every request ends the same way — a plan you can read, pages you can look at, one button. First, what most
+        people use each mode for and whether the app can do it; then the recipes for the usual jobs.
       </Lead>
+      <Guide title="Typical operations" tagline={TYPICAL_INTRO}>
+        <ModeHeading>Safe mode</ModeHeading>
+        <p className="mt-1 text-xs leading-relaxed text-ink-dim">
+          No model call, no key. A document a button cannot change exactly is listed under <Tag>Left untouched</Tag>{" "}
+          with the reason, and one click hands it to Default.
+        </p>
+        <OperationsTable rows={SAFE_OPERATIONS} withButtons />
+        <p className="mt-3 text-xs leading-relaxed text-ink-dim">{SAFE_LIMITS}</p>
+        <ModeHeading>Default mode</ModeHeading>
+        <p className="mt-1 text-xs leading-relaxed text-ink-dim">
+          The conversation plus the operation library. Every request ends in the same preview, one button and the
+          independent checks.
+        </p>
+        <OperationsTable rows={DEFAULT_OPERATIONS} />
+        <p className="mt-3 text-xs leading-relaxed text-ink-dim">{DEFAULT_LIMITS}</p>
+        <ModeHeading>Obliterate mode</ModeHeading>
+        <p className="mt-1 text-xs leading-relaxed text-ink-dim">{OBLITERATE_INTRO}</p>
+        <OperationsTable rows={OBLITERATE_OPERATIONS} />
+        <p className="mt-3 text-xs leading-relaxed text-ink-dim">{EVERY_MODE}</p>
+      </Guide>
       <Recipe
         title="Safe mode: clean up a set before issue"
         tagline="One button at a time, each building on the last."
@@ -247,50 +339,14 @@ function Workflows() {
         ]}
       />
       <Recipe
-        title="Change the fonts across a set"
-        tagline="One property, every section, nothing else touched."
+        title="Asking in Default mode"
+        tagline="Five requests that work, word for word."
         steps={[
-          "Attach the sections: drop the whole set at once; files from several folders are fine.",
-          "Say it plainly: “Change every font to Arial 10 pt, keeping bold and italic.”",
-          "If it asks whether the headers and footers are included, answer, or let its recommended answer stand.",
-          "Read the sentence for the change, look at a sample’s pages, then Create edited copies.",
-        ]}
-      />
-      <Recipe
-        title="Match the headers and footers to a template"
-        tagline="Your sections, the architect’s look."
-        steps={[
-          "Attach the sections, then Add a template (optional) with the document whose headers and footers you want.",
-          "Ask: “Match the headers, footers and fonts to this template. Keep our technical wording.”",
-          "Changes that touch the same parts of a file — the template’s header beside a font change — are put in order by Spec Surgeon itself; it is still one plan and one button.",
-          "If one of your documents is a copy of the template, the window says so: remove one of them.",
-        ]}
-      />
-      <Recipe
-        title="Swap a logo"
-        tagline="The picture you attach, at the size you approve."
-        steps={[
-          "Attach the sections and Add a picture or table (optional) with the new logo (.png, .jpg or .gif).",
-          "Ask: “Replace the logo in the first-page header with this one, at the same size.”",
-          "Check the picture and its size on a sample’s pages. Your approval covers that exact file: change it after the preview and the plan is checked again.",
-        ]}
-      />
-      <Recipe
-        title="Fill in project values from a sheet"
-        tagline="The values come from your table, never from the AI."
-        steps={[
-          "Attach the sections and the sheet (.xlsx, .csv or .json) with the project names and numbers.",
-          "Say what goes where: “Put the project name and number from this sheet in every footer.”",
-          "Check the values on a sample’s pages before you approve.",
-        ]}
-      />
-      <Recipe
-        title="Change an issue stamp or a phrase"
-        tagline="Exact words, placed exactly as approved."
-        steps={[
-          "Ask: “Change ‘Issued for Bid’ to ‘Issued for Construction’ everywhere.”",
-          "Check the new text on a sample’s pages before you approve.",
-          "Words that go into a document are ones you typed or picked. A choice that would place words shows them beneath its button, and picking it approves exactly those words — or, after Edit wording, exactly your version of them; a suggested reply you tap answers a question but never becomes document wording. The one exception: when no ordinary plan fits and the app carries out an outcome plan Claude proposed, that plan’s wording is used without a separate pick — it is shown in the plan you approve.",
+          "Change the fonts across a set — “Change every font to Arial 10 pt, keeping bold and italic.” If it asks whether the headers and footers are included, answer, or let its recommended answer stand.",
+          "Match the headers and footers to a template — Add a template (optional) with the document whose headers and footers you want, then “Match the headers, footers and fonts to this template. Keep our technical wording.” Changes that touch the same parts of a file are put in order by Spec Surgeon itself; it is still one plan and one button. If one of your documents is a copy of the template, the window says so: remove one of them.",
+          "Swap a logo — Add a picture or table (optional) with the new logo (.png, .jpg or .gif), then “Replace the logo in the first-page header with this one, at the same size.” Check the picture and its size on a sample’s pages. Your approval covers that exact file: change it after the preview and the plan is checked again.",
+          "Fill in project values from a sheet — attach the sheet (.xlsx, .csv or .json) with the project names and numbers, then say what goes where: “Put the project name and number from this sheet in every footer.” The values come from your table, never from the AI.",
+          "Change an issue stamp or a phrase — “Change ‘Issued for Bid’ to ‘Issued for Construction’ everywhere.” Check the new text on a sample’s pages before you approve. Words that go into a document are ones you typed or picked: a choice that would place words shows them beneath its button, and picking it approves exactly those words — or, after Edit wording, exactly your version of them. A suggested reply you tap answers a question but never becomes document wording. When no ordinary plan fits, an outcome plan Claude proposes is offered the same way, every word it would place beneath it, and runs only once you pick it.",
         ]}
       />
       <Recipe
@@ -307,6 +363,7 @@ function Workflows() {
         title="One change after another"
         tagline="Each request builds on the last result."
         steps={[
+          "Several changes in one request are fine: “remove the headers and footers, empty the articles, then Arial 12 pt.” Changes that touch the same parts of a file become ordered steps, in the order you asked, each planned and checked on the step before it; you still see one plan and press one button. There is no limit on how many.",
           "After the copies are created, ask for the next change. It is made on those copies, and the assistant is told what was already done, so it plans only what is new.",
           "Each run’s copies go into their own folder, so earlier copies remain.",
           "Start over from the originals — a reply you can tap, or the link under the copies — goes back to your files.",
@@ -709,7 +766,7 @@ export default function HelpModal({
       <div
         ref={panelRef}
         tabIndex={-1}
-        className="flex max-h-[80vh] w-full max-w-2xl flex-col overflow-hidden rounded-2xl border border-edge bg-surface shadow-2xl outline-none"
+        className={`flex max-h-[80vh] w-full ${topic === "workflows" ? "max-w-4xl" : "max-w-2xl"} flex-col overflow-hidden rounded-2xl border border-edge bg-surface shadow-2xl outline-none`}
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header: title + close */}
