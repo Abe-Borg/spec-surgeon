@@ -19,6 +19,8 @@ export type ActionButton =
       /** Clicking does nothing while true; `tip` says why. */
       disabled: boolean;
       tip: string;
+      /** Approving saves clean PDFs (Save clean PDFs), not edited copies. */
+      pdf?: boolean;
     };
 
 export const STOP_TIP =
@@ -28,14 +30,17 @@ export const APPROVE_TIP =
   "Creates an edited copy of every document from the plan and pages shown here. Your originals stay intact.";
 export const BLOCKING_TIP =
   "A visual finding is marked as blocking: this confirms you looked at the flagged pages shown here.";
+export const PDF_TIP =
+  "Saves a PDF of every document from a clean copy: comments removed, tracked changes accepted. Your Word documents stay as they are.";
 export const CONTINUE_TIP =
   "Checks the documents against your request again before anything can be approved.";
 export const SAVE_TIP = "Saves the copies that are already verified while a question is still open.";
 
-/** The approve tip when `held` previews carry the red X. */
-export function heldTip(held: number): string {
+/** The approve tip when `held` previews carry the red X (`pdf`: the approval saves clean PDFs). */
+export function heldTip(held: number, pdf = false): string {
+  const what = pdf ? "Saves a clean PDF of" : "Creates an edited copy of";
   return (
-    `Creates an edited copy of every document except the ${held === 1 ? "one" : held} marked with the red X; ` +
+    `${what} every document except the ${held === 1 ? "one" : held} marked with the red X; ` +
     `${held === 1 ? "it goes" : "they go"} on your to-do list for after. Your originals stay intact.`
   );
 }
@@ -74,12 +79,15 @@ export function actionButton(view: View, busy: boolean, draft: boolean, held = 0
       ? view.blocking
         ? BLOCKING_TIP
         : counted
-          ? heldTip(held)
-          : APPROVE_TIP
+          ? heldTip(held, action.export === "pdf")
+          : action.export === "pdf"
+            ? PDF_TIP
+            : APPROVE_TIP
       : kind === "continue"
         ? CONTINUE_TIP
         : SAVE_TIP;
-  return { kind, label, token: action.token, disabled: !action.token, tip };
+  const pdf = kind === "approve" && action.export === "pdf";
+  return { kind, label, token: action.token, disabled: !action.token, tip, ...(pdf ? { pdf } : {}) };
 }
 
 /** The sentence beside the button, in the conversation pane. */
@@ -88,8 +96,10 @@ export function actionSentence(button: ActionButton, held: number): string {
   switch (button.kind) {
     case "approve":
       return held > 0
-        ? `${held === 1 ? "One document" : `${held} documents`} marked with the red X ${held === 1 ? "goes" : "go"} on your to-do list; the rest get their copies now.`
-        : "If the pages look right, create the edited copies.";
+        ? `${held === 1 ? "One document" : `${held} documents`} marked with the red X ${held === 1 ? "goes" : "go"} on your to-do list; the rest get their ${button.pdf ? "PDFs" : "copies"} now.`
+        : button.pdf
+          ? "If the pages look right, save the clean PDFs."
+          : "If the pages look right, create the edited copies.";
     case "continue":
       return "The documents are checked against your request again before anything can be approved.";
     case "save":

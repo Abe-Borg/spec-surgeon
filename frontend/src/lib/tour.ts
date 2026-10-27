@@ -273,7 +273,7 @@ export const TOUR: readonly TourChapter[] = [
         placement: "left",
         title: "Copies, checked word for word",
         body:
-          "These copies were really made from the practice documents by the same engine that edits yours: each from its original, each checked by an independent checker that shares no code with the editing, and delivered only because it passed. Click one to open it in Word; the folder button opens the run's folder. Originals are never written. A copy that fails a check is moved aside and never delivered. The tour marked one document with the red X before creating these, so it got no copy.",
+          "These copies were really made from the practice documents by the same engine that edits yours: each from its original, each checked by an independent checker that shares no code with the editing, and delivered only because it passed. Click one to open it in Word; the folder button opens the run's folder. Originals are never written. A copy that fails a check is moved aside and never delivered. The tour marked one document with the red X before creating these, so it got no copy. Safe mode's Save clean PDFs button lists its PDFs in a card of their own here, with the same open and folder buttons.",
       },
       {
         id: "working-line",

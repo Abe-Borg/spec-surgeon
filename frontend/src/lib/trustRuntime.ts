@@ -51,7 +51,7 @@ export const RUNTIME_CARDS: RuntimeCard[] = [
       "changes nothing.",
   },
   {
-    covers: ["A32"],
+    covers: ["A33"],
     title: "Taking the guided tour",
     you: "Tour in the top bar, the chip at the top of an empty conversation, or Help → How to use → Start the guided tour (or a chapter); then Continue, Back, End the tour, and at the end Finish and return to my conversation.",
     runs:
@@ -272,10 +272,11 @@ export const RUNTIME_CARDS: RuntimeCard[] = [
       "copy; its results are kept beside it.",
   },
   {
-    covers: ["A23", "A24", "A25", "A29", "A30"],
-    title: "Safe mode: choosing a mode, pressing a button, changing your mind, handing documents over",
+    covers: ["A23", "A24", "A25", "A29", "A30", "A32"],
+    title: "Safe mode: choosing a mode, pressing a button, saving clean PDFs, changing your mind, handing documents over",
     you:
       "Choose Safe or Default in the top bar; in Safe mode, pick a button, fill in its form and press Preview; " +
+      "Save clean PDFs, then Save clean PDFs beside its preview; " +
       "Discard preview, All buttons or Clear form; Undo the last button; Try these in Default mode beside what a " +
       "button left untouched.",
     runs:
@@ -283,7 +284,11 @@ export const RUNTIME_CARDS: RuntimeCard[] = [
       "Safe-mode form in this window; an unsent message holds Create only in a conversation mode. A button builds its plan in code from your form " +
       "and your attachments; the plan passes the same gate as a conversation's (its settings, the files it reads, " +
       "every word it would place traced to what you typed) and the ordinary preview runs, without Claude's visual " +
-      "check. Create edited copies then makes and checks the copies as always. Discard preview (or All buttons " +
+      "check. Create edited copies then makes and checks the copies as always. Save clean PDFs plans two steps, " +
+      "every comment removed and then every tracked change accepted; its run makes and checks those clean copies " +
+      "as always, then Word (a new, invisible instance) or LibreOffice turns each copy that passed into a PDF, " +
+      "through the render cache, and the app checks each PDF opens, has pages and carries no note. The PDFs are " +
+      "the result: the Word documents the next button works on keep their comments and tracked changes. Discard preview (or All buttons " +
       "while a preview waits) withdraws it: nothing is created, and the window shows the copies it showed before. " +
       "Each button's form keeps what you typed until Clear form, New conversation or Start over. Undo the last " +
       "button makes the copies from before that button the ones the next button builds on again (your originals, " +
@@ -293,7 +298,10 @@ export const RUNTIME_CARDS: RuntimeCard[] = [
     ai: NONE,
     bounds:
       "The buttons and what they do are fixed in the app. A document a button cannot change exactly is left " +
-      "untouched with the reason; nothing an AI does follows, neither a visual check nor recovery. Discard and Undo " +
+      "untouched with the reason; nothing an AI does follows, neither a visual check nor recovery. A document that " +
+      "cannot be cleaned exactly, or whose PDF does not pass that check, gets no PDF and is listed with why; a PDF " +
+      "that failed is kept apart in pdf-failed. Save clean PDFs needs Word or LibreOffice on this computer, " +
+      "and says so when there is neither. Discard and Undo " +
       "write and delete no file: the copies an undone button made stay where they were saved. Undo goes back one " +
       "button at a time, never while a preview waits, and refuses when a copy it would go back to is gone.",
   },
@@ -398,9 +406,10 @@ export const RUNTIME_CARDS: RuntimeCard[] = [
   {
     covers: ["A12", "A16"],
     title: "Opening a copy or enlarging a page",
-    you: "Click a copy, the folder button, or a page in a preview.",
+    you: "Click a copy or a clean PDF, the folder button, or a page in a preview.",
     runs:
-      "A copy opens in its own application (usually Word); the folder opens in Explorer. A page opens larger in the " +
+      "A copy opens in its own application (usually Word), a clean PDF in your PDF viewer; the folder opens in " +
+      "Explorer. A page opens larger in the " +
       "window, from the picture already rendered on your computer.",
     sent: "Nothing.",
     ai: NONE,

@@ -84,7 +84,8 @@ only when no file plans, a sample fails its check, or every sample is refused). 
 `set_aside` tool at the user's word (`Conversation.set_aside` → `DocumentTask._take_set_aside`), a file the plan
 refused once the others run, a run failure no recovery takes, and recovery's leftovers at `SET_ASIDE_REST`;
 `put_back` takes one off without a pass.
-Delivered copies are the working set the next request builds on. In Safe mode, **Discard preview**
+Delivered copies are the working set the next request builds on, except Safe mode's **Save clean PDFs**, whose
+result is the PDFs (`DocumentTask.pdfs`, `_end_export`): no working copy, history line or undo point. In Safe mode, **Discard preview**
 (`DocumentTask.discard_preview`) withdraws a button's preview and shows again what `_recipe` set aside
 (`_before_button`); **Undo the last button** (`DocumentTask.undo`) pops `undo_points` (one per run that delivered
 copies, taken at approval, kept in the journal) to put the working set back one run. Neither writes or deletes a file.
@@ -128,6 +129,8 @@ jobs). Details: `docs/CONVERSATIONAL_DESKTOP.md`.
     out of it, `Conversation.left_out`), `inventory.py` (the content digest that pins a file).
   - `recipes.py` — Safe mode's buttons: each a fixed EditSpec from its form (`build`), the header/footer template's kind
     (`template_kind`); the page's copy of the list (`frontend/mock/recipes.json`) is pinned to `catalog()`.
+    `pdf_export.py` (Save clean PDFs: a PDF of each copy that passed, rendered through `render` and its cache, then
+    `check_pdf`; the button's plan is a fixed chain, comments removed and then tracked changes accepted).
     `template_roles.py` (a template's style per role, page and font, read without a model) and `body_match.py` (match
     body formatting: one plan per document from its own structure, one layout per agreeing pattern, each through the
     gate; what it cannot match is left out with the reason, `Session.left_out_reasons`).
@@ -140,9 +143,10 @@ jobs). Details: `docs/CONVERSATIONAL_DESKTOP.md`.
     conversation chapters are recordings that say so (`RECORDED`, `TutorialTask.scripted`). The page's side:
     `frontend/src/lib/tour.ts` (the manifest: chapters, steps, `data-tour` anchors, the capabilities each teaches),
     `capabilities.ts` (every end-user control carries a `data-capability`), `useTour.ts`, `tourStorage.ts`,
-    `components/TourOverlay.tsx`. `frontend/tests/tour.test.ts` fails on a control without a capability, a
-    capability no step teaches, an anchor the page lacks, a scenario the server does not build, or a form value the
-    server's chapter did not run: **a new control needs its capability and its tour step in the same change.**
+    `components/TourOverlay.tsx`. `frontend/tests/tour.test.ts` fails on a `data-capability` the vocabulary lacks, a
+    capability no control carries or no step teaches, an anchor the page lacks, a scenario the server does not build,
+    or a form value the server's chapter did not run: **a new control needs its capability and its tour step in the
+    same change** (the test cannot see a control that carries no capability; the reviewer can).
   - `document_task.py`, `review_display.py`, `gui.py` (`Session`, `main`; `python -m spec_surgeon` runs it), `web/`
     (`server.py`, `shell.py`, `watch.py`: the page's own reports and the watchdog over the page and the job),
     `updater.py`, `settings.py`, `credentials.py`, `winapp.py`.

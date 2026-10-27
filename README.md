@@ -172,7 +172,7 @@ mode you last used (Safe the first time; never Obliterate).
   template*, *Match font to template*,
   *Find and replace* (typed pairs or an attached table; body, headers and footers), *Accept all tracked changes*,
   *Remove all comments*, *Remove highlighting*, *Remove hidden text*, *Remove empty paragraphs*, *Name files by
-  section number and title*, *Set the document title property* and *Turn off Track Changes*. Each button has a short
+  section number and title*, *Set the document title property*, *Turn off Track Changes* and *Save clean PDFs*. Each button has a short
   form (your words and choices only), then **Preview**, the same pages, checks and **Create edited copies** as Default
   mode. What it costs: only what the buttons do. The copies are clean unless you tick *Show my changes as tracked
   changes in Word* (offered where the change can be tracked). The template buttons take either a prepared template
@@ -192,6 +192,18 @@ mode you last used (Safe the first time; never Obliterate).
   bold, italic and underlined words stay. Documents built alike run as one plan and the rest are planned their own way; a document it
   cannot read (no outline, typed and Word numbers mixed, an outline deeper than the template's, one of its styles
   shared with paragraphs it does not restyle) is left untouched with the reason.
+- **Save clean PDFs** (Safe mode) gives you a PDF of every document with all comments off and every tracked change
+  accepted, ready to issue. It plans two steps, in this order: every comment (and its replies) is removed, then every
+  tracked change is accepted (insertions, deletions, moves and formatting changes, in the body, headers, footers and
+  notes). You see the clean pages in the preview and press **Save clean PDFs** beside them. The run makes the clean
+  copies and checks them like any button's. Then Word turns each copy that passed into a PDF (a new, invisible
+  instance, never the Word you have open), or LibreOffice when Word is not installed, and the app checks that each
+  PDF opens, has pages and carries no comment notes. The PDFs land in the run's `pdf` folder (`PDF_REPORT.md` beside
+  it lists each one and the copy it came from), and the window lists them under **Your clean PDFs**, each one a click
+  away. Your Word documents stay as they are: the next button works on them with their comments and tracked changes,
+  and Undo is unaffected. A document with a change only Word can settle (an inserted or merged table cell, a change
+  inside an equation), or whose PDF cannot be made, gets no PDF and is listed under Left untouched with why. The
+  button needs Word or LibreOffice on this computer, and says so when there is neither.
 - **Default — a conversation.** What you control: any change you can describe, from one word to whole tables,
   sections and pictures, on documents built in different ways. What it costs: an Anthropic API key and the AI's
   spending, and the AI can misread a request, so you read what it plans and look at the pages before you approve.
@@ -374,6 +386,9 @@ recorded for the requests that follow.
   out of reach stay out of reach in every mode.
 - A PASS is the engine's proof of the predicted change, not acceptance of the result. Look at the before/after
   pages. Claude's visual check is advisory and can be wrong both ways.
+- A clean PDF is checked as a file (it opens, has pages and carries no notes) and is made from a checked clean copy;
+  its pages are the renderer's. Word's are the ones to trust: LibreOffice's can differ from Word's in fonts, line
+  breaks and numbering.
 - Normalizing a file (typed numbers, direct formatting, whitespace, pending tracked changes) is never automatic; it
   runs only as a first stage you were offered and accepted.
 - Where Word's behaviour is uncertain, or Word and LibreOffice differ (shared list definitions, overridden levels,

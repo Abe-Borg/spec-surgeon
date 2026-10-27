@@ -11,6 +11,7 @@ import {
   kindTag,
   pageCount,
   parentFolder,
+  pdfFolder,
   planHasContent,
   referencesTitle,
   runFolder,
@@ -143,4 +144,13 @@ test("Undo the last button shows in Safe mode when there is something to undo, w
   assert.equal(undoLink({ mode: "default", working }, false), null);
   // an older server sends no undo: no link
   assert.equal(undoLink({ mode: "safe", working: { generation: 1, from_originals: false, can_start_over: true } }, false), null);
+});
+
+test("the PDF folder is the parent of the first clean PDF", () => {
+  assert.equal(pdfFolder({ pdfs: [] }), "");
+  assert.equal(pdfFolder({}), "");
+  assert.equal(
+    pdfFolder({ pdfs: [{ source: "C:/Specs/a.docx", output: "C:\\runs\\2\\run\\pdf\\a.pdf", name: "a.pdf" }] }),
+    "C:\\runs\\2\\run\\pdf",
+  );
 });
