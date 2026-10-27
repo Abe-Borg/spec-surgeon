@@ -100,6 +100,15 @@ export const SAFE_OPERATIONS: readonly TypicalOperation[] = [
     can: "Yes",
     note: "The setting only. Pending changes are neither accepted nor rejected.",
   },
+  {
+    task: "Issue clean PDFs of the set: no comments, every tracked change accepted",
+    buttons: ["Save clean PDFs"],
+    can: "Yes",
+    note:
+      "Needs Microsoft Word or LibreOffice on this computer; Word's pages are the ones to trust. Each PDF is made " +
+      "from a checked clean copy, and your Word documents keep their comments and tracked changes. A change Word " +
+      "must settle itself leaves that file without a PDF.",
+  },
 ];
 
 export const SAFE_LIMITS =

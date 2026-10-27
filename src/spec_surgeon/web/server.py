@@ -233,6 +233,8 @@ class WindowState:
         results = [{"source": source, "output": output, "name": Path(output).name,
                     "unverified": list(unverified.get(source, []))}
                    for source, output in raw["results"].items()]
+        pdfs = [{"source": source, "output": output, "name": Path(output).name}
+                for source, output in raw.get("pdfs", {}).items()]
         return {"version": self.version, "busy": busy, "stage": stage, "mode": raw.get("mode", "default"),
                 "modes": task.available_modes(), "template": task.template_info(),
                 "left_untouched": [dict(e) for e in raw.get("left_untouched", [])],
@@ -240,10 +242,11 @@ class WindowState:
                 "cost": task._cost(), "attachments": attachments, "messages": messages, "plan": plan,
                 "questions": list(raw["questions"]), "choices": list(raw["choices"]), "chips": list(raw["chips"]),
                 "samples": samples, "warnings": list(raw["warnings"]), "blocking": bool(raw["blocking"]),
-                "results": results,
+                "results": results, "pdfs": pdfs, "pdf": task.pdf_info(),
                 "action": {"label": label, "token": raw["token"], "kind": kind,
                            "disabled_reason": raw.get("blocked_reason", ""),
-                           "can_hold": kind == "approve" and bool(raw.get("can_hold"))},
+                           "can_hold": kind == "approve" and bool(raw.get("can_hold")),
+                           "export": raw.get("export", "") if kind == "approve" else ""},
                 "todo": [dict(item) for item in raw.get("todo", [])], "focus": list(raw.get("focus", [])),
                 "working": raw["working"], "budget": {"paused": bool(raw["budget_paused"]),
                                                       "reason": raw.get("pause_reason", "")},

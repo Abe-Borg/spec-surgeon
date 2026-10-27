@@ -63,6 +63,7 @@ WHY_HELD, WHY_ASKED, WHY_REFUSED, WHY_FAILED = "held", "asked", "refused", "fail
 HELD_REASON = "You marked its preview as needing more work."
 ASKED_REASON = "You asked to set it aside for later."
 EARLIER_COPY = "in an earlier copy: "   # an UNVERIFIED mark a later copy builds on (``_mark_unverified``)
+NO_PDF = "Its PDF could not be made"   # Save clean PDFs: a clean copy passed, its PDF did not (``_without_pdf``)
 CONVERSATION_EFFORT = "medium"   # the model's own default: fewer tool rounds per turn than high, measured by the owner
 RECOVERY_EFFORT = "high"         # the hard path keeps the depth
 RECOVERY_ATTEMPTS = 8            # candidate attempts per problem group (docs/RECOVERY.md), on every recovery path
@@ -193,6 +194,8 @@ SAFE_NO_CONVERSATION = ("Safe mode has no conversation: press a button to make a
 STATUS_FOR_LOG = {"Preparing and checking the preview…": ("previewing", "Preparing and checking the preview…"),
                   "Looking at the rendered pages…": ("looking", "Looking at the rendered pages…"),
                   "Creating and checking your edited copies…": ("creating", "Creating and checking your edited copies…"),
+                  "Creating and checking the clean copies…": ("creating", "Creating and checking the clean copies…"),
+                  "Saving the clean PDFs…": ("rendering", "Saving the clean PDFs…"),
                   "Checking the files that still need work…": ("recovering", "Checking the files that still need work…"),
                   "Continuing where the conversation stopped…": ("resuming", "Continuing where the conversation stopped…")}
 
@@ -279,6 +282,9 @@ class DocumentTask:
         self.word_sources: List[str] = []
         self.results: Dict[str, str] = {}
         self.unverified: Dict[str, List[str]] = {}   # original → the failed checks its copy was delivered with
+        # Save clean PDFs: original → the PDF of its clean copy, the last run's; never the working set (``_end_export``)
+        self.pdfs: Dict[str, str] = {}
+        self._pdf_info: Optional[Dict[str, Any]] = None   # whether this computer can make PDFs (``pdf_info``)
         self.attachments: List[Attachment] = []
         self.stage = "empty"
         self.problem = ""
@@ -564,13 +570,14 @@ class DocumentTask:
         for shown in [*self.undo_points, self._before_button or {}]:
             # attached again later, it is an original: no undo or discard puts an old copy back in its place, or
             # shows one as its result
-            for part in ("working", "applied", "results", "unverified"):
+            for part in ("working", "applied", "results", "unverified", "pdfs"):
                 if part in shown:
                     shown[part].pop(str(path), None)
             if "left_untouched" in shown:
                 shown["left_untouched"] = [e for e in shown["left_untouched"]
                                            if _same_file_key(e["path"]) != _same_file_key(path)]
         self.left_untouched = [e for e in self.left_untouched if _same_file_key(e["path"]) != _same_file_key(path)]
+        self.pdfs.pop(str(path), None)
         pass_over = False
         if self.focus:
             self.focus["documents"] = [d for d in self.focus["documents"] if d != str(path)]
@@ -704,7 +711,7 @@ class DocumentTask:
         if not self.working and not self.history and not self.todo and not self.focus:
             return
         self.working, self.generation, self.history, self.decisions = {}, 0, [], []
-        self.results, self.unverified = {}, {}
+        self.results, self.unverified, self.pdfs = {}, {}, {}
         self.applied, self.todo, self.focus, self._binned = {}, {}, None, []
         self.left_untouched = []
         self.undo_points, self._pending_undo, self._before_button = [], None, None
@@ -720,11 +727,11 @@ class DocumentTask:
         """The working set as it is before the run being approved, and what the window shows of it (a button's
         preview cleared that, so its ``_before_button``): what ``undo`` restores once the run has delivered."""
         shown = self._before_button or {"results": self.results, "unverified": self.unverified,
-                                        "left_untouched": self.left_untouched}
+                                        "left_untouched": self.left_untouched, "pdfs": self.pdfs}
         return {"request": self.decisions[0] if self.decisions else "",
                 "working": dict(self.working), "generation": self.generation, "history": list(self.history),
                 "applied": {k: list(v) for k, v in self.applied.items()},
-                "results": dict(shown["results"]),
+                "results": dict(shown["results"]), "pdfs": dict(shown.get("pdfs", {})),
                 "unverified": {k: list(v) for k, v in shown["unverified"].items()},
                 "left_untouched": [dict(e) for e in shown["left_untouched"]],
                 "todo_before": list(self.todo)}
@@ -748,6 +755,7 @@ class DocumentTask:
         attached = {str(a.path) for a in self.attachments if not a.template and not a.reference}
         keys = {_same_file_key(p) for p in attached}
         self.results = {k: v for k, v in shown["results"].items() if k in attached and Path(v).is_file()}
+        self.pdfs = {k: v for k, v in shown.get("pdfs", {}).items() if k in attached and Path(v).is_file()}
         # a mark belongs to the working copy it was delivered with, shown among the results or not
         self.unverified = {k: list(v) for k, v in shown["unverified"].items() if k in self.results or k in self.working}
         self.left_untouched = [dict(e) for e in shown["left_untouched"]
@@ -1022,6 +1030,7 @@ class DocumentTask:
             raise ValueError("There is no such button.")
         files = s.files(outcome=False)
         ctx = recipes.Context(files, self.template(), self.references())
+        self._pdf_info = None                    # a renderer installed or removed since is seen at the press
         try:
             built = recipes.build(recipe.id, inputs, ctx)
         except recipes.RecipeError as e:
@@ -1045,11 +1054,12 @@ class DocumentTask:
             # first one's, which is still what came before)
             self._before_button = {"results": dict(self.results),
                                    "unverified": {k: list(v) for k, v in self.unverified.items()},
-                                   "left_untouched": [dict(e) for e in self.left_untouched]}
+                                   "left_untouched": [dict(e) for e in self.left_untouched],
+                                   "pdfs": dict(self.pdfs)}
         # Results describe this button's copies. Earlier copies remain in the working set and on disk, but must
         # not be presented as if they carry a later change that could be refused or fail verification. An UNVERIFIED
         # mark is the working copy's, not the button's: it stays (``_mark_unverified``).
-        self.results = {}
+        self.results, self.pdfs = {}, {}
         self.say(built.request, "user")
         self.decisions = [built.request]
         self.word_sources.extend(w for w in built.sources if w not in self.word_sources)
@@ -1066,7 +1076,7 @@ class DocumentTask:
             self.save()
             return
         s._set_outcome(spec=outcome, source="recipe", left_out=list(built.left_out),
-                       left_out_reasons=built.left_out)
+                       left_out_reasons=built.left_out, export=built.export)
         self._settle(log)
         if nothing:
             self.say("None of the documents can take this change as they are; each one's reason is under Left "
@@ -1090,7 +1100,9 @@ class DocumentTask:
             self.todo[entry["path"]] = {
                 "name": entry["name"], "decisions": [entry["request"]] if entry["request"] else [], "seen": [],
                 "why": WHY_REFUSED if refused else WHY_FAILED,
-                "reason": ("The button could not change it" if refused else "Its copy could not be made")
+                # a document whose clean copy was made but not its PDF (Save clean PDFs) says so as it is
+                "reason": f"{why}." if why.startswith(NO_PDF) else
+                ("The button could not change it" if refused else "Its copy could not be made")
                 + (f": {why}." if why else ".")}
         self.left_untouched = [e for e in self.left_untouched if e["path"] not in wanted]
         self.mode = "default"
@@ -1446,11 +1458,18 @@ class DocumentTask:
         request = self.decisions[0] if self.decisions else ""
         # a Safe-mode button's refused documents stay in scope for the next button; they are offered to Default mode
         untouched_before = self._refused_by_preview(outcome.preview, request) if model_free else []
-        log("Creating and checking your edited copies…")
+        export = s.export                        # Save clean PDFs: the run's copies are made for their PDFs
+        log("Creating and checking the clean copies…" if export else "Creating and checking your edited copies…")
         s.run(False, self.render, log, only=remaining)
         if not model_free:
             self._binned += [self._set_aside(path, seen_by, why=WHY_REFUSED, reason=reason)
                              for path, seen_by, reason in refused]
+        if export:
+            self._collect_pdfs()
+            self.left_untouched = self._left_after_run(request, untouched_before) + self._without_pdf(request)
+            self._end_export()
+            return
+        self.pdfs = {}                           # the last run's PDFs only: this run saved none
         self._collect_results()
         self._emit({"type": "results", "results": self._results_view()})
         if model_free:
@@ -1643,6 +1662,57 @@ class DocumentTask:
                 self.results[str(self.origin_of(item.source))] = str(item.output)
                 self._mark_unverified(str(self.origin_of(item.source)), getattr(item, "unverified", None))
 
+    def _collect_pdfs(self) -> None:
+        """The PDFs Save clean PDFs saved, keyed by the ATTACHED original, as the copies are (``_collect_results``)."""
+        done = self.session.last_pdfs
+        self.pdfs = {str(self.origin_of(source)): str(pdf) for source, pdf in (done.pdfs.items() if done else [])}
+
+    def _without_pdf(self, request: str) -> List[Dict[str, str]]:
+        """The documents whose clean copy passed but whose PDF could not be made, with the renderer's reason."""
+        done = self.session.last_pdfs
+        out: List[Dict[str, str]] = []
+        for source, why in (done.failed.items() if done else []):
+            origin = str(self.origin_of(source))
+            out.append({"path": origin, "name": Path(origin).name, "why": WHY_FAILED,
+                        "reason": f"{NO_PDF}: {str(why).rstrip('.')}.", "request": request})
+        return out
+
+    def _end_export(self) -> None:
+        """Save clean PDFs is done: the PDFs are the result, and the working set is as it was — the clean copies the
+        PDFs were made from stay in the run folder, but the next request works on the documents as they were, their
+        comments and tracked changes included. So nothing joins the history the model hears, no copy becomes a working
+        copy, and no undo point is kept (there is nothing to undo)."""
+        s = self.session
+        self.stage = "done"
+        self._revision += 1
+        n, done = len(self.pdfs), s.last_pdfs
+        made = f", made by {done.renderer_name}" if done is not None and done.renderer_name else ""
+        if n:
+            ready = (f"{n} clean {'PDF is' if n == 1 else 'PDFs are'} ready{made}: every comment removed and every "
+                     f"tracked change accepted, each from a copy the checks passed. Your Word documents are as they "
+                     f"were; the next button works on them, comments and tracked changes included.")
+        else:
+            ready = "No PDF was saved. Choose another button or start over from the originals."
+        self.say(ready + (f" Without a PDF: {', '.join(e['name'] for e in self.left_untouched)} — each one's reason is "
+                          "under Left untouched." if self.left_untouched else ""))
+        self._pending_undo, self._before_button = None, None
+        self.decisions = []
+        self._binned = []
+        self._sync()                             # a document the ✗ put on the to-do list leaves the next button's scope
+        s._set_outcome()
+        s.end_conversation()
+
+    def pdf_info(self) -> Dict[str, Any]:
+        """Whether this computer can make PDFs (Save clean PDFs' ``needs``), and with what: asked once, again at each
+        button press."""
+        if self._pdf_info is None:
+            from .pdf_export import RENDERER_NAMES, renderer
+            backend, why = renderer()
+            self._pdf_info = {"available": backend is not None, "renderer": RENDERER_NAMES.get(backend or "", ""),
+                              "reason": "" if backend else
+                              "Saving PDFs needs Microsoft Word or LibreOffice on this computer, and neither was found."}
+        return dict(self._pdf_info)
+
     def _mark_unverified(self, origin: str, failed) -> None:
         """A copy delivered with failed checks (Obliterate mode) keeps them beside it, and so does every later copy
         that builds on it: a later PASS was checked against the unverified copy, not against the original, so from
@@ -1805,6 +1875,8 @@ class DocumentTask:
             labels = {k: v for k, v in labels.items() if k == "preview"}   # Safe mode continues no conversation
         if blocking and self.stage == "preview":
             labels["preview"] = "I reviewed the flagged pages — create copies"
+        elif s.export == "pdf" and "preview" in labels:
+            labels["preview"] = "Save clean PDFs"
         planned = getattr(batch_plan, "files", None)
         if s.model_free and self.stage == "preview" and planned and len(set_aside) >= len(planned):
             labels.pop("preview", None)              # a button no document can take: there is nothing to create
@@ -1855,6 +1927,7 @@ class DocumentTask:
                              "editable": getattr(c, "editable", False)} for c in choices],
                 "samples": samples, "set_aside": set_aside,
                 "warnings": list(dict.fromkeys(warnings)), "results": dict(self.results),
+                "pdfs": dict(self.pdfs), "export": s.export if self.stage == "preview" else "",
                 "unverified": {k: list(v) for k, v in self.unverified.items()},
                 "action": labels.get(self.stage, ""), "token": self.action_token(),
                 "blocked_reason": s.run_blocked_reason() if self.stage == "preview" else "",
@@ -1881,7 +1954,7 @@ class DocumentTask:
             "version": 2,
             "attachments": [a.to_dict() for a in self.attachments],
             "messages": self.messages, "decisions": self.decisions, "word_sources": self.word_sources,
-            "results": self.results, "unverified": self.unverified,
+            "results": self.results, "unverified": self.unverified, "pdfs": self.pdfs,
             "recovery": str(self.session.recovery.out_dir) if self.session.recovery else
                         str(self.session.recovery_checkpoint) if self.session.recovery_checkpoint else self._resume_recovery,
             "pending_layouts": [str(x) for x in self.session.pending_layout_recovery],
@@ -1941,12 +2014,14 @@ class DocumentTask:
                 isinstance(p, dict) and text(p.get("request", "")) and paths(p.get("working"))
                 and type(p.get("generation")) is int and texts(p.get("history")) and lists(p.get("applied"))
                 and paths(p.get("results")) and lists(p.get("unverified")) and texts(p.get("todo_added", []))
+                and paths(p.get("pdfs", {}))
                 and isinstance(p.get("left_untouched"), list) and all(map(entry, p["left_untouched"]))
                 for p in points):
             return []
         return [{"request": p.get("request", ""), "working": dict(p["working"]), "generation": p["generation"],
                  "history": list(p["history"]), "applied": {k: list(v) for k, v in p["applied"].items()},
                  "results": dict(p["results"]), "unverified": {k: list(v) for k, v in p["unverified"].items()},
+                 "pdfs": dict(p.get("pdfs", {})),
                  "left_untouched": [{"path": e["path"], "name": e.get("name") or Path(e["path"]).name,
                                      "why": e.get("why", WHY_REFUSED), "reason": e.get("reason", ""),
                                      "request": e.get("request", "")} for e in p["left_untouched"]],
@@ -1999,6 +2074,10 @@ class DocumentTask:
         if not isinstance(self.word_sources, list) or not all(isinstance(x, str) for x in self.word_sources):
             raise ValueError("The saved wording approvals could not be read.")
         self.results = data.get("results", {})
+        pdfs = data.get("pdfs", {})
+        # the last run's PDFs, while they are where they were saved (a journal from before Save clean PDFs has none)
+        self.pdfs = ({k: v for k, v in pdfs.items() if isinstance(k, str) and isinstance(v, str) and Path(v).is_file()}
+                     if isinstance(pdfs, dict) else {})
         working = data.get("working", {})
         unverified = data.get("unverified", {})
         # a mark belongs to a working copy (an earlier copy's, carried on) or to a result of the last run
