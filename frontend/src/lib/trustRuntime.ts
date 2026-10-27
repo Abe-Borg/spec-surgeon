@@ -209,7 +209,7 @@ export const RUNTIME_CARDS: RuntimeCard[] = [
       "file, a sample fails its check, or every sample is refused), the app asks Claude for a plan of outcomes on " +
       "its own, then offers it to you as one choice, Use these outcomes and continue, with every word it would place " +
       "beneath it; nothing is tried until you pick it. A file the plan " +
-      "refuses while the others plan does not start it, nor does a sample a later step of the plan refuses: that " +
+      "refuses while the others plan does not start it, at whichever step of a plan done in steps: that " +
       "file waits under Left untouched beside the preview of the others, and goes on your to-do list when you " +
       "create theirs. The documents you left out of the request stay out of the outcomes.",
     runs:

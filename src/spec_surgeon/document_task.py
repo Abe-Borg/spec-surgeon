@@ -1114,7 +1114,7 @@ class DocumentTask:
         self.save()
 
     def _refused_by_preview(self, preview, request: str) -> List[Dict[str, str]]:
-        """The documents a button's preview refused (the plan, or a later step on a sample), with their reasons:
+        """The documents a button's preview refused (the plan, at any of its steps), with their reasons:
         Create does not run them (``Session._without_refused``), so the run's own results never name them."""
         from .preview import refusals
         out: List[Dict[str, str]] = []
@@ -1781,7 +1781,7 @@ class DocumentTask:
 
     def _left_untouched(self, preview) -> List[Dict[str, str]]:
         """Left untouched beside a preview: the documents the user left out of the request (no plan covers them),
-        then those the preview refused (the plan, or a later step on a sample), each with its reason."""
+        then those the preview refused (the plan, at any of its steps), each with its reason."""
         if preview is None:
             return []
         from .preview import refusals

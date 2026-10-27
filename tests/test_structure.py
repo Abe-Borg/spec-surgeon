@@ -150,8 +150,9 @@ def test_table_textbox_drawing_and_revision_dispositions_keep_global_ordinals():
     assert all(r["disposition"] == "excluded" for r in result["paragraphs"][3:7])
     assert result["paragraphs"][4]["text"] == "A. Drawing host"
     assert result["paragraphs"][5]["text"] == "1. Textbox detail"
-    # The excluded heading/revision may have changed parent context: do not
-    # inherit the old article until a new explicit article establishes it.
+    # The excluded heading/revision (the wording inserted whole: with the change rejected the line is empty, another
+    # reading) may have changed parent context: do not inherit the old article until a new explicit article
+    # establishes it.
     assert result["paragraphs"][7]["disposition"] == "unresolved"
 
 
@@ -208,10 +209,10 @@ def test_numbering_after_a_pending_revision_cannot_claim_stable_addresses():
     for level, text in ((0, "GENERAL"), (1, "SUMMARY"), (2, "Inserted clause"), (2, "Later clause")):
         numbered(doc.add_paragraph(text), level)
     changed = doc.paragraphs[4]
-    ins = OxmlElement("w:ins")
-    ins.set(qn("w:id"), "8")
-    ins.append(changed.runs[0]._r)
-    changed._p.append(ins)
+    mark, ins = OxmlElement("w:rPr"), OxmlElement("w:ins")      # the paragraph mark itself is inserted: with the
+    ins.set(qn("w:id"), "8")                                     # change rejected the list is one item shorter
+    mark.append(ins)
+    changed._p.get_or_add_pPr().append(mark)
     rows = analyze_structure(package(doc))["paragraphs"]
     assert rows[4]["disposition"] == "excluded"
     assert rows[5]["disposition"] == "unresolved" and "earlier pending revisions" in rows[5]["reason"]
