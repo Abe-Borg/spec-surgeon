@@ -15,7 +15,11 @@ Grammar:
                   has_bold bool        (has a non-empty live run with effective bold on)
                   is_all_caps bool     (live display text is all uppercase letters or has w:caps on)
                   after_heading_regex "…" (comes after the first paragraph matching the regex)
-                  between_paragraphs {"start_regex": "…", "end_regex": "…", "include_bounds": bool | "start" | "end"}
+                  between_paragraphs {"start_regex": "…", "end_regex": "…", "include_bounds": bool | "start" | "end",
+                                      "every": bool}
+                                       (one stretch: from the first start match to the first end match after it, else
+                                        the end of the part; every: true — every stretch, from each start match to the
+                                        next paragraph matching end_regex or start_regex, else the end of the part)
 * ``runs``        "all" or a dict: has_direct_font bool | font_in [names] | not_in_revisions bool |
                   color_in [colours] (the run's EFFECTIVE colour — the nearest level setting w:color, set_properties'
                   rule — has one of the listed theme names or values: 6 hex digits or auto, case-insensitive)
@@ -125,13 +129,16 @@ def check_paragraph_selector(pred) -> None:
         bp = pred["between_paragraphs"]
         if not isinstance(bp, dict) or "start_regex" not in bp or not isinstance(bp["start_regex"], str):
             raise JobException("between_paragraphs must be an object with 'start_regex'", "bad-params")
-        extra = set(bp) - {"start_regex", "end_regex", "include_bounds"}
+        extra = set(bp) - {"start_regex", "end_regex", "include_bounds", "every"}
         if extra:
             raise JobException(f"unknown between_paragraphs key(s) {sorted(extra)}", "bad-params")
         bounds = bp.get("include_bounds", False)
         if not (isinstance(bounds, bool) or bounds in BOUNDS):
             raise JobException("between_paragraphs.include_bounds must be true, false, 'start' (the start paragraph "
                                "included, the end one not) or 'end'", "bad-params")
+        if "every" in bp and not isinstance(bp["every"], bool):
+            raise JobException("between_paragraphs.every must be true (every stretch, from each start match to the "
+                               "next start or end match) or false (the first stretch only)", "bad-params")
         try:
             _selector_regex(bp["start_regex"], pred)
             if bp.get("end_regex") is not None:
@@ -502,17 +509,28 @@ def paragraph_selected(pred, p: etree._Element, index: int, text: str, sheet: St
         starts = [i for i, t in enumerate(texts) if srx.search(t)]
         if not starts:
             return False
-        s_idx = starts[0]
-        e_idx = len(texts)
-        if bp.get("end_regex") is not None:
-            erx = _selector_regex(bp["end_regex"], pred)
-            ends = [i for i in range(s_idx + 1, len(texts)) if erx.search(texts[i])]
-            if ends:
-                e_idx = ends[0]
+        erx = _selector_regex(bp["end_regex"], pred) if bp.get("end_regex") is not None else None
+        if bp.get("every"):
+            # every stretch: from each start match to the next paragraph that matches end_regex or start_regex (the
+            # next article or the next PART), else the end of the part — "empty every article, keep the titles"
+            stops = [i for i, t in enumerate(texts) if srx.search(t) or (erx is not None and erx.search(t))]
+            stretches = [(s_idx, next((i for i in stops if i > s_idx), len(texts))) for s_idx in starts]
+        else:
+            s_idx = starts[0]
+            e_idx = len(texts)
+            if erx is not None:
+                ends = [i for i in range(s_idx + 1, len(texts)) if erx.search(texts[i])]
+                if ends:
+                    e_idx = ends[0]
+            stretches = [(s_idx, e_idx)]
         inc = bp.get("include_bounds", False)
-        after_start = s_idx <= index if inc in (True, "start") else s_idx < index
-        before_end = index <= min(e_idx, len(texts) - 1) if inc in (True, "end") else index < e_idx
-        if not (after_start and before_end):
+
+        def inside(s_idx: int, e_idx: int) -> bool:
+            after_start = s_idx <= index if inc in (True, "start") else s_idx < index
+            before_end = index <= min(e_idx, len(texts) - 1) if inc in (True, "end") else index < e_idx
+            return after_start and before_end
+
+        if not any(inside(s, e) for s, e in stretches):
             return False
     return True
 

@@ -205,9 +205,17 @@ def _paragraph_words(pred: Any) -> str:
     if isinstance(pred.get("between_paragraphs"), dict):
         bp = pred["between_paragraphs"]
         start, end, bounds = quote(bp.get("start_regex", "")), quote(bp.get("end_regex", "")), bp.get("include_bounds")
-        clauses.append(f"from {start} up to, not including, {end}" if bounds == "start" else
-                       f"after {start} through {end}" if bounds == "end" else
-                       f"between {start} and {end}" + (" inclusive" if bounds else ""))
+        if bp.get("every"):
+            # every stretch: each start match up to the next start or end match (the next article or PART)
+            nxt = f"the next {end} or {start}" if bp.get("end_regex") else f"the next {start}"
+            clauses.append(f"from each {start} up to, not including, {nxt}" if bounds == "start" else
+                           f"after each {start} through {nxt}" if bounds == "end" else
+                           f"from each {start} through {nxt}" if bounds else
+                           f"between each {start} and {nxt}")
+        else:
+            clauses.append(f"from {start} up to, not including, {end}" if bounds == "start" else
+                           f"after {start} through {end}" if bounds == "end" else
+                           f"between {start} and {end}" + (" inclusive" if bounds else ""))
     if not adjectives and not clauses:
         return "every paragraph"
     return noun + (" " + " ".join(clauses) if clauses else "")

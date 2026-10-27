@@ -412,9 +412,11 @@ dates, and holds the plan's diffs and accepted views to its own). `select.paragr
   (Word keeps a container's last paragraph mark).
 * **Numbering**: automatic list and heading numbers and footnote marks follow the new position (flagged); content
   controls (not data-bound), fields, comments and pending revisions move untracked as they are.
-* Known limit: `between_paragraphs` has no "start included, end excluded" form; an article (its heading through the
-  paragraph before the next heading) is `between_paragraphs` with `include_bounds` and a `text_regex` `^(?!<end>)`,
-  which `describe()` reads as "through the one before". Its bounds read the paragraph text without tabs.
+* `between_paragraphs` takes `include_bounds` "start" (an article from its heading up to, not including, the next)
+  and `every: true` (every such stretch, from each start match to the next start or end match: every article's body,
+  every PART 2 — a move needs one stretch, so it refuses the gap); the older idiom of `include_bounds` with a
+  `text_regex` `^(?!<end>)`, which `describe()` reads as "through the one before", still works. Its bounds read the
+  paragraph text without tabs.
 
 Tests: `tests/test_move_paragraphs.py` (fixtures `tests/fx_moving.py`, describe cases `tests/describe_cases/moving.py`).
 Still needs the owner's machine: a live request over real specifications, both modes, opened in Word (accept all,

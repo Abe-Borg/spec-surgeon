@@ -458,21 +458,40 @@ def para_matches(pred, p, bi: int, view: PartView, styles: Styles) -> bool:
             return False
     if "between_paragraphs" in pred:
         bp = pred["between_paragraphs"]
+        if "every" in bp and type(bp["every"]) is not bool:
+            raise ValueError("between_paragraphs.every must be a boolean")
         srx = _v_selector_regex(bp["start_regex"], pred)
         starts = [i for i, t in enumerate(view.texts) if srx.search(t)]
         if not starts:
             return False
-        s_idx = starts[0]
-        e_idx = len(view.texts)
-        if bp.get("end_regex") is not None:
-            erx = _v_selector_regex(bp["end_regex"], pred)
-            ends = [i for i in range(s_idx + 1, len(view.texts)) if erx.search(view.texts[i])]
-            if ends:
-                e_idx = ends[0]
+        n = len(view.texts)
+        erx = _v_selector_regex(bp["end_regex"], pred) if bp.get("end_regex") is not None else None
         bounds = bp.get("include_bounds", False)             # True (both), False (neither), "start" or "end"
-        lo = s_idx if bounds is True or bounds == "start" else s_idx + 1
-        hi = (e_idx + 1 if e_idx < len(view.texts) else len(view.texts)) if bounds is True or bounds == "end" else e_idx
-        if not lo <= bi < hi:
+        if bp.get("every") is True:
+            # every stretch: each start match up to the next start or end match, the last to the end of the part
+            pairs = []
+            for s_idx in starts:
+                e_idx = n
+                for i in range(s_idx + 1, n):
+                    if srx.search(view.texts[i]) or (erx is not None and erx.search(view.texts[i])):
+                        e_idx = i
+                        break
+                pairs.append((s_idx, e_idx))
+        else:
+            s_idx = starts[0]
+            e_idx = n
+            if erx is not None:
+                ends = [i for i in range(s_idx + 1, n) if erx.search(view.texts[i])]
+                if ends:
+                    e_idx = ends[0]
+            pairs = [(s_idx, e_idx)]
+        hit = False
+        for s_idx, e_idx in pairs:
+            lo = s_idx if bounds is True or bounds == "start" else s_idx + 1
+            hi = (e_idx + 1 if e_idx < n else n) if bounds is True or bounds == "end" else e_idx
+            if lo <= bi < hi:
+                hit = True
+        if not hit:
             return False
     return True
 
