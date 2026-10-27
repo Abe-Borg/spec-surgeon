@@ -127,7 +127,8 @@ class RecoveryResult:
     review: Any = None
     review_ack: str = ""                       # never serialized; acknowledgement is preview-specific
     token: str = ""
-    approval_version: int = 2                # source-content preview pins; a v1 checkpoint needs a new review
+    approval_version: int = 3                # v3: a global target bound once, by count (P5); older checkpoints need
+    #                                          a new review, as a v1 one did when v2 pinned source contents
     token_inputs: Dict[str, Any] = field(default_factory=dict)
     questions: List[str] = field(default_factory=list)
     notes: List[str] = field(default_factory=list)
@@ -147,6 +148,8 @@ class RecoveryResult:
     input_pins: Dict[str, str] = field(default_factory=dict)
     paused_reason: str = ""
     _reviews: Dict[str, Any] = field(default_factory=dict, repr=False)
+    _digests: Dict[str, Any] = field(default_factory=dict, repr=False)   # path → (size, mtime_ns, sha256); _sha_of
+    _token_basis: Any = field(default=None, repr=False)                  # what the token was last computed from
     recovery_id: str = field(default_factory=diag.new_id)
     _scheduler_context: Optional[Dict[str, Any]] = field(default=None, repr=False)
 
@@ -313,11 +316,11 @@ def _sha(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def _recovery_token(key, files):
+def _recovery_token(key, files, result=None):
     """Recovery may run for minutes: pin source contents as well as the normal preview metadata."""
     try:
         return _hash({"preview": approval_token(key, files),
-                      "contents": {str(p): _sha(p) for p in files}})
+                      "contents": {str(p): _sha_of(result, p) for p in files}})
     except OSError as exc:
         diag.event("recovery.identity.unavailable", level="warning", **diag.error_fields(exc))
         return ""
@@ -326,7 +329,7 @@ def _recovery_token(key, files):
 def _checkpoint_token_matches(result):
     """A checkpoint's token is the content-pinned preview digest; an older format's token never matches (it needs a
     new review)."""
-    if not result.token or result.approval_version != 2:
+    if not result.token or result.approval_version != 3:
         return False
     return _recovery_token(result.key, [f.source for f in result.files]) == result.token
 
@@ -527,11 +530,26 @@ def _save(result):
         _save_records(result)
 
 
+def _sha_of(result, path):
+    """``_sha(path)``, read again only when the file's size or mtime moved since this result last read it: a
+    checkpoint used to hash every pinned file three times over (the owner's 27-file run: 5–18 s each, P5)."""
+    if result is None:
+        return _sha(path)
+    path = Path(path)
+    st = path.stat()
+    known = result._digests.get(str(path))
+    if known is not None and known[0] == st.st_size and known[1] == st.st_mtime_ns:
+        return known[2]
+    digest = _sha(path)
+    result._digests[str(path)] = (st.st_size, st.st_mtime_ns, digest)
+    return digest
+
+
 def _save_records(result):
     result.out_dir.mkdir(parents=True, exist_ok=True)
     # Every checkpoint is independently reloadable, including a process exit between trials.
     # Original pins never move forward merely because a source changed during investigation.
-    result.approval_version = 2
+    result.approval_version = 3
     if result.input_pins:
         changed = _changed_pins(result)
         if changed:
@@ -539,8 +557,14 @@ def _save_records(result):
         else:
             result.key["prepared"] = _prepared(result.files)
             result.key["decisions"] = copy.deepcopy(result.decisions)
-            result.token = _recovery_token(result.key, [f.source for f in result.files])
-            result.token_inputs = approval_inputs(result.key, [f.source for f in result.files])
+            files = [f.source for f in result.files]
+            # The token and its inputs read every file and template: once per change of what they are made of.
+            basis = (_hash(result.key), tuple(sorted((p, *result._digests.get(p, (None,))[:2])
+                                                     for p in result.input_pins)))
+            if result._token_basis != basis or not result.token:
+                result.token = _recovery_token(result.key, files, result)
+                result.token_inputs = approval_inputs(result.key, files)
+                result._token_basis = basis if result.token else None
     atomic_json(result.out_dir / "recovery.json", result.to_dict())
     (result.out_dir / "RECOVERY_REPORT.md").write_text(result.to_text() + "\n\n" +
         "\n".join(f"Attempt {a['number']}: {a.get('reason', '')}\n{_json(a.get('results', []))}" for a in result.attempts),
@@ -567,7 +591,7 @@ def _changed_pins(result):
     changed = []
     for path, digest in result.input_pins.items():
         try:
-            if _sha(Path(path)) != digest:
+            if _sha_of(result, Path(path)) != digest:
                 changed.append(path)
         except OSError:
             changed.append(path)
@@ -665,8 +689,9 @@ def recover(files: Sequence[Path], request: str, out_dir: Path, *, spec=None, ch
         result.key["stages"] += [{"spec": {"ops": [{"op": "fill_variables", "params": {"table": {"file": str(p)}}}]}}
                                  for p in input_files]
         result.token_inputs = approval_inputs(result.key, files)
-        result.token = _recovery_token(result.key, files)
-        result.input_pins = {str(p): _sha(p) for p in dict.fromkeys([*files, *templates.values(), *input_files])}
+        result.token = _recovery_token(result.key, files, result)
+        result.input_pins = {str(p): _sha_of(result, p)
+                             for p in dict.fromkeys([*files, *templates.values(), *input_files])}
         sources = [request, *approved_words, *adaptive.approved_words(adaptive_contract),
                    *(w for s in _specs(goal) for w in compiler.placed_words(s))]
         failure_by_file = {str(Path(f["source"]).resolve()): f for f in prior_failures if isinstance(f, dict) and f.get("source")}
@@ -719,21 +744,26 @@ def recover(files: Sequence[Path], request: str, out_dir: Path, *, spec=None, ch
                 group = [f for f in result.files if str(f.source) in state["files"]]
                 local = {**context, "suppress_model_review": True, "preserve_applicability": True, "group_state": state}
                 if not goal and adaptive_contract is not None:
-                    # Try every easy document before asking a model to investigate hard ones.
+                    # Try every easy document before asking a model to investigate hard ones: the files whose
+                    # approved outcome compiles to the same method go through one trial, as a batch run does (P5:
+                    # the owner's 27 files went one trial each, one after the other).
+                    by_method: Dict[str, Any] = {}          # method id → (candidate, its files)
                     for file in group:
                         try:
                             plan = adaptive.replan(local, file)
                             if plan["status"] != "planned":
                                 continue
-                            state["used"] += 1
                             candidate = plan["candidate"]
                             state.setdefault("attempted", []).append(_hash([_strategy_id(candidate), [str(file.source)]]))
-                            _trial(local, [file], candidate, state["pattern_id"], state["code"],
-                                   "Deterministic approved-goal baseline", state.setdefault("latest", {}))
+                            by_method.setdefault(_strategy_id(candidate), (candidate, []))[1].append(file)
                         except Exception as exc:
                             file.reason = f"Initial method needs investigation: {type(exc).__name__}: {exc}"
                             result.session_state.setdefault("planning_failures", []).append({
                                 "source": str(file.source), "error": file.reason, "code": getattr(exc, "code", "planning")})
+                    for candidate, files_of_method in by_method.values():
+                        state["used"] += 1
+                        _trial(local, files_of_method, candidate, state["pattern_id"], state["code"],
+                               "Deterministic approved-goal baseline", state.setdefault("latest", {}))
                 else:
                     candidate = {"kind": "chain", "chain": goal} if "stages" in goal else {"kind": "spec", "spec": goal}
                     state["used"] += 1
@@ -973,7 +1003,6 @@ def _investigate(ctx, group, pid, code, failures, template, catalog, applicable)
                                           max_tokens=options.max_context_tokens,
                                           source_pins=scoped_pins, catalog_folder=result.out_dir / "context-catalog")
                 state["messages"] = messages
-                _save(result)
                 if ctx["client"] is None:
                     ctx["client"] = compiler._client()
                 resp = llm.call(ctx["client"], model=options.model or llm.DEFAULT_MODEL,
@@ -1019,7 +1048,6 @@ def _investigate(ctx, group, pid, code, failures, template, catalog, applicable)
             return
         state["non_action_turns"] = 0
         messages.append({"role": "assistant", "content": body})
-        _save(result)  # a process exit cannot lose the submitted tool calls
         answers, stop = [], False
         unsupported_files = None
         for call in uses:
@@ -1183,6 +1211,9 @@ def _investigate(ctx, group, pid, code, failures, template, catalog, applicable)
         elif unsupported_files:
             state["status"] = "unsupported"
         result.budget = ctx["budget"].to_dict()
+        # The turn's one checkpoint (P5): before the call, after the reply and after each trial there were three
+        # more, 5–18 s each over 27 files, and Stop waited for the one in flight. A process exit inside a turn
+        # costs that turn's model call again on resume, never a trial's delivered copy (attempts/ keeps them).
         _save(result)
         if stop or state.get("status") == "paused":
             return
@@ -1272,7 +1303,7 @@ def _trial(ctx, group, candidate, pid, code, reason, latest):
             renames = any(spec_renames_outputs(s) for s in _specs(chain))
             folder = result.out_dir / "attempts" / f"{n:03d}"
             ctx["log"](f"Trying repair {n} on {len(pending)} file(s)…")
-            run = run_chain([str(f.source) for f in pending], chain, folder, workers=1,
+            run = run_chain([str(f.source) for f in pending], chain, folder, workers=0,
                             renderer=options.renderer, do_render=options.render, in_place=False, progress=ctx["log"])
             by_source = {str(f.source): f for f in run.files}
             good = []
@@ -1309,7 +1340,6 @@ def _trial(ctx, group, candidate, pid, code, reason, latest):
     entry["results"] = [f.to_dict() for f in pending]
     _trial_outcomes(pending, n)
     _remember(ctx, group, candidate, pid, code, entry)
-    _save(result)
     return {**_trial_summary(entry), **_page(entry["results"], {}),
             "error": entry.get("error"), "visual_review": entry["visual_review"], "critic_review": entry.get("critic_review"),
             "remaining_attempts": ctx.get("group_state", {}).get("attempt_limit", options.max_attempts)
@@ -1600,7 +1630,6 @@ def _custom_trial(ctx, group, proposal, pid, code, latest):
     entry["results"] = [f.to_dict() for f in pending]
     _trial_outcomes(pending, n)
     _remember(ctx, group, entry["candidate"], pid, code, entry)
-    _save(result)
     return {**_trial_summary(entry), **_page(entry["results"], {}), "visual_review": entry["visual_review"]}
 
 
@@ -1626,7 +1655,7 @@ def load_recovery(run_dir: Path) -> RecoveryResult:
         raise ValueError("Unsupported recovery checkpoint format")
     result = RecoveryResult(folder, value["request"])
     result.approval_version = value.get("approval_version", 1)
-    if type(result.approval_version) is not int or result.approval_version not in (1, 2):
+    if type(result.approval_version) is not int or result.approval_version not in (1, 2, 3):
         raise ValueError("Unsupported recovery approval format")
     for name in ("recovery_id", "questions", "notes", "attempts", "transcript", "budget", "key", "token", "token_inputs",
                  "seconds", "session_state", "question_records", "decisions", "resource_history",

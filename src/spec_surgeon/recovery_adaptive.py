@@ -154,13 +154,19 @@ def _document_facts(file, result):
     from lxml import etree
     from .ooxml import paragraphs
     targets = ([bound["target"]] if bound and bound.get("target") else
-               [target for effect in (bound or {}).get("effects", {}).values() for target in effect.get("targets", [])])
+               [target for effect in (bound or {}).get("effects", {}).values()
+                for target in (effect.get("targets") if isinstance(effect.get("targets"), list) else [])])
+    effects = (contract_of(result) or {}).get("effects", [])
+    # A global effect is bound once, by count, naming no paragraph: its approved scope names the parts to show.
+    global_scopes = list(dict.fromkeys(scope for effect in effects if (effect.get("target") or {}).get("all") is True
+                                       for scope in (effect["target"].get("scope") or ["document"])))
     for key, path in (("source_xml_evidence", file.source), ("candidate_xml_evidence", file.output)):
         pkg = DocxPackage.from_path(path)
         try:
-            parts = list(dict.fromkeys([pkg.main_part(), *(target["part"] for target in targets)]))
-            if any(effect.get("type") in ("header_footer_template", "remove_header_footer")
-                   for effect in (contract_of(result) or {}).get("effects", [])):
+            kinds = pkg.parts_by_kind() if global_scopes else {}
+            parts = list(dict.fromkeys([pkg.main_part(), *(target["part"] for target in targets),
+                                        *(part for scope in global_scopes for part in kinds.get(scope, []))]))
+            if any(effect.get("type") in ("header_footer_template", "remove_header_footer") for effect in effects):
                 parts = list(dict.fromkeys([*parts, *pkg.text_parts()]))
             evidence = []
             for part in parts:
@@ -194,7 +200,7 @@ def critic_review(ctx, files, *, explicit=False):
         return None
     if not explicit and (not contract or contract.get("kind") != "document_effects" or not ctx["options"].critic_review):
         return None
-    from .recovery import _assert_adaptive, _hash, _save
+    from .recovery import _assert_adaptive, _hash
     for file in files:
         if file.output is None or hashlib.md5(file.output.read_bytes()).hexdigest() != file.output_md5:
             raise ValueError("The candidate changed before critic review")
@@ -210,7 +216,6 @@ def critic_review(ctx, files, *, explicit=False):
         evidence = {"approved_contract": contract, "user_decisions": ctx.get("decisions", []),
                     "documents": [_document_facts(file, result) for file in files]}
         record["evidence"] = evidence
-        _save(result)
         if ctx["client"] is None:
             from . import compiler
             ctx["client"] = compiler._client()
@@ -266,7 +271,7 @@ def custom_trial(ctx, group, proposal, pid, code, latest, *, remembered=None):
     """An independently supported outcome permits new methods without trusting their declarations."""
     from .codegen import GeneratedOp, generate_op, run_generated
     from .goals import validate_contract
-    from .recovery import _review, _remember, _save, _page, _trial_summary, _adaptive_evidence
+    from .recovery import _review, _remember, _page, _trial_summary, _adaptive_evidence
     from .sampling import representative_samples
     from . import repair_methods
     result, options = ctx["result"], ctx["options"]
@@ -319,7 +324,6 @@ def custom_trial(ctx, group, proposal, pid, code, latest, *, remembered=None):
                 max_context_tokens=options.max_context_tokens, analysis_limits=options.analysis_limits,
                 goal_contract=contract, goal_bindings=bindings, approved_words=ctx["sources"])
         entry["generated_attempts"], entry["codegen_transcript"] = generated.attempts, generated.transcript
-        _save(result)
         good = []
         if generated.passed:
             try:
@@ -364,7 +368,6 @@ def custom_trial(ctx, group, proposal, pid, code, latest, *, remembered=None):
     finally:
         entry["results"] = [f.to_dict() for f in pending]
         _remember(ctx, group, entry["candidate"], pid, code, entry)
-        _save(result)
     return {**_trial_summary(entry), **_page(entry["results"], {}),
             "critic_review": entry.get("critic_review"), "error": entry.get("error"),
             "visual_review": entry["visual_review"]}

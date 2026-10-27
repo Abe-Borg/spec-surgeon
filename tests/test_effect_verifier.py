@@ -176,13 +176,20 @@ def test_content_effects_preserve_nontext_envelope_and_reject_empty_revision_noi
     rejects(source, mutate(output, change), goal, binding)
 
 
-@pytest.mark.parametrize("damage", ["all_subset", "bool_is_int", "matched_locators", "unique_subset", "source", "contract"])
+@pytest.mark.parametrize("damage", ["all_count", "all_subset", "all_listed", "bool_is_int", "matched_locators",
+                                    "unique_subset", "source", "contract"])
 def test_target_evidence_cannot_be_forged_or_narrow_a_global_request(compound, damage):
     source, output, goal, binding = compound
     bad = copy.deepcopy(binding)
-    if damage == "all_subset":
-        bad["effects"]["font"]["targets"].pop()
-        bad["effects"]["font"]["choice"] = "user"
+    assert binding["effects"]["font"] == {"targets": "all", "choice": "unique",
+                                         "source_count": binding["effects"]["font"]["source_count"]}   # once, by count
+    if damage == "all_count":
+        bad["effects"]["font"]["source_count"] -= 1
+    elif damage == "all_subset":
+        bad["effects"]["font"] = {"targets": [], "choice": "user"}
+    elif damage == "all_listed":          # a paragraph list is no global binding, however many it names
+        bad["effects"]["font"] = {"targets": [copy.deepcopy(binding["effects"]["title"]["targets"][0])],
+                                  "choice": "unique"}
     elif damage == "bool_is_int":
         bad["effects"]["title"]["targets"][0]["in_table"] = 1
     elif damage == "matched_locators":

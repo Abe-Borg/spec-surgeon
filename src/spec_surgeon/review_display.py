@@ -216,6 +216,9 @@ def targets(review):
         for ident, effect in groups.items():
             bound = binding.get("effects", {}).get(ident, binding if "effects" not in resolution else {})
             chosen = bound.get("targets", effect.get("candidates", []))
+            if chosen == "all":
+                details.append(f"every paragraph in scope ({bound.get('source_count', 0)} passage(s))")
+                continue
             details.append(f"{len(chosen)} passage(s)" if chosen else str(effect.get("reason", "Whole-document change")))
             for target in chosen:
                 location = readable(target.get("scope", "document"))

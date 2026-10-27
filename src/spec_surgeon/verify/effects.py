@@ -431,17 +431,26 @@ def _bound_targets(source, roots, styles, contract, binding, source_hash):
         targets = [] if effect["type"] in PACKAGE_EFFECTS else _resolve(
             source, roots, styles, effect["target"], source_hash)
         entry = binding["effects"][effect["id"]]
-        entry_keys = {"targets", "choice", "source_count"} if effect["type"] in OPERATION_EFFECTS else {"targets", "choice"}
+        target = effect.get("target", {})
+        # A global target is bound once, by count: its entry names no paragraph, and this side resolves them all.
+        counted = effect["type"] in OPERATION_EFFECTS or (target.get("all") is True and isinstance(entry, dict)
+                                                          and entry.get("targets") == "all")
+        entry_keys = {"targets", "choice", "source_count"} if counted else {"targets", "choice"}
         if not isinstance(entry, dict) or set(entry) != entry_keys or entry.get("choice") not in ("unique", "user"):
             raise ValueError("invalid effect binding")
-        if effect["type"] in OPERATION_EFFECTS and (type(entry["source_count"]) is not int or entry["source_count"] < 0):
-            raise ValueError("operation binding needs a nonnegative source_count")
+        if counted and (type(entry["source_count"]) is not int or entry["source_count"] < 0):
+            raise ValueError("a counted binding needs a nonnegative source_count")
         selected = entry["targets"]
-        target = effect.get("target", {})
         if not target and entry["choice"] != "unique":
             raise ValueError("package effects require a unique empty target binding")
         cardinality = target.get("cardinality", "all" if target.get("all") is True else 1) if target else 0
         count = len(targets) if cardinality == "all" else cardinality
+        if selected == "all":
+            if entry["choice"] != "unique" or entry["source_count"] != len(targets) or len(targets) != count:
+                raise ValueError(f"{effect['id']}: the global binding's count differs from the independently resolved "
+                                 "source paragraphs")
+            resolved[effect["id"]] = list(targets)
+            continue
         empty_global_format = effect["type"] == "format" and target.get("all") is True
         if (not isinstance(selected, list) or len(selected) != count or (target and not selected and not empty_global_format)
                 or len({_hash_json(c) for c in selected}) != len(selected)):

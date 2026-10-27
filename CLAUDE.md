@@ -123,7 +123,7 @@ jobs). Details: `docs/CONVERSATIONAL_DESKTOP.md`.
     it changes speed and price (`FAST_PRICES`), never the model, effort or prompt; a fast call the fast capacity
     cannot take is re-sent at standard speed. `compiler.compose_submission` is the one gate a submission passes.
   - `preview.py`, `codegen.py` + `sandbox_runner.py` (custom transforms), `goals.py`, `goal_contracts.py`,
-    `goal_operations.py` (reviewed outcome contracts), `recovery*.py`, `continuous_recovery.py`, `campaign_planner.py`
+    `goal_operations.py` (reviewed outcome contracts; a target with `all: true` is bound once, by count), `recovery*.py` (one checkpoint per model call, at the turn's end), `continuous_recovery.py`, `campaign_planner.py`
     (bounded investigation of set-aside files: the outcome plan is a choice the user picks, its words beneath it —
     `Session.outcome` auto-takes a custom transform only — and the documents the user left out of the request stay
     out of it, `Conversation.left_out`), `inventory.py` (the content digest that pins a file).
