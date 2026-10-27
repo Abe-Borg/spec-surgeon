@@ -20,7 +20,7 @@ interface Props {
  * "Find and replace, occurrence by occurrence": every occurrence the waiting plan found, per document — every
  * document of the plan, not the sampled ones only — each with a checkbox. Unticked, an occurrence is left as it is;
  * Update the preview makes the plan and pages again with the unticked ones left out, and the one button waits until
- * then. A document the plan set aside lists what was found up to the refusal, so the occurrence the reason names can
+ * then. A document the plan set aside lists every occurrence found, so the occurrence the reason names can
  * be unticked and the document then plans.
  */
 export default function OccurrencesCard({ docs, unticks, canUntick, pending, onToggle, onUpdate }: Props) {

@@ -136,7 +136,8 @@ Rules the page relies on:
   `before`/`match`/`after` the words around it, whitespace collapsed; none of these is verified, the occurrence's
   place is. `key` is what the page sends back as `skip` (below); the server resolves it from its own record, never
   from the page's numbers. A document with `status` `refused` is one the plan set aside (its `reason` as under Left
-  untouched); its items are what the op listed up to the refusal, the refused occurrence included, so the user can
+  untouched); its items are every occurrence the op listed (a refusal waits until the whole document is listed), the
+  refused one included, so the user can
   untick the one the reason names and the document then plans. A plan done in steps lists its first step's only. An
   older server sends no `occurrences`.
 - `samples` are the pages of the plan waiting for the user (stages `preview` and `question`), less any document

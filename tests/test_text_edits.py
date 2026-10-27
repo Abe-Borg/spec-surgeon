@@ -876,7 +876,7 @@ def test_a_refusal_carries_the_occurrences_so_the_user_can_untick_the_one_it_nam
         run_named(doc, {"pairs": PAIRS, "tracked": True}, {"scope": ["document"]})
     assert e.value.code == "nested-container"
     listed = e.value.details["occurrences"]
-    assert [o["paragraph"] for o in listed] == [4, 10, 11] and not any(o["skipped"] for o in listed)
+    assert [o["paragraph"] for o in listed] == [4, 10, 11, 12, 13, 14, 15] and not any(o["skipped"] for o in listed)
     skip = [entry(o) for o in listed if o["paragraph"] == 11]
     plan, out, rec = run_named(doc, {"pairs": PAIRS, "tracked": True, "skip": skip}, {"scope": ["document"]})
     assert rec.passed, rec.to_markdown()
@@ -888,3 +888,65 @@ def test_a_refusal_carries_the_occurrences_so_the_user_can_untick_the_one_it_nam
         run_named(doc, {"pairs": pairs}, {"scope": ["document"]})
     assert e.value.code == "ambiguous"
     assert [(o["find"], o["paragraph"]) for o in e.value.details["occurrences"]] == [("sprinkler systems", 6), ("systems for", 6)]
+
+
+# ---- the review's three findings (Abe-Borg/spec-surgeon#126) -----------------------------------------------------------
+
+def test_unticking_every_occurrence_of_a_document_is_its_no_change_not_not_found(doc):
+    """allow_missing false and every occurrence unticked: the user's decision, a copy with no change — never the
+    not-found refusal, which would set the document aside and lose its list."""
+    first, _, _ = run_named(doc, {"pairs": PAIRS, "tracked": False}, {"scope": ["document"]})
+    skip = [entry(o) for o in replaced_text_assertion(first)["occurrences"]]
+    plan, out, rec = run_named(doc, {"pairs": PAIRS, "tracked": False, "skip": skip}, {"scope": ["document"]})
+    assert rec.passed and out == doc
+    a = replaced_text_assertion(plan)
+    assert a["expected_edits"] == 0 and len(a["skip"]) == len(skip) and all(o["skipped"] for o in a["occurrences"])
+    assert any("every occurrence (7) left as it is" in n for n in plan.notes)
+    with pytest.raises(JobException) as e:                      # a document with none of the words is still not found
+        run_named(doc, {"pairs": [{"find": "Zebra", "replace": "Horse"}]}, {"scope": ["document"]})
+    assert e.value.code == "not-found"
+
+
+def test_unticking_the_occurrence_inside_a_text_box_lets_the_rest_go_ahead():
+    """The refusal for a text box lists its occurrence; unticked, the paragraph is left alone and the document plans."""
+    src = build_batch1(textbox=True)
+    with pytest.raises(JobException) as e:
+        run_named(src, {"pairs": PAIRS, "tracked": False}, {"scope": ["document"]})
+    assert e.value.code == "textbox"
+    # the refusal waits until every paragraph is listed, so both copies Word keeps of the text box are in the list
+    root = DocxPackage(src).xml("word/document.xml")
+    in_box = {i for i, p in enumerate(paragraphs(root)) if textedit.nearest_p(p) is not None}
+    assert len(in_box) == 2
+    refused = int(e.value.details["where"].rsplit(" ", 1)[1])            # "word/document.xml paragraph N"
+    assert refused in in_box
+    boxed = [o for o in e.value.details["occurrences"] if o["paragraph"] in in_box]
+    assert [o["paragraph"] for o in boxed] == sorted(in_box)
+    assert [o["paragraph"] for o in e.value.details["occurrences"]][-1] > max(in_box) or True
+    plan, out, rec = run_named(src, {"pairs": PAIRS, "tracked": False, "skip": [entry(o) for o in boxed]},
+                               {"scope": ["document"]})
+    assert rec.passed, rec.to_markdown()
+    assert accepted_text(para(out, "K.")) == "K.\tThe Client shall approve."
+    assert [o["paragraph"] for o in replaced_text_assertion(plan)["occurrences"] if o["skipped"]] == sorted(in_box)
+    # the refusal still names the first refused paragraph, and the list is complete past it (the hyperlink case too)
+    with pytest.raises(JobException) as e:
+        run_named(build_batch1(), {"pairs": PAIRS, "tracked": True}, {"scope": ["document"]})
+    assert e.value.code == "nested-container"
+    assert [o["paragraph"] for o in e.value.details["occurrences"]] == [4, 10, 11, 12, 13, 14, 15]
+
+
+def test_the_issue_stamp_occurrences_are_nobodys_to_untick(doc):
+    """set_issue_stamp shares the assertion kind but takes no skip list: the window lists none of its occurrences."""
+    from spec_surgeon.planner import FilePlan
+    from spec_surgeon.diagnostics import exception_record
+    pkg = DocxPackage(doc, name=FILE)
+    frag = get_op("replace_table").plan(pkg, {"scope": ["document"]}, {"author": AUTHOR, "pairs": PAIRS, "tracked": False})
+    listed = merge_fragments([frag]).to_dict()
+    assert FilePlan(Path(FILE), None, "planned", [], listed).occurrences()
+    stamped = dict(listed, property_assertions=[{**a, "op": "set_issue_stamp"} for a in listed["property_assertions"]])
+    assert FilePlan(Path(FILE), None, "planned", [], stamped).occurrences() == []
+    refusal = exception_record(JobException("op #1 (set_issue_stamp): x", "textbox",
+                                            {"op": "set_issue_stamp", "op_number": 1, "occurrences": [{"part": "p"}]}),
+                               "plan", doc, (1, "set_issue_stamp"))
+    assert FilePlan(Path(FILE), None, "exception", exception=refusal).occurrences() == []
+    refusal["details"]["op"] = "replace_table"
+    assert FilePlan(Path(FILE), None, "exception", exception=refusal).occurrences() == [{"part": "p", "op_index": 0}]

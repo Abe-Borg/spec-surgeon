@@ -177,7 +177,7 @@ export interface OccurrenceItem {
 export interface OccurrenceDoc {
   source: string;
   name: string;
-  /** `refused`: the plan set the document aside; its items are what was found up to the refusal. */
+  /** `refused`: the plan set the document aside; its items are every occurrence found, the refused one included. */
   status: "planned" | "refused";
   reason: string;
   items: OccurrenceItem[];

@@ -406,7 +406,8 @@ and the preview is made again with them left out; **Create edited copies** waits
 preview's. The checker re-finds every occurrence on its own, confirms each unticked one is untouched and every other
 one replaced, and each copy's record and the batch report list them all (the occurrence log). A document the plan set
 aside — two pairs overlapping on the same words, an occurrence inside a hyperlink that a tracked change cannot take —
-lists what was found up to the refusal too, so the occurrence its reason names can be unticked and the document then
+lists every occurrence found too (the refusal waits until the whole document is listed, so both copies Word
+keeps of a text box are there), so the occurrence its reason names can be unticked and the document then
 plans with the others. A plan done in steps lists its first step's occurrences only. The ticks belong to the plan on
 screen; a new plan starts them over.
 

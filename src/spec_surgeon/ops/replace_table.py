@@ -259,6 +259,7 @@ class _Replacing(Op):
         where_of = {part: WHERE_WORDS.get(kind, kind) for kind, names in kinds.items() for part in names}
         main = pkg.main_part()
         labels: Optional[Dict[int, str]] = None
+        pending: Optional[JobException] = None     # the first paragraph's refusal, raised once every one is listed
         try:
             for part in parts:
                 root = pkg.xml(part)
@@ -269,11 +270,17 @@ class _Replacing(Op):
                         continue
                     where = f"{part} paragraph {bi}"
                     rt = RunText(p)
-                    hits = all_hits(rt.text, pairs, compiled, where)
+                    try:
+                        hits = all_hits(rt.text, pairs, compiled, where)
+                    except JobException as e:
+                        pending = pending or e
+                        continue
                     if not hits:
                         continue
-                    # the paragraph's occurrences are listed before anything about it can refuse: a refusal carries
-                    # the list (``details["occurrences"]``), so the user can untick the occurrence it names
+                    # the paragraph's occurrences are listed before anything about it can refuse, and a refusal
+                    # waits until every paragraph is listed: the refusal carries the whole list
+                    # (``details["occurrences"]``), so the user can untick the occurrence it names — and the others
+                    # of its kind (a text box Word stores twice) in the same round
                     here = {(a, b, f) for pt, pi, a, b, f in mine if pt == part and pi == bi}
                     if part == main and labels is None:
                         labels = article_labels(pkg)
@@ -290,22 +297,28 @@ class _Replacing(Op):
                             "heading": (labels or {}).get(bi, "") if part == main else "",
                             "before": shown(rt.text[max(0, a - CONTEXT_CHARS):a]), "match": shown(rt.text[a:b]),
                             "after": shown(rt.text[b:b + CONTEXT_CHARS]), "skipped": skipped})
-                    if nearest_p(p) is not None:
-                        raise JobException(f"{where} is inside a text box (Word keeps two copies of it); not changed",
-                                           "textbox", {"where": where, "text": shown(rt.text)})
-                    found = find_all(rt.text, pairs, compiled, where, skipped=here)
-                    if not found:
+                    try:
+                        found = find_all(rt.text, pairs, compiled, where, skipped=here)
+                        if not found:
+                            continue                            # every hit unticked: nothing to change here
+                        if nearest_p(p) is not None:
+                            raise JobException(f"{where} is inside a text box (Word keeps two copies of it); not "
+                                               f"changed", "textbox", {"where": where, "text": shown(rt.text)})
+                        edits = [Edit(a, b, pairs[k]["replace"]) for a, b, k in found]
+                        done = plan_paragraph(frag, part, bi, p, edits, tracked, in_field, where)
+                    except JobException as e:
+                        pending = pending or e
                         continue
-                    edits = [Edit(a, b, pairs[k]["replace"]) for a, b, k in found]
-                    done = plan_paragraph(frag, part, bi, p, edits, tracked, in_field, where)
                     if done:
                         data.setdefault(part, {})[str(bi)] = edits_to_data(done)
                         total += len(done)
                         for a, b, k in found:
                             per_pair[k] += 1
+            if pending is not None:
+                raise pending
         except JobException as e:
             if isinstance(e.details, dict) and occurrences:
-                e.details["occurrences"] = occurrences   # what was listed up to the refusal, the refused one included
+                e.details["occurrences"] = occurrences   # every occurrence listed, the refused one included
             raise
         unmatched = sorted(set(mine) - honoured)
         if unmatched:
@@ -321,6 +334,12 @@ class _Replacing(Op):
                      "skip": [[mine[x], *x] for x in sorted(honoured)], "occurrences": occurrences}
         frag.property_assertions.append(assertion)
         if total == 0:
+            if honoured:
+                # every occurrence found was unticked by the user: their decision, a copy with no change (ticking one
+                # back is the next preview's), never a file with nothing to find
+                frag.notes.append(f"{self.name}: every occurrence ({len(honoured)}) left as it is at the user's word "
+                                  f"(unticked in the preview); no change.")
+                return frag
             if params.get("allow_missing"):
                 frag.notes.append(f"{self.name}: nothing to replace in {scope}; no change.")
                 return frag

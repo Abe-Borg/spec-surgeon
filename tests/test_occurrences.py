@@ -1,6 +1,6 @@
 """Find and replace, occurrence by occurrence (backlog F1): the waiting plan lists every occurrence per document, the
 user's unticks go into the previewed spec through the gate, the preview is made again, and the copies leave them as
-they are. A refused document lists what was found up to the refusal, so the occurrence the refusal names can be
+they are. A refused document lists every occurrence found, so the occurrence the refusal names can be
 unticked and the document then plans."""
 from __future__ import annotations
 
@@ -140,7 +140,7 @@ def test_a_refused_document_lists_its_occurrences_and_unticking_the_named_one_le
     docs = {d["name"]: d for d in view["occurrences"]}
     a = docs["A.docx"]
     assert a["status"] == "refused" and a["reason"]
-    assert [i["paragraph"] for i in a["items"]] == [4, 10, 11]           # up to the refusal, the refused one included
+    assert [i["paragraph"] for i in a["items"]] == [4, 10, 11, 12, 13, 14, 15]   # the whole list, the refused one included
     assert docs["B.docx"]["status"] == "planned"
     h = next(i for i in a["items"] if i["paragraph"] == 11)
     view = task.perform("occurrences", skip=[h["key"]])

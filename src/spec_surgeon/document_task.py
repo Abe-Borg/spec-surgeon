@@ -1130,7 +1130,7 @@ class DocumentTask:
     def _occurrences_view(self, preview) -> List[Dict[str, Any]]:
         """The find-and-replace occurrences the waiting plan lists (backlog F1), per document of the plan — every
         planned document, not the sampled ones only — each item with the key the page sends back to leave it as it
-        is. A document the plan refused lists what was found up to the refusal, with the reason, so the user can
+        is. A document the plan refused lists every occurrence found, with the reason, so the user can
         untick the occurrence the refusal names. Empty when no plan lists any. A plan done in steps lists its first
         step's only."""
         from .compiler import skip_record_key
