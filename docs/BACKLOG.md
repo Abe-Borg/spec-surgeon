@@ -69,7 +69,10 @@ specifications, Windows and Word, and only the owner can do them. Record what a 
   is still in its run folder), and Undo after a restart.
 - **Default mode:** a choice's drafted wording edited before it is picked, and the copy carrying the edit.
 - **Obliterate:** a request Default refuses (a text box, Claude's own wording), with Word; a copy marked UNVERIFIED
-  opened in Word.
+  opened in Word. A request that needs a custom method using an attached file (a logo from an attached picture, a
+  template's text box): its failed checks going back to the writer, any it keeps shown with its reason beside the
+  copy, and the copy opened in Word.
+- **The chat streaming its words:** a question's or a plan's message appearing in the window as Claude writes it.
 - **The Division 21 batch again**, with its header/footer template: before anything runs the assistant names 21 05
   53's footer title and the stale Properties titles; a footer-only rename says the first page still reads the old
   title; "capitals like the others" is one plan with one sentence; "set every file's title to its own section" fixes

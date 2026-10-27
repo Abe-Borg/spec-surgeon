@@ -356,12 +356,20 @@ function Dossier() {
               "Turning plain English into a plan of operations takes judgment; the plan is then checked by code.",
             ],
             [
-              "The visual check, a custom method",
+              "The visual check",
               <>
-                {MODEL_NAME}, at the conversation’s {F.conversationEffort} effort (they run inside the turn that started
-                them)
+                {MODEL_NAME}, at the conversation’s {F.conversationEffort} effort (it runs inside the turn that started
+                it)
               </>,
-              "Looking at pages, writing a small formatting program.",
+              "Looking at pages.",
+            ],
+            [
+              "Writing a custom method",
+              <>
+                {MODEL_NAME}, {F.codegenEffort} effort while it writes the method, here or in recovery; the calls
+                after it go back to their own effort
+              </>,
+              "The one place Claude writes the code that edits your documents: it gets the most thought.",
             ],
             [
               "An outcome plan, and recovery of copies that failed",
@@ -402,7 +410,9 @@ function Dossier() {
         <P>
           In plain words: Claude thinks before it answers (its thinking summary is shown while it works), at the
           reasoning depth called “effort”. It may write at most {grouped(F.maxOutputTokens)} tokens of output per call (a
-          token is about three-quarters of a word). The app sends no temperature (randomness) setting, so the model’s defaults apply. The instructions and the operation
+          token is about three-quarters of a word). Claude’s message to you in a question or a plan reaches the window
+          as it is written; the app checks that what arrived is complete before acting on it, and asks again when it
+          is not. The app sends no temperature (randomness) setting, so the model’s defaults apply. The instructions and the operation
           catalog are cached by Anthropic for an hour, and the growing conversation for the default five minutes, so a
           follow-up reads them instead of paying full price again.
         </P>

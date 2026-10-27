@@ -87,15 +87,15 @@ def _guarded_import(allowed):
     return imp
 
 
-def load_op_class(source: str, goal_contract=None):
+def load_op_class(source: str, goal_contract=None, unguarded: bool = False):
     from .codegen import ALLOWED_IMPORT, allowed_imports, check_source
     from .ops.base import Op
-    problems = check_source(source, goal_contract=goal_contract)
+    problems = check_source(source, goal_contract=goal_contract, unguarded=unguarded)
     if problems:
         raise ValueError("source rejected: " + "; ".join(problems))
     safe = {k: getattr(builtins, k) for k in SAFE_BUILTINS if hasattr(builtins, k)}
     safe["__build_class__"] = builtins.__build_class__
-    safe["__import__"] = _guarded_import(tuple(set(allowed_imports(goal_contract)) | ALLOWED_IMPORT))
+    safe["__import__"] = _guarded_import(tuple(set(allowed_imports(goal_contract, unguarded)) | ALLOWED_IMPORT))
     ns = {"__builtins__": safe, "__name__": "generated_op"}
     exec(compile(source, "generated_op.py", "exec"), ns)
     classes = [v for v in ns.values() if isinstance(v, type) and issubclass(v, Op) and v is not Op]
@@ -121,7 +121,9 @@ def main(argv=None) -> int:
         sys.stdout = BoundedText(sys.stdout, limits["log_bytes"])
         sys.stderr = BoundedText(sys.stderr, limits["log_bytes"])
         install_guard(out_dir)                  # before a single line of the generated code runs
-        cls = load_op_class(req["source"], req.get("goal_contract"))
+        # an Obliterate method (``unguarded``) has the governed helpers; never on a governed path
+        cls = load_op_class(req["source"], req.get("goal_contract"),
+                            req.get("unguarded") is True and req.get("goal_contract") is None)
         op = cls()
         pkg = DocxPackage(Path(req["docx"]).read_bytes(), name=Path(req["docx"]).name)
         from types import MappingProxyType
@@ -139,6 +141,7 @@ def main(argv=None) -> int:
         import copy
         pkg.goal = copy.deepcopy(req.get("goal_contract"))
         pkg.binding = copy.deepcopy(req.get("goal_binding"))
+        pkg.author = req.get("author")         # an Obliterate method's tracked changes carry it
         frag = op.plan(pkg, req.get("select") or {}, req.get("params") or {})
         frag.op = frag.op or getattr(cls, "name", "generated")
         plan = merge_fragments([frag], job=f"generated:{getattr(cls, 'name', 'op')}", params=req.get("params") or {})
@@ -146,6 +149,7 @@ def main(argv=None) -> int:
         work.inputs = pkg.inputs
         work.goal = copy.deepcopy(req.get("goal_contract"))
         work.binding = copy.deepcopy(req.get("goal_binding"))
+        work.author = req.get("author")
         op.apply(work, frag)
         output = work.output_bytes()
         if len(output) > limits["output_bytes"]:

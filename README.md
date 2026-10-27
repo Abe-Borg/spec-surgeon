@@ -186,8 +186,10 @@ mode you last used (Safe the first time; never Obliterate).
 - **Obliterate — the conversation without guardrails (hidden).** Off the switch until Settings → **Advanced** →
   *Show Obliterate mode* is on, and chosen only after its warning, every time (tick *I understand*, then **Turn on
   Obliterate**). What you control: Claude may write wording itself (it is in the plan you approve); when no operation
-  fits, Claude may write a custom method that changes anything Word stores, not only formatting; and a copy that fails
-  a check is delivered anyway, marked **UNVERIFIED** with the checks it failed, instead of being held back. What it
+  fits, Claude may write a custom method that changes anything Word stores, not only formatting, and may use the
+  template, pictures and tables you attached (a check the method fails goes back to Claude first, to fix or to keep
+  with a reason you read beside the copy); and a copy that fails a check is delivered anyway, marked **UNVERIFIED**
+  with the checks it failed, instead of being held back. What it
   costs: no proof that the rest of the file is untouched, content can be lost or invented without a refusal, a copy
   may need Word's repair, results can differ from run to run, and more AI spending. What still holds: copies only
   (your originals are never written), a source that changed is never delivered over, the custom method's sandbox, and
@@ -210,11 +212,13 @@ insert, a schedule to place as a table, or a spreadsheet of project values to fi
 beside your documents is ever looked for.
 
 For Default mode, connect an Anthropic API key once in **Settings**. There is no spending limit: every AI step runs Claude Opus 5.5
-with room for its full 128,000-token answer (the conversation, and the visual check and custom methods it runs inside
-a turn, at medium effort; the outcome planning when no ordinary plan fits (no operation for the request, a plan that
+with room for its full 128,000-token answer (the conversation, and the visual check it runs inside a turn, at medium
+effort; writing a custom method, here or in recovery, at extra-high (`xhigh`), after which the next call goes back to
+its own effort; the outcome planning when no ordinary plan fits (no operation for the request, a plan that
 covers no file, a sample that fails its check, or a preview whose every sample is refused), and recovery, at high;
 no step at max; every operation's settings ride the cached prompt, so a plan is one or two calls; that prompt is cached for an
-hour, so a follow-up request reads it instead of paying for it again). Instead, the
+hour, so a follow-up request reads it instead of paying for it again). While Claude asks you something or writes a
+plan, its words reach the chat as they are written. Instead, the
 header shows the estimated spending as it accrues, **Stop now** cuts off the AI step that is running at once, and
 work pauses after every 48 AI steps until you press **Continue**, which picks the conversation up where it stopped. A call that fails for a
 passing reason (an overloaded service, a dropped connection) is sent again automatically. Every request needs

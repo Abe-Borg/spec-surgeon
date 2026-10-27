@@ -46,7 +46,10 @@ embedded objects, data-bound content controls and the theme.
 Every invariant binds **Safe** and **Default**. **Obliterate** (`Session.unguarded`)
 is the owner's decision to lift, for that mode only, the guardrails that protect a document's content: the placed-words
 trace (invariant 6: `compose_submission(unguarded=)` skips `_content_checks`, Claude may write wording and must show it
-in the plan), a custom method's formatting-only limits (`codegen` skips `hard_limits`; `UNGUARDED_LIMITS`), and the
+in the plan; `compiler.UNGUARDED_RULES` rewrites the prompt's rules it lifts), a custom method's formatting-only limits
+(`codegen` skips `hard_limits`; `UNGUARDED_LIMITS`; the writer gets the `GOAL_FROM` helpers and the user's attachments
+as `pkg.inputs`, pinned in `GeneratedOp.attachments`, and its failed checks go back to it `UNGUARDED_CHECK_ROUNDS`
+times, to fix or to keep with a reason in `GeneratedOp.accepted_failures`), and the
 holding back of a copy that fails a check (`deliver_unverified`: delivered to `outputs/` marked UNVERIFIED, its
 failed checks in `FileResult.unverified`/`ChainFile.unverified`, no recovery). The verifier still runs on every copy
 and reports; invariants 1, 2, 3, 4, 5 (built-in ops still refuse what they cannot predict; Obliterate's way past a
@@ -104,11 +107,14 @@ jobs). Details: `docs/CONVERSATIONAL_DESKTOP.md`.
   - `compiler.py`, `conversation.py`, `llm.py`, `vision.py` — request → EditSpec. `llm.call` is the one call site: the
     system prompt carries its own 1-hour cache breakpoint, the history the automatic 5-minute one, and a `one_shot`
     call caches nothing after the system prompt; keep system prompts and tools byte-stable. No call runs at effort
-    `max` (the owner's decision, 2026-10-22): `resources.EFFORTS` refuses it, the window's chat runs at medium and
-    every other call at high. Fast mode (`speed="fast"`, Settings → Fast responses, `llm.set_fast_mode`) is the
-    user's choice, off by default: it changes speed and price (`FAST_PRICES`), never the model, effort or prompt; a
-    fast call the fast capacity cannot take is re-sent at standard speed. `compiler.compose_submission` is the one
-    gate a submission passes.
+    `max` (the owner's decision, 2026-10-22): `resources.EFFORTS` refuses it. The window's chat and its visual check
+    run at medium, outcome planning and recovery at high, and the custom-method writer at `xhigh`
+    (`resources.CODEGEN_EFFORT`, 2026-10-26: `generate_op` enters `llm.effort_scope`, after which calls are back at
+    their own effort). The chat's `ask_user` and `submit_editspec` stream their input unbuffered
+    (`compiler.STREAMED_TOOLS`, `eager_input_streaming`); `llm` checks it and re-sends a call whose input is broken.
+    Fast mode (`speed="fast"`, Settings → Fast responses, `llm.set_fast_mode`) is the user's choice, off by default:
+    it changes speed and price (`FAST_PRICES`), never the model, effort or prompt; a fast call the fast capacity
+    cannot take is re-sent at standard speed. `compiler.compose_submission` is the one gate a submission passes.
   - `preview.py`, `codegen.py` + `sandbox_runner.py` (custom transforms), `goals.py`, `goal_contracts.py`,
     `goal_operations.py` (reviewed outcome contracts), `recovery*.py`, `continuous_recovery.py`, `campaign_planner.py`
     (bounded investigation of set-aside files), `inventory.py` (the content digest that pins a file).

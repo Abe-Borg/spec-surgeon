@@ -8,7 +8,8 @@ approval or execute saved code.
 
 Attachments are Word documents to edit, at most one template, and pictures or tables the user attached for the edit
 to use (``reference``: a new logo, a sheet of project values); nothing beside them is discovered. There is no spending
-ceiling: every model call writes up to the model's maximum output at high effort, the work pauses after
+ceiling: every model call may write up to the model's maximum output (the conversation at ``CONVERSATION_EFFORT``,
+the custom-method writer at ``resources.CODEGEN_EFFORT``, recovery at ``RECOVERY_EFFORT``), the work pauses after
 ``STEPS_PER_PAUSE`` model calls until the user says to go on, the window shows the estimated spending, and its Stop
 cuts off the call that is running (``llm.cancellation_scope``). Continue after a pause, a stop or a failed call picks
 the conversation up where it stopped.
@@ -74,7 +75,7 @@ TOOL_ACTIVITY = {
 }
 # The tools whose input carries the model's words to the user in a top-level "message": the reply joins them to its
 # plain text (``conversation._ask_turn``, ``_spec_turn``), so the window shows them as they are written.
-TELLING_TOOLS = ("ask_user", "submit_editspec")
+TELLING_TOOLS = ("ask_user", "submit_editspec")   # compiler.STREAMED_TOOLS: their input streams as it is written
 _JSON_ESCAPES = {'"': '"', "\\": "\\", "/": "/", "b": "\b", "f": "\f", "n": "\n", "r": "\r", "t": "\t"}
 
 

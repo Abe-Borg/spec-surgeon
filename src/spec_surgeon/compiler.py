@@ -621,28 +621,67 @@ SET_ASIDE_TOOL = {
                                                     "each document on the to-do list); empty when they gave none"}},
         "required": ["documents"]}}
 ASK_USER_CHAT = _chat_ask_user()
+# The tools whose input carries Claude's words to the user (a top-level "message"), which the window shows as they are
+# written (document_task.TELLING_TOOLS): in the chat they stream their input as it is generated
+# (``eager_input_streaming``) instead of arriving in one burst after the server has buffered it. The server then no
+# longer checks that input is valid JSON: llm checks it and sends a call with a broken one again.
+STREAMED_TOOLS = ("ask_user", "submit_editspec")
+
+
+def _streamed(tool: Dict[str, Any]) -> Dict[str, Any]:
+    return {**tool, "eager_input_streaming": True} if tool["name"] in STREAMED_TOOLS else tool
+
+
 # the conversation's tools (a chat adds view_pages, propose_defined_terms and set_aside); the advisor and the transform
 # writer never get these
-CHAT_TOOLS = ([ASK_USER_CHAT if t["name"] == "ask_user" else t for t in TOOLS]
+CHAT_TOOLS = ([_streamed(ASK_USER_CHAT if t["name"] == "ask_user" else t) for t in TOOLS]
               + [VIEW_PAGES_TOOL, PROPOSE_TERMS_TOOL, SET_ASIDE_TOOL])
 
 
 UNGUARDED_PROMPT = """
-OBLITERATE MODE (the user's own choice, for this whole conversation): the rule that
-every placed word must be the user's is lifted. You may write wording yourself — drafts, rewrites, new paragraphs —
-and place it without asking for it verbatim; put every word you will place in the plan's summary so the user reads it
-before approving. When no operation fits, set custom_transform to "possible" whenever a one-off method could do it at
-all: in this mode a custom method may change anything Word stores (text, text boxes, shapes, structure). It still
-runs in the sandbox, on copies, and the independent checks still run on every copy; their failures are shown to the
-user beside the copy instead of stopping it. Change only what the user asked for.
+OBLITERATE MODE (the user's own choice, for this whole conversation): the rules above that every placed word
+must be the user's and that a custom method does formatting only are lifted, and the rules above say so where they
+apply. A custom method still runs in the sandbox, on copies, and the independent checks
+still run on every copy; their failures are shown to the user beside the copy instead of stopping it. Built-in
+operations still refuse what they cannot predict: a custom method is the way past such a refusal. Change only what
+the user asked for.
 """
+
+# Obliterate mode rewrites the base rules it lifts instead of contradicting them at the end of the prompt: each pair
+# is (the guarded sentence, its Obliterate wording). ``system_prompt`` refuses to build a prompt where one is missing.
+UNGUARDED_RULES = (
+    ('Content edits place only words the user gave verbatim (or a template\'s own words). Never invent, reword, or '
+     '"improve" document text; if the user did not give the exact words, ask.',
+     "Content edits may place your own wording in this mode (Obliterate): drafts, rewrites, new paragraphs, placed "
+     "without asking for them verbatim. Put every word you will place in the plan's summary so the user reads it "
+     "before approving, and never invent project facts, technical requirements or citations."),
+    ("the user's pick approves them; your own text never does.",
+     "the user's pick approves them (in this mode your own wording may also be placed, shown in the summary)."),
+    ('set custom_transform to "possible" only when a one-off transform could do it within the catalog\'s '
+     'custom_transform_limits, else "outside_limits" with custom_transform_reason.',
+     'set custom_transform to "possible" whenever a one-off method could do it at all: in this mode a custom method '
+     'may change anything Word stores (text, text boxes, shapes, structure) and the catalog\'s '
+     'custom_transform_limits do not apply; else "outside_limits" with custom_transform_reason.'),
+    ("The catalog's custom_transform_limits describe this chat's legacy fallback.",
+     "The catalog's custom_transform_limits do not bind this conversation (Obliterate mode)."),
+)
+
+
+def _unguarded(text: str) -> str:
+    for guarded, loose in UNGUARDED_RULES:
+        if text.count(guarded) != 1:
+            raise RuntimeError(f"the Obliterate prompt no longer finds the rule it rewrites: {guarded[:60]!r}")
+        text = text.replace(guarded, loose)
+    return text
 
 
 def system_prompt(chat: bool = False, unguarded: bool = False) -> str:
     """The system prompt — built once per conversation and never changed during it. One mode: the user supplies
     documents, an optional template and a request; the model chooses methods internally. ``unguarded`` (Obliterate
-    mode) adds ``UNGUARDED_PROMPT`` at the end: a conversation's mode never changes, so the prompt stays byte-stable."""
-    return (SYSTEM + (CHAT_BASICS if chat else "") + SIMPLE_EXPERIENCE
+    mode) rewrites the rules it lifts (``UNGUARDED_RULES``) and adds ``UNGUARDED_PROMPT`` at the end: a
+    conversation's mode never changes, so the prompt stays byte-stable."""
+    base = SYSTEM + (CHAT_BASICS if chat else "") + SIMPLE_EXPERIENCE
+    return ((_unguarded(base) if unguarded else base)
             + "\nOPERATIONS (every operation with its mode, description, selectors and parameters; the selector "
             "grammar, fill rules, expect syntax and assertions follow; describe_op returns an operation's verification "
             "rules, common assumptions and worked examples):\n"
@@ -659,7 +698,8 @@ def system_prompt(chat: bool = False, unguarded: bool = False) -> str:
             "spacing and requires exact source evidence. Typed wording is the user's (typed or picked), placed as "
             "approved; give every document the spec covers its own (mode untracked). "
             "Bindings override slot_fills fallback rules. "
-            "Custom transform limits:\n"
+            "Custom transform limits"
+            + (" (they do not bind this conversation: Obliterate mode)" if unguarded else "") + ":\n"
             + json.dumps(op_catalog(examples=False)["custom_transform_limits"], ensure_ascii=False)
             + (UNGUARDED_PROMPT if unguarded else ""))
 

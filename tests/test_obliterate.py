@@ -178,8 +178,13 @@ def test_the_conversation_says_obliterate_and_offers_a_custom_method_past_the_fo
     guarded = Conversation("stamp it", files, client=FakeClient(resp(tool("ask_user", {"message": "?"}))))
     loose = Conversation("stamp it", files, client=FakeClient(resp(tool("submit_editspec", {"spec": PLACES_STAMP}))),
                          unguarded=True)
-    assert "OBLITERATE MODE" not in guarded.system and loose.system == guarded.system + compiler.UNGUARDED_PROMPT
-    assert compiler.system_prompt(chat=True) + compiler.UNGUARDED_PROMPT == compiler.system_prompt(True, True)
+    assert "OBLITERATE MODE" not in guarded.system and loose.system == compiler.system_prompt(True, True)
+    assert loose.system.endswith(compiler.UNGUARDED_PROMPT)
+    # the rules it lifts are rewritten where they stand, never left in to contradict the mode (item 5 of the review)
+    for kept, lifted in compiler.UNGUARDED_RULES:
+        assert kept in guarded.system and kept not in loose.system and lifted in loose.system
+    assert "Never invent, reword" in guarded.system and "Never invent, reword" not in loose.system
+    assert "never invent project facts" in loose.system                    # what it never lifts stays
     t = loose.start()
     assert t.status == "ok" and t.spec["ops"][0]["params"]["replace"] == STAMP   # Claude's words, not traced
     outside = Conversation("move the logo", files, unguarded=True, client=FakeClient(resp(tool(
@@ -209,6 +214,139 @@ def test_a_custom_method_past_the_limits_passes_with_its_failed_checks_only_in_o
     governed = trial(TEXT_OP, f, {}, {"twips": 900}, tmp_path / "gov", unguarded=True,
                      goal_contract={"kind": "document_effects", "effects": []})
     assert not governed.unverified
+
+
+def write_op(*submissions):
+    """A scripted writer: each submission is (source, params, accept_failures or None)."""
+    return FakeClient(*[resp(tool("submit_op", {"source": src, "params": params,
+                                                **({"accept_failures": keep} if keep else {})}, f"t{i}"))
+                        for i, (src, params, keep) in enumerate(submissions)])
+
+
+def test_an_obliterate_methods_failed_checks_go_back_to_the_writer_before_it_is_used(folder, tmp_path):
+    """Item 1: a method that ran but failed checks is not used at once — the failures go back to the writer, which
+    fixes them; the copy it then makes shows no failure."""
+    f = sorted(folder.glob("*.docx"))[:1]
+    fake = write_op((UNASSERTED_OP, {"twips": 900}, None), (GOOD_OP, {"twips": 900}, None))
+    g = codegen.generate_op("move the header", "set the header distance", f, tmp_path / "cg", client=fake,
+                            unguarded=True)
+    assert g.passed and g.source == GOOD_OP and len(g.attempts) == 2
+    back = fake.requests[1]["messages"][-1]["content"][0]
+    assert back["is_error"] and "RAN, BUT 1 CHECK(S) FAILED" in back["content"] and "V10 FAIL" in back["content"]
+    assert [t.unverified for t in g.trials] == [[]]
+    # Default mode is unchanged: the same failure is a problem to fix, as it always was
+    fake = write_op((UNASSERTED_OP, {"twips": 900}, None), (GOOD_OP, {"twips": 900}, None))
+    guarded = codegen.generate_op("x", "y", f, tmp_path / "g", client=fake)
+    assert guarded.passed and "FAILED — fix and submit again" in fake.requests[1]["messages"][-1]["content"][0]["content"]
+
+
+def test_a_failed_check_the_writer_keeps_on_purpose_carries_its_reason_to_every_copy(folder, tmp_path):
+    f = sorted(folder.glob("*.docx"))
+    why = "the request moves the footer with the header"
+    fake = write_op((UNASSERTED_OP, {"twips": 900}, None),
+                    (UNASSERTED_OP, {"twips": 900}, [{"check": "v10", "reason": why}, {"check": "V2"}]))
+    g = codegen.generate_op("move both", "set both distances", f[:1], tmp_path / "cg", client=fake, unguarded=True)
+    assert g.passed and g.accepted_failures == {"V10": why} and len(g.attempts) == 2   # V2 without a reason: dropped
+    assert any(f"Claude says this is part of the change: {why}" in u for u in g.trials[0].unverified)
+    assert preview.generated_key(g)["accepted_failures"] == {"V10": why}     # what the user approves, reasons included
+    results = codegen.run_generated(g, [str(p) for p in f], tmp_path / "run")
+    assert all(r.passed and any(why in u for u in r.unverified) for r in results)
+
+
+def test_after_its_rounds_the_latest_method_is_used_with_its_failures_shown(folder, tmp_path):
+    f = sorted(folder.glob("*.docx"))[:1]
+    rounds = codegen.UNGUARDED_CHECK_ROUNDS
+    fake = write_op(*[(UNASSERTED_OP, {"twips": 900 + i}, None) for i in range(rounds + 1)])
+    g = codegen.generate_op("x", "y", f, tmp_path / "cg", client=fake, unguarded=True)
+    assert g.passed and len(g.attempts) == rounds + 1 and len(fake.requests) == rounds + 1
+    assert g.params == {"twips": 900 + rounds}                                # the latest
+    assert g.trials[0].unverified and g.trials[0].unverified[0].startswith("V10 (")
+    # the same method sent back unchanged is a stall: the writer stops, and that method is shown with its failures
+    fake = write_op(*[(UNASSERTED_OP, {"twips": 900}, None)] * (rounds + 1))
+    stalled = codegen.generate_op("x", "y", f, tmp_path / "stall", client=fake, unguarded=True)
+    assert stalled.passed and len(stalled.attempts) < rounds + 1 and "stalled" in stalled.errors[0]
+
+
+def test_a_writer_that_stops_leaves_its_best_method_but_a_pause_leaves_it_to_the_user(folder, tmp_path):
+    from fake_claude import api_error, raise_on_enter
+    from spec_surgeon import llm
+    f = sorted(folder.glob("*.docx"))[:1]
+    fake = FakeClient(resp(tool("submit_op", {"source": UNASSERTED_OP, "params": {"twips": 900}})),
+                      raise_on_enter(api_error("Overloaded", status=400)))
+    g = codegen.generate_op("x", "y", f, tmp_path / "cg", client=fake, unguarded=True)
+    assert g.passed and g.source == UNASSERTED_OP and g.trials[0].unverified     # shown with its failed checks
+    # the window's pause for the user's go-ahead stops the writer: nothing is used on its own
+    fake = FakeClient(resp(tool("submit_op", {"source": UNASSERTED_OP, "params": {"twips": 900}})),
+                      resp(tool("submit_op", {"source": GOOD_OP, "params": {"twips": 900}}, "t2")))
+    with llm.budget_scope(llm.CallBudget(max_calls=1, max_cost_usd=None, max_total_tokens=None, effort="medium")):
+        paused = codegen.generate_op("x", "y", f, tmp_path / "paused", client=fake, unguarded=True)
+    assert not paused.passed and len(fake.requests) == 1
+
+
+def test_an_obliterate_method_has_the_text_and_revision_helpers_and_its_wording_change_passes_every_check(
+        tmp_path, monkeypatch):
+    """Item 2: the writer is told it may change wording, tracked or plain — and now has the helpers that let a correct
+    change assert itself, so it is not marked UNVERIFIED."""
+    from test_governed_codegen import CONTENT_OP
+    source = tmp_path / "source.docx"
+    source.write_bytes(build("21 00 00", "FIRE SUPPRESSION"))
+    monkeypatch.setenv("SPEC_SURGEON_AUTHOR", "Obliterate Tester")
+    op = CONTENT_OP.replace('author="Tester"', "author=pkg.author").replace('RevisionStamp.now("Tester"',
+                                                                            "RevisionStamp.now(pkg.author")
+    assert codegen.check_source(op) and codegen.check_source(op, unguarded=True) == []
+    for tracked in (False, True):
+        t = trial(op, source, {}, {"replacement": "WATER", "tracked": tracked}, tmp_path / f"t{tracked}",
+                  unguarded=True)
+        assert t.passed and t.unverified == [], (t.problems, t.unverified)
+        xml = __import__("zipfile").ZipFile(t.output).read("word/document.xml").decode("utf-8")
+        assert ("WATER" in xml) and (('w:author="Obliterate Tester"' in xml) is tracked)
+    refused = trial(op, source, {}, {"replacement": "WATER"}, tmp_path / "guarded")      # Default: whitelist
+    assert not refused.passed and any("is not allowed" in p for p in refused.problems)
+    prompt = codegen.system_prompt(unguarded=True)
+    assert "pkg.add_member" in prompt and "plan_paragraph" in prompt and "pkg.inputs" in prompt
+    assert "apply() mutates the working package only through" not in prompt   # no rule left to contradict it
+
+
+ATTACHED_OP = GOOD_OP.replace("        twips = params.get(\"twips\")",
+                              "        if len(pkg.inputs) != params.get(\"expect_inputs\"):\n"
+                              "            raise JobException(f\"{len(pkg.inputs)} attached file(s)\", \"inputs\")\n"
+                              "        twips = params.get(\"twips\")")
+
+
+def test_an_obliterate_method_gets_the_users_attachments_pinned_when_it_was_written(folder, tmp_path):
+    """Item 3: the template and the pictures or tables the user attached reach the method as ``pkg.inputs`` — the
+    bytes pinned when it was written; a file changed since is refused, never read afresh."""
+    import hashlib
+    assert ATTACHED_OP != GOOD_OP
+    f = sorted(folder.glob("*.docx"))
+    template = tmp_path / "template.docx"
+    template.write_bytes(build("00 00 00", "TEMPLATE"))
+    logo = tmp_path / "logo.png"
+    logo.write_bytes(b"\x89PNG fake logo")
+    fake = FakeClient(resp(tool("read_template", {}, "r1")),
+                      resp(tool("submit_op", {"source": ATTACHED_OP, "params": {"twips": 900, "expect_inputs": 2}})))
+    g = codegen.generate_op("use my logo", "put the logo in", f[:1], tmp_path / "cg", client=fake, unguarded=True,
+                            template=template, input_files=[logo])
+    assert g.passed and g.trials[0].unverified == [], g.attempts
+    assert [a["path"] for a in g.attachments] == [str(template.resolve()), str(logo.resolve())]
+    assert g.attachments[1]["sha256"] == hashlib.sha256(logo.read_bytes()).hexdigest()
+    first = fake.requests[0]
+    assert str(logo.resolve()) in first["messages"][0]["content"] and "ATTACHED FILES" in first["messages"][0]["content"]
+    names = [t["name"] for t in first["tools"]]
+    assert {"read_template", "read_input_file"} <= set(names)
+    submit = next(t for t in first["tools"] if t["name"] == "submit_op")
+    assert "accept_failures" in submit["input_schema"]["properties"]
+    assert not fake.requests[1]["messages"][-1]["content"][0].get("is_error")       # read_template answered
+    assert preview.generated_key(g)["attachments"] == g.attachments
+    assert all(r.passed for r in codegen.run_generated(g, [str(p) for p in f], tmp_path / "run"))
+    logo.write_bytes(b"\x89PNG another logo")                                         # changed after it was written
+    stale = codegen.run_generated(g, [str(f[0])], tmp_path / "run2")
+    assert not stale[0].passed and "[stale-input]" in stale[0].problems[0]
+    # Default mode: no attachment reaches a method, and its tools are unchanged
+    plain = trial(ATTACHED_OP, f[0], {}, {"twips": 900, "expect_inputs": 2}, tmp_path / "plain",
+                  attachments=g.attachments)
+    assert not plain.passed and "0 attached file(s)" in plain.problems[0]
+    assert "accept_failures" not in json.dumps(codegen.CODEGEN_TOOLS)
 
 
 def test_the_whitelist_and_the_sandbox_hold_in_obliterate(folder, tmp_path):

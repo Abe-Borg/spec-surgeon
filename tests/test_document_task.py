@@ -475,7 +475,8 @@ def test_custom_method_is_prepared_internally_but_only_delivered_after_review(tm
     fake = FakeClient(resp(tool("submit_editspec", {"spec": {"request": request, "summary": "Move header",
         "unsupported": "Use a custom method", "proposal": "Set the header distance to 900 twips"},
         "custom_transform": "possible", "custom_transform_reason": "Formatting only"})),
-        resp(tool("submit_op", {"source": GOOD_OP, "params": {"twips": 900}})))
+        resp(tool("submit_op", {"source": GOOD_OP, "params": {"twips": 900}})),
+        resp(tool("ask_user", {"message": "Anything else?"}, "t3")))
     task = task_for(tmp_path, fake)
     source = document(tmp_path / "Spec.docx")
     task.attach([source])
@@ -487,6 +488,11 @@ def test_custom_method_is_prepared_internally_but_only_delivered_after_review(tm
     task.perform("primary", token=view["token"])
     assert task.stage == "done" and Path(task.results[str(source)]).is_file()
     assert Document(task.results[str(source)]).sections[0].header_distance.twips == 900
+    # the chat thinks at medium, the custom-method writer at xhigh (resources.CODEGEN_EFFORT), and the chat's next
+    # call is back at medium; every one of them counted in the window's one ledger
+    task.perform("send", text="Thanks.")
+    assert [r["output_config"]["effort"] for r in fake.requests] == ["medium", "xhigh", "medium"]
+    assert task._budget.calls == 3 and task._budget.effort == "medium"
 
 
 def test_partial_failure_recovers_automatically_and_can_reopen(tmp_path, monkeypatch):

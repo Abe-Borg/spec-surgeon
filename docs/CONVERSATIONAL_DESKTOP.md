@@ -121,11 +121,21 @@ What it lifts (`Session.unguarded`; CLAUDE.md, "Modes"):
 
 - **Wording.** The gate no longer traces placed words to the user's own (`compose_submission(unguarded=True)` skips
   `_content_checks`). Claude may write wording itself and is told to put every word it will place in the plan the
-  user approves.
+  user approves. The conversation's prompt rewrites the rules it lifts where they stand (`compiler.UNGUARDED_RULES`)
+  instead of leaving them in to contradict the mode; "never invent project facts, requirements or citations" stays.
 - **Custom methods.** When no operation fits, the custom method is offered whenever any method could make the change,
   and it may change anything Word stores: the writer's prompt drops the plain-formatting limits and `codegen` skips
-  `hard_limits`. A trial whose only failures are its checks — the verifier read the copy, the source did not move —
-  passes with them listed.
+  `hard_limits`. The writer gets what that takes: the governed path's helpers (`GOAL_FROM`: text edits, tracked
+  revisions with `pkg.author`, parts and relationships; `allowed_imports(unguarded=True)`, re-checked by the sandbox),
+  the V10 assertion kinds that let a correct change prove itself, and the files the user attached (a template,
+  pictures, tables) as `pkg.inputs` — pinned by digest when the method is written (`GeneratedOp.attachments`, part of
+  its approval), refused at any later trial if one changed (`stale-input`), readable with `read_template` and
+  `read_input_file`. A trial whose only failures are its checks — the verifier read the copy, the source did not
+  move — goes back to the writer up to `codegen.UNGUARDED_CHECK_ROUNDS` times: it fixes what it did not intend, or
+  resubmits with `accept_failures` (a check and its reason, which the user reads beside every copy:
+  `GeneratedOp.accepted_failures`, in the approval too). After those rounds the latest method passes with its
+  failures listed; a writer that stops otherwise (an API error, a stall, its attempts) leaves the best such method,
+  but the pause for the user's go-ahead never does.
 - **Holding back.** A copy that fails a check is delivered to the run's `outputs/` instead of `failed/`, its record
   kept with every failure and V9 saying *delivered UNVERIFIED*; a chain's step hands its copy on and the chain's copy
   carries everything that failed. The preview already says so: a sample whose copy fails a check shows **Did not
@@ -433,17 +443,24 @@ says "Connect your Anthropic API key in Settings to start."
 There is no spending limit. Every AI step (one call to Claude Opus 5.5, whether for the conversation, a
 custom method, the visual check or recovery) may write up to 128,000 tokens, the most the model writes. The
 conversation runs at medium reasoning effort (its sentences and plans are short and the operations' settings ride the
-cached prompt, so a plan is one or two calls), and so do the visual check and a custom method it runs inside a turn,
-because the conversation's budget sets the effort for every call inside it. The outcome planning when no ordinary plan
-fits (no operation for the request, a plan that covers no file, a sample that fails its check, or a preview whose every sample is refused), and recovery (with the custom methods it tries), think at high: their own budget sits inside the
-conversation's and wins. No step runs at max: `resources.EFFORTS` refuses it (the owner's decision, 2026-10-22). The
+cached prompt, so a plan is one or two calls), and so does the visual check it runs inside a turn, because the
+conversation's budget sets the effort for every call inside it. The outcome planning when no ordinary plan
+fits (no operation for the request, a plan that covers no file, a sample that fails its check, or a preview whose every sample is refused), and recovery, think at high: their own budget sits inside the
+conversation's and wins. Writing a custom method — the one place Claude writes the code that edits the documents,
+from the conversation or inside recovery — thinks at `xhigh` (`resources.CODEGEN_EFFORT`, the owner's decision,
+2026-10-26): `codegen.generate_op` enters `llm.effort_scope`, an effort-only budget with no limits of its own (the
+pause and the spending still count every call), and when the method is written the next call is back at its own
+effort; the method's conversation is separate from the chat, so the chat's cache is untouched. No step runs at max:
+`resources.EFFORTS` refuses it (the owner's decision, 2026-10-22). The
 instructions and the operations' settings (the same for every conversation) are cached for an hour, so the next
 request after a run, a start over or a changed attachment reads them instead of paying for them again; the
 conversation itself is cached for five minutes between its calls, and the one-call checks (the visual check, the
 recovery critic) are not cached at all beyond the instructions. Three things keep the spending in your hands instead:
 
 - **You see it.** While work runs the chat shows the assistant's words and its thinking summary as they are
-  written, a sentence per step, and the top bar the estimated spending so far. A step that is still running is
+  written, a sentence per step, and the top bar the estimated spending so far. A question or a plan's message streams
+  as Claude writes it (`compiler.STREAMED_TOOLS` carry `eager_input_streaming`); since the server then no longer
+  checks that tool input is complete JSON, `llm` does, and a broken one is sent again instead of being acted on. A step that is still running is
   counted when it ends. The amounts are estimates from a built-in price table, not provider bills.
 - **Stop now.** While work runs the button is the kill switch. It cuts off the AI step that is running at
   once, so Claude stops writing, and starts no other; a document check or file operation already running

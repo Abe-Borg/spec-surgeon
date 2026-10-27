@@ -69,7 +69,7 @@ class RecoveryOptions:
                 or not math.isfinite(self.max_cost_usd) or self.max_cost_usd <= 0):
             raise ValueError("max_cost_usd must be a finite positive amount, or None")
         if self.effort not in EFFORTS:
-            raise ValueError("effort must be low, medium or high")
+            raise ValueError("effort must be one of " + ", ".join(EFFORTS))
         if self.renderer not in ("auto", "word", "libreoffice", "none"):
             raise ValueError("unknown renderer")
         if self.analysis_limits is not None:
@@ -1529,7 +1529,7 @@ def _custom_trial(ctx, group, proposal, pid, code, latest):
                                 max_iter=max(1, ctx.get("group_state", {}).get("attempt_limit", options.max_attempts)
                                              - ctx.get("group_state", {}).get("used", 0)),
                                 max_calls=ctx.get("group_slice_remaining", options.group_call_slice),
-                                max_output_tokens=options.max_output_tokens, effort=options.effort,
+                                max_output_tokens=options.max_output_tokens,   # the writer's effort: CODEGEN_EFFORT
                                 max_context_tokens=options.max_context_tokens, analysis_limits=options.analysis_limits,
                                 brief=brief, log=ctx["log"])
                 entry["generated_attempts"], entry["codegen_transcript"] = g.attempts, g.transcript

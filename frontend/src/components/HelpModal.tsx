@@ -383,7 +383,7 @@ function HowItWorks() {
           },
           {
             t: "One model, with room to think",
-            d: "Every AI step runs Claude Opus 5.5 with room for its full answer: the conversation, and the visual check and custom methods it runs, at medium effort; outcome planning and recovery at high. A plan usually takes one or two calls. Settings → Fast responses, off until you turn it on, has the same model write up to 2.5 times faster at twice the price.",
+            d: "Every AI step runs Claude Opus 5.5 with room for its full answer: the conversation and the visual check it runs at medium effort; writing a custom method at extra-high, then back; outcome planning and recovery at high. A plan usually takes one or two calls. Settings → Fast responses, off until you turn it on, has the same model write up to 2.5 times faster at twice the price.",
           },
           {
             t: "A clean start every time",

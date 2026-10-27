@@ -108,6 +108,7 @@ def expected() -> dict:
         "maxOutputTokens": const("resources.py", "DEFAULT_MAX_OUTPUT_TOKENS"),
         "conversationEffort": const("document_task.py", "CONVERSATION_EFFORT"),
         "recoveryEffort": const("document_task.py", "RECOVERY_EFFORT"),
+        "codegenEffort": const("resources.py", "CODEGEN_EFFORT"),
         "fastSpeedup": const("llm.py", "FAST_SPEEDUP"),
         "fastPriceFactor": const("llm.py", "FAST_PRICE_FACTOR"),
         "stepsPerPause": const("document_task.py", "STEPS_PER_PAUSE"),
@@ -143,6 +144,7 @@ def expected() -> dict:
         "customMethodSeconds": const("codegen.py", "SANDBOX_TIMEOUT"),
         "customMethodMemoryMB": const("process_limits.py", "DEFAULT_MEMORY_MB"),
         "customMethodAttempts": const("resources.py", "DEFAULT_MAX_ATTEMPTS"),
+        "obliterateCheckRounds": const("codegen.py", "UNGUARDED_CHECK_ROUNDS"),
         "analysisSeconds": const("resources.py", "DEFAULT_ANALYSIS_SECONDS"),
         "analysisMemoryMB": const("resources.py", "DEFAULT_ANALYSIS_MEMORY_MB"),
         "maxTableOrPictureMB": const("inputs.py", "MAX_BYTES") // MIB,
@@ -263,7 +265,8 @@ def test_the_ledger_covers_the_facts_and_the_rule():
     claude = (ROOT / "CLAUDE.md").read_text(encoding="utf-8")
     assert "The trust surfaces are a contract" in claude
     for key in ("STEPS_PER_PAUSE", "AUTO_STEPS", "CHECK_INTERVAL", "SANDBOX_TIMEOUT", "DEFAULT_MEMORY_MB",
-                "MAX_CASES", "STOPPED_OUTPUT_RATE", "RETRY_DELAYS", "CONVERSATION_EFFORT", "RECOVERY_EFFORT"):
+                "MAX_CASES", "STOPPED_OUTPUT_RATE", "RETRY_DELAYS", "CONVERSATION_EFFORT", "RECOVERY_EFFORT",
+                "CODEGEN_EFFORT", "UNGUARDED_CHECK_ROUNDS", "STREAMED_TOOLS"):
         assert key in ledger, f"the ledger names no source for {key}"
 
 
