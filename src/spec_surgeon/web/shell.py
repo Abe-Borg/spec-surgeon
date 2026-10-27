@@ -109,7 +109,9 @@ def unsaved_copies_question(count: int) -> str:
 
 def on_closing(state: WindowState) -> bool:
     """The window's X. With edited copies never saved by Export, one native question first: OK closes and lets the
-    scratch folder (the copies in it) be deleted, Cancel keeps the window open — the only time a close is refused.
+    scratch folder (the copies in it) be deleted (``close_confirmed``), Cancel keeps the window open — the only time
+    a close is refused. With nothing unsaved, nothing is asked and nothing is recorded, so copies a run still
+    finishing delivers after this are kept for the next start (``gui.main``).
     While work runs the running AI step is cut off, as Stop now does (its progress is saved), and a download is
     cancelled. True: pywebview closes the window."""
     try:
@@ -121,7 +123,10 @@ def on_closing(state: WindowState) -> bool:
             diag.event("window.close_refused", unsaved=unsaved)
             diag.app_log().info(f"Window close cancelled: {unsaved} unsaved cop{'y' if unsaved == 1 else 'ies'}")
             return False
-    state.close_confirmed = True
+        # Consent is recorded only when the question was asked and answered OK. With nothing unsaved now it stays
+        # unrecorded: a run still finishing can deliver copies after this, and ``gui.main`` then keeps the scratch
+        # folder for the next start instead of deleting copies nobody was asked about.
+        state.close_confirmed = True
     try:
         job = state.job_status()
         diag.event("window.closing", job=job["action"] if job else None, unsaved=unsaved)

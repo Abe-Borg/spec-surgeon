@@ -162,8 +162,9 @@ class WindowState:
         self.cancel: Optional[threading.Event] = None
         self.started_at = 0.0
         self.job: Optional[Dict[str, Any]] = None       # the running job's clock, for the watch (``job_status``)
-        self.close_confirmed = False                     # the user let the window close with copies unsaved, or had
-                                                         # none to lose (``web.shell.on_closing``): the scratch may go
+        self.close_confirmed = False                     # the user answered OK to the close question over unsaved
+                                                         # copies (``web.shell.on_closing``): the scratch folder may
+                                                         # go with them; never set when nothing was asked
         self.watch = WindowWatch(job_status=self.job_status)
         self._last_view: Optional[Dict[str, Any]] = None
         llm.set_fast_mode(settings.fast_mode)          # the user's choice, for every call from the window's start

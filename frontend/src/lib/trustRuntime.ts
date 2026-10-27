@@ -404,8 +404,9 @@ export const RUNTIME_CARDS: RuntimeCard[] = [
     sent: "Nothing.",
     ai: NONE,
     bounds:
-      "Never over an input: a folder where a copy would land on an attached document or on a working copy refuses " +
-      "the whole export, and nothing is written. Each file is written whole, then renamed into place. The copies in " +
+      "Never over an input, and never into the app's scratch folder (it would go with it): a folder where a copy " +
+      "would land on an attached document or on a working copy, or that lies inside the scratch tree, refuses the " +
+      "whole export, and nothing is written. Each file is written whole, then renamed into place. The copies in " +
       "the scratch folder are unchanged, and nothing is written until you press Export.",
   },
   {

@@ -82,8 +82,8 @@ def test_export_refuses_a_folder_where_a_copy_would_land_on_an_input(tmp_path, f
     # the originals' folder: these copies carry their originals' names
     with pytest.raises(ValueError, match="one of the files this conversation works on"):
         task.export(files[0].parent)
-    # the run's own outputs folder: the copies themselves
-    with pytest.raises(ValueError, match="one of the files this conversation works on"):
+    # the run's own outputs folder: the copies themselves, and inside the scratch folder besides
+    with pytest.raises(ValueError, match="inside the app's scratch folder"):
         task.export(Path(next(iter(task.working.values()))).parent)
     assert {p: p.read_bytes() for p in files} == originals and task.exported == {} and task.export_folder == ""
     assert len(task.unsaved_copies()) == 2 and _names(files[0].parent) == ["21 13 13.docx", "21 13 16.docx"]
@@ -91,6 +91,29 @@ def test_export_refuses_a_folder_where_a_copy_would_land_on_an_input(tmp_path, f
         task.export(tmp_path / "missing")
     with pytest.raises(ValueError, match="no edited copies"):
         safe_task(tmp_path / "other").export(tmp_path)
+
+
+def test_export_refuses_a_folder_inside_the_scratch_tree(tmp_path, files):
+    """A copy saved into the window's scratch folder (or any folder under the app's scratch root) would be deleted
+    with it at the close, while reading as saved: refused before anything is written or marked (Codex review on
+    PR #124)."""
+    from spec_surgeon.settings import scratch_root
+    task = _run(tmp_path, files)
+    inside = Path(task.session.out_root) / "Saved"
+    inside.mkdir()
+    with pytest.raises(ValueError, match="inside the app's scratch folder"):
+        task.export(inside)
+    with pytest.raises(ValueError, match="inside the app's scratch folder"):
+        task.export(task.session.out_root)
+    other = scratch_root() / "20261001-120000-9" / "Saved"            # another window's, or a leftover's
+    other.mkdir(parents=True)
+    with pytest.raises(ValueError, match="inside the app's scratch folder"):
+        task.export(other)
+    assert _names(inside) == [] and _names(other) == [] and task.exported == {}
+    assert len(task.unsaved_copies()) == 2
+    beside = tmp_path / "Saved"                                         # a folder of the user's own, as before
+    beside.mkdir()
+    assert task.export(beside)["saved"] == 2
 
 
 def test_a_copy_that_is_gone_refuses_the_whole_export(tmp_path, files):
@@ -226,8 +249,10 @@ def test_the_export_route_waits_for_a_running_job(tmp_path):
 def test_closing_asks_once_before_unsaved_copies_are_deleted(tmp_path):
     state, client = window(tmp_path)
     state.shell = FolderShell(answer=False)
-    assert on_closing(state) is True and state.close_confirmed and state.shell.questions == []   # nothing to lose
-    state.close_confirmed = False
+    # nothing to lose: no question, and no consent recorded either — a run still finishing may deliver copies after
+    # this, and the launcher then keeps the folder rather than delete copies nobody was asked about (Codex review on
+    # PR #124)
+    assert on_closing(state) is True and not state.close_confirmed and state.shell.questions == []
     _safe_run(client, tmp_path)
     assert len(state.task.unsaved_copies()) == 2
     assert on_closing(state) is False and not state.close_confirmed
@@ -241,11 +266,12 @@ def test_closing_asks_once_before_unsaved_copies_are_deleted(tmp_path):
     # a shell that cannot ask answers no: the close is refused rather than the copies deleted
     state.close_confirmed, state.shell = False, Shell()
     assert on_closing(state) is False and not state.close_confirmed
-    # once saved there is nothing to ask about
+    # once saved there is nothing to ask about, and nothing to consent to
     dest = tmp_path / "Saved"
     dest.mkdir()
     state.task.export(dest)
-    assert on_closing(state) is True and state.close_confirmed
+    state.shell = FolderShell(answer=False)
+    assert on_closing(state) is True and not state.close_confirmed and state.shell.questions == []
 
 
 def test_a_dropped_file_lands_in_the_scratch_folder(tmp_path):

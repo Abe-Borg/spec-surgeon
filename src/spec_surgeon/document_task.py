@@ -21,6 +21,7 @@ from __future__ import annotations
 import hashlib
 import contextlib
 import json
+import os
 import re
 import time
 from dataclasses import dataclass, field
@@ -1878,16 +1879,23 @@ class DocumentTask:
         """Export → Save the copies…: every copy the next request builds on (the working set, one per attached
         original) written into ``folder`` under its planned name, each through ``guard.write_new``. All or nothing:
         every copy is read and every destination settled before the first write. A destination that is one of the
-        inputs (an attached file, a working copy) refuses the export; a file already there with the same bytes is
-        that copy, saved (nothing written); one with other bytes is left alone and the copy is numbered beside it.
-        Returns ``{"folder", "saved", "already"}``."""
+        inputs (an attached file, a working copy) refuses the export, and so does a folder inside the app's scratch
+        tree (the window's own scratch folder or any other: a copy saved there would go with it); a file already
+        there with the same bytes is that copy, saved (nothing written); one with other bytes is left alone and the
+        copy is numbered beside it. Returns ``{"folder", "saved", "already"}``."""
         from . import guard
+        from .settings import scratch_root
         folder = Path(folder)
         if not self.working:
             raise ValueError("There are no edited copies to save yet.")
         if not folder.is_dir():
             raise ValueError(f"{folder} is not a folder.")
         folder = folder.resolve()
+        for disposable in (self.session.out_root, scratch_root()):
+            root = _same_file_key(disposable)
+            if _same_file_key(folder) == root or _same_file_key(folder).startswith(root.rstrip("\\/") + os.sep):
+                raise ValueError(f"{folder} is inside the app's scratch folder, which is deleted when the window "
+                                 "closes; nothing was saved. Choose a folder of your own.")
         inputs = set()
         for a in self.attachments:
             inputs.add(_same_file_key(a.path))

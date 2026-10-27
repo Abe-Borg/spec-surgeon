@@ -125,7 +125,7 @@ def test_the_window_job_preserves_action_context_and_failure_before_the_page_hea
         diag.event("fixture.worker.checkpoint")
         raise RuntimeError("fixture background defect")
     task.perform = perform
-    state = WindowState(task, Settings(out_root=str(tmp_path / "out")), token="t")
+    state = WindowState(task, Settings(), token="t")
     with diag.scope(journal, session_id="fixture-session", action_id="fixture-action"):
         with diag.span("fixture.dispatch"):
             queue = state.start_job("send", text="anything")

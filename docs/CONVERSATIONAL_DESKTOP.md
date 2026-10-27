@@ -543,7 +543,8 @@ checker passed, each written whole and then renamed into place (`DocumentTask.ex
 nothing: every copy is read and every destination settled before the first write. A file already there with the
 same content is that copy, saved, and nothing is written over it; a different file under a copy's name is left alone
 and the copy is numbered beside it (`name (2).docx`); a folder where a copy would land on one of the files this
-conversation works on — an attached document, a working copy — refuses the whole export. The copies list then marks
+conversation works on — an attached document, a working copy — refuses the whole export, and so does a folder inside
+the app's scratch tree, where a saved copy would go with the window. The copies list then marks
 each copy **SAVED** (its hover says where), the chat says how many were saved, and the journal keeps what was saved
 where, so a later run's new copies read as unsaved again and Undo's older copies as saved. Saving the records beside
 the copies, saving beside the originals and writing back over the originals are not offered (backlog H4).
