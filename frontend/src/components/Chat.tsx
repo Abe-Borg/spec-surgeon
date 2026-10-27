@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState, type ReactNode, type WheelEve
 import type { Choice, Mode } from "../types";
 import type { ActionButton } from "../lib/action";
 import { STARTERS, endedLive, withLeaving, type ChatItem } from "../lib/chat";
+import { TOUR_HOLD } from "../lib/tour";
 import type { LiveReply } from "../lib/view";
 import { usePrefersReducedMotion } from "../lib/useReveal";
 import ChatMessage, { ErrorBubble } from "./MessageBubble";
@@ -36,6 +37,11 @@ interface Props {
   onMode: (mode: Mode) => void;
   /** Safe mode's Discard, while a button's preview waits (beside the one button). */
   onDiscard?: () => void;
+  /** The guided tour runs: the conversation's controls are held still (its conversation is a recording). */
+  tourActive: boolean;
+  /** This computer finished the tour (the chip then invites to take it again); null until the first view. */
+  tourFinished: boolean | null;
+  onStartTour: () => void;
 }
 
 export default function Chat({
@@ -58,6 +64,9 @@ export default function Chat({
   panel,
   onMode,
   onDiscard,
+  tourActive,
+  tourFinished,
+  onStartTour,
 }: Props) {
   const safe = mode === "safe";
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -171,7 +180,11 @@ export default function Chat({
   const showTranscript = !(empty && safe);
 
   return (
-    <section className="flex min-h-0 min-w-[400px] flex-1 basis-[46%] flex-col border-r border-edge" aria-label="Conversation">
+    <section
+      className="flex min-h-0 min-w-[400px] flex-1 basis-[46%] flex-col border-r border-edge"
+      aria-label="Conversation"
+      data-tour="chat-pane"
+    >
       {showTranscript && (
         <div
           ref={scrollRef}
@@ -189,14 +202,35 @@ export default function Chat({
                 Add your Word files and tell me what you want to change. I&apos;ll check the documents, work
                 out a plan, and show you what will happen.
               </p>
-              <div className="mt-6 flex w-full max-w-md flex-col gap-2 text-left">
+              <div className="mt-6 flex w-full max-w-md flex-col gap-2 text-left" data-tour="starters" data-capability="chat.starters">
+                <button
+                  type="button"
+                  onClick={onStartTour}
+                  disabled={busy || tourActive}
+                  data-tour="tour-chip"
+                  data-capability="tour.start"
+                  title="A guided tour of the window on bundled practice documents; your conversation is set aside and comes back when it ends"
+                  className={`rounded-xl border border-accent/50 bg-accent/10 px-4 py-2.5 text-left transition-colors hover:border-accent hover:bg-accent/15 disabled:pointer-events-none disabled:opacity-40 ${
+                    tourActive || tourFinished !== false ? "" : "chip-pulse"
+                  }`}
+                >
+                  <span className="block text-sm text-ink">
+                    🧭 {tourFinished ? "Take the guided tour again" : "New to Spec Surgeon? Take the guided tour"}
+                  </span>
+                  <span className="mt-0.5 block text-[11px] text-ink-faint">
+                    {tourActive
+                      ? "You are taking it right now"
+                      : "Every part of the window, on bundled practice documents · no AI call · nothing of yours is touched"}
+                  </span>
+                </button>
                 {STARTERS.map((starter) => (
                   <button
                     key={starter.title}
                     type="button"
                     onClick={() => onPrefill(starter.text)}
-                    title="Puts this request in the box; edit it, then send"
-                    className="rounded-xl border border-edge bg-surface px-4 py-2.5 transition-colors hover:border-accent/70 hover:bg-raised"
+                    disabled={busy || tourActive}
+                    title={tourActive ? TOUR_HOLD : "Puts this request in the box; edit it, then send"}
+                    className="rounded-xl border border-edge bg-surface px-4 py-2.5 transition-colors hover:border-accent/70 hover:bg-raised disabled:pointer-events-none disabled:opacity-40"
                   >
                     <span className="block text-[11px] font-medium tracking-wide text-ink-faint uppercase">
                       {starter.title}
@@ -224,6 +258,7 @@ export default function Chat({
                         choices={item.choices}
                         chips={item.chips}
                         busy={busy}
+                        tourActive={tourActive}
                         onChoose={onChoose}
                         onSend={onSend}
                       />
@@ -238,6 +273,7 @@ export default function Chat({
                         limitText={item.limitText}
                         canContinue={item.canContinue}
                         busy={busy}
+                        tourActive={tourActive}
                         onContinue={onContinue}
                       />
                     );
@@ -247,6 +283,7 @@ export default function Chat({
                         key={item.key}
                         items={item.items}
                         busy={busy}
+                        tourActive={tourActive}
                         onSend={onSend}
                         onDefaultMode={safe ? () => onMode("default") : undefined}
                       />
@@ -299,6 +336,7 @@ export default function Chat({
         <Composer
           busy={busy}
           canSend={canSend}
+          tourActive={tourActive}
           reason={sendReason}
           onSend={onSend}
           onStop={onStop}

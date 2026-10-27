@@ -18,9 +18,12 @@ import SettingsModal from "./components/SettingsModal";
 import HelpModal from "./components/HelpModal";
 import ZoomModal from "./components/ZoomModal";
 import SafePanel from "./components/SafePanel";
-import { EMPTY_SAFE_FORM, type SafeFormState } from "./lib/recipes";
+import { EMPTY_SAFE_FORM, openForm, type SafeFormState } from "./lib/recipes";
 import ObliterateWarning from "./components/ObliterateWarning";
 import { modeChoice } from "./lib/modes";
+import TourOverlay from "./components/TourOverlay";
+import { TOUR_COMPLETION_VERSION, TOUR_FORM, type TourStep } from "./lib/tour";
+import { useTour } from "./lib/useTour";
 
 type PickKind = "documents" | "template" | "references";
 
@@ -33,6 +36,8 @@ export default function App() {
   const { view } = state;
   const busy = view.busy;
   const busyRef = useRef(false);
+  const viewRef = useRef(view);
+  viewRef.current = view;
 
   const [notice, setNotice] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
@@ -290,10 +295,10 @@ export default function App() {
     setReviews({});
   }, []);
 
-  const onNewConversation = useCallback(() => {
-    if (busyRef.current) return;
-    applyView(api.newConversation(), resetInputs);
-  }, [applyView, resetInputs]);
+  // Declared below, once the tour exists: New conversation ends a running tour first (the conversation comes back,
+  // then starts afresh).
+  const newConversationRef = useRef<() => void>(() => {});
+  const onNewConversation = useCallback(() => newConversationRef.current(), []);
 
   const onStartOver = useCallback(() => applyView(api.startOver(), resetInputs), [applyView, resetInputs]);
   // Safe mode's ways back: Discard withdraws a button's preview (the form keeps what was typed); Undo takes the
@@ -340,6 +345,44 @@ export default function App() {
   );
 
   const onPutBack = useCallback((path: string) => applyView(api.putBack(path)), [applyView]);
+
+  // --- The guided tour -------------------------------------------------------
+  // The server builds each chapter's state on bundled practice documents and answers with the view; the page shows
+  // it like any other. The one page-side preparation is the Safe-mode form a step points at (lib/tour.ts TOUR_FORM).
+  const applyTourView = useCallback((next: View) => dispatch({ type: "view", view: next }), []);
+  const prepareTourStep = useCallback(
+    (step: TourStep) => {
+      if (step.prepare !== "safe-form") return;
+      const recipe = recipes.find((r) => r.id === TOUR_FORM.recipe);
+      if (!recipe) return;
+      setSafeForm((form) => {
+        const opened = openForm(form, recipe, viewRef.current);
+        const slots = { ...((opened.inputs.slots as Record<string, string> | undefined) ?? {}), [TOUR_FORM.slot]: TOUR_FORM.value };
+        return { ...opened, inputs: { ...opened.inputs, slots } };
+      });
+    },
+    [recipes],
+  );
+  const tour = useTour({ applyView: applyTourView, tutorial: view.tutorial, loaded: state.loaded, prepare: prepareTourStep });
+  const tourActive = tour.active;
+  const tourFinished = state.loaded ? view.tutorial.finished_version >= TOUR_COMPLETION_VERSION : null;
+  newConversationRef.current = () => {
+    if (busyRef.current) return;
+    if (tourActive) {
+      void tour.abort().then((returned) => {
+        if (returned) applyView(api.newConversation(), resetInputs);
+      });
+      return;
+    }
+    applyView(api.newConversation(), resetInputs);
+  };
+  const onStartTourAt = useCallback(
+    (chapter: string) => {
+      setHelpTopic(null);
+      tour.startAtChapter(chapter);
+    },
+    [tour],
+  );
 
   const onOpen = useCallback((path: string) => {
     api.openPath(path).catch((failure: unknown) => setNotice(failureText(failure)));
@@ -458,6 +501,8 @@ export default function App() {
         onOpenHelp={setHelpTopic}
         onMode={onMode}
         onStop={onStop}
+        tourActive={tourActive}
+        onStartTour={tour.start}
       />
       {updateShown && (
         <UpdateBanner
@@ -502,6 +547,9 @@ export default function App() {
           panel={panel}
           onMode={onMode}
           onDiscard={discard}
+          tourActive={tourActive}
+          tourFinished={tourFinished}
+          onStartTour={tour.start}
         />
         <Workbench
           view={view}
@@ -549,7 +597,9 @@ export default function App() {
         onOpenLogs={onOpenLogs}
         onSaveBundle={onSaveBundle}
         bundleNote={bundleNote}
+        onStartTourAt={onStartTourAt}
       />
+      <TourOverlay tour={tour} view={view} busy={busy} />
       {zoom && <ZoomModal src={zoom.src} title={zoom.title} onClose={() => setZoom(null)} />}
       {warning && (
         <ObliterateWarning

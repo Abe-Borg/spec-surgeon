@@ -279,7 +279,7 @@ function SafePanel({ recipes, view, busy, onPreview, onDiscard, form, onFormChan
     const ready = availability(chosen, view);
     const needs = ready.ready ? missing(chosen, inputs) : ready.reason;
     return (
-      <div className="flex flex-col gap-2.5" aria-label={chosen.label}>
+      <div className="flex flex-col gap-2.5" aria-label={chosen.label} data-tour="safe-form" data-capability="safe.form">
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
             <h2 className="text-sm font-semibold text-ink">{chosen.label}</h2>
@@ -328,7 +328,7 @@ function SafePanel({ recipes, view, busy, onPreview, onDiscard, form, onFormChan
   }
 
   return (
-    <div className="flex flex-col gap-3" aria-label="Safe mode's buttons">
+    <div className="flex flex-col gap-3" aria-label="Safe mode's buttons" data-tour="safe-buttons" data-capability="safe.buttons">
       {groups.map(({ group, recipes: items }) => (
         <div key={group}>
           <p className="mb-1.5 text-[11px] font-medium tracking-wide text-ink-faint uppercase">{group}</p>

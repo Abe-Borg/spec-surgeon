@@ -61,6 +61,7 @@ export default function ZoomModal({ src, title, onClose }: Props) {
           type="button"
           onClick={() => setMode("fit")}
           aria-pressed={mode === "fit"}
+          data-capability="zoom.controls"
           className={`${quietBtn} ${mode === "fit" ? "border-accent text-accent" : ""}`}
           title="Fit the whole picture in the window"
         >

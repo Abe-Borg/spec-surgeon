@@ -56,7 +56,7 @@ export default class ErrorBoundary extends Component<{ children: ReactNode }, St
             {this.state.message}
           </p>
           <div className="mt-4 flex flex-wrap items-center gap-3">
-            <button type="button" className={primaryBtn} onClick={() => window.location.reload()}>
+            <button type="button" className={primaryBtn} onClick={() => window.location.reload()} data-capability="window.reload">
               Reload the window
             </button>
             <button type="button" className={quietBtn} onClick={this.saveBundle}>

@@ -19,6 +19,9 @@ interface Props {
   onMode: (mode: Mode) => void;
   /** The kill switch beside the spending: cuts off the AI step that is running and starts no other. */
   onStop: () => void;
+  /** The guided tour runs: it switches modes as its chapters need, so the switch is held still. */
+  tourActive: boolean;
+  onStartTour: () => void;
 }
 
 const ORIGIN_TIPS: Record<string, string> = {
@@ -38,6 +41,8 @@ function Header({
   onOpenHelp,
   onMode,
   onStop,
+  tourActive,
+  onStartTour,
 }: Props) {
   const safe = view.mode === "safe";
   const ready = !!view.connection?.ready;
@@ -49,7 +54,7 @@ function Header({
   const heading = updatePill ? "" : sessionHeading(view);
 
   return (
-    <header className="flex items-center gap-4 border-b border-edge bg-surface px-5 py-3">
+    <header className="flex items-center gap-4 border-b border-edge bg-surface px-5 py-3" data-tour="header">
       {/* The one block that gives way on a narrow window: the context line truncates. */}
       <div className="flex min-w-0 items-baseline gap-3">
         <h1 className="flex-none font-[family-name:var(--font-display)] text-lg font-semibold tracking-tight whitespace-nowrap">
@@ -62,7 +67,26 @@ function Header({
         )}
       </div>
       <span className="h-5 w-px flex-none bg-edge" aria-hidden="true" />
-      <nav className="flex flex-none items-center gap-0.5" aria-label="Help">
+      <nav className="flex flex-none items-center gap-0.5" aria-label="Help" data-tour="help-nav" data-capability="help.topics">
+        <Tip
+          tip={
+            tourActive
+              ? "The tour is running"
+              : busy
+                ? "Finish or stop the current work first"
+                : "A guided tour of the window on bundled practice documents; your conversation is set aside and comes back when it ends"
+          }
+        >
+          <button
+            type="button"
+            onClick={onStartTour}
+            disabled={tourActive || busy}
+            data-capability="tour.start"
+            className="rounded-md px-2 py-1 text-xs whitespace-nowrap text-accent transition-colors hover:bg-raised disabled:pointer-events-none disabled:opacity-60 lg:px-2.5"
+          >
+            Tour
+          </button>
+        </Tip>
         {HELP_TOPICS.map((t) => (
           <button
             key={t.id}
@@ -75,13 +99,28 @@ function Header({
         ))}
       </nav>
       <span className="h-5 w-px flex-none bg-edge" aria-hidden="true" />
-      <div className="flex flex-none items-center rounded-lg border border-edge bg-raised p-0.5" role="group" aria-label="Mode">
+      <div
+        className="flex flex-none items-center rounded-lg border border-edge bg-raised p-0.5"
+        role="group"
+        aria-label="Mode"
+        data-tour="mode-switch"
+        data-capability="header.modes"
+      >
         {(view.modes ?? ["safe", "default"]).map((mode) => (
-          <Tip key={mode} tip={busy ? "Finish the current work first" : MODE_TIPS[mode]}>
+          <Tip
+            key={mode}
+            tip={
+              busy
+                ? "Finish the current work first"
+                : tourActive
+                  ? "The tour switches modes as its chapters need"
+                  : MODE_TIPS[mode]
+            }
+          >
             <button
               type="button"
               aria-pressed={view.mode === mode}
-              disabled={busy}
+              disabled={busy || tourActive}
               onClick={() => view.mode !== mode && onMode(mode)}
               className={`rounded-md px-2.5 py-0.5 text-xs whitespace-nowrap transition-colors disabled:pointer-events-none ${
                 view.mode === mode
@@ -130,6 +169,8 @@ function Header({
             (fast ? " Fast responses is in effect (Settings): AI steps are priced at the fast rate." : "")
           }
           className="rounded-full border border-edge bg-raised px-3 py-1 text-xs whitespace-nowrap text-ink-dim tabular-nums"
+          data-tour="spend-pill"
+          data-capability="header.spending"
         >
           {costPill(view.cost)}
           <span className="ml-1 hidden text-ink-faint xl:inline">this conversation</span>
@@ -142,6 +183,7 @@ function Header({
               type="button"
               onClick={onStop}
               aria-label="Stop all AI work"
+              data-capability="header.stop"
               className="rounded-full border border-err/60 bg-err/10 px-3 py-1 text-xs font-medium whitespace-nowrap text-err transition-colors hover:bg-err/20"
             >
               Stop
@@ -159,6 +201,8 @@ function Header({
                 : (ORIGIN_TIPS[view.connection?.origin ?? "none"] ?? ORIGIN_TIPS.none)
           }
           className="flex items-center gap-2 rounded-full border border-edge bg-raised px-3 py-1 text-xs whitespace-nowrap text-ink-dim transition-colors hover:border-accent hover:text-accent"
+          data-tour="connection"
+          data-capability="header.connection"
         >
           <span className={`h-2 w-2 rounded-full ${safe ? "bg-ink-faint" : ready ? "bg-ok" : "bg-warn"}`} aria-hidden />
           {safe ? "No AI in Safe mode" : ready ? (view.connection?.origin === "none" ? "Credentials available" : "Key available") : "Add your API key"}
@@ -174,6 +218,8 @@ function Header({
             type="button"
             onClick={onNewConversation}
             disabled={busy}
+            data-tour="new-conversation"
+            data-capability="header.new-conversation"
             className="rounded-lg border border-edge bg-raised px-3 py-1.5 text-xs whitespace-nowrap text-ink transition-colors hover:border-accent hover:text-accent disabled:pointer-events-none disabled:opacity-40"
           >
             New conversation
@@ -184,6 +230,8 @@ function Header({
           onClick={onOpenSettings}
           title="Settings — your AI connection"
           aria-label="Settings"
+          data-tour="settings"
+          data-capability="header.settings"
           className="flex h-8 w-8 flex-none items-center justify-center rounded-lg border border-edge bg-raised text-ink-dim transition-colors hover:border-accent hover:text-accent"
         >
           <svg

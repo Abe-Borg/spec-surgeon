@@ -12,6 +12,10 @@
  * pause; anything else plans and previews. A choice leads to the plan job;
  * the primary action creates copies (or continues after a pause).
  *
+ * The guided tour's routes (GET /api/tutorial/status, POST /api/tutorial/start|scenario|restore) swap the view for a
+ * canned scenario per chapter and put the conversation back at the end, the shape of the real server's practice
+ * workspace; the real one builds each chapter's state on the bundled showcase through the engine.
+ *
  * Mock-only routes (never in the real server): POST /mock/scenario {name}
  * sets the view to a canned scenario (empty, attached, question, preview,
  * layouts, done, todo, paused, update-available, update-ready, up-to-date,
@@ -254,7 +258,44 @@ function emptyView() {
     modes: ["safe", "default"],
     template: NO_TEMPLATE,
     left_untouched: [],
+    tutorial: { active: false, id: "", scenario: "", finished_version: 0 }, // GET /api/state refreshes it from settings
   };
+}
+
+/** The guided tour (web/server.py's practice workspace): the conversation set aside, a scenario per chapter. */
+let tutorial = null; // { id, requestId, original: view, scenario }
+const TUTORIAL_SCENARIOS = {
+  start: () => SCENARIOS.safe(),
+  button: () => {
+    const v = SCENARIOS.safe();
+    v.stage = "preview";
+    v.messages = [msg("user", "Headers and footers from the template · ISSUED FOR PERMIT → ISSUED FOR CONSTRUCTION 2026-03-01")];
+    v.samples = samples();
+    v.action = { label: "Create edited copies", token: "tok-tour-button", kind: "approve", can_hold: true };
+    // the plan refused the other firm's document, as the server's chapter does (no section number line to fill)
+    v.plan = { groups: [], targets: [], set_aside: [{ path: DOCS[2].path, name: name(DOCS[2].path), reason: "Its first lines carry no section number for the template's placeholder; change this one in Word." }], stages: 1 };
+    return v;
+  },
+  copies: () => SCENARIOS["safe-done"](),
+  conversation: () => SCENARIOS.attached(),
+  question: () => SCENARIOS.question(),
+  plan: () => {
+    const v = SCENARIOS.preview();
+    v.plan = { ...PLAN, set_aside: [{ path: DOCS[2].path, name: name(DOCS[2].path), reason: "You left it out of this request (“Leave out 21 05 00 for now”)." }] };
+    return v;
+  },
+  todo: () => SCENARIOS.todo(),
+};
+function tutorialBlock() {
+  return { active: !!tutorial, id: tutorial?.id ?? "", scenario: tutorial?.scenario ?? "", finished_version: settings.tutorial_version };
+}
+function tutorialView(kind) {
+  const v = TUTORIAL_SCENARIOS[kind]();
+  v.connection = tutorial.original.connection;
+  v.update = tutorial.original.update;
+  v.cost = { usd: 0, text: "less than $0.01", calls: 0 };
+  v.tutorial = tutorialBlock();
+  return v;
 }
 
 /** The reply that begins the pass over the to-do list; the real server recognises these exact words. */
@@ -443,7 +484,7 @@ function undoFields() {
   const top = undoStack[undoStack.length - 1];
   return { undo: top ? top.request : "", undo_blocked: top && view.stage === "preview" ? "Discard the preview first." : "" };
 }
-let settings = { key_present: true, origin: "saved", can_remember: true, out_root: "C:/Users/abe/AppData/Local/Spec Surgeon/runs", logs_dir: "C:/Users/abe/AppData/Roaming/Spec Surgeon/logs", theme: "clay", fast_mode: false, show_obliterate: false, spending_limit_usd: 20, spending_default_usd: 20, fast: { model: "claude-opus-5-5", available: true, speedup: 2.5, price_factor: 2, standard_usd_per_mtok: [4, 20], fast_usd_per_mtok: [8, 40], refused: null } };
+let settings = { key_present: true, origin: "saved", can_remember: true, out_root: "C:/Users/abe/AppData/Local/Spec Surgeon/runs", logs_dir: "C:/Users/abe/AppData/Roaming/Spec Surgeon/logs", theme: "clay", fast_mode: false, show_obliterate: false, tutorial_version: 0, spending_limit_usd: 20, spending_default_usd: 20, fast: { model: "claude-opus-5-5", available: true, speedup: 2.5, price_factor: 2, standard_usd_per_mtok: [4, 20], fast_usd_per_mtok: [8, 40], refused: null } };
 const THEMES = ["clay", "blueprint", "graphite", "carbon", "linen"];
 function keySettings() { return { ...settings, can_remove_key: ["saved", "session"].includes(settings.origin) }; }
 let running = null; // { stop: boolean }
@@ -1001,7 +1042,39 @@ async function handle(req, res) {
 
   switch (`${req.method} ${path}`) {
     case "GET /api/state":
+      view.tutorial = tutorialBlock();
       return json(res, 200, view);
+    case "GET /api/tutorial/status":
+      return json(res, 200, tutorialBlock());
+    case "POST /api/tutorial/start": {
+      const body = await readJson(req);
+      if (tutorial && tutorial.requestId && tutorial.requestId === body.request_id) return json(res, 200, view);
+      if (tutorial) return json(res, 409, { error: "A tour is already running; end it before starting another." });
+      if (view.busy) return busyRefusal();
+      tutorial = { id: `tour-${Date.now()}`, requestId: body.request_id || "", original: view, scenario: "start" };
+      view = tutorialView("start");
+      return json(res, 200, view);
+    }
+    case "POST /api/tutorial/scenario": {
+      const body = await readJson(req);
+      if (!tutorial || body.tutorial_id !== tutorial.id) return json(res, 409, { error: "That tour has ended." });
+      if (view.busy) return busyRefusal();
+      if (!TUTORIAL_SCENARIOS[body.kind]) return json(res, 400, { error: `Unknown tour scenario ${body.kind}.` });
+      tutorial.scenario = body.kind;
+      view = tutorialView(body.kind);
+      return json(res, 200, view);
+    }
+    case "POST /api/tutorial/restore": {
+      const body = await readJson(req);
+      if (tutorial && body.tutorial_id && body.tutorial_id !== tutorial.id) return json(res, 409, { error: "That tour has ended." });
+      if (tutorial) {
+        if (view.busy) return busyRefusal();
+        view = tutorial.original;
+        tutorial = null;
+      }
+      view.tutorial = tutorialBlock();
+      return json(res, 200, view);
+    }
     case "POST /api/attach": {
       if (view.busy) return busyRefusal();
       const body = await readJson(req);
@@ -1194,6 +1267,7 @@ async function handle(req, res) {
       return json(res, 200, view);
     case "POST /api/new-conversation": {
       if (view.busy) return busyRefusal();
+      if (tutorial) return json(res, 409, { error: "End the tour first; your conversation comes back when it does." });
       const keep = view.update;
       const mode = view.mode, modes = view.modes;
       view = emptyView();
@@ -1230,6 +1304,13 @@ async function handle(req, res) {
         if (!THEMES.includes(body.theme)) return json(res, 400, { error: "There is no such colour scheme." });
         settings = { ...settings, theme: body.theme };
         if (!("api_key" in body)) return json(res, 200, keySettings());
+      }
+      if ("tutorial_version" in body) {
+        const v = body.tutorial_version;
+        if (typeof v !== "number" || !Number.isInteger(v) || v < 0) return json(res, 400, { error: "The tour's version is a whole number." });
+        settings = { ...settings, tutorial_version: v };
+        view.tutorial = tutorialBlock();
+        if (Object.keys(body).length === 1) return json(res, 200, keySettings());
       }
       if ("show_obliterate" in body) {
         if (typeof body.show_obliterate !== "boolean") return json(res, 400, { error: "Show Obliterate mode is on or off." });

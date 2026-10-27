@@ -15,6 +15,7 @@ export function ModalShell({
   children,
   wide,
   xwide,
+  marker,
 }: {
   title: string;
   onClose: () => void;
@@ -22,6 +23,8 @@ export function ModalShell({
   wide?: boolean;
   /** Wider still (the zoomed preview). Wins over `wide`. */
   xwide?: boolean;
+  /** `data-dialog` on the dialog: the guided tour stamps its own dialogs so its Escape guard can tell them apart. */
+  marker?: string;
 }) {
   const panelRef = useRef<HTMLDivElement>(null);
   // Always open: every consumer renders the shell conditionally.
@@ -32,6 +35,7 @@ export function ModalShell({
       onClick={onClose}
       role="dialog"
       aria-modal="true"
+      data-dialog={marker}
     >
       <div
         ref={panelRef}

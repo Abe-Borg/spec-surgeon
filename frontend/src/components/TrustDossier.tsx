@@ -625,6 +625,7 @@ function Dossier() {
           items={[
             "Checking each file when it arrives (opens, is a .docx, no document type declaration, has a paragraph; notes on typed numbers, tracked changes and more).",
             "Safe mode, every button from its form to the copies.",
+            "The guided tour, every chapter from the bundled practice documents to the copies it makes of them; its conversation chapters are a recording and say so.",
             "Every operation: planning the change from the original, applying it, and writing the package back with every untouched part byte-identical.",
             "Putting overlapping changes into ordered steps, in the order you asked for them.",
             "Grouping a mixed batch by layout.",
@@ -637,7 +638,7 @@ function Dossier() {
           ]}
         />
         <Note title="With the network disconnected" tone="ok">
-          You can still attach files and see their checks, use Safe mode's buttons from the preview to the copies, open
+          You can still attach files and see their checks, use Safe mode's buttons from the preview to the copies, take the guided tour, open
           earlier copies and their records, read the logs and save a bundle. You cannot ask for a change in Default
           mode: every request there goes through Claude.
         </Note>

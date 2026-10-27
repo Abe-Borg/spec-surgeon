@@ -1,5 +1,6 @@
 import { primaryBtn } from "./ModalShell";
 import Tip from "./Tip";
+import { TOUR_HOLD } from "../lib/tour";
 import type { PauseReason } from "../types";
 
 interface Props {
@@ -10,6 +11,8 @@ interface Props {
   limitText: string;
   canContinue: boolean;
   busy: boolean;
+  /** The guided tour runs: Continue is held still. */
+  tourActive?: boolean;
   onContinue: () => void;
 }
 
@@ -25,9 +28,11 @@ const TITLES: Record<Props["reason"], string> = {
  * app closed while work was running. Nothing runs until Continue; Continue is the action here, so the workbench's spot
  * stays empty while this card is up.
  */
-export default function PauseCard({ reason, costText, requestText, limitText, canContinue, busy, onContinue }: Props) {
+export default function PauseCard({ reason, costText, requestText, limitText, canContinue, busy, tourActive = false, onContinue }: Props) {
   const label = reason === "limit" && limitText ? `Continue (up to ${limitText} more)` : "Continue";
-  const tip = !canContinue
+  const tip = tourActive
+    ? TOUR_HOLD
+    : !canContinue
     ? "Nothing to continue right now."
     : reason === "limit" && limitText
       ? `Allows this request up to ${limitText} more and picks it up where it stopped.`
@@ -35,7 +40,7 @@ export default function PauseCard({ reason, costText, requestText, limitText, ca
         ? "Picks the conversation up where it stopped."
         : "Goes on without a spending check for this request.";
   return (
-    <div className="chat-in rounded-2xl border border-warn/40 bg-warn/10 px-4 py-3" role="status">
+    <div className="chat-in rounded-2xl border border-warn/40 bg-warn/10 px-4 py-3" role="status" data-tour="pause-card">
       <p className="font-[family-name:var(--font-display)] text-base font-semibold text-ink">{TITLES[reason]}</p>
       <p className="mt-1.5 text-sm leading-relaxed text-ink-dim">
         {reason === "limit" &&
@@ -55,7 +60,13 @@ export default function PauseCard({ reason, costText, requestText, limitText, ca
       </p>
       <div className="mt-3">
         <Tip tip={tip}>
-          <button type="button" className={primaryBtn} disabled={!canContinue || busy} onClick={onContinue}>
+          <button
+            type="button"
+            className={primaryBtn}
+            disabled={!canContinue || busy || tourActive}
+            onClick={onContinue}
+            data-capability="chat.pause"
+          >
             {label}
           </button>
         </Tip>

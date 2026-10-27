@@ -92,6 +92,7 @@ function AttachmentCard({
           onClick={() => onRemove(attachment)}
           disabled={busy}
           aria-label={`Remove ${attachment.name}`}
+          data-capability="documents.remove"
           className="rounded-md px-1.5 py-0.5 text-ink-faint transition-colors hover:bg-raised hover:text-ink disabled:pointer-events-none disabled:opacity-40"
         >
           ✕
@@ -131,7 +132,7 @@ function Section({
   };
   const bodyId = `tray-${id}-body`;
   return (
-    <section aria-label={title.split(" · ")[0]}>
+    <section aria-label={title.split(" · ")[0]} data-tour={`tray-${id}`}>
       <button
         type="button"
         onClick={toggle}
@@ -196,7 +197,7 @@ export default function DocumentsTray({ attachments, todo, focus, busy, uploadin
         {cards("documents")}
         <div className="mt-3 flex flex-wrap items-center gap-2">
           <Tip tip={held ? holdTip : "Attach one or more .docx files to edit"}>
-            <button type="button" className={quietBtn} disabled={held} onClick={() => onAdd("documents")}>
+            <button type="button" className={quietBtn} disabled={held} onClick={() => onAdd("documents")} data-capability="documents.add">
               Add Word documents
             </button>
           </Tip>
@@ -219,7 +220,7 @@ export default function DocumentsTray({ attachments, todo, focus, busy, uploadin
                   : "One reference document to match; it is never part of the batch"
             }
           >
-            <button type="button" className={quietBtn} disabled={held} onClick={() => onAdd("template")}>
+            <button type="button" className={quietBtn} disabled={held} onClick={() => onAdd("template")} data-capability="documents.template">
               {hasTemplate ? "Replace the template" : "Add a template (optional)"}
             </button>
           </Tip>
@@ -229,7 +230,7 @@ export default function DocumentsTray({ attachments, todo, focus, busy, uploadin
         {cards("references")}
         <div className="mt-3 flex flex-wrap items-center gap-2">
           <Tip tip={held ? holdTip : "A new logo, or a spreadsheet of values, for the edit to use"}>
-            <button type="button" className={quietBtn} disabled={held} onClick={() => onAdd("references")}>
+            <button type="button" className={quietBtn} disabled={held} onClick={() => onAdd("references")} data-capability="documents.references">
               Add a picture or table (optional)
             </button>
           </Tip>
