@@ -74,7 +74,6 @@ export const TRUST_FACTS = {
   renderCacheGB: 2,
   repairMemoryCases: 2000,
   bundleRecentRuns: 5,
-  bundleRecentConversations: 3,
   installLogsKept: 3,
   // The watchdog (web/watch.py, frontend/src/lib/diagnostics.ts, web/shell.py)
   pageBeatSeconds: 10,

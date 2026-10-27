@@ -129,7 +129,7 @@ def window(tmp_path, *, show=False):
     session = Session(client=FakeClient(resp(tool("submit_editspec", {"spec": SPEC}))), out_root=tmp_path / "out",
                       visual_check=False)
     task = DocumentTask(session, render=False, obliterate_allowed=show)
-    state = WindowState(task, Settings(out_root=str(tmp_path / "out"), show_obliterate=show), token=TOKEN,
+    state = WindowState(task, Settings(show_obliterate=show), token=TOKEN,
                         updates=FakeUpdates(), version="1.6.0")
     return state, TestClient(create_app(state), headers={TOKEN_HEADER: TOKEN})
 

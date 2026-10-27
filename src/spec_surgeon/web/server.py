@@ -31,7 +31,7 @@ from ..ui_feedback import failed_preview_checks
 from .. import diagnostics as diag
 from ..document_task import LAUNCH_MODES, DocumentTask
 from ..gui import Session
-from ..settings import (DEFAULT_SPENDING_LIMIT_USD, THEMES, Settings, config_dir, data_dir, default_run_root, logs_dir,
+from ..settings import (DEFAULT_SPENDING_LIMIT_USD, THEMES, Settings, config_dir, data_dir, logs_dir,
                         save_settings, spending_check)
 from ..tutorial import SCENARIOS, Tutorial
 from .watch import WindowWatch
@@ -130,10 +130,18 @@ def launch_mode(mode: str) -> str:
 
 
 class Shell:
-    """What the native window offers the server: file dialogs and closing. The default has neither (a browser)."""
+    """What the native window offers the server: file dialogs, a yes/no question and closing. The default has none of
+    them (a browser): no dialog, and a question that cannot be asked is answered no."""
 
     def pick_files(self, kind: str) -> Optional[List[str]]:
         return None
+
+    def pick_folder(self, start: str = "") -> Optional[str]:
+        """The folder the user chose, "" when they cancelled, None when this shell has no dialog."""
+        return None
+
+    def confirm(self, title: str, message: str) -> bool:
+        return False
 
     def close(self) -> None:
         pass
@@ -155,6 +163,9 @@ class WindowState:
         self.cancel: Optional[threading.Event] = None
         self.started_at = 0.0
         self.job: Optional[Dict[str, Any]] = None       # the running job's clock, for the watch (``job_status``)
+        self.close_confirmed = False                     # the user answered OK to the close question over unsaved
+                                                         # copies (``web.shell.on_closing``): the scratch folder may
+                                                         # go with them; never set when nothing was asked
         self.watch = WindowWatch(job_status=self.job_status)
         self._last_view: Optional[Dict[str, Any]] = None
         # The guided tour (``tutorial``): while it runs, ``task`` is the practice workspace and the user's own task
@@ -310,12 +321,13 @@ class WindowState:
                     "failures": failed_preview_checks(sv), "geometry": sv.geometry}
                    for sv in raw["samples"]]
         unverified = raw.get("unverified") or {}
+        exported = raw.get("exported") or {}
         results = [{"source": source, "output": output, "name": Path(output).name,
-                    "unverified": list(unverified.get(source, []))}
+                    "unverified": list(unverified.get(source, [])), "saved_to": exported.get(output, "")}
                    for source, output in raw["results"].items()]
         pdf_marks = raw.get("pdf_unverified") or {}
         pdfs = [{"source": source, "output": output, "name": Path(output).name,
-                 "unverified": list(pdf_marks.get(source, []))}
+                 "unverified": list(pdf_marks.get(source, [])), "saved_to": exported.get(output, "")}
                 for source, output in raw.get("pdfs", {}).items()]
         return {"version": self.version, "busy": busy, "stage": stage, "mode": raw.get("mode", "default"),
                 "modes": task.available_modes(), "template": task.template_info(),
@@ -325,6 +337,8 @@ class WindowState:
                 "questions": list(raw["questions"]), "choices": list(raw["choices"]), "chips": list(raw["chips"]),
                 "samples": samples, "warnings": list(raw["warnings"]), "blocking": bool(raw["blocking"]),
                 "results": results, "pdfs": pdfs, "pdf": task.pdf_info(),
+                "export": {"folder": raw.get("export_folder", ""), "unsaved": len(raw.get("unsaved") or []),
+                           "copies": int(raw.get("copies") or 0)},
                 "action": {"label": label, "token": raw["token"], "kind": kind,
                            "disabled_reason": raw.get("blocked_reason", ""),
                            "can_hold": kind == "approve" and bool(raw.get("can_hold")),
@@ -441,10 +455,11 @@ class WindowState:
         return True
 
     def new_conversation(self) -> None:
+        """An empty conversation over the same scratch folder: its journal is written over, and the copies the old
+        one made stay in the scratch folder until the window closes (the page asks first when any was never saved)."""
         if self.tutorial.active:
             raise RuntimeError("End the tour first; New conversation then starts your own conversation afresh.")
         task = self.task
-        task.archive()
         session = Session(out_root=task.session.out_root, client=task.session.client,
                           visual_check=task.session.visual_check)
         self.task = DocumentTask(session, journal=task.journal, render=task.render, mode=task.mode,
@@ -452,10 +467,9 @@ class WindowState:
         self.task.save()
 
     def remember_settings(self) -> None:
-        """settings.json takes the user's own task's folder and mode (``settings_task``), never the tour's practice
-        task's while one stands in."""
+        """settings.json takes the user's own task's mode (``settings_task``), never the tour's practice task's while
+        one stands in. The export folder is written by the export route itself."""
         keep = self.settings_task
-        self.settings.out_root = str(keep.session.out_root)
         self.settings.mode = launch_mode(keep.mode)
         save_settings(self.settings)
 
@@ -565,9 +579,11 @@ def create_app(state: WindowState, *, dev: bool = False) -> FastAPI:
 
     @app.post("/api/upload")
     async def upload(files: List[UploadFile] = File(...), template: str = Form("false")):
+        """A dropped file's bytes go under the scratch folder's ``attachments/<stamp>/`` and are attached from there:
+        kept only while the window is open, as everything in the scratch folder is."""
         if state.busy:
             return busy_error()
-        folder = config_dir() / "attachments" / time.strftime("%Y%m%d-%H%M%S")
+        folder = Path(state.task.session.out_root) / "attachments" / time.strftime("%Y%m%d-%H%M%S")
         folder.mkdir(parents=True, exist_ok=True)
         saved: List[str] = []
         for f in files:
@@ -717,6 +733,40 @@ def create_app(state: WindowState, *, dev: bool = False) -> FastAPI:
             return error(str(exc), 409)
         return state.view()
 
+    @app.post("/api/export")
+    async def export_copies(request: Request):
+        """Export → Save the copies…: the working set written into a folder — the one in the body, else the one the
+        native folder dialog returns (opened where the last export went). 501 without a dialog and a folder, 409
+        while work runs, 400 when there is nothing to save or the folder refuses; ``{"cancelled": true}`` when the
+        dialog was dismissed; else the view."""
+        if state.busy:
+            return busy_error()
+        if state.tutorial.active:
+            return error("End the tour first; Export saves your own copies, not the practice documents.", 409)
+        if not state.task.working and not state.task.pdfs:
+            return error("There are no edited copies or clean PDFs to save yet.")
+        try:
+            body = await request.json()
+        except ValueError:
+            body = {}
+        folder = str((body or {}).get("folder") or "") if isinstance(body, dict) else ""
+        if not folder:
+            chosen = state.shell.pick_folder(state.settings.export_folder or str(Path.home()))
+            if chosen is None:
+                return error("This window has no native folder dialog; name the folder to save the copies into.", 501)
+            if not chosen:
+                return {"cancelled": True}
+            folder = chosen
+        try:
+            made = state.task.export(folder)
+        except (OSError, ValueError) as e:
+            return error(str(e))
+        diag.event("export.saved", folder=made["folder"], saved=made["saved"], already=made["already"])
+        diag.app_log().info(f"Export: {made['saved']} copies saved to {made['folder']} ({made['already']} already there)")
+        state.settings.export_folder = made["folder"]
+        state.save_settings()
+        return state.view()
+
     # ---- the guided tour (docs/WEB_API.md, "The guided tour"; ``tutorial.py``) ----
     async def tour_body(request: Request) -> Dict[str, Any]:
         try:
@@ -791,7 +841,7 @@ def create_app(state: WindowState, *, dev: bool = False) -> FastAPI:
     def get_settings():
         return {"key_present": state.task.session.claude_ready(), "origin": state.key_origin,
                 "can_remove_key": state.key_origin in {"saved", "session"},
-                "can_remember": credentials.available(), "out_root": str(state.task.session.out_root),
+                "can_remember": credentials.available(), "export_folder": state.settings.export_folder,
                 "logs_dir": str(logs_dir()), "theme": state.settings.theme,
                 "spending_limit_usd": state.task.spending_limit, "spending_default_usd": DEFAULT_SPENDING_LIMIT_USD,
                 "fast_mode": state.settings.fast_mode, "fast": fast_offer(),
@@ -959,9 +1009,10 @@ def create_app(state: WindowState, *, dev: bool = False) -> FastAPI:
     @app.post("/api/diagnostics/bundle")
     def diagnostics_bundle():
         target = data_dir() / "diagnostics" / f"spec-surgeon-diagnostics-{time.strftime('%Y%m%d-%H%M%S')}.zip"
-        roots = [Path(state.task.session.out_root), default_run_root()]
+        roots = [Path(state.task.session.out_root)]      # the scratch folder: this window's session folders
         try:
             made = diag.diagnostic_bundle(target, logs=logs_dir(), config=config_dir(), run_roots=roots,
+                                          journal=state.task.journal,
                                           header=[f"Spec Surgeon {state.version}",
                                                   diag.environment_line(diag.environment()),
                                                   f"Job running: {state.job['action'] if state.busy and state.job else 'none'}"])

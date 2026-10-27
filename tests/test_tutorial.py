@@ -40,7 +40,7 @@ def tour_window(tmp_path, journal=None):
     fake = FakeClient(resp(tool("submit_editspec", {"spec": SPEC})))
     session = Session(client=fake, out_root=tmp_path / "out", visual_check=False)
     task = DocumentTask(session, render=False, journal=journal)
-    settings = Settings(out_root=str(tmp_path / "out"), mode="default")
+    settings = Settings(mode="default")
     state = WindowState(task, settings, token=TOKEN, updates=FakeUpdates(), version="1.6.0")
     client = TestClient(create_app(state), headers={TOKEN_HEADER: TOKEN})
     return state, client
@@ -184,7 +184,7 @@ def test_the_tour_sets_the_users_task_aside_and_restore_returns_the_same_object(
     journal_before = journal.read_bytes()
     state.save_settings()
     settings_before = load_settings()
-    assert settings_before.mode == "default" and settings_before.out_root == str(tmp_path / "out")
+    assert settings_before.mode == "default"
     assert before["tutorial"] == {"active": False, "id": None, "scenario": None, "finished_version": 0}
 
     view = client.post("/api/tutorial/start", json={"request_id": "r1"}).json()
@@ -206,7 +206,7 @@ def test_the_tour_sets_the_users_task_aside_and_restore_returns_the_same_object(
     assert ended[-1]["type"] == "done" and ended[-1]["state"]["stage"] == "done" and len(ended[-1]["state"]["results"]) == 3
     assert client.post("/api/settings", json={"theme": "linen"}).status_code == 200
     kept = load_settings()
-    assert kept.mode == "default" and kept.out_root == str(tmp_path / "out") and kept.theme == "linen"
+    assert kept.mode == "default" and kept.theme == "linen"
     assert journal.read_bytes() == journal_before
     practice = Path(ended[-1]["state"]["results"][0]["output"])
     assert practice.is_relative_to(tutorial.practice_root()) and tutorial.practice_root().exists()

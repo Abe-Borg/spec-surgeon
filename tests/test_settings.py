@@ -15,7 +15,7 @@ from spec_surgeon.settings import Settings, load_settings, save_settings
 
 def test_round_trip(tmp_path):
     p = tmp_path / "settings.json"
-    s = Settings(folder=r"C:\Projects\21 – Fire\Specs", out_root="D:/out", render=False, skipped_version="0.5.0",
+    s = Settings(folder=r"C:\Projects\21 – Fire\Specs", export_folder="D:/out", render=False, skipped_version="0.5.0",
                  last_update_check=123.5, pending_update={"version": "0.5.0"})
     save_settings(s, p)
     assert load_settings(p) == s

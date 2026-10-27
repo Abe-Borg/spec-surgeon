@@ -869,7 +869,6 @@ BUNDLE_TEXT = frozenset({".log", ".jsonl", ".json", ".md", ".txt"})
 BUNDLE_SKIP_DIRS = frozenset({"outputs", "failed", "samples", "source", "source-in", "template", "output",
                               "output-hf", "attachments", "pages", "images", "sandbox"})
 BUNDLE_RECENT_RUNS = 5
-BUNDLE_RECENT_CONVERSATIONS = 3
 BUNDLE_FILE_CAP = 25 * 2 ** 20
 BUNDLE_TOTAL_CAP = 250 * 2 ** 20
 
@@ -884,14 +883,16 @@ def _newest(paths: Sequence[Path], n: int) -> List[Path]:
 
 
 def diagnostic_bundle(target: Path, *, logs: Path, config: Path, run_roots: Sequence[Path],
-                      recent_runs: int = BUNDLE_RECENT_RUNS, header: Sequence[str] = ()) -> Dict[str, Any]:
+                      journal: Optional[Path] = None, recent_runs: int = BUNDLE_RECENT_RUNS,
+                      header: Sequence[str] = ()) -> Dict[str, Any]:
     """One zip with everything a diagnosis reads, and nothing of the documents: the application logs folder (the app
-    log, every event journal, crash logs, session markers), ``settings.json``, the current conversation and the last
-    archived ones, and from the newest ``recent_runs`` folders of each run root their logs, records, reports and
-    conversation records (``.log``, ``.jsonl``, ``.json``, ``.md``, ``.txt`` outside the folders that hold documents
-    and pages). ``MANIFEST.txt`` lists what is in it and what was left out, and why. Conversations and records quote
-    the user's words and the documents' text: the bundle is the user's to share or not. Written whole, then renamed
-    into place; returns ``{"path", "files", "skipped", "bytes"}``. Raises OSError when the zip cannot be written."""
+    log, every event journal, crash logs, session markers), ``settings.json``, the current conversation's journal
+    (``journal``, in the window's scratch folder), and from the newest ``recent_runs`` folders of each run root (the
+    scratch folder: its session folders) their logs, records, reports and conversation records (``.log``,
+    ``.jsonl``, ``.json``, ``.md``, ``.txt`` outside the folders that hold documents and pages). ``MANIFEST.txt``
+    lists what is in it and what was left out, and why. The conversation and the records quote the user's words and
+    the documents' text: the bundle is the user's to share or not. Written whole, then renamed into place; returns
+    ``{"path", "files", "skipped", "bytes"}``. Raises OSError when the zip cannot be written."""
     target = Path(target)
     chosen: List[tuple] = []                   # (name in the zip, file on disk)
     skipped: List[str] = []
@@ -910,9 +911,8 @@ def diagnostic_bundle(target: Path, *, logs: Path, config: Path, run_roots: Sequ
             add(f"logs/{path.name}", path)
     config = Path(config)
     add("config/settings.json", config / "settings.json")
-    add("config/conversation.json", config / "conversation.json")
-    for path in _newest(list((config / "conversations").glob("*.json")), BUNDLE_RECENT_CONVERSATIONS):
-        add(f"config/conversations/{path.name}", path)
+    if journal is not None:
+        add("scratch/conversation.json", Path(journal))
     roots: List[Path] = []
     for root in run_roots:
         root = Path(root)
@@ -921,7 +921,9 @@ def diagnostic_bundle(target: Path, *, logs: Path, config: Path, run_roots: Sequ
             roots.append(root)
     for i, root in enumerate(roots):
         try:
-            runs = _newest([p for p in root.iterdir() if p.is_dir()], recent_runs)
+            # the session folders only: a scratch folder's attachments\ (dropped files) is never read
+            runs = _newest([p for p in root.iterdir() if p.is_dir() and p.name.lower() not in BUNDLE_SKIP_DIRS],
+                           recent_runs)
         except OSError as exc:
             skipped.append(f"{root} (the run folder could not be listed: {exc})")
             continue
@@ -960,9 +962,9 @@ def diagnostic_bundle(target: Path, *, logs: Path, config: Path, run_roots: Sequ
             files.append(name)
             total += len(data)
         manifest = [*header, f"Saved {datetime.now().astimezone().isoformat(timespec='seconds')}", "",
-                    "Holds the app's logs and event journals, its settings, the current and last conversations, and "
-                    "the logs, records and reports of the newest runs. No document, picture or page image is in it; "
-                    "conversations and records can quote your words and your documents' text.", "",
+                    "Holds the app's logs and event journals, its settings, the current conversation, and the logs, "
+                    "records and reports of the newest runs. No document, picture or page image is in it; the "
+                    "conversation and the records can quote your words and your documents' text.", "",
                     f"Files ({len(files)}):", *[f"  {n}" for n in files]]
         if skipped:
             manifest += ["", f"Left out ({len(skipped)}):", *[f"  {n}" for n in skipped]]

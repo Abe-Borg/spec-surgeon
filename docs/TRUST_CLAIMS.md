@@ -28,7 +28,9 @@ of the modes: Obliterate's placed wording traced to the reply the user reads (T5
 every later copy (T56), the checks a custom method may never keep (T25, T56), the outcome plan offered as a choice
 the user picks (B4, B8, T6; F1 resolved), the documents left out of a request kept out of it (B8), and the author on
 the outcome path (F10). Updated 2026-10-27 with Safe mode's **Save clean PDFs** (A32, T8, T59, the run folders in 1e,
-1f, 1g). Updated 2026-10-27 with the guided tour (A33, its practice folder and `tutorial_version` in 1e, T60).
+1f, 1g). Updated 2026-10-27 with the guided tour (A33, its practice folder and `tutorial_version` in 1e, T60). Updated 2026-10-27 with the scratch folder and Export (backlog H1): the window
+works in a scratch folder it deletes when it closes and writes a copy or a clean PDF where you chose only at
+Export (A3, A12, A14, A19, A34, B1, B19, T1, T31, T34, 1e; F5 resolved).
 Paths are relative to `src/spec_surgeon/` unless they start with `frontend/`, `tests/` or `docs/`.
 
 **Verification column:**
@@ -47,7 +49,7 @@ Paths are relative to `src/spec_surgeon/` unless they start with `frontend/`, `t
 | A1 | Settings → paste the key, **Save** (optional **Remember securely on this computer**) | `POST /api/settings` → `credentials.save` | none |
 | A1a | Settings → **Remove app key** | `POST /api/settings/remove-key` → `WindowState.remove_app_key`; deletes the app-specific secure-store entry and session override, restores a launch environment key; refuses while busy or deletion fails | none; no revocation or authentication check |
 | A2 | Settings → **Appearance** (colour scheme) | `POST /api/settings` `{theme}` | none |
-| A3 | **Add Word documents**, **Add a template (optional)**, **Add a picture or table (optional)**, or a drop anywhere in the window | `POST /api/pick` → `/api/attach`; a drop → `POST /api/upload` → `DocumentTask.attach` → `triage` | none |
+| A3 | **Add Word documents**, **Add a template (optional)**, **Add a picture or table (optional)**, or a drop anywhere in the window | `POST /api/pick` → `/api/attach`; a drop → `POST /api/upload` (the bytes under the scratch folder's `attachments\<stamp>\`) → `DocumentTask.attach` → `triage` | none |
 | A4 | Remove an attachment (✕) | `POST /api/remove` | none |
 | A5 | Type a request or answer, then **Send** or Enter | `POST /api/send` → `DocumentTask._send` | conversation |
 | A6 | Pick a choice (after **Edit wording**, with your own version of its drafted wording), type its number, or tap a suggested reply | `POST /api/choose` (`wording`) or `/api/send` (`chip`) | conversation |
@@ -56,9 +58,9 @@ Paths are relative to `src/spec_surgeon/` unless they start with `frontend/`, `t
 | A9 | **Save N ready copies** | `POST /api/primary` during recovery | none |
 | A10 | **Continue** (after a pause at the spending check, a stop, a failure or a restored conversation) | `POST /api/primary` → `_primary` (stage `budget`: the request's limit becomes its spending plus the amount, or none for `unpriced`) → `_resume` | conversation or recovery |
 | A11 | **Stop** beside the spending in the top bar, the stop button in the chat, and closing the window while work runs | `POST /api/stop`; `web/shell.on_closing` | cuts the running call off |
-| A12 | Open a copy, or the copies' folder | `POST /api/open` → `os.startfile` | none |
+| A12 | Open a copy, or the copies' folder (both in the window's scratch folder) | `POST /api/open` → `os.startfile` | none |
 | A13 | **Start over from the originals** | `POST /api/start-over` (or the typed reply) | none |
-| A14 | **New conversation** | `POST /api/new-conversation` | none |
+| A14 | **New conversation** (the page asks first when a copy was never saved with Export) | `POST /api/new-conversation` → `WindowState.new_conversation`: an empty task over the same scratch folder, its journal written over | none |
 | A15 | **Work on the documents I set aside** (to-do list: whatever put them there, each with why) | `/api/send` with `WORK_TODO` → `start_todo` | none until the next request |
 | A16 | Click a page to enlarge it | page only; the image comes from `GET /api/image` | none |
 | A16a | Read why a preview or document did not pass | `ui_feedback.failed_preview_checks` reads actual verdicts, including earlier chain stages; `refusal_message` presents common refusals; original engine evidence remains in diagnostics | none; presentation only |
@@ -81,6 +83,7 @@ Paths are relative to `src/spec_surgeon/` unless they start with `frontend/`, `t
 | A31 | Settings → **Spending check**: type an amount in US dollars and **Apply**, or **Turn off** | `POST /api/settings` `{spending_limit_usd}` → `settings.spending_check` → `DocumentTask.set_spending_limit`, kept in `settings.json` (`Settings.spending_limit_usd`; 0 is off); the next request uses it | none |
 | A32 | In Safe mode: **Save clean PDFs**, then **Save clean PDFs** beside its preview | `POST /api/recipe` → `recipes._clean_pdf` (two steps: `remove_comments` all, then `resolve_tracked_changes` accept; refused at the press when `pdf_export.renderer` finds neither Word nor LibreOffice) → the preview as A24; `POST /api/primary` → `DocumentTask._primary` → `Session.run` (`export` "pdf") → `Session._export_pdfs` → `pdf_export.export_pdfs` (`render.pick`, `render.render_pdfs` through the render cache, `check_pdf`) into `<run>\pdf\`; `DocumentTask._end_export`: the working set, the history and the undo points are unchanged | none |
 | A33 | **Tour** in the top bar, the chip at the top of an empty conversation, or Help → How to use → **Start the guided tour** / a chapter; then **Continue**, **Back**, **End the tour** and **Finish and return to my conversation** | `POST /api/tutorial/start` → `WindowState.begin_tutorial` → `tutorial.Tutorial.begin` (the conversation's `DocumentTask` set aside untouched in `original_task`, a `TutorialTask` over the bundled showcase `examples/tutorial/` in its place; its copies go to `data_dir()\tutorial\`); each chapter `POST /api/tutorial/scenario` → `Tutorial.show` → `tutorial.build_scenario` (triage, `recipes.build` and `compiler.compose_submission`, `Session.make_preview`, `Session.run` — the production paths, `Session.model_free`; a conversation chapter's messages and question are a recording, `TutorialTask.scripted`, and its `send`/`choose` raise `NO_CONVERSATION`); the end `POST /api/tutorial/restore` → `Tutorial.end` (the original task back, the practice folder deleted) and, on Finish only, `POST /api/settings` `{tutorial_version}`. The page keeps its place in `localStorage` (`spec-surgeon:tour-progress`) | none (no model call in any chapter, and none possible: the practice task refuses `send` and `choose`) |
+| A34 | **Export** in the top bar → the native folder dialog → **Save the copies…** (the edited copies the next request builds on, and the clean PDFs of the last Save clean PDFs run) | `POST /api/export` → `Shell.pick_folder` (`webview.FOLDER_DIALOG`, opened at `Settings.export_folder`) → `DocumentTask.export` → `guard.write_new` per copy; the folder kept in `settings.json` | none |
 
 Count: 31 actions.
 
@@ -93,7 +96,7 @@ your browser (N4).
 
 | # | Behaviour | Where | AI | Network |
 | --- | --- | --- | --- | --- |
-| B1 | At start: archive the last conversation, report a session that never closed, tidy old installer downloads | `gui.main`, `DocumentTask.archive`, `diag.CrashWatch`, `UpdateFlow.startup` | none | none |
+| B1 | At start: open a new scratch folder and sweep what earlier windows left (a window's that never closed is taken over and its conversation and copies restored instead: B19), report a session that never closed, tidy old installer downloads | `gui.main`, `scratch.open_window`, `DocumentTask.restore`, `diag.CrashWatch`, `UpdateFlow.startup` | none | none |
 | B2 | Automatic update check, at most once every 24 h | `UpdateFlow.auto_check`, `updater.should_auto_check` | none | GitHub |
 | B3 | Every attachment checked on arrival (triage); two attached documents of one name are named in the chat with both folders (re-audit) | `triage.triage`, `triage_reference`, `DocumentTask._say_same_names` | none | none |
 | B4 | After a reply, up to `AUTO_STEPS` internal steps: make the preview, prepare a custom method (an outcome plan is a choice you pick, A6, never a step taken on its own) | `DocumentTask._settle`, `Session.outcome` (`auto`: `custom_transform` only) | yes | Anthropic |
@@ -112,6 +115,7 @@ your browser (N4).
 | B16 | A batch of 3 or more files is edited and checked in the app's own worker processes, one per core up to 8, each file whole in one worker; a preview plans 12 or more files, and checks 3 or more samples, the same way; Word renders over up to 3 private instances side by side | `batch.worker_plan` (`DEFAULT_WORKER_MODE` "auto"), `batch.map_files`, `planner.PLAN_PROCESS_MIN_FILES`, `render/word_worker.run_word_batches` | none | none |
 | B17 | With Fast responses on: a fast call the fast capacity cannot take (429, 529) is re-sent at once at standard speed; a key refused fast mode (a 400 or 403 naming the speed) runs at standard speed until the setting is turned on again | `llm.call` (`_fast_capacity`, `_speed_refused`, `_fast_unavailable`) | follows a call | Anthropic |
 | B18 | (to-do list) After Create edited copies runs: a file its preview refused, and a run failure no recovery takes, go on the to-do list with the reason (a Create that is refused moves nothing). After a conversation turn: the documents Claude set aside at the user's word (`set_aside`) go there too | `DocumentTask._refused_now`, `_bin_failed`, `_take_set_aside` | none of its own | none |
+| B19 | Closing the window: with edited copies or clean PDFs of the user's own task never saved by Export (never the tour's practice task's), one native question (OK closes and gives them up, Cancel keeps the window open; nothing is asked or recorded with nothing unsaved, so copies a run still finishing delivers after the question are kept for the next start); then the scratch folder — every session folder, dropped file and the journal — is deleted. At the next start every leftover scratch folder is swept, except a window's that never closed, which is taken over and its conversation and copies restored, once | `web.shell.on_closing` (`Shell.confirm`, `WindowState.close_confirmed`), `gui.main` (`scratch.open_window`, `Scratch.discard`), `DocumentTask.restore` | none | none |
 
 Count: 18 automatic behaviours. B4–B10, B13, B15 and B17 run only inside work a click started. B1–B3, B11, B12, B14,
 B16 and B18 involve no model.
@@ -212,9 +216,9 @@ On Windows, `config_dir()` = `%APPDATA%\Spec Surgeon`, `data_dir()` = `%LOCALAPP
 | Location | Holds | Your words or document text? | Kept |
 | --- | --- | --- | --- |
 | Windows Credential Manager, `Spec Surgeon/ANTHROPIC_API_KEY` | the API key, if you ticked Remember | — | until Settings → Remove app key, or deletion in Credential Manager |
-| `config_dir()\settings.json` | folders, colour scheme, whether Fast responses is on, the mode the window opens in (Safe or Default; never Obliterate), whether Obliterate mode is shown, the guided tour version this computer finished (`tutorial_version`), update bookkeeping | paths only | overwritten |
-| `config_dir()\conversation.json`, `conversations\*.json` | the chat, your decisions and approved wording, results (and the failed checks of a copy delivered UNVERIFIED in Obliterate mode), the to-do list with why each document waits, the undo points (for each run that delivered copies: the copy each document built on before it, the history, and the copies and Left untouched list it replaced on screen; paths and change sentences only), estimated spending | yes | archived at each start; **never pruned** (F5); Start over and removing the last working copy clear the undo points |
-| `config_dir()\attachments\<time>\` | full copies of files you dropped on the window | yes, whole files | **never deleted** (F5) |
+| `config_dir()\settings.json` | the folder Export last saved to, colour scheme, whether Fast responses is on, the mode the window opens in (Safe or Default; never Obliterate), whether Obliterate mode is shown, the guided tour version this computer finished (`tutorial_version`), update bookkeeping | paths only | overwritten |
+| the scratch folder's `conversation.json` (`data_dir()\scratch\<start>-<pid>\`) | the chat, your decisions and approved wording, results (and the failed checks of a copy delivered UNVERIFIED in Obliterate mode), the to-do list with why each document waits, the undo points (for each run that delivered copies: the copy each document built on before it, the history, and the copies and Left untouched list it replaced on screen; paths and change sentences only), what Export saved where, estimated spending | yes | deleted with the scratch folder when the window closes (B19); a window that never closed leaves it for the next start, which restores it once; Start over and removing the last working copy clear the undo points |
+| the scratch folder's `attachments\<time>\` | full copies of files you dropped on the window | yes, whole files | deleted with the scratch folder (B19) |
 | `config_dir()\repair-memory.sqlite3` | past repair cases: your request, candidate plans, wording and generated code | yes | 2,000 cases, oldest dropped; no clear button (F4) |
 | `config_dir()\render-profiles\` | LibreOffice's own profiles | not inspected | kept |
 | `data_dir()\logs\spec-surgeon.log` | the app log: job start/end, progress lines, errors | file names; error messages can quote document text | 2 MiB × 3 backups |
@@ -222,8 +226,9 @@ On Windows, `config_dir()` = `%APPDATA%\Spec Surgeon`, `data_dir()` = `%LOCALAPP
 | `data_dir()\logs\crash-*.log`, `session-*.json` | crash stacks, session markers | no | newest 10 crash logs |
 | `data_dir()\updates\` | downloaded installers, install logs | no | old installers deleted at start; 3 logs |
 | `data_dir()\diagnostics\*.zip` | bundles you saved | yes (see F3) | **never deleted** |
-| run folders under `data_dir()\runs\` (or the chosen folder) | delivered copies, failed copies, clean PDFs (`run\pdf\`, `PDF_REPORT.md`; a PDF that failed its check in `run\pdf-failed\`), records, plans, previews, page images, conversation transcripts (`conversation.json`, `compile.json`, `chat\context\*.json` with page images), custom-method history and sandbox copies, recovery checkpoints | yes | **never deleted** (F5) |
-| `runs\.render-cache\` | PDFs of rendered documents, by content hash | yes | 2 GiB, least recently used dropped |
+| session folders in the scratch folder (`data_dir()\scratch\<start>-<pid>\<stamp>\`) | delivered copies, failed copies, clean PDFs (`run\pdf\`, `PDF_REPORT.md`; a PDF that failed its check in `run\pdf-failed\`), records, plans, previews, page images, conversation transcripts (`conversation.json`, `compile.json`, `chat\context\*.json` with page images), custom-method history and sandbox copies, recovery checkpoints | yes | deleted with the scratch folder when the window closes, after one question if a copy was never saved (B19); a leftover is swept at the next start |
+| the folder you chose at Export | the copies and clean PDFs you saved (`DocumentTask.export`, `guard.write_new`: never over an input, never into the scratch tree) | yes, whole files | yours: never deleted or changed by the app |
+| `data_dir()\scratch\.render-cache\` | PDFs of rendered documents, by content hash | yes | 2 GiB, least recently used dropped; never swept with a scratch folder |
 | `data_dir()\tutorial\<time>\` | the guided tour's practice workspace: copies of the bundled showcase (`examples/tutorial/`, no file of yours), and the previews, copies and records its chapters make from them | the showcase's text only | deleted when the tour ends; replaced at the next tour's start |
 | the browser's `localStorage`, `spec-surgeon:tour-progress` | the tour's id, chapter and step (for a reload during the tour) | no | cleared when the tour ends or its version changes |
 
@@ -356,7 +361,7 @@ How each is labelled:
 - **Local server:**
   - It binds `127.0.0.1` on a free port (`web/shell.free_port`, `serve`).
   - Every `/api` request needs the launch token (`secrets.token_urlsafe(24)`, compared in constant time).
-  - Pictures are served only as PNGs under the run folder or the config folder (`image_allowed`).
+  - Pictures are served only as PNGs under the window's scratch folder or the config folder (`image_allowed`).
   - Cross-origin requests are allowed only in the developer mode (`SPEC_SURGEON_DEV`).
   - (re-audit) If no native window can open (`web/shell.native_backend_problem`: pywebview or its WebView2 backend
     missing), the page opens in the default browser at the same loopback address with `?token=` in the URL
@@ -390,7 +395,7 @@ All in the dossier's "What this does not do":
 
 ### 1l. Audit hooks
 
-- **The run folder:** `records\*.record.md` and `.json` (V1–V10), `BATCH_REPORT.md`, `DIAGNOSTICS.md`,
+- **The run folder** (in the window's scratch folder until it closes; a bundle carries the records): `records\*.record.md` and `.json` (V1–V10), `BATCH_REPORT.md`, `DIAGNOSTICS.md`,
   `exceptions\`, `plans\`.
 - **The conversation's records:** `conversation.json` with `exchange` (every request as sent and every answer, with
   its served model, tokens and request id), `compile.json`, `visual_review.json`, `codegen\history.json`.
@@ -409,7 +414,7 @@ Lv1 marks a claim in "Why trust it?"; D marks one in the dossier (section in bra
 
 | # | Claim | Where | Source | Verified by |
 | --- | --- | --- | --- | --- |
-| T1 | The window never writes over an original: it delivers copies, each run in its own folder | Lv1, D(summary, terms, runtime A8) | `gui.Session.run` raises on `in_place`; `DocumentTask._primary` calls `s.run(False, …)`; `guard.write_back` reached only through `in_place` | existing: `tests/test_document_task.py` (`source.read_bytes() == before`), `tests/test_execution_delivery_safety.py` |
+| T1 | The window never writes over an original: it delivers copies into its scratch folder, and Export writes them where you choose, never over an input and never into the scratch tree (a destination that is an attached file or a working copy, or a folder inside the app's scratch folders, refuses the whole export) | Lv1, D(summary, terms, runtime A8, A34) | `gui.Session.run` raises on `in_place`; `DocumentTask._primary` calls `s.run(False, …)`; `guard.write_back` reached only through `in_place`; `DocumentTask.export` → `guard.write_new` | existing: `tests/test_document_task.py` (`source.read_bytes() == before`), `tests/test_execution_delivery_safety.py`, `tests/test_export.py` (bytes verbatim, refused over an input) |
 | T2 | Each change is predicted from the original before anything is changed | Lv1, D(terms) | CLAUDE.md invariant 1; `Op.plan` | existing: `tests/test_ops.py` and the op suites |
 | T3 | The checker shares no code with the editing | Lv1, D(engine, terms) | `verify/` imports | existing: `tests/test_independence.py` |
 | T4 | A copy that fails its check is never delivered; it goes to `failed\` (in Safe and Default modes; Obliterate: T56) | Lv1, D(runtime A8, limits) | `batch.py` | existing: `tests/test_batch*.py` |
@@ -440,10 +445,10 @@ Lv1 marks a claim in "Why trust it?"; D marks one in the dossier (section in bra
 | T28 | Updates: HTTPS only; only an installer named for the version, at most 500 MiB, whose SHA-256 matches the release's `SHA256SUMS`; unsigned | D(security, runtime A18) | `updater.py` | facts + existing: `tests/test_updater.py` |
 | T29 | Nothing is uploaded: no telemetry, no crash reports; the bundle is saved on your computer | Lv1, D(boundary) | `telemetry.py`, `server.diagnostics_bundle` | manual (grep in §1c) |
 | T30 | The page loads no outside script, font or picture of its own | D(boundary) | `frontend/index.html`, `index.css`, built `web/static` | trust.test (trust components); manual (built page) |
-| T31 | Run folders, conversations, attachments copies and bundles are never deleted by the app | D(security, limits) | §1e | manual |
+| T31 | The app deletes only its own scratch folders — at a clean close, after one question when a copy was never saved, and at the next start's sweep, a window's that never closed restored instead — never a file you attached by path, a copy you saved with Export, or a saved bundle | D(security, limits, runtime B1, B19) | `scratch.open_window`, `Scratch.discard`, `gui.main`, `web.shell.on_closing`, `WindowState.close_confirmed` | existing: `tests/test_scratch.py`, `tests/test_gui.py` (the scratch lifecycle), `tests/test_export.py` (the close question) |
 | T32 | Log sizes: app log 2 MiB × 3, event journal 5 MiB × 3 for 5 past sessions, render cache 2 GiB, repair memory 2,000 cases, newest 10 crash logs | D(security) | `diagnostics.setup_app_logging`, `telemetry`, `render/cache.py`, `repair_memory.MAX_CASES`, `CrashWatch.KEEP` | facts |
 | T33 | Recovery sends up to 5 past repair cases from earlier work with its request | D(provenance, boundary, limits) | `recovery._investigate` (`limit=5`) | facts (source text) |
-| T34 | The bundle holds 3 recent conversations and 5 recent runs' text files | D(runtime A19) | `diagnostics.BUNDLE_RECENT_*` | facts |
+| T34 | The bundle holds this conversation's journal and the 5 newest session folders' text files | D(runtime A19) | `diagnostics.BUNDLE_RECENT_RUNS`, `diagnostic_bundle(journal=)` | facts (`bundleRecentRuns`) + existing: `tests/test_window_diagnostics.py` |
 | T35 | Recovery tries at most 8 attempts per group, pausing after 3 equivalent rejected tries | D(runtime B8, B9) | `document_task.RECOVERY_ATTEMPTS`, `DEFAULT_STALL_REPETITIONS` | facts |
 | T36 | Pictures and tables over 20 MB are listed as too big, never read; a .docx is opened up to 256 MiB | D(runtime A3) | `inputs.MAX_BYTES`, `package_limits.ArchiveLimits.max_archive_bytes` | facts |
 | T37 | Word renders on your machine in new invisible instances (up to 3 side by side, T51), never your open Word; else LibreOffice | D(no AI, engine) | `render/word_com.py` (DispatchEx, Visible False), `render/__init__.pick` | manual |
@@ -509,9 +514,11 @@ Lv1 marks a claim in "Why trust it?"; D marks one in the dossier (section in bra
   - Recovery sends up to 5 matching cases with its request to Claude, so wording from an earlier project can go out
     with a later one.
   - `CaseStore.forget` exists but nothing in the window calls it.
-- **F5. Unbounded local data.**
-  - Run folders (copies, page images, transcripts, sandbox copies), `conversations\` archives, `attachments\` (full
-    copies of every file dropped on the window, in the Roaming profile) and saved bundles are never deleted.
+- **F5. Unbounded local data** (resolved 2026-10-27, backlog H1).
+  - Run folders, the conversation's journal and dropped files now live in the window's scratch folder, deleted when
+    the window closes (after one question when a copy was never saved) and swept at the next start (B19); nothing of
+    a session is kept unless Export saved it. Saved bundles are still never deleted; the repair memory (F4) and the
+    render cache keep their own limits.
 - **F6. Windows sandboxes are weaker than Linux's.**
   - Model-written analysis on Linux gets a syscall filter and CPU and file-size limits. On Windows it gets a job object
     (memory, one process) plus the language and audit guards.

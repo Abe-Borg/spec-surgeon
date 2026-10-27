@@ -156,6 +156,17 @@ export interface Result {
   name: string;
   /** Obliterate mode: the checks this copy failed; it was delivered anyway. Empty for a verified copy. */
   unverified?: string[];
+  /** Where Export → Save the copies… saved this copy; "" while it lives only in the window's scratch folder. Absent
+   *  from an older server. */
+  saved_to?: string;
+}
+
+/** Export → Save the copies…: where the copies were last saved, how many working copies are not saved yet (only a
+ *  saved copy survives closing the window), and how many working copies there are. */
+export interface ExportState {
+  folder: string;
+  unsaved: number;
+  copies: number;
 }
 
 /** A clean PDF Save clean PDFs saved: `source` is the attached document, `output` the PDF made from its clean copy. */
@@ -166,6 +177,8 @@ export interface PdfResult {
   /** Made from a working copy delivered UNVERIFIED (Obliterate mode): that copy's failed checks, as an earlier
    *  copy's. Empty when nothing failed on the way. */
   unverified?: string[];
+  /** Where Export → Save the copies… saved this PDF; "" while it lives only in the window's scratch folder. */
+  saved_to?: string;
 }
 
 /** Whether this computer can make PDFs (Save clean PDFs needs Word or LibreOffice), and with which program. */
@@ -294,6 +307,7 @@ export interface View {
   pdfs: PdfResult[];
   /** Whether Save clean PDFs can run on this computer. */
   pdf: PdfInfo;
+  export: ExportState;
   action: Action;
   /** Documents set aside for more work, waiting on the to-do list (attached originals). */
   todo: TodoItem[];
@@ -354,7 +368,8 @@ export interface Settings {
   can_remember: boolean;
   /** An app-managed session/saved key can be removed; external credentials are managed outside the app. */
   can_remove_key?: boolean;
-  out_root: string;
+  /** Where Export → Save the copies… last saved, and where its folder dialog opens; "" before the first export. */
+  export_folder: string;
   logs_dir: string;
   /** The colour scheme kept in settings.json: one of src/lib/theme.ts's ids. */
   theme: string;

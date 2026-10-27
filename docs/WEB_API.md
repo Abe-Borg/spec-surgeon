@@ -46,10 +46,11 @@ that ends a job is authoritative.
                "pages_before": 12, "pages_after": 12, "passed": true, "failures": [],
                "geometry": {"status": "PASS", "note": "Page layout checked on the rendered pages: …"}}],
   "warnings": ["…"], "blocking": false,
-  "results": [{"source": "…", "output": "…", "name": "21 13 13.docx", "unverified": []}],
-  "pdfs": [{"source": "C:/Specs/21 13 13.docx", "output": "C:/.../runs/20261027-1/run/pdf/21 13 13.pdf",
-            "name": "21 13 13.pdf", "unverified": []}],
+  "results": [{"source": "…", "output": "…", "name": "21 13 13.docx", "unverified": [], "saved_to": ""}],
+  "pdfs": [{"source": "C:/Specs/21 13 13.docx", "output": "C:/.../scratch/20261027-090000-7/20261027-1/run/pdf/21 13 13.pdf",
+            "name": "21 13 13.pdf", "unverified": [], "saved_to": ""}],
   "pdf": {"available": true, "renderer": "Microsoft Word | LibreOffice", "reason": ""},
+  "export": {"folder": "", "unsaved": 2, "copies": 2},
   "action": {"label": "Create edited copies", "token": "…", "kind": "approve | continue | save | none",
              "can_hold": true, "export": " | pdf"},
   "todo": [{"path": "C:/Specs/21 05 00.docx", "name": "21 05 00.docx", "why": "held | asked | refused | failed",
@@ -151,8 +152,12 @@ Rules the page relies on:
   `chips` outside the question stage.
 - During recovery (stage `question`), once every ready copy is saved, `chips` carries "Set the rest aside for later":
   sent as a reply, it puts what recovery has not fixed on the to-do list and ends the request (no model call).
-- `results` lists the edited copies of the latest run; `working.generation` > 0 means the next request builds on
+- `results` lists the edited copies of the latest run, each with `saved_to` (where Export saved it; `""` while it
+  lives only in the window's scratch folder); `working.generation` > 0 means the next request builds on
   those copies, and `can_start_over` shows the "Start over from the originals" chip.
+- `export` is `{"folder", "unsaved", "copies"}`: where Export last saved (`""` before the first), how many working
+  copies are not saved yet (only a saved copy survives closing the window), and how many working copies there are.
+  The Export button is disabled at `copies` 0 and says the `unsaved` count.
 - `working.undo` is the request of the last run that delivered copies (the button's sentence in Safe mode), which
   `POST /api/undo` goes back before; "" when nothing can be undone. `working.undo_blocked` says why it cannot be
   undone now ("Discard the preview first." while a preview waits, a request still open); "" when it can. In Safe mode
@@ -186,7 +191,7 @@ explicitly injected clients are retained. Both key replacement and removal refus
 | POST | `/api/settings/remove-key` | | the settings; 409 while work runs; 400 for external-only credentials or secure-store deletion failure |
 | GET | `/api/state` | | the view |
 | POST | `/api/attach` | `{"paths": [..], "template": false}` | the view (400 with `{"error"}` for a refused file) |
-| POST | `/api/upload` | multipart `files[]`, `template` field | copies the bytes under the config folder's `attachments/<stamp>/` and attaches them; the view |
+| POST | `/api/upload` | multipart `files[]`, `template` field | copies the bytes under the scratch folder's `attachments/<stamp>/` (deleted with it when the window closes) and attaches them; the view |
 | POST | `/api/pick` | `{"kind": "documents | template | references"}` | opens the NATIVE file dialog through the shell (pywebview); `{"paths": [...]}` — 501 when no shell |
 | POST | `/api/remove` | `{"path": "...", "template": false}` | the view |
 | POST | `/api/send` | `{"text": "...", "chip"?: true}` — `chip` marks one of the model's suggested replies the user tapped: their decision, never approved wording | SSE stream (below) |
@@ -201,14 +206,15 @@ explicitly injected clients are retained. Both key replacement and removal refus
 | POST | `/api/start-over` | | the view (the working set returns to the originals; the plan is void; the to-do list is cleared; nothing can be undone) |
 | POST | `/api/discard` | | Safe mode's Discard: the view (the waiting preview withdrawn, nothing created; `results` and `left_untouched` as they were before the button was pressed); 400 with `{"error"}` outside Safe mode or with no preview waiting, 409 while work runs |
 | POST | `/api/undo` | | the view (the working set back to the copies from before the last run that delivered copies; `results`, `left_untouched` and the to-do entries that run's ✗ added as they were; no file written or deleted); 400 with `{"error"}` when there is nothing to undo, a preview waits, a request is open or a copy it would go back to is gone, 409 while work runs |
-| POST | `/api/new-conversation` | | the view (archives the journal, starts empty); 409 with `{"error"}` while a tour runs (the page ends the tour first) |
+| POST | `/api/new-conversation` | | the view (starts empty over the same scratch folder; the journal is written over; the page asks first when a copy was never saved with Export); 409 with `{"error"}` while a tour runs (the page ends the tour first) |
 | GET | `/api/tutorial/status` | | the view's `tutorial` block |
 | POST | `/api/tutorial/start` | `{"request_id": "<the page's id for this start>"}` | begins the guided tour: the conversation's task is set aside untouched, a `TutorialTask` over the bundled showcase (`examples/tutorial/`, copied to a fresh practice folder under `data_dir()/tutorial/`) takes its place in the `start` state; the view, its `tutorial` block naming the tour. The same `request_id` sent again joins the tour that start began (a retried request starts no second one); 409 while work runs or another tour is running; 500 when the practice folder cannot be made |
 | POST | `/api/tutorial/scenario` | `{"tutorial_id": "<id>", "kind": "start \| button \| copies \| conversation \| question \| plan \| todo"}` | builds that chapter's state from the showcase through the production paths (no model call) and shows it; the view. The kind already shown is answered without rebuilding; 400 for an unknown kind; 409 for a stale id or while work runs; 500 when the build fails (the view is unchanged) |
 | POST | `/api/tutorial/restore` | `{"tutorial_id": "<id>"}` (`null` ends whatever tour runs) | ends the tour: the conversation's task back exactly as it was, the practice folder deleted; the view (`tutorial.active` false). Idempotent for a tour already ended; 409 for another tour's id or while work runs |
-| POST | `/api/open` | `{"path": "..."}` | opens a result in Word, a clean PDF in the PDF viewer, or a folder, with the OS (`{"ok": true}`); 404 if gone |
-| GET | `/api/image` | `?path=…` | the PNG (only files under the app's run folders are served; else 404) |
-| GET | `/api/settings` | | `{"key_present": true, "origin": "saved", "can_remember": true, "out_root": "…", "logs_dir": "…", "theme": "clay", "spending_limit_usd": 20.0, "spending_default_usd": 20.0, "fast_mode": false, "show_obliterate": false, "fast": {"model": "claude-opus-5-5", "available": true, "speedup": 2.5, "price_factor": 2, "standard_usd_per_mtok": [4.0, 20.0], "fast_usd_per_mtok": [8.0, 40.0], "refused": null}}` — `fast` is what Settings says about fast mode, from `llm.PRICES` / `llm.FAST_PRICES` for the model the calls use; `refused` is the API's reason when it refused fast mode for this key |
+| POST | `/api/export` | `{"folder": "…"}`, optional: without it the native folder dialog asks, opened at `export_folder` | Export → Save the copies…: every working copy, and every clean PDF of the last Save clean PDFs run, written into the folder under its planned name (a file there with the same bytes is that copy, saved; a different one is left alone and the copy numbered beside it; a destination that is an attached file or a working copy, or a folder inside the app's scratch tree, refuses the whole export, nothing written); the view, with `results[].saved_to`, `pdfs[].saved_to` and `export` filled and one `app` message; `{"cancelled": true}` when the dialog was dismissed; 400 with `{"error"}` for nothing to save or a folder that refuses, 409 while work runs or a tour runs, 501 without a dialog and a folder |
+| POST | `/api/open` | `{"path": "..."}` | opens a result (in the scratch folder) in Word, a clean PDF in the PDF viewer, or a folder, with the OS (`{"ok": true}`); 404 if gone |
+| GET | `/api/image` | `?path=…` | the PNG (only files under the window's scratch folder or its config folder are served; else 404) |
+| GET | `/api/settings` | | `{"key_present": true, "origin": "saved", "can_remember": true, "export_folder": "…", "logs_dir": "…", "theme": "clay", "spending_limit_usd": 20.0, "spending_default_usd": 20.0, "fast_mode": false, "show_obliterate": false, "tutorial_version": 0, "fast": {"model": "claude-opus-5-5", "available": true, "speedup": 2.5, "price_factor": 2, "standard_usd_per_mtok": [4.0, 20.0], "fast_usd_per_mtok": [8.0, 40.0], "refused": null}}` — `fast` is what Settings says about fast mode, from `llm.PRICES` / `llm.FAST_PRICES` for the model the calls use; `refused` is the API's reason when it refused fast mode for this key; `export_folder` is where Export last saved (its dialog opens there; `""` before the first export) |
 | POST | `/api/settings` | `{"api_key": "sk-…", "remember": true}` and/or `{"theme": "linen"}` and/or `{"fast_mode": true}` and/or `{"show_obliterate": true}` and/or `{"spending_limit_usd": 12.5}` and/or `{"tutorial_version": 1}` | the settings (`GET` also carries `tutorial_version`, the tour version this computer finished, 0 = never; the page writes it when the tour is finished, and it is kept in `settings.json`); 400 with `{"error"}` (an unknown scheme, a `fast_mode` or `show_obliterate` that is not a boolean, a `spending_limit_usd` that is neither a positive amount nor `null`/`0`, a `tutorial_version` that is not a whole number of 0 or more). `spending_limit_usd` is the spending check per request (`null` or `0` turns it off; `GET` says `null` then), kept in `settings.json` and used from the next request (`DocumentTask.set_spending_limit`). `show_obliterate` (Settings → Advanced) adds `obliterate` to the view's `modes` and is kept; turning it off while the window is in Obliterate leaves the mode for Default (409 while work runs). `theme` is one of `clay`, `blueprint`, `graphite`, `carbon`, `linen` and is saved to `settings.json` at once; `fast_mode` is saved too and applies from the next AI step (`llm.set_fast_mode`; a call already running keeps its speed) |
 | GET | `/api/about` | | `{"version", "name", "tagline", "license", "license_name", "license_summary": [...], "release_notes", "credits": [...], "copyright", "author", "email", "github", "linkedin", "model", "components": [{"name", "license", "url"}]}` — every value from `about.py` (and `model` from `llm.DEFAULT_MODEL`); `credits` is the same as plain lines |
 | GET | `/api/update` | | the `update` block |

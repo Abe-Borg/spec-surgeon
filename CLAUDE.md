@@ -85,7 +85,13 @@ only when no file plans, a sample fails its check, or every sample is refused). 
 refused once the others run, a run failure no recovery takes, and recovery's leftovers at `SET_ASIDE_REST`;
 `put_back` takes one off without a pass.
 Delivered copies are the working set the next request builds on, except Safe mode's **Save clean PDFs**, whose
-result is the PDFs (`DocumentTask.pdfs`, `_end_export`): no working copy, history line or undo point. In Safe mode, **Discard preview**
+result is the PDFs (`DocumentTask.pdfs`, `_end_export`): no working copy, history line or undo point. The window
+works in a scratch folder (`scratch.py`: one per window under `data_dir()\scratch`, locked while it runs, holding
+every session folder, dropped file and the journal; deleted at a clean close after one question when a copy or a
+PDF was never saved, swept at the next start, a crashed window's taken over and restored), and writes a copy or a
+clean PDF where the user chose only through **Export → Save the copies…** (`DocumentTask.export` →
+`guard.write_new`, never over an input, never into the scratch tree; the engine and the verifier are untouched).
+In Safe mode, **Discard preview**
 (`DocumentTask.discard_preview`) withdraws a button's preview and shows again what `_recipe` set aside
 (`_before_button`); **Undo the last button** (`DocumentTask.undo`) pops `undo_points` (one per run that delivered
 copies, taken at approval, kept in the journal) to put the working set back one run. Neither writes or deletes a file.
@@ -149,7 +155,7 @@ jobs). Details: `docs/CONVERSATIONAL_DESKTOP.md`.
     same change** (the test cannot see a control that carries no capability; the reviewer can).
   - `document_task.py`, `review_display.py`, `gui.py` (`Session`, `main`; `python -m spec_surgeon` runs it), `web/`
     (`server.py`, `shell.py`, `watch.py`: the page's own reports and the watchdog over the page and the job),
-    `updater.py`, `settings.py`, `credentials.py`, `winapp.py`.
+    `scratch.py`, `updater.py`, `settings.py`, `credentials.py`, `winapp.py`.
   - `render/` (Word COM, LibreOffice), `schemas/` (ECMA-376 XSDs), `skill/`, `examples/` (the worked EditSpecs, and
     `examples/tutorial/`, the tour's showcase, shipped in the wheel and the app; `packaging/installed_wheel_smoke.py`
     checks the installed bytes against the checkout).
@@ -178,8 +184,8 @@ There is no command line. Check a change with the test suite; to run the engine 
 for one pair, `gui.Session` for the window's steps with a scripted client (`tests/fake_claude.py`). A run's
 `DIAGNOSTICS.md`, `records/` and `logs/` say why a file did not pass. The window's own trail (requests, jobs, the
 page's errors, a frozen page, an unclean exit) is in the logs folder, `spec-surgeon.log` and `app-events-<pid>.jsonl`
-(`docs/DEVELOPER_DIAGNOSTICS.md`, "The window"); About → Save a diagnostic bundle zips it with the conversations and
-the newest runs' records.
+(`docs/DEVELOPER_DIAGNOSTICS.md`, "The window"); About → Save a diagnostic bundle zips it with the conversation's
+journal and the newest session folders' records (all in the window's scratch folder, gone when it closes).
 
 ## How to add an op
 

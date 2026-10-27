@@ -36,16 +36,19 @@ export const RUNTIME_CARDS: RuntimeCard[] = [
     automatic: true,
     you: "Start Spec Surgeon.",
     runs:
-      "The last conversation is moved to the conversations folder beside settings.json and the window opens empty. " +
-      "If the previous session never closed, the chat says so and the app log records what it was doing. Old " +
-      `installer downloads are deleted. If ${F.updateCheckHours} hours have passed since the last attempt, one ` +
-      "update check starts in the background.",
+      "The window opens empty in a new scratch folder under the app's local data, and what an earlier window left " +
+      "under scratch is deleted — except the folder of a window that never closed, which is taken over instead: " +
+      "its conversation and copies come back, and the chat says so, as it says when the previous session never " +
+      `closed (the app log records what it was doing). Old installer downloads are deleted. If ${F.updateCheckHours} ` +
+      "hours have passed since the last attempt, one update check starts in the background.",
     sent:
       `Only the update check: one request to ${F.githubApiHost} for the newest release (falling back to the ` +
       `${F.githubHost} releases page when GitHub limits the rate). It carries the app's version in its User-Agent ` +
       "and nothing about your documents, your key or your conversation.",
     ai: NONE,
     bounds:
+      "Only the app's own scratch folders are deleted, never a file you attached by path or saved with Export; a " +
+      "folder another open window holds is left alone. " +
       `At most one automatic check every ${F.updateCheckHours} hours, ${F.updateCheckTimeoutSeconds} s to answer. ` +
       `The environment variable ${F.noUpdateCheckEnv} turns it off. A failed check is written to the app log and ` +
       "changes nothing.",
@@ -90,7 +93,7 @@ export const RUNTIME_CARDS: RuntimeCard[] = [
     title: "Adding documents, a template, a picture or a table",
     you: "Add Word documents, Add a template (optional), Add a picture or table (optional), or a drop anywhere in the window.",
     runs:
-      "A file you pick is used where it is. A file you drop is copied into the attachments folder beside settings.json " +
+      "A file you pick is used where it is. A file you drop is copied into the window's scratch folder (attachments) " +
       "and used from there. Each file is then checked on arrival: does it open as a Word package, is it a .docx (not " +
       ".doc or .docm, not a ~$ lock file), does any part carry an XML document type declaration, does the body have a " +
       "paragraph. A refused file stays greyed out with the reason and never enters a plan. The rest are listed, with " +
@@ -101,7 +104,7 @@ export const RUNTIME_CARDS: RuntimeCard[] = [
     bounds:
       `Milliseconds per file. A .docx is opened up to ${F.maxDocxMB} MiB; a picture or table over ` +
       `${F.maxTableOrPictureMB} MB is listed as too big and never read. Nothing beside the files you attach is looked ` +
-      "for. Dropped copies stay in the attachments folder until you delete them.",
+      "for. A dropped copy stays in the scratch folder until the window closes; the file you dropped is untouched.",
   },
   {
     covers: ["A4"],
@@ -408,12 +411,48 @@ export const RUNTIME_CARDS: RuntimeCard[] = [
     title: "Opening a copy or enlarging a page",
     you: "Click a copy or a clean PDF, the folder button, or a page in a preview.",
     runs:
-      "A copy opens in its own application (usually Word), a clean PDF in your PDF viewer; the folder opens in " +
-      "Explorer. A page opens larger in the " +
-      "window, from the picture already rendered on your computer.",
+      "A copy opens in its own application (usually Word) and a clean PDF in your PDF viewer, both from the window's " +
+      "scratch folder; the folder button opens that run's folder in Explorer. A page opens larger in the window, from " +
+      "the picture already rendered on your computer.",
     sent: "Nothing.",
     ai: NONE,
-    bounds: "The window's server only serves PNG pictures from the run folder or the app's own folder.",
+    bounds:
+      "The window's server only serves PNG pictures from the scratch folder or the app's own folder. A copy opened " +
+      "there goes with the scratch folder when the window closes; save it with Export to keep it.",
+  },
+  {
+    covers: ["A34"],
+    title: "Export → Save the copies…",
+    you: "Export in the top bar, then choose a folder in the dialog (it opens where you last saved).",
+    runs:
+      "Every copy the next request builds on (one per attached document), and every clean PDF of the last Save " +
+      "clean PDFs run, is written into that folder under its planned name, byte for byte the file the checker " +
+      "passed. A file already there with the same bytes is that " +
+      "copy, saved; a different file under the name is left alone and the copy is numbered beside it. The copies " +
+      "list then says SAVED, and the folder is kept in settings.json for the next dialog.",
+    sent: "Nothing.",
+    ai: NONE,
+    bounds:
+      "Never over an input, and never into the app's scratch folder (it would go with it): a folder where a copy " +
+      "would land on an attached document or on a working copy, or that lies inside the scratch tree, refuses the " +
+      "whole export, and nothing is written. Each file is written whole, then renamed into place. The copies in " +
+      "the scratch folder are unchanged, and nothing is written until you press Export.",
+  },
+  {
+    covers: ["B19"],
+    title: "Closing the window",
+    automatic: true,
+    you: "Close the window.",
+    runs:
+      "If any edited copy was never saved with Export, one native question first: OK closes and gives the copies " +
+      "up, Cancel keeps the window open. Then a running AI step is cut off, the settings are saved, and the " +
+      "window's scratch folder — every session folder, dropped file and the conversation's journal — is deleted.",
+    sent: "Nothing.",
+    ai: NONE,
+    bounds:
+      "Only the app's own scratch folder is deleted; what you saved with Export, the render cache, the logs and " +
+      "settings.json stay. A folder a close could not delete whole (a copy held open in Word) is swept at the next " +
+      "start, and a window that never closed keeps its folder for the next start to restore.",
   },
   {
     covers: ["A13", "A14", "A15", "A26", "A27"],
@@ -424,7 +463,8 @@ export const RUNTIME_CARDS: RuntimeCard[] = [
       "are saved).",
     runs:
       "Start over makes your originals the working set again; the plan is void and the to-do list is cleared. New " +
-      "conversation archives this conversation in the conversations folder and starts an empty one. Both clear " +
+      "conversation starts an empty one over the same scratch folder, after one question when a copy was never " +
+      "saved with Export (the old conversation's copies stay in the scratch folder until the window closes). Both clear " +
       "unsent messages and staged forms after the reset succeeds. Start over keeps the attached originals; " +
       "New conversation clears the attachments. The to-do list " +
       "holds the documents set aside, each with why: the ✗ on its preview, your word to the assistant, a plan or a " +
@@ -462,12 +502,12 @@ export const RUNTIME_CARDS: RuntimeCard[] = [
     you: "About → Open diagnostic logs; About → Save a diagnostic bundle.",
     runs:
       "The logs folder opens in Explorer. The bundle is one zip saved on your computer and shown in Explorer: the " +
-      `app's logs and event journals, settings.json, the current and ${F.bundleRecentConversations} most recent ` +
-      `conversations, and the text records and logs of the ${F.bundleRecentRuns} newest runs.`,
+      "app's logs and event journals, settings.json, this conversation's journal from the scratch folder, and the " +
+      `text records and logs of the ${F.bundleRecentRuns} newest session folders in it.`,
     sent: "Nothing. The app never uploads a log or a bundle; sending it is yours to decide.",
     ai: NONE,
     bounds:
-      "Folders of copies, samples and page pictures are left out, but the conversations' saved histories can hold " +
+      "Folders of copies, samples and page pictures are left out, but the conversation's saved history can hold " +
       "page images and document text: treat a bundle like your documents.",
   },
   {

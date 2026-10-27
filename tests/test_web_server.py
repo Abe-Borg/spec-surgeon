@@ -53,7 +53,7 @@ def window(tmp_path, fake=None, journal=None):
     fake = fake or FakeClient(resp(tool("submit_editspec", {"spec": SPEC})))
     session = Session(client=fake, out_root=tmp_path / "out", visual_check=False)
     task = DocumentTask(session, render=False, journal=journal)
-    settings = Settings(out_root=str(tmp_path / "out"))
+    settings = Settings()
     state = WindowState(task, settings, token=TOKEN, updates=FakeUpdates(), version="1.6.0")
     client = TestClient(create_app(state), headers={TOKEN_HEADER: TOKEN})
     return state, client
@@ -350,7 +350,7 @@ def test_the_browser_fallback_serves_the_page_and_stops_on_a_termination_request
         from spec_surgeon.web.server import WindowState, new_token
         from spec_surgeon.web.shell import run_window
         task = DocumentTask(Session(out_root=sys.argv[1]), render=False)
-        sys.exit(run_window(WindowState(task, Settings(out_root=sys.argv[1]), token=new_token())))
+        sys.exit(run_window(WindowState(task, Settings(), token=new_token())))
     """)
     env = {**os.environ, "BROWSER": "true", "SPEC_SURGEON_CONFIG_DIR": str(tmp_path / "config")}
     proc = subprocess.Popen([sys.executable, "-c", code, str(tmp_path / "out"), why], env=env, text=True,
@@ -498,7 +498,7 @@ def test_an_update_downloaded_during_work_waits_for_restart(tmp_path):
     from spec_surgeon.web.updates import UpdateFlow
     busy = [True]
     launched, quit_calls = [], []
-    flow = UpdateFlow(Settings(out_root=str(tmp_path)), launcher=lambda dl, d, log: launched.append(dl),
+    flow = UpdateFlow(Settings(), launcher=lambda dl, d, log: launched.append(dl),
                       installed=lambda: True, quit_app=lambda: quit_calls.append(1), is_busy=lambda: busy[0])
     dl = SimpleNamespace(version="9.9.9", path=tmp_path / "setup.exe")
     assert flow.install_downloaded(dl) is False                 # work runs: nothing is launched, nothing quits
@@ -509,7 +509,7 @@ def test_an_update_downloaded_during_work_waits_for_restart(tmp_path):
     assert launched == [dl] and quit_calls == [1] and flow.state()["state"] == "installing" and flow.ready is None
     # the route: Restart to update installs the waiting download
     state, client = window(tmp_path, FakeClient())
-    state.updates = UpdateFlow(Settings(out_root=str(tmp_path)), launcher=lambda dl, d, log: launched.append(dl),
+    state.updates = UpdateFlow(Settings(), launcher=lambda dl, d, log: launched.append(dl),
                                installed=lambda: True, quit_app=lambda: quit_calls.append(2), is_busy=lambda: False)
     state.updates.ready = dl
     assert client.post("/api/update/install").json()["state"] == "installing" and quit_calls[-1] == 2

@@ -17,6 +17,7 @@ export const END_USER_CAPABILITIES = [
   "header.spending",
   "header.stop",
   "header.connection",
+  "header.export",
   "header.new-conversation",
   "header.settings",
   // Settings

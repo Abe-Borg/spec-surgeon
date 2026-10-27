@@ -276,6 +276,17 @@ export const TOUR: readonly TourChapter[] = [
           "These copies were really made from the practice documents by the same engine that edits yours: each from its original, each checked by an independent checker that shares no code with the editing, and delivered only because it passed. Click one to open it in Word; the folder button opens the run's folder. Originals are never written. A copy that fails a check is moved aside and never delivered. The tour marked one document with the red X before creating these, so it got no copy. Safe mode's Save clean PDFs button lists its PDFs in a card of their own here, with the same open and folder buttons.",
       },
       {
+        id: "export",
+        capabilities: ["header.export"],
+        mode: "explanatory",
+        anchor: "header-export",
+        needs: "results",
+        placement: "bottom",
+        title: "Save the copies with Export",
+        body:
+          "The copies live in the window's scratch folder until you save them. Export, here in the top bar, asks for a folder and writes every copy the next request builds on into it under its planned name, byte for byte the copy the checker passed; clean PDFs go with them. A file already there with the same content counts as saved; a different file under a copy's name is left alone and the copy numbered beside it; a folder where a copy would land on an attached file is refused. The button counts the copies not saved yet, and only a saved copy survives closing the window: the close asks once first. The practice copies are not yours, so the button is held still during the tour.",
+      },
+      {
         id: "working-line",
         capabilities: ["results.start-over", "results.undo"],
         mode: "explanatory",

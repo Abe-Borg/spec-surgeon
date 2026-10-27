@@ -305,6 +305,12 @@ export default function App() {
   const newConversationRef = useRef<() => void>(() => {});
   const onNewConversation = useCallback(() => newConversationRef.current(), []);
 
+  // Export → Save the copies…: a dismissed dialog changes nothing (the view is fetched again, which is harmless).
+  const onExport = useCallback(() => {
+    if (busyRef.current) return;
+    applyView(api.exportCopies().then((next) => next ?? api.getState()));
+  }, [applyView]);
+
   const onStartOver = useCallback(() => applyView(api.startOver(), resetInputs), [applyView, resetInputs]);
   // Safe mode's ways back: Discard withdraws a button's preview (the form keeps what was typed); Undo takes the
   // working set back to the copies from before the last button.
@@ -381,12 +387,22 @@ export default function App() {
     if (kept) setReviews(kept);
   }, [tourActive]);
   const tourFinished = state.loaded ? view.tutorial.finished_version >= TOUR_COMPLETION_VERSION : null;
+  const unsavedCopies = view.export?.unsaved ?? 0;
   newConversationRef.current = () => {
     if (busyRef.current) return;
     if (tourActive) {
       void tour.abort().then((returned) => {
         if (returned) applyView(api.newConversation(), resetInputs);
       });
+      return;
+    }
+    // Copies never saved with Export outlive a new conversation only until the window closes: say so first.
+    if (
+      unsavedCopies > 0 &&
+      !window.confirm(
+        `${unsavedCopies === 1 ? "1 file made in this window (an edited copy or a clean PDF) has" : `${unsavedCopies} files made in this window (edited copies or clean PDFs) have`} not been saved. A new conversation leaves ${unsavedCopies === 1 ? "it" : "them"} behind in the window's scratch folder, which goes when the window closes.\n\nOK starts the new conversation anyway. Cancel goes back, so you can save ${unsavedCopies === 1 ? "it" : "them"} with Export first.`,
+      )
+    ) {
       return;
     }
     applyView(api.newConversation(), resetInputs);
@@ -511,6 +527,7 @@ export default function App() {
         busy={busy}
         updatePill={updatePill(view.update, updateShown)}
         onDownloadUpdate={onDownloadUpdate}
+        onExport={onExport}
         onNewConversation={onNewConversation}
         onOpenSettings={onOpenSettings}
         onOpenHelp={setHelpTopic}

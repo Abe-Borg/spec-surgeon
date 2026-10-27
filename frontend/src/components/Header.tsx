@@ -5,6 +5,7 @@ import type { Mode, View } from "../types";
 import { costPill, dollars, requestPill } from "../lib/chat";
 import { HELP_TOPICS, sessionHeading, type HelpTopic } from "../lib/help";
 import { MODE_LABELS, MODE_TIPS } from "../lib/modes";
+import { exportLabel, exportTip } from "../lib/workbench";
 import Tip from "./Tip";
 
 interface Props {
@@ -13,6 +14,8 @@ interface Props {
   /** "v1.7.0 available" for an update set aside with the banner's "Not now"; "" for none (lib/help.updatePill). */
   updatePill: string;
   onDownloadUpdate: () => void;
+  /** Export → Save the copies…: the working copies written to a folder the native dialog asks for. */
+  onExport: () => void;
   onNewConversation: () => void;
   onOpenSettings: () => void;
   onOpenHelp: (topic: HelpTopic) => void;
@@ -36,6 +39,7 @@ function Header({
   busy,
   updatePill,
   onDownloadUpdate,
+  onExport,
   onNewConversation,
   onOpenSettings,
   onOpenHelp,
@@ -207,11 +211,23 @@ function Header({
           <span className={`h-2 w-2 rounded-full ${safe ? "bg-ink-faint" : ready ? "bg-ok" : "bg-warn"}`} aria-hidden />
           {safe ? "No AI in Safe mode" : ready ? (view.connection?.origin === "none" ? "Credentials available" : "Key available") : "Add your API key"}
         </button>
+        <Tip tip={exportTip(view, busy)}>
+          <button
+            type="button"
+            onClick={onExport}
+            disabled={busy || !!view.tutorial?.active || (view.export?.copies ?? 0) === 0}
+            data-tour="header-export"
+            data-capability="header.export"
+            className="rounded-lg border border-edge bg-raised px-3 py-1.5 text-xs whitespace-nowrap text-ink transition-colors hover:border-accent hover:text-accent disabled:pointer-events-none disabled:opacity-40"
+          >
+            {exportLabel(view)}
+          </button>
+        </Tip>
         <Tip
           tip={
             busy
               ? "Finish or stop the current work first"
-              : "Archives this conversation and starts an empty one. Your documents and copies stay where they are."
+              : "Starts an empty conversation. Your originals stay where they are; copies you have not saved with Export stay in the window's scratch folder until it closes."
           }
         >
           <button

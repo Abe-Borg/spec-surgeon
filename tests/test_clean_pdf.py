@@ -243,7 +243,7 @@ def test_the_window_shows_the_pdfs_and_whether_pdfs_can_be_made(tmp_path, render
     from spec_surgeon.web.server import TOKEN_HEADER, WindowState, create_app
     monkeypatch.setenv("SPEC_SURGEON_CONFIG_DIR", str(tmp_path / "config"))
     task = safe_task(tmp_path)
-    state = WindowState(task, Settings(out_root=str(tmp_path / "out")), token="t", version="1.6.0")
+    state = WindowState(task, Settings(), token="t", version="1.6.0")
     client = TestClient(create_app(state), headers={TOKEN_HEADER: "t"})
     client.post("/api/attach", json={"paths": [str(p) for p in redlined_set(tmp_path / "docs")[:1]]})
 
@@ -352,7 +352,7 @@ def test_a_pdf_built_on_a_copy_delivered_unverified_keeps_its_mark(tmp_path, ren
     assert set(view["pdfs"]) == {str(f) for f in files}
     assert view["pdf_unverified"] == {str(files[0]): [EARLIER_COPY + "V2 (Text preservation)"]}
     assert "1 is marked UNVERIFIED" in task.messages[-1]["text"]
-    state = WindowState(task, Settings(out_root=str(tmp_path / "out")), token="t", version="1.6.0")
+    state = WindowState(task, Settings(), token="t", version="1.6.0")
     payload = TestClient(create_app(state), headers={TOKEN_HEADER: "t"}).get("/api/state").json()
     marks = {p["source"]: p["unverified"] for p in payload["pdfs"]}
     assert marks == {str(files[0]): [EARLIER_COPY + "V2 (Text preservation)"], str(files[1]): []}
