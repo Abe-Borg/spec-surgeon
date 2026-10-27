@@ -200,3 +200,41 @@ def test_a_marker_the_engine_reads_otherwise_under_its_redline_gets_no_selector(
     summary = role_summary(pkg)
     assert summary["roles"]["paragraph"]["count"] == 2 and summary["roles"]["paragraph"]["markers"] == ["A."]
     assert "paragraph" not in summary["selectors"]
+
+
+def test_a_redline_on_a_section_line_that_changes_what_follows_is_excluded():
+    """Codex on #120: a title inserted on a bare SECTION line gives both views the same section reading, but with the
+    change rejected the next uppercase line is the section's title and with it accepted it is not: the readings
+    differ. A word changed inside a title the line carries in both views reads alike."""
+    doc = document("SECTION 21 13 13", "SPRINKLERS", "1.1 SUMMARY")
+    revise(doc.paragraphs[0], "ins", " WET-PIPE SPRINKLER SYSTEMS", 8)
+    rows = analyze_structure(package(doc))["paragraphs"]
+    assert rows[0]["disposition"] == "excluded" and rows[0]["reason"] == VIEWS_DIFFER
+    assert rows[1]["role"] is None
+    doc = document("SECTION 21 13 13 WET-PIPE SYSTEMS", "1.1 SUMMARY")
+    revise(doc.paragraphs[0], "ins", " AND VALVES", 8)
+    rows = analyze_structure(package(doc))["paragraphs"]
+    assert rows[0]["role"] == "section_id" and rows[0]["content"] == "WET-PIPE SYSTEMS AND VALVES"
+    assert rows[1]["role"] == "article"
+
+
+@pytest.mark.parametrize("where", ["run", "mark"])
+def test_a_formatting_change_that_hid_the_text_before_is_not_admitted(where):
+    """Codex on #120: a tracked formatting change whose old properties hide the run (or the mark) reads alike in
+    both views, but with the change rejected the text is invisible; the paragraph stays outside coverage, as hidden
+    text is, and its list is not unsettled."""
+    doc = listed("First clause", "Later clause")
+    change = wrapper("rPrChange", 8)
+    old = OxmlElement("w:rPr")
+    old.append(OxmlElement("w:vanish"))
+    change.append(old)
+    p = doc.paragraphs[4]
+    if where == "run":
+        p.runs[0]._r.get_or_add_rPr().append(change)
+    else:
+        mark = OxmlElement("w:rPr")
+        mark.append(change)
+        p._p.get_or_add_pPr().append(mark)
+    rows = analyze_structure(package(doc))["paragraphs"]
+    assert rows[4]["disposition"] == "excluded" and rows[4]["reason"].startswith("hidden text")
+    assert rows[5]["disposition"] == "unresolved" and "earlier pending revisions" not in rows[5]["reason"]

@@ -171,7 +171,7 @@ def _reading(line, num, first_nonblank, previous):
     if section is None and first_nonblank and num is None:
         section = _BARE_SECTION.fullmatch(line)
     if section:
-        return ("section_id", _section_id(section[1]))
+        return ("section_id", _section_id(section[1]), bool(section[2].strip()))   # a bare number awaits its title
     if _END.fullmatch(line):
         return ("end_of_section",)
     part = _PART.fullmatch(line)
@@ -234,6 +234,9 @@ def analyze_structure(pkg: DocxPackage) -> dict:
         if excluded is None:
             runs = [r for r in p.iter(W + "r") if next((a for a in r.iterancestors() if a.tag == W + "p"), None) is p]
             properties = [r.find(W + "rPr") for r in runs] + [p.find(W + "pPr/" + W + "rPr")]
+            # The formatting a tracked change replaced counts too: hidden with the change rejected is hidden.
+            properties += [old for old in (pr.find(W + "rPrChange/" + W + "rPr") for pr in properties
+                                           if pr is not None) if old is not None]
             if any(look.hidden(pr, p) is not False for pr in properties):
                 excluded = "hidden text or ambiguous effective visibility is outside structural coverage"
         if numbering is not None and revision == "structural":
