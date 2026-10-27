@@ -239,3 +239,28 @@ def build_highlighted() -> bytes:
                     rp = etree.Element(W + "rPr"); r.insert(0, rp)
                 h = etree.SubElement(rp, W + "highlight"); h.set(W + "val", "magenta")
     return patch_docx(data, {DOC: fix})
+
+
+def build_comment_in_deletion() -> bytes:
+    """Jeremy's comment on "black steel ", which Jack then deleted with Track Changes on: the comment's range marks and
+    its reference sit inside Jack's ``w:del``, as Word keeps them. Accepting that deletion alone would take the
+    comment's anchor away (``marks-in-change``); with the comment removed first, the deletion accepts cleanly."""
+    from fx_revisions import JACK, wrap
+    doc = Document()
+    doc.add_paragraph("SECTION 21 13 13 - WET-PIPE SPRINKLER SYSTEMS")
+    p = doc.add_paragraph("A. Pipe shall be ")
+    r = p.add_run("black steel ")
+    doc.add_comment(r, text="Why black?", author="Jeremy", initials="JS")
+    p.add_run("Schedule 40.")
+    kids = list(p._p)
+    start = next(k for k in kids if k.tag == W + "commentRangeStart")
+    end = next(k for k in kids if k.tag == W + "commentRangeEnd")
+    ref = next(k for k in kids if k.tag == W + "r" and k.find(W + "commentReference") is not None)
+    wrap(r, "del", JACK)
+    deletion = r._r.getparent()
+    for t in r._r.iter(W + "t"):
+        t.tag = W + "delText"
+    deletion.insert(0, start)
+    deletion.append(end)
+    deletion.append(ref)
+    return docx_bytes(doc)

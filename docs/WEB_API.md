@@ -47,8 +47,11 @@ that ends a job is authoritative.
                "geometry": {"status": "PASS", "note": "Page layout checked on the rendered pages: …"}}],
   "warnings": ["…"], "blocking": false,
   "results": [{"source": "…", "output": "…", "name": "21 13 13.docx", "unverified": []}],
+  "pdfs": [{"source": "C:/Specs/21 13 13.docx", "output": "C:/.../runs/20261027-1/run/pdf/21 13 13.pdf",
+            "name": "21 13 13.pdf", "unverified": []}],
+  "pdf": {"available": true, "renderer": "Microsoft Word | LibreOffice", "reason": ""},
   "action": {"label": "Create edited copies", "token": "…", "kind": "approve | continue | save | none",
-             "can_hold": true},
+             "can_hold": true, "export": " | pdf"},
   "todo": [{"path": "C:/Specs/21 05 00.docx", "name": "21 05 00.docx", "why": "held | asked | refused | failed",
             "reason": "You marked its preview as needing more work."}],
   "focus": [],
@@ -87,6 +90,15 @@ Rules the page relies on:
   per role, the template's paragraph styles for the form's `roles` field, the page and font in words, and `problems`
   — non-empty, the button cannot be pressed, the first one says why). `left_untouched` lists what the last Safe-mode button's run gave no copy, with the engine's reason, until the
   next button or a hand-off; it is empty while a preview waits.
+- `pdfs` lists the clean PDFs the last run saved (Safe mode's **Save clean PDFs**, `pdf_export`), keyed by the attached
+  document; `results` is empty for that run, since the PDFs change no working copy (`working` is as it was). A later
+  button's press, a run that saved none, Start over and Undo replace it (Discard shows again what the press replaced).
+  `pdfs[].unverified` carries the marks of a working copy delivered UNVERIFIED earlier (Obliterate mode), as an
+  earlier copy's: the PDF's clean copy passed its checks, against that copy (`[]` otherwise); the page marks it.
+  `pdf` says whether this computer can make PDFs and with which program; `available: false` holds back every button
+  whose `needs` names `pdf`, `reason` saying why (an older server sends no `pdf`: the page holds nothing back). While
+  such a button's preview waits, `action.export` is `"pdf"` and `action.label` is "Save clean PDFs"; it is `""`
+  otherwise.
 - `modes` lists `obliterate` only while Settings → Advanced shows it (`show_obliterate`). In `obliterate` the page is
   the conversation, as in `default`, with Obliterate's strip above the composer; the engine runs with
   `Session.unguarded` (CLAUDE.md, "Modes"). `results[].unverified` names the checks a copy failed when it was
@@ -173,7 +185,7 @@ explicitly injected clients are retained. Both key replacement and removal refus
 | POST | `/api/send` | `{"text": "...", "chip"?: true}` — `chip` marks one of the model's suggested replies the user tapped: their decision, never approved wording | SSE stream (below) |
 | POST | `/api/choose` | `{"choice_id": "c1", "wording": "…"}` — `wording` only for an `editable` choice (one drafted wording): the user's edit, approved instead of the draft (400 when it is not text; an edit that breaks the wording rule ends the job in `error`) | SSE stream |
 | POST | `/api/primary` | `{"token": "...", "hold"?: ["<sample source path>", …]}` — `hold` names the previewed documents marked with the red X: set aside on the to-do list, the others run; a path that is not one of the plan's documents is refused (400 for a malformed list, the job's `error` for an unknown path) | SSE stream |
-| GET | `/api/recipes` | | `{"recipes": [{"id", "label", "group", "summary", "needs": ["template" \| "picture"], "fields": [{"name", "kind": "text \| pairs \| choice \| check \| picture \| table \| slots", "label", "required", "default"?, "options"?, "help"?, "placeholder"?, "optional_choice"?}]}], "groups": [...]}` — Safe mode's buttons (`recipes.catalog()`), the same for the whole session |
+| GET | `/api/recipes` | | `{"recipes": [{"id", "label", "group", "summary", "needs": ["template" \| "picture" \| "pdf"], "fields": [{"name", "kind": "text \| pairs \| choice \| check \| picture \| table \| slots", "label", "required", "default"?, "options"?, "help"?, "placeholder"?, "optional_choice"?}]}], "groups": [...]}` — Safe mode's buttons (`recipes.catalog()`), the same for the whole session |
 | POST | `/api/recipe` | `{"recipe": "<id>", "inputs": {<field name>: value}}` — a Safe-mode button and its form; a form that cannot be used, or a plan the gate refuses, is said in one `app` message and nothing is previewed; 400 for inputs that are not an object | SSE stream |
 | POST | `/api/mode` | `{"mode": "safe \| default \| obliterate", "acknowledged"?: true}` — `obliterate` needs `show_obliterate` on and `acknowledged: true` (the user ticked its warning this time); entering or leaving it voids the plan | the view; Safe or Default is kept in settings.json, Obliterate never is (the next start opens in Default); 400 for another mode, a hidden Obliterate or a missing acknowledgement |
 | POST | `/api/handoff` | `{"paths": ["<left_untouched path>", …]}` — the documents go on the to-do list with the button's sentence as their request, and the mode becomes `default`; 400 for a path the last button did not leave untouched, or while a preview waits | the view |
@@ -183,7 +195,7 @@ explicitly injected clients are retained. Both key replacement and removal refus
 | POST | `/api/discard` | | Safe mode's Discard: the view (the waiting preview withdrawn, nothing created; `results` and `left_untouched` as they were before the button was pressed); 400 with `{"error"}` outside Safe mode or with no preview waiting, 409 while work runs |
 | POST | `/api/undo` | | the view (the working set back to the copies from before the last run that delivered copies; `results`, `left_untouched` and the to-do entries that run's ✗ added as they were; no file written or deleted); 400 with `{"error"}` when there is nothing to undo, a preview waits, a request is open or a copy it would go back to is gone, 409 while work runs |
 | POST | `/api/new-conversation` | | the view (archives the journal, starts empty) |
-| POST | `/api/open` | `{"path": "..."}` | opens a result in Word / a folder with the OS (`{"ok": true}`); 404 if gone |
+| POST | `/api/open` | `{"path": "..."}` | opens a result in Word, a clean PDF in the PDF viewer, or a folder, with the OS (`{"ok": true}`); 404 if gone |
 | GET | `/api/image` | `?path=…` | the PNG (only files under the app's run folders are served; else 404) |
 | GET | `/api/settings` | | `{"key_present": true, "origin": "saved", "can_remember": true, "out_root": "…", "logs_dir": "…", "theme": "clay", "spending_limit_usd": 20.0, "spending_default_usd": 20.0, "fast_mode": false, "show_obliterate": false, "fast": {"model": "claude-opus-5-5", "available": true, "speedup": 2.5, "price_factor": 2, "standard_usd_per_mtok": [4.0, 20.0], "fast_usd_per_mtok": [8.0, 40.0], "refused": null}}` — `fast` is what Settings says about fast mode, from `llm.PRICES` / `llm.FAST_PRICES` for the model the calls use; `refused` is the API's reason when it refused fast mode for this key |
 | POST | `/api/settings` | `{"api_key": "sk-…", "remember": true}` and/or `{"theme": "linen"}` and/or `{"fast_mode": true}` and/or `{"show_obliterate": true}` and/or `{"spending_limit_usd": 12.5}` | the settings; 400 with `{"error"}` (an unknown scheme, a `fast_mode` or `show_obliterate` that is not a boolean, a `spending_limit_usd` that is neither a positive amount nor `null`/`0`). `spending_limit_usd` is the spending check per request (`null` or `0` turns it off; `GET` says `null` then), kept in `settings.json` and used from the next request (`DocumentTask.set_spending_limit`). `show_obliterate` (Settings → Advanced) adds `obliterate` to the view's `modes` and is kept; turning it off while the window is in Obliterate leaves the mode for Default (409 while work runs). `theme` is one of `clay`, `blueprint`, `graphite`, `carbon`, `linen` and is saved to `settings.json` at once; `fast_mode` is saved too and applies from the next AI step (`llm.set_fast_mode`; a call already running keeps its speed) |

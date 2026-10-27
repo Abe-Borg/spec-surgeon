@@ -335,6 +335,7 @@ function Workflows() {
           "Accept all tracked changes, then Remove all comments, then Remove highlighting — each one previewed, then created.",
           "Match body formatting to template (its outline styles and numbering, page and font), then Match headers and footers to template.",
           "Name files by section number and title last, so the copies carry their names.",
+          "Save clean PDFs for the issue: a PDF of each document with its comments removed and its tracked changes accepted, made by Word (or LibreOffice) from a checked clean copy. The PDFs open from the window; the Word documents keep their comments and tracked changes.",
           "A document a button left untouched keeps its reason beside the copies; Try these in Default mode hands it to the conversation.",
         ]}
       />

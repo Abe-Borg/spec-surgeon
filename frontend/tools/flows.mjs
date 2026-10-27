@@ -477,6 +477,20 @@ try {
   check("Undo goes back before the button: no copies, nothing left untouched",
     (await page.getByText("Your edited copies").count()) === 0 && (await handOff.count()) === 0);
   check("…and nothing is left to undo", (await undoBtn.count()) === 0);
+  // Save clean PDFs: its preview's one button says what it makes; the PDFs are listed, and no working copy changes.
+  await page.getByRole("button", { name: "All buttons" }).click();
+  await page.getByRole("button", { name: "Save clean PDFs", exact: true }).click();
+  await previewBtn.click();
+  const savePdfs = page.getByRole("button", { name: "Save clean PDFs", exact: true });
+  await page.getByText("If the pages look right, save the clean PDFs.").waitFor({ timeout: 20000 });
+  check("a Save clean PDFs preview's button says PDFs", (await savePdfs.count()) === 1 && (await createCopies.count()) === 0);
+  await savePdfs.click();
+  await page.getByText("Your clean PDFs").waitFor({ timeout: 20000 });
+  check("the clean PDFs are listed, each one a click away", await page.getByRole("button", { name: /\.pdf/ }).first().isVisible());
+  check("…and no copy joins the working set: no edited copies, nothing to undo",
+    (await page.getByText("Your edited copies").count()) === 0 && (await undoBtn.count()) === 0);
+  await page.getByRole("button", { name: "All buttons" }).click();
+  await page.getByRole("button", { name: "Find and replace" }).click();
   await previewBtn.click();
   await createCopies.waitFor({ timeout: 20000 });
   await createCopies.click();

@@ -89,6 +89,9 @@ export const EMPTY_VIEW: View = {
   warnings: [],
   blocking: false,
   results: [],
+  pdfs: [],
+  // an older server says nothing about PDFs: the button is not held back, the server answers at the press
+  pdf: { available: true, renderer: "", reason: "" },
   action: { label: "", token: "", kind: "none", can_hold: false },
   todo: [],
   focus: [],
@@ -153,6 +156,8 @@ export function normalizeView(raw: unknown): View {
     warnings: list(v.warnings),
     blocking: v.blocking === true,
     results: list(v.results),
+    pdfs: list(v.pdfs),
+    pdf: obj(v.pdf, EMPTY_VIEW.pdf),
     action: obj(v.action, EMPTY_VIEW.action),
     todo: list(v.todo),
     focus: list<string>(v.focus).filter((p) => typeof p === "string"),

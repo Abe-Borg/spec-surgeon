@@ -367,6 +367,16 @@
    "summary": "The copies open with Word's Track Changes setting off.",
    "needs": [],
    "fields": []
+  },
+  {
+   "id": "clean_pdf",
+   "label": "Save clean PDFs",
+   "group": "Files & properties",
+   "summary": "Saves a PDF of every document with its comments removed and its tracked changes accepted; your Word documents stay as they are.",
+   "needs": [
+    "pdf"
+   ],
+   "fields": []
   }
  ],
  "groups": [

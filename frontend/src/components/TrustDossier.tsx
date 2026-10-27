@@ -468,7 +468,7 @@ function Dossier() {
           rightTitle="Stays on your machine"
           right={[
             "Your originals: read, never written.",
-            "Edited copies, failed copies, previews, page pictures and PDFs, each run in its own folder.",
+            "Edited copies, failed copies, previews, page pictures and PDFs (the clean PDFs you saved among them), each run in its own folder.",
             "The verification records, the conversation’s records (every request sent and every answer), logs and event journals.",
             "Your API key, in Windows Credential Manager when you ask it to be remembered.",
             "The repair memory, the render cache, settings.json, archived conversations and copies of files you dropped on the window.",
@@ -581,7 +581,7 @@ function Dossier() {
         />
         <Term
           word="Approved"
-          claim="You pressed Create edited copies (or Save ready copies) on a plan whose fingerprint covers the plan and the exact content of each file. A changed file or plan voids the approval. In Safe and Default modes, Create also refuses a failed preview check. Save ready copies exports only the recovery's ready files."
+          claim="You pressed Create edited copies (or Save ready copies, or Save clean PDFs for that button) on a plan whose fingerprint covers the plan and the exact content of each file. A changed file or plan voids the approval. In Safe and Default modes, Create also refuses a failed preview check. Save ready copies exports only the recovery's ready files."
           not={[
             "That you read every sentence of the plan.",
             "That Claude understood you — only that the engine will do exactly what is on screen.",

@@ -158,6 +158,25 @@ export interface Result {
   unverified?: string[];
 }
 
+/** A clean PDF Save clean PDFs saved: `source` is the attached document, `output` the PDF made from its clean copy. */
+export interface PdfResult {
+  source: string;
+  output: string;
+  name: string;
+  /** Made from a working copy delivered UNVERIFIED (Obliterate mode): that copy's failed checks, as an earlier
+   *  copy's. Empty when nothing failed on the way. */
+  unverified?: string[];
+}
+
+/** Whether this computer can make PDFs (Save clean PDFs needs Word or LibreOffice), and with which program. */
+export interface PdfInfo {
+  available: boolean;
+  /** "Microsoft Word" or "LibreOffice"; "" when neither is found. */
+  renderer: string;
+  /** Why the button cannot be pressed; "" when it can. */
+  reason: string;
+}
+
 /** Why a document waits on the to-do list: the red X on its preview, the user asked the assistant, the plan
  *  refused it, or its copy could not be made. */
 export type TodoWhy = "held" | "asked" | "refused" | "failed";
@@ -182,6 +201,8 @@ export interface Action {
   disabled_reason?: string;
   /** The previews can be marked: a document marked with the red X is set aside when the copies are created. */
   can_hold?: boolean;
+  /** "pdf": approving saves a clean PDF of each document (Save clean PDFs); "" or absent for edited copies. */
+  export?: string;
 }
 
 export interface Cost {
@@ -260,6 +281,10 @@ export interface View {
   warnings: string[];
   blocking: boolean;
   results: Result[];
+  /** The clean PDFs the last run saved (Save clean PDFs); the working set is not changed by them. */
+  pdfs: PdfResult[];
+  /** Whether Save clean PDFs can run on this computer. */
+  pdf: PdfInfo;
   action: Action;
   /** Documents set aside for more work, waiting on the to-do list (attached originals). */
   todo: TodoItem[];
