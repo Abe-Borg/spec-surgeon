@@ -15,7 +15,6 @@ them was built; `git log --all -- 'docs/PLAN-*'` finds them, with their findings
 | Item | What the run showed | What to build |
 | --- | --- | --- |
 | S4 — what a run left open | Over test-set-2 (13 specifications, eight owners): the reference rules find no section number in seven of them (VA, Wisconsin, Port of Portland, Michigan layouts); a chain preview repeats the spec's summary and assumptions for each step; after an outcome-planner question the next reply still goes to that planner, not the assistant (seen again over test-set-3) | Reference rules for those layouts; a chain preview that says its summary once; the reply after an outcome-planner question goes back to the assistant |
-| P5 — recovery's pace | Recovery of 27 files took 30 minutes: one trial per file, serially (about 25 s each, 177 s for the largest), three checkpoints per model call (5–18 s each), and Stop waited 37 s for two of them | A checkpoint per model call instead of three; an `all` target's bindings kept once, not per paragraph in every checkpoint and in `set_aside.json`; trials of files with the same method in one run |
 
 ### Word as the judge of tracked changes (W1–W4)
 

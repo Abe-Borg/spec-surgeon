@@ -449,8 +449,22 @@ def resolve_goal(source, contract):
                 continue
             target = effect.get("target")
             candidates = _candidates(pkg, source_hash, target) if target else []
-            expected = (len(candidates) if target and (target.get("cardinality") == "all"
-                         or (target.get("all") and "cardinality" not in target))
+            if target and target.get("all") is True:
+                # Every scoped paragraph, bound once by its count (P5): the binding lists no paragraph — the source
+                # digest pins which they are, and the verifier resolves them itself — so a checkpoint, a run's
+                # set_aside.json and a group's first message carry a number where they carried every paragraph.
+                count = len(candidates)
+                expected = target["cardinality"] if type(target.get("cardinality")) is int else count
+                resolved = count == expected and (count > 0 or effect["type"] == "format")
+                reason = (f"bound every original scoped paragraph ({count})" if resolved else
+                          f"expected {expected} target(s), found {count}; explicit target choice or clarification "
+                          "required")
+                resolutions[effect["id"]] = {"status": "resolved" if resolved else "needs_input", "reason": reason,
+                                             "candidates": [], "expected": expected, "source_count": count}
+                if resolved:
+                    binding["effects"][effect["id"]] = {"targets": "all", "choice": "unique", "source_count": count}
+                continue
+            expected = (len(candidates) if target and target.get("cardinality") == "all"
                         else target.get("cardinality", 1) if target else 0)
             absent_optional_format = effect["type"] == "format" and target and target.get("all") is True
             resolved = len(candidates) == expected and (bool(candidates) or target is None or absent_optional_format)
@@ -480,9 +494,19 @@ def _checked_binding(resolution, contract, binding, require_complete=True):
             raise GoalError("binding has unknown or invalid effects", "stale-binding")
         effects = {e["id"]: e for e in contract["effects"]}
         for eid, choice in binding["effects"].items():
+            row = resolution["effects"][eid]
+            if (effects[eid].get("target") or {}).get("all") is True:
+                # Bound once, by count: a list of paragraphs for a global target is an older binding (a new review)
+                _object(choice, {"targets", "choice", "source_count"}, "effect binding")
+                if (choice.get("targets") != "all" or choice.get("choice") != "unique"
+                        or type(choice.get("source_count")) is not int or row["status"] != "resolved"
+                        or choice["source_count"] != row["source_count"]):
+                    raise GoalError("a global target binds every original scoped paragraph by its count, which differs "
+                                    "from the current source", "stale-binding")
+                result["effects"][eid] = copy.deepcopy(choice)
+                continue
             extended = effects[eid]["type"] in OPERATIONS
             _object(choice, {"targets", "choice"} | ({"source_count"} if extended else set()), "effect binding")
-            row = resolution["effects"][eid]
             if extended and (choice.get("choice") != "unique" or type(choice.get("source_count")) is not int
                              or choice["source_count"] != row["source_count"] or row["status"] != "resolved"):
                 raise GoalError("bound operation count differs from the current source or approved count", "stale-binding")
@@ -616,6 +640,9 @@ def compile_goal_candidate(source, contract, binding=None):
             kind = effect["type"]
             author = effect.get("author", contract_author(contract))
             targets = bound["effects"][effect["id"]]["targets"]
+            if targets == "all" and kind != "format":
+                # Bound once, by count: the paragraphs a content or structural stage needs are read here.
+                targets = _candidates(pkg, bound["source_sha256"], effect["target"])
             if kind in OPERATIONS:
                 spec = operation_spec(effect, request, contract_author(contract))
                 try:
