@@ -309,7 +309,11 @@ function Workbench({
           <div ref={view.results.length > 0 ? undefined : resultsRef} className="scroll-mt-6">
             <PaperCard
               title="Your clean PDFs"
-              subtitle="Each PDF was made from a copy that passed every check: comments removed, tracked changes accepted. Click one to open it; your Word documents stay as they are."
+              subtitle={
+                pdfs.some((p) => (p.unverified ?? []).length > 0)
+                  ? "Each PDF was made from a clean copy that passed every check: comments removed, tracked changes accepted. A PDF marked UNVERIFIED was made from a document delivered UNVERIFIED earlier: check it before you use it. Your Word documents stay as they are."
+                  : "Each PDF was made from a copy that passed every check: comments removed, tracked changes accepted. Click one to open it; your Word documents stay as they are."
+              }
               aside={
                 pdfsAt ? (
                   <Tip tip={`Open the folder with these PDFs: ${pdfsAt}`}>
@@ -341,10 +345,22 @@ function Workbench({
                         <path d="M14 3v5h5" />
                       </svg>
                       <span className="truncate">{pdf.name || pdf.output.split(/[\\/]/).pop()}</span>
-                      <span className="ml-auto flex-none rounded-full border border-paper-edge px-2 py-0.5 text-[10px] font-semibold tracking-wide text-paper-dim">
-                        PDF
-                      </span>
+                      {(pdf.unverified ?? []).length > 0 ? (
+                        <span
+                          className="ml-auto flex-none rounded-full border border-err/50 bg-err/10 px-2 py-0.5 text-[10px] font-semibold tracking-wide text-err"
+                          title={unverifiedLine(pdf.unverified)}
+                        >
+                          UNVERIFIED
+                        </span>
+                      ) : (
+                        <span className="ml-auto flex-none rounded-full border border-paper-edge px-2 py-0.5 text-[10px] font-semibold tracking-wide text-paper-dim">
+                          PDF
+                        </span>
+                      )}
                     </button>
+                    {(pdf.unverified ?? []).length > 0 && (
+                      <p className="pb-2 pl-6 text-[11px] leading-snug text-err">{unverifiedLine(pdf.unverified)}</p>
+                    )}
                   </li>
                 ))}
               </ul>

@@ -331,3 +331,28 @@ def test_a_document_without_a_pdf_handed_to_default_mode_says_what_happened(tmp_
                                "boom.")
     assert entry["decisions"] == ["Save clean PDFs: every comment removed, every tracked change accepted"]
     assert task.mode == "default"
+
+
+def test_a_pdf_built_on_a_copy_delivered_unverified_keeps_its_mark(tmp_path, renderer, no_ai, monkeypatch):
+    """A working copy delivered UNVERIFIED (Obliterate mode) keeps its mark on every later copy built on it
+    (``_mark_unverified``), and on the PDF made from it: the PDF's clean copy passed, but against that copy."""
+    from fastapi.testclient import TestClient
+    from spec_surgeon.document_task import EARLIER_COPY
+    from spec_surgeon.settings import Settings
+    from spec_surgeon.web.server import TOKEN_HEADER, WindowState, create_app
+    monkeypatch.setenv("SPEC_SURGEON_CONFIG_DIR", str(tmp_path / "config"))
+    files = redlined_set(tmp_path / "docs")[:2]
+    task = safe_task(tmp_path)
+    task.attach(files)
+    view = task.perform("recipe", recipe="remove_highlight", inputs={})
+    task.perform("primary", token=view["token"])
+    task.unverified[str(files[0])] = ["V2 (Text preservation)"]       # as an Obliterate-mode delivery leaves it
+    view = task.perform("recipe", recipe="clean_pdf", inputs={})
+    view = task.perform("primary", token=view["token"])
+    assert set(view["pdfs"]) == {str(f) for f in files}
+    assert view["pdf_unverified"] == {str(files[0]): [EARLIER_COPY + "V2 (Text preservation)"]}
+    assert "1 is marked UNVERIFIED" in task.messages[-1]["text"]
+    state = WindowState(task, Settings(out_root=str(tmp_path / "out")), token="t", version="1.6.0")
+    payload = TestClient(create_app(state), headers={TOKEN_HEADER: "t"}).get("/api/state").json()
+    marks = {p["source"]: p["unverified"] for p in payload["pdfs"]}
+    assert marks == {str(files[0]): [EARLIER_COPY + "V2 (Text preservation)"], str(files[1]): []}

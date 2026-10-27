@@ -1667,6 +1667,13 @@ class DocumentTask:
         done = self.session.last_pdfs
         self.pdfs = {str(self.origin_of(source)): str(pdf) for source, pdf in (done.pdfs.items() if done else [])}
 
+    def _pdf_marks(self) -> Dict[str, List[str]]:
+        """The UNVERIFIED marks each PDF carries: its clean copy passed, but it was checked against a working copy
+        delivered UNVERIFIED (Obliterate mode), so that copy's marks stay on the PDF as an earlier copy's, as they do
+        on every later copy built on it (``_mark_unverified``)."""
+        return {origin: [m if m.startswith(EARLIER_COPY) else EARLIER_COPY + m for m in self.unverified[origin]]
+                for origin in self.pdfs if self.unverified.get(origin)}
+
     def _without_pdf(self, request: str) -> List[Dict[str, str]]:
         """The documents whose clean copy passed but whose PDF could not be made, with the renderer's reason."""
         done = self.session.last_pdfs
@@ -1687,10 +1694,14 @@ class DocumentTask:
         self._revision += 1
         n, done = len(self.pdfs), s.last_pdfs
         made = f", made by {done.renderer_name}" if done is not None and done.renderer_name else ""
+        shaky = len(self._pdf_marks())
         if n:
             ready = (f"{n} clean {'PDF is' if n == 1 else 'PDFs are'} ready{made}: every comment removed and every "
                      f"tracked change accepted, each from a copy the checks passed. Your Word documents are as they "
-                     f"were; the next button works on them, comments and tracked changes included.")
+                     f"were; the next button works on them, comments and tracked changes included." +
+                     (f" {shaky} {'is' if shaky == 1 else 'are'} marked UNVERIFIED: {'its' if shaky == 1 else 'their'}"
+                      f" Word document was delivered UNVERIFIED earlier, and the checks that failed are beside "
+                      f"{'it' if shaky == 1 else 'them'}." if shaky else ""))
         else:
             ready = "No PDF was saved. Choose another button or start over from the originals."
         self.say(ready + (f" Without a PDF: {', '.join(e['name'] for e in self.left_untouched)} — each one's reason is "
@@ -1927,7 +1938,8 @@ class DocumentTask:
                              "editable": getattr(c, "editable", False)} for c in choices],
                 "samples": samples, "set_aside": set_aside,
                 "warnings": list(dict.fromkeys(warnings)), "results": dict(self.results),
-                "pdfs": dict(self.pdfs), "export": s.export if self.stage == "preview" else "",
+                "pdfs": dict(self.pdfs), "pdf_unverified": self._pdf_marks(),
+                "export": s.export if self.stage == "preview" else "",
                 "unverified": {k: list(v) for k, v in self.unverified.items()},
                 "action": labels.get(self.stage, ""), "token": self.action_token(),
                 "blocked_reason": s.run_blocked_reason() if self.stage == "preview" else "",

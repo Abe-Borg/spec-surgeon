@@ -48,7 +48,7 @@ that ends a job is authoritative.
   "warnings": ["…"], "blocking": false,
   "results": [{"source": "…", "output": "…", "name": "21 13 13.docx", "unverified": []}],
   "pdfs": [{"source": "C:/Specs/21 13 13.docx", "output": "C:/.../runs/20261027-1/run/pdf/21 13 13.pdf",
-            "name": "21 13 13.pdf"}],
+            "name": "21 13 13.pdf", "unverified": []}],
   "pdf": {"available": true, "renderer": "Microsoft Word | LibreOffice", "reason": ""},
   "action": {"label": "Create edited copies", "token": "…", "kind": "approve | continue | save | none",
              "can_hold": true, "export": " | pdf"},
@@ -93,6 +93,8 @@ Rules the page relies on:
 - `pdfs` lists the clean PDFs the last run saved (Safe mode's **Save clean PDFs**, `pdf_export`), keyed by the attached
   document; `results` is empty for that run, since the PDFs change no working copy (`working` is as it was). A later
   button's press, a run that saved none, Start over and Undo replace it (Discard shows again what the press replaced).
+  `pdfs[].unverified` carries the marks of a working copy delivered UNVERIFIED earlier (Obliterate mode), as an
+  earlier copy's: the PDF's clean copy passed its checks, against that copy (`[]` otherwise); the page marks it.
   `pdf` says whether this computer can make PDFs and with which program; `available: false` holds back every button
   whose `needs` names `pdf`, `reason` saying why (an older server sends no `pdf`: the page holds nothing back). While
   such a button's preview waits, `action.export` is `"pdf"` and `action.label` is "Save clean PDFs"; it is `""`

@@ -87,7 +87,9 @@ there. It goes through the render cache, so a copy the run rendered for its page
 checks each PDF (`check_pdf`): it opens without a password, has at least one page, and no page carries a note. The
 PDFs go to the run's `pdf/` folder, with `PDF_REPORT.md` beside the run's other reports; a PDF that fails its check
 is kept apart in `pdf-failed/`. The window lists them under **Your clean PDFs** (the view's `pdfs`), each opening in
-the PDF viewer, with a button for their folder.
+the PDF viewer, with a button for their folder. A PDF made from a document delivered UNVERIFIED earlier (Obliterate
+mode) is marked UNVERIFIED there with that copy's failed checks (`DocumentTask._pdf_marks`), as every later copy built
+on it is.
 
 The PDFs are the result and nothing else changes (`DocumentTask._end_export`): the Word documents the next button works
 on are the ones it worked on, comments and tracked changes included. No copy joins the working set, no line joins the

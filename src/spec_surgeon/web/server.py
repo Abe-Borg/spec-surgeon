@@ -233,7 +233,9 @@ class WindowState:
         results = [{"source": source, "output": output, "name": Path(output).name,
                     "unverified": list(unverified.get(source, []))}
                    for source, output in raw["results"].items()]
-        pdfs = [{"source": source, "output": output, "name": Path(output).name}
+        pdf_marks = raw.get("pdf_unverified") or {}
+        pdfs = [{"source": source, "output": output, "name": Path(output).name,
+                 "unverified": list(pdf_marks.get(source, []))}
                 for source, output in raw.get("pdfs", {}).items()]
         return {"version": self.version, "busy": busy, "stage": stage, "mode": raw.get("mode", "default"),
                 "modes": task.available_modes(), "template": task.template_info(),

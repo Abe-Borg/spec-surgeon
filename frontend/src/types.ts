@@ -163,6 +163,9 @@ export interface PdfResult {
   source: string;
   output: string;
   name: string;
+  /** Made from a working copy delivered UNVERIFIED (Obliterate mode): that copy's failed checks, as an earlier
+   *  copy's. Empty when nothing failed on the way. */
+  unverified?: string[];
 }
 
 /** Whether this computer can make PDFs (Save clean PDFs needs Word or LibreOffice), and with which program. */
