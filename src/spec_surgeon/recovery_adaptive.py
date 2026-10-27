@@ -156,12 +156,17 @@ def _document_facts(file, result):
     targets = ([bound["target"]] if bound and bound.get("target") else
                [target for effect in (bound or {}).get("effects", {}).values()
                 for target in (effect.get("targets") if isinstance(effect.get("targets"), list) else [])])
+    effects = (contract_of(result) or {}).get("effects", [])
+    # A global effect is bound once, by count, naming no paragraph: its approved scope names the parts to show.
+    global_scopes = list(dict.fromkeys(scope for effect in effects if (effect.get("target") or {}).get("all") is True
+                                       for scope in (effect["target"].get("scope") or ["document"])))
     for key, path in (("source_xml_evidence", file.source), ("candidate_xml_evidence", file.output)):
         pkg = DocxPackage.from_path(path)
         try:
-            parts = list(dict.fromkeys([pkg.main_part(), *(target["part"] for target in targets)]))
-            if any(effect.get("type") in ("header_footer_template", "remove_header_footer")
-                   for effect in (contract_of(result) or {}).get("effects", [])):
+            kinds = pkg.parts_by_kind() if global_scopes else {}
+            parts = list(dict.fromkeys([pkg.main_part(), *(target["part"] for target in targets),
+                                        *(part for scope in global_scopes for part in kinds.get(scope, []))]))
+            if any(effect.get("type") in ("header_footer_template", "remove_header_footer") for effect in effects):
                 parts = list(dict.fromkeys([*parts, *pkg.text_parts()]))
             evidence = []
             for part in parts:

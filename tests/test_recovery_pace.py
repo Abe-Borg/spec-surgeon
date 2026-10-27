@@ -153,3 +153,30 @@ def test_the_baseline_trials_the_files_that_share_a_method_in_one_run(tmp_path, 
     assert sorted(runs) == [(1, 0), (3, 0)]
     assert sorted(len(a["results"]) for a in result.attempts) == [1, 3]
     assert all(a["reason"] == "Deterministic approved-goal baseline" for a in result.attempts)
+
+
+def test_the_critic_sees_the_parts_a_global_effects_scope_names(tmp_path):
+    """Codex on #123: bound once by count, a global effect names no paragraph, so the critic's evidence took its
+    parts from the paragraphs no longer listed: a header-scoped font change showed the critic the body alone. The
+    effect's approved scope names the parts now."""
+    import hashlib
+    from make_fixtures import build
+    from spec_surgeon import recovery_adaptive
+    from spec_surgeon.package import DocxPackage
+    source = tmp_path / "spec.docx"
+    source.write_bytes(build("21 13 13", "SPRINKLER SYSTEMS"))
+    headers = DocxPackage(source.read_bytes()).parts_by_kind()["headers"]
+    assert headers
+    result = recovery.RecoveryResult(out_dir=tmp_path / "session", request="Headers in Arial")
+    file = recovery.RecoveryFile(source=source, output=source, output_md5=hashlib.md5(source.read_bytes()).hexdigest())
+    result.files = [file]
+    recovery_adaptive.initialize(result, contract(
+        {"id": "hf", "type": "format", "target": {"scope": ["headers"], "all": True}, "font": {"name": "Arial"}}))
+    assert result.key["adaptive_bindings"][str(source)]["effects"]["hf"]["targets"] == "all"
+    facts = recovery_adaptive._document_facts(file, result)
+    for key in ("source_xml_evidence", "candidate_xml_evidence"):
+        shown = [row["part"] for row in facts[key]]
+        assert set(headers) <= set(shown) and all(row["source_target_positions"] == [] for row in facts[key])
+    result.key["adaptive_contract"]["effects"][0]["target"] = {"all": True}      # the body alone: the main part only
+    facts = recovery_adaptive._document_facts(file, result)
+    assert [row["part"] for row in facts["source_xml_evidence"]] == [DocxPackage(source.read_bytes()).main_part()]
