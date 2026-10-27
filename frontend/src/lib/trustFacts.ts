@@ -16,7 +16,7 @@ export const TRUST_FACTS = {
   codegenEffort: "xhigh",
   fastSpeedup: 2.5,
   fastPriceFactor: 2,
-  stepsPerPause: 48,
+  spendingCheckDefaultUsd: 20,
   autoSteps: 6,
   retries: 2,
   retryDelaysSeconds: [5, 20],

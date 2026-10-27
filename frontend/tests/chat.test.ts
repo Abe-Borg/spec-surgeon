@@ -14,6 +14,7 @@ import {
   WORK_TODO,
   composerState,
   costPill,
+  requestPill,
   endedLive,
   liveHasContent,
   pauseFor,
@@ -85,20 +86,26 @@ test("the error bubble follows the transcript and precedes the prompts", () => {
 test("the pause card shows in the budget stage, or whenever the budget says paused, with Continue when the action allows", () => {
   const paused = state({
     stage: "budget",
-    budget: { paused: true, steps_per_pause: 48 },
-    cost: { usd: 2.41, text: "", calls: 48 },
+    budget: { paused: true, reason: "limit" },
+    cost: { usd: 18.41, text: "", calls: 41, request: 17.62, limit: 20 },
     action: { label: "Continue", token: "t", kind: "continue" },
   });
   const card = pauseFor(paused);
   assert.equal(card?.kind, "pause");
   if (card?.kind === "pause") {
-    assert.equal(card.stepsPerPause, 48);
-    assert.equal(card.costText, "about $2.41");
+    assert.equal(card.reason, "limit");
+    assert.equal(card.costText, "about $18.41");
+    assert.equal(card.requestText, "about $17.62");
+    assert.equal(card.limitText, "$20.00");
     assert.equal(card.canContinue, true);
   }
   assert.equal(transcript(paused).at(-1)?.kind, "pause");
   assert.equal(pauseFor(state({ stage: "budget", busy: true })), null);
-  assert.equal(pauseFor(state({ stage: "preview", budget: { paused: true, steps_per_pause: 48 } }))?.kind, "pause");
+  assert.equal(pauseFor(state({ stage: "preview", budget: { paused: true, reason: "interrupted" } }))?.kind, "pause");
+  // an older server, or a pause with no reason: the plain "work paused" card; the check off: no amount
+  const plain = pauseFor(state({ stage: "budget", cost: { usd: 1, text: "", calls: 1, limit: null } }));
+  assert.equal(plain?.kind === "pause" && plain.reason, "interrupted");
+  assert.equal(plain?.kind === "pause" && plain.limitText, "");
   assert.equal(pauseFor(state({ stage: "preview" })), null);
   const noToken = pauseFor(state({ stage: "budget", action: { label: "", token: "", kind: "none" } }));
   assert.equal(noToken?.kind === "pause" && noToken.canContinue, false);
@@ -146,6 +153,11 @@ test("spending reads as the window says it: an estimate, never a bill", () => {
   assert.equal(costPill({ usd: 0, text: "", calls: 0 }), "≈ $0.00");
   assert.equal(costPill({ usd: null, text: "about $1", calls: 0 }), "≈ about $1");
   assert.equal(costPill(null), "—");
+  // beside it while a request runs: this request's spending against the check, nothing with the check off
+  assert.equal(requestPill({ usd: 3, text: "", calls: 3, request: 0.4, limit: 20 }), "this request ≈ $0.40 of $20.00");
+  assert.equal(requestPill({ usd: 3, text: "", calls: 3, request: null, limit: 20 }), "this request ≈ ? of $20.00");
+  assert.equal(requestPill({ usd: 3, text: "", calls: 3, request: 0.4, limit: null }), "");
+  assert.equal(requestPill({ usd: 3, text: "", calls: 3 }), "");
 });
 
 test("the status strip prefers the server's sentence, then the kind's label, then Working…", () => {

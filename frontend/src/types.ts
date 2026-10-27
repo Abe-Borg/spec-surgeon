@@ -188,6 +188,12 @@ export interface Cost {
   /** Fast mode is in effect (Settings → "Fast responses" on, the model served fast, not refused for this key): the next
    *  AI step is priced at the fast table. Absent from an older server. */
   fast?: boolean;
+  /** This request's estimated spending (a message, a pick, an approval, a button), null when the price table cannot
+   *  estimate it. Absent from an older server. */
+  request?: number | null;
+  /** The spending check (Settings): the estimated dollars one request may spend before the work pauses; null when it
+   *  is off. Absent from an older server. */
+  limit?: number | null;
 }
 
 export interface Connection {
@@ -206,9 +212,13 @@ export interface Working {
   undo_blocked?: string;
 }
 
+/** Why the work is paused: the request reached the spending check; the price table cannot estimate the model that
+ *  answered, so the check cannot be kept; or the app closed while work ran. */
+export type PauseReason = "limit" | "unpriced" | "interrupted" | "";
+
 export interface Budget {
   paused: boolean;
-  steps_per_pause: number;
+  reason: PauseReason;
 }
 
 /** none · available · downloading · ready (downloaded while work ran; Restart to update) · installing (Setup
@@ -314,6 +324,11 @@ export interface Settings {
   fast?: FastOffer;
   /** Settings → Advanced: the top bar offers Obliterate mode. Absent from an older server. */
   show_obliterate?: boolean;
+  /** The spending check: the estimated dollars one request may spend before the work pauses; null when it is off.
+   *  Absent from an older server. */
+  spending_limit_usd?: number | null;
+  /** The amount the check starts at until the user changes it. */
+  spending_default_usd?: number;
 }
 
 /** What Settings says about fast mode, from the server's own price table (llm.PRICES / llm.FAST_PRICES): the model

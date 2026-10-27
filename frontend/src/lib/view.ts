@@ -93,7 +93,7 @@ export const EMPTY_VIEW: View = {
   todo: [],
   focus: [],
   working: { generation: 0, from_originals: true, can_start_over: false, undo: "", undo_blocked: "" },
-  budget: { paused: false, steps_per_pause: 48 },
+  budget: { paused: false, reason: "" },
   update: { state: "none", version: "", notes: "", progress: 0, error: "" },
   mode: "default",
   modes: ["safe", "default"],

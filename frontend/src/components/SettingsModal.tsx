@@ -1,13 +1,13 @@
 import { useEffect, useRef, useState } from "react";
 import type { Settings } from "../types";
-import { getSettings, removeKey, saveFastMode, saveSettings, saveShowObliterate, saveTheme } from "../lib/api";
+import { getSettings, removeKey, saveFastMode, saveSettings, saveShowObliterate, saveSpendingLimit, saveTheme } from "../lib/api";
+import { dollars } from "../lib/chat";
 import { fastStatus, fastWords } from "../lib/fastMode";
 import { THEMES, applyTheme, resolveTheme } from "../lib/theme";
 import { ModalShell, primaryBtn, quietBtn } from "./ModalShell";
 import Tip from "./Tip";
 
 interface Props {
-  stepsPerPause: number;
   onClose: () => void;
   /** The connection may have changed: the caller refreshes the view. */
   onSaved: () => void;
@@ -15,8 +15,9 @@ interface Props {
 
 /**
  * Connection setup, separate from the document task: "AI connection" (the
- * key, whether to remember it securely, and the sentence on spending;
- * docs/CONVERSATIONAL_DESKTOP.md, "Connection and resource use"), "Fast
+ * key, whether to remember it securely; docs/CONVERSATIONAL_DESKTOP.md,
+ * "Connection and resource use"), "Spending check" (the estimated dollars one
+ * request may spend before the work pauses, typed by the user, or off), "Fast
  * responses" (Claude's fast mode: what it buys and what it costs, both from
  * the server's price table; turning it on asks for a second click that names
  * the price) and "Appearance" (the colour scheme, applied at once and kept for
@@ -25,7 +26,7 @@ interface Props {
  * "Advanced" shows or hides Obliterate mode in the top bar (a second click to
  * show it; choosing the mode still shows its own warning every time).
  */
-export default function SettingsModal({ stepsPerPause, onClose, onSaved }: Props) {
+export default function SettingsModal({ onClose, onSaved }: Props) {
   const [settings, setSettings] = useState<Settings | null>(null);
   const [key, setKey] = useState("");
   const [remember, setRemember] = useState(true);
@@ -42,6 +43,9 @@ export default function SettingsModal({ stepsPerPause, onClose, onSaved }: Props
   const [confirmingShow, setConfirmingShow] = useState(false);
   const [showSaving, setShowSaving] = useState(false);
   const [showError, setShowError] = useState("");
+  const [spendSaving, setSpendSaving] = useState(false);
+  const [spendError, setSpendError] = useState("");
+  const [spendStatus, setSpendStatus] = useState("");
 
   useEffect(() => {
     let alive = true;
@@ -132,6 +136,27 @@ export default function SettingsModal({ stepsPerPause, onClose, onSaved }: Props
     }
   };
 
+  const setSpending = async (limit: number | null) => {
+    if (spendSaving) return;
+    setSpendSaving(true);
+    setSpendError("");
+    setSpendStatus("");
+    try {
+      const next = await saveSpendingLimit(limit);
+      setSettings(next);
+      setSpendStatus(
+        typeof next.spending_limit_usd === "number"
+          ? `From the next request on, the work pauses before one request could spend more than ${dollars(next.spending_limit_usd)}.`
+          : "The spending check is off: nothing pauses the work; Stop still cuts it off.",
+      );
+      onSaved();
+    } catch (failure) {
+      setSpendError(failure instanceof Error ? failure.message : String(failure));
+    } finally {
+      setSpendSaving(false);
+    }
+  };
+
   const setShowObliterate = async (on: boolean) => {
     if (showSaving) return;
     setShowSaving(true);
@@ -194,11 +219,6 @@ export default function SettingsModal({ stepsPerPause, onClose, onSaved }: Props
             </label>
           </Tip>
         </section>
-        <p className="text-xs leading-relaxed text-ink-faint">
-          There is no spending limit. Work pauses after every {stepsPerPause} AI steps until you continue,
-          the status line shows the estimated spending, and Stop now cuts off the AI step that is running.
-          Provider charges can differ from the estimate.
-        </p>
         {settings && (
           <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-[11px] text-ink-faint">
             <dt>Edited copies</dt>
@@ -236,6 +256,16 @@ export default function SettingsModal({ stepsPerPause, onClose, onSaved }: Props
             </button>
           </Tip>
         </div>
+        {settings && settings.spending_limit_usd !== undefined && (
+          <SpendingSection
+            limit={settings.spending_limit_usd}
+            fallback={settings.spending_default_usd}
+            saving={spendSaving}
+            error={spendError}
+            status={spendStatus}
+            onSave={(limit) => void setSpending(limit)}
+          />
+        )}
         {settings?.fast && (
           <FastSection
             on={!!settings.fast_mode}
@@ -304,6 +334,94 @@ export default function SettingsModal({ stepsPerPause, onClose, onSaved }: Props
         )}
       </div>
     </ModalShell>
+  );
+}
+
+/**
+ * "Spending check": the estimated dollars one request (a message, a pick, an approval) may spend. The app does not start
+ * an AI step that could take the request past it; the work pauses with its progress saved until the user continues,
+ * which allows the amount again. Typed by the user, or off. Stop, beside the spending while work runs, is the kill
+ * switch.
+ */
+function SpendingSection({
+  limit,
+  fallback,
+  saving,
+  error,
+  status,
+  onSave,
+}: {
+  limit: number | null;
+  /** The amount the check starts at, shown as the field's hint. */
+  fallback?: number;
+  saving: boolean;
+  error: string;
+  status: string;
+  onSave: (limit: number | null) => void;
+}) {
+  const [text, setText] = useState(limit === null ? "" : String(limit));
+  const typed = Number(text);
+  const valid = text.trim() !== "" && Number.isFinite(typed) && typed > 0;
+  const unchanged = valid && limit !== null && Math.abs(typed - limit) < 0.005;
+  return (
+    <section className="border-t border-edge pt-4">
+      <h3 className="font-[family-name:var(--font-display)] text-sm font-semibold text-ink">Spending check</h3>
+      <p className="mt-0.5 text-xs leading-relaxed text-ink-dim">
+        The most one request (a message, a pick, an approval) may spend, as the app estimates it. An AI step that could
+        take the request past it is not started: the work pauses with its progress saved until you continue, which
+        allows the amount again. While work runs, Stop beside the spending in the top bar cuts it off at once.
+        Estimates come from a built-in price table; provider charges can differ.
+      </p>
+      <p className="mt-2 text-xs text-ink-faint" role="status">
+        {limit === null ? "Now: off. Nothing pauses the work." : `Now: ${dollars(limit)} per request.`}
+      </p>
+      <div className="mt-2 flex items-center gap-2">
+        <label className="flex items-center gap-1 rounded-lg border border-edge bg-bg px-2 py-1.5 text-sm text-ink focus-within:border-accent/70">
+          <span className="text-ink-faint" aria-hidden>
+            $
+          </span>
+          <input
+            type="number"
+            inputMode="decimal"
+            min="0.01"
+            step="1"
+            value={text}
+            placeholder={fallback === undefined ? "" : String(fallback)}
+            onChange={(e) => setText(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && valid && !unchanged) onSave(typed);
+            }}
+            aria-label="Spending check in US dollars per request"
+            className="w-24 bg-transparent outline-none tabular-nums placeholder:text-ink-faint"
+          />
+        </label>
+        <Tip tip={valid ? "The next request uses it" : "Type an amount in US dollars, more than zero"}>
+          <button type="button" className={primaryBtn} disabled={!valid || unchanged || saving} onClick={() => onSave(typed)}>
+            {saving ? "Applying…" : "Apply"}
+          </button>
+        </Tip>
+        {limit !== null && (
+          <Tip tip="Nothing pauses the work for its spending; Stop still cuts it off">
+            <button type="button" className={quietBtn} disabled={saving} onClick={() => {
+              setText("");
+              onSave(null);
+            }}>
+              Turn off
+            </button>
+          </Tip>
+        )}
+      </div>
+      {error && (
+        <p className="mt-2 text-xs text-err" role="alert">
+          {error}
+        </p>
+      )}
+      {status && !error && (
+        <p className="mt-2 text-xs text-ok" role="status">
+          {status}
+        </p>
+      )}
+    </section>
   );
 }
 

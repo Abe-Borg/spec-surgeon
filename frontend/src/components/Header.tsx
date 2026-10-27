@@ -2,7 +2,7 @@
 // line, the help topics beside it, then the pills and the buttons on the right.
 import { memo } from "react";
 import type { Mode, View } from "../types";
-import { costPill } from "../lib/chat";
+import { costPill, dollars, requestPill } from "../lib/chat";
 import { HELP_TOPICS, sessionHeading, type HelpTopic } from "../lib/help";
 import { MODE_LABELS, MODE_TIPS } from "../lib/modes";
 import Tip from "./Tip";
@@ -17,6 +17,8 @@ interface Props {
   onOpenSettings: () => void;
   onOpenHelp: (topic: HelpTopic) => void;
   onMode: (mode: Mode) => void;
+  /** The kill switch beside the spending: cuts off the AI step that is running and starts no other. */
+  onStop: () => void;
 }
 
 const ORIGIN_TIPS: Record<string, string> = {
@@ -35,11 +37,14 @@ function Header({
   onOpenSettings,
   onOpenHelp,
   onMode,
+  onStop,
 }: Props) {
   const safe = view.mode === "safe";
   const ready = !!view.connection?.ready;
   const calls = view.cost?.calls ?? 0;
   const fast = !!view.cost?.fast;
+  const limit = view.cost?.limit;
+  const request = busy && !safe ? requestPill(view.cost) : "";
   // The context line steps aside for the update pill: both only fit from 1280 px, and not together.
   const heading = updatePill ? "" : sessionHeading(view);
 
@@ -119,14 +124,30 @@ function Header({
         <span
           title={
             `Estimated spending in this conversation — an estimate from a built-in price table, never a bill. ${calls} AI ${calls === 1 ? "step" : "steps"} so far.` +
+            (typeof limit === "number"
+              ? ` Spending check (Settings): the work pauses before one request could spend more than ${dollars(limit)}.`
+              : " The spending check is off (Settings).") +
             (fast ? " Fast responses is in effect (Settings): AI steps are priced at the fast rate." : "")
           }
           className="rounded-full border border-edge bg-raised px-3 py-1 text-xs whitespace-nowrap text-ink-dim tabular-nums"
         >
           {costPill(view.cost)}
           <span className="ml-1 hidden text-ink-faint xl:inline">this conversation</span>
+          {request && <span className="ml-1.5 text-ink-faint">· {request}</span>}
           {fast && <span className="ml-1.5 font-medium text-accent">Fast</span>}
         </span>
+        {busy && !safe && (
+          <Tip tip="Stop now — the kill switch: cuts off the AI step that is running at once and starts no other. Your progress is saved; nothing in your files changes.">
+            <button
+              type="button"
+              onClick={onStop}
+              aria-label="Stop all AI work"
+              className="rounded-full border border-err/60 bg-err/10 px-3 py-1 text-xs font-medium whitespace-nowrap text-err transition-colors hover:bg-err/20"
+            >
+              Stop
+            </button>
+          </Tip>
+        )}
         <button
           type="button"
           onClick={onOpenSettings}

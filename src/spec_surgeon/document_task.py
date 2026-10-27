@@ -7,12 +7,14 @@ triages every attachment the moment it arrives, and persists a recoverable journ
 approval or execute saved code.
 
 Attachments are Word documents to edit, at most one template, and pictures or tables the user attached for the edit
-to use (``reference``: a new logo, a sheet of project values); nothing beside them is discovered. There is no spending
-ceiling: every model call may write up to the model's maximum output (the conversation at ``CONVERSATION_EFFORT``,
-the custom-method writer at ``resources.CODEGEN_EFFORT``, recovery at ``RECOVERY_EFFORT``), the work pauses after
-``STEPS_PER_PAUSE`` model calls until the user says to go on, the window shows the estimated spending, and its Stop
-cuts off the call that is running (``llm.cancellation_scope``). Continue after a pause, a stop or a failed call picks
-the conversation up where it stopped.
+to use (``reference``: a new logo, a sheet of project values); nothing beside them is discovered. Every model call
+may write up to the model's maximum output (the conversation at ``CONVERSATION_EFFORT``, the custom-method writer at
+``resources.CODEGEN_EFFORT``, recovery at ``RECOVERY_EFFORT``). The spending check is the user's (``spending_limit``,
+Settings; None: no check): each request — a message, a pick, an approval, a button — gets its own ledger, and a call
+that could take that request past the limit is not started; the work pauses with its progress saved until the user
+says to go on, which allows the limit again. The window shows the estimated spending, and its Stop is the kill
+switch: it cuts off the call that is running at once (``llm.cancellation_scope``). Continue after a pause, a stop or
+a failed call picks the conversation up where it stopped.
 """
 from __future__ import annotations
 
@@ -31,11 +33,15 @@ from . import llm, review_display
 from .gui import Session
 from .inputs import KINDS as REFERENCE_KINDS
 from .recovery_state import atomic_json
-from .resources import DEFAULT_MAX_OUTPUT_TOKENS
+from .resources import DEFAULT_MAX_CALLS, DEFAULT_MAX_OUTPUT_TOKENS
+from .settings import spending_check
 
-STEPS_PER_PAUSE = 48    # model calls between the pauses where the user says to go on
 AUTO_STEPS = 6          # internal steps the coordinator takes on its own after one user action (bounded)
 STAGES = ("empty", "question", "preview", "done", "budget", "resume")
+# Why the work is paused (stage "budget"): the request reached the user's spending check; the price table cannot
+# estimate the model that answers, so the check cannot be kept; or the app closed while work ran
+PAUSES = ("limit", "unpriced", "interrupted")
+INTERRUPTED = "Previous work stopped before its final usage was recorded."
 # Safe: the buttons, no AI call; Default: the conversation; Obliterate: the conversation without the guardrails that
 # protect a document's content (CLAUDE.md, Modes) — hidden unless Settings → Advanced shows it, chosen
 # only after its warning, never restored at a launch
@@ -255,9 +261,11 @@ def _same_file_key(path) -> str:
 
 
 class DocumentTask:
-    def __init__(self, session=None, *, journal=None, render=True, mode="default", obliterate_allowed=False):
+    def __init__(self, session=None, *, journal=None, render=True, mode="default", obliterate_allowed=False,
+                 spending_limit=None):
         if mode not in MODES or (mode == "obliterate" and not obliterate_allowed):
             raise ValueError(f"mode must be one of {LAUNCH_MODES}")
+        self.spending_limit = spending_check(spending_limit)   # Settings → Spending check: USD per request, None off
         self.mode = mode
         self.obliterate_allowed = bool(obliterate_allowed)   # Settings → Advanced → "Show Obliterate mode"
         self.session = session or Session()
@@ -314,6 +322,7 @@ class DocumentTask:
         self._resume_recovery = None
         self._resume_layouts = []           # layout batch folders still to recover, from the journal
         self._budget = self._new_budget()
+        self._request_budget = self._new_request()
         # Files a caller handed the session (tests, the installed smoke test) become attachments.
         given: List[Path] = []
         given = list(self.session.documents or [])
@@ -329,10 +338,33 @@ class DocumentTask:
         self._sync()
 
     @staticmethod
-    def _new_budget(max_calls=STEPS_PER_PAUSE):
-        """No spending or token ceiling; the call count pauses the work for the user's go-ahead."""
-        return llm.CallBudget(max_cost_usd=None, max_calls=max_calls, max_output_tokens=DEFAULT_MAX_OUTPUT_TOKENS,
-                              max_total_tokens=None, effort=CONVERSATION_EFFORT)
+    def _new_budget():
+        """The conversation's ledger: every model call and the spending the window shows; no limit of its own."""
+        return llm.CallBudget(max_cost_usd=None, max_calls=llm.UNLIMITED_CALLS,
+                              max_output_tokens=DEFAULT_MAX_OUTPUT_TOKENS, max_total_tokens=None,
+                              effort=CONVERSATION_EFFORT)
+
+    def _new_request(self):
+        """One request's ledger, inside the conversation's: the user's spending check. A call whose largest possible
+        cost would take the request past ``spending_limit`` is refused before it starts (``CallBudget._preflight``);
+        None leaves the request unchecked. Its effort is the conversation's, so the calls inside keep theirs."""
+        return llm.CallBudget(max_cost_usd=self.spending_limit, max_calls=llm.UNLIMITED_CALLS,
+                              max_output_tokens=DEFAULT_MAX_OUTPUT_TOKENS, max_total_tokens=None,
+                              effort=CONVERSATION_EFFORT)
+
+    def set_spending_limit(self, limit) -> None:
+        """Settings → Spending check: from the next request on. A request paused at the check is let go on at the new
+        limit when the user continues it."""
+        self.spending_limit = spending_check(limit)
+
+    def pause_reason(self) -> str:
+        """Why the work is paused (``PAUSES``), or '' when it is not."""
+        if self.stage != "budget":
+            return ""
+        reason = self._request_budget.exhausted_reason or self._budget.exhausted_reason or ""
+        if "price" in reason and "unknown" in reason:
+            return "unpriced"
+        return "limit" if "ceiling" in reason else "interrupted"     # llm.CallBudget._preflight's own words
 
     # ---- attachments ----
     def documents(self) -> List[Path]:
@@ -803,8 +835,13 @@ class DocumentTask:
             if status:
                 self._emit({"type": "status", "kind": status[0], "text": status[1]})
             log(message)
+        if not (action == "primary" and self.stage == "budget"):
+            # a new request: the spending check starts again, and nothing stopped on the way carries over
+            self._request_budget = self._new_request()
+            self._budget.exhausted_reason = None
         try:
-            with llm.budget_scope(self._budget), llm.stream_observer_scope(self._on_stream):
+            with llm.budget_scope(self._budget), llm.budget_scope(self._request_budget), \
+                    llm.stream_observer_scope(self._on_stream):
                 if action == "send":
                     self._send(text, checkpointed_log, chip=chip)
                 elif action == "choose":
@@ -823,7 +860,7 @@ class DocumentTask:
             self._revision += 1
             raise
         finally:
-            if self._budget.exhausted_reason and self.stage not in {"done", "preview"}:
+            if self._request_budget.exhausted_reason and self.stage not in {"done", "preview"}:
                 self.stage = "budget"
             self._emit({"type": "cost", "cost": self._cost()})
             self._events = None
@@ -836,8 +873,10 @@ class DocumentTask:
         text = ("an amount the price table cannot estimate" if cost is None else
                 "less than $0.01" if cost < 0.005 else f"about ${cost:.2f}")
         # ``fast``: the next AI step will ask for fast mode and be priced at the fast table (llm.FAST_PRICES) — the
-        # setting is on, the model is served fast, and Anthropic has not refused fast mode for this key
-        return {"usd": cost, "text": text, "calls": self._budget.calls, "fast": llm.fast_for(llm.DEFAULT_MODEL)}
+        # setting is on, the model is served fast, and Anthropic has not refused fast mode for this key; ``request``:
+        # this request's spending, ``limit`` the user's spending check (None: off)
+        return {"usd": cost, "text": text, "calls": self._budget.calls, "fast": llm.fast_for(llm.DEFAULT_MODEL),
+                "request": self._request_budget.spent_usd, "limit": self.spending_limit}
 
     def _ready_to_talk(self):
         self.session.files(outcome=False)  # reject missing attachments before consuming an answer
@@ -1157,7 +1196,7 @@ class DocumentTask:
         self._revision += 1
         self.stage = {"question": "question", "preview": "preview", "resume": "resume", "auto": "question",
                       "empty": "resume" if self.decisions else "empty"}[outcome.kind]
-        if self._budget.exhausted_reason and self.stage == "question":
+        if self._request_budget.exhausted_reason and self.stage == "question":
             self.stage = "budget"
         if self.stage == "question":
             self._emit({"type": "question", "questions": list(outcome.questions),
@@ -1167,7 +1206,7 @@ class DocumentTask:
 
     def _recovery_options(self):
         from .recovery import RecoveryOptions
-        return RecoveryOptions(max_cost_usd=None, max_calls=self._budget.max_calls, max_attempts=RECOVERY_ATTEMPTS,
+        return RecoveryOptions(max_cost_usd=None, max_calls=DEFAULT_MAX_CALLS, max_attempts=RECOVERY_ATTEMPTS,
                                max_output_tokens=DEFAULT_MAX_OUTPUT_TOKENS, max_total_tokens=None,
                                effort=RECOVERY_EFFORT, render=self.render, visual_review=self.session.visual_check)
 
@@ -1321,11 +1360,21 @@ class DocumentTask:
         if self.mode == "safe" and self.stage != "preview":
             raise ValueError("Press a button to preview a change first.")
         if self.stage == "budget":
-            # Extend the same ledger; do not reset accumulated usage or nested limits.
-            self._budget.max_calls = max(self._budget.max_calls, self._budget.calls) + STEPS_PER_PAUSE
-            self._budget.exhausted_reason = None
+            # The user's go-ahead: the same request goes on, its spending kept, with the limit allowed again
+            why, spent, limit = self.pause_reason(), self._request_budget.spent_usd, self.spending_limit
+            self._request_budget.max_cost_usd = None if why == "unpriced" or limit is None else (spent or 0.0) + limit
+            if why == "unpriced":
+                self.say("Continuing without a spending check for this request: the price table cannot estimate the "
+                         "model that answers.")
+            elif why == "limit" and limit is None:
+                self.say("Continuing without a spending check for this request: it is off in Settings.")
+            elif why == "limit":
+                self.say(f"Continuing: this request may spend up to ${limit:.2f} more before the spending check "
+                         "asks again.")
+            else:
+                self.say("Continuing where the work stopped.")
+            self._request_budget.exhausted_reason = self._budget.exhausted_reason = None
             self.stage = "resume"
-            self.say(f"Continuing for up to {STEPS_PER_PAUSE} more AI steps.")
             self._primary(self.action_token(), log, hold=hold)
             return
         if self.stage == "resume":
@@ -1795,7 +1844,7 @@ class DocumentTask:
                 "unverified": {k: list(v) for k, v in self.unverified.items()},
                 "action": labels.get(self.stage, ""), "token": self.action_token(),
                 "blocked_reason": s.run_blocked_reason() if self.stage == "preview" else "",
-                "budget_paused": self.stage == "budget", "steps_per_pause": STEPS_PER_PAUSE,
+                "budget_paused": self.stage == "budget", "pause_reason": self.pause_reason(),
                 "cost": self._budget.spent_usd,
                 "blocking": blocking}
 
@@ -1824,7 +1873,7 @@ class DocumentTask:
             "pending_layouts": [str(x) for x in self.session.pending_layout_recovery],
             "working": dict(self.working), "generation": self.generation, "history": list(self.history),
             "applied": self.applied, "todo": self.todo, "focus": self.focus, "undo": self.undo_points,
-            "budget": self._budget.to_dict(), "in_progress": in_progress})
+            "budget": self._budget.to_dict(), "request": self._request_budget.to_dict(), "in_progress": in_progress})
 
     def _restore_todo(self, data) -> None:
         """The changes each copy carries, the to-do list and the pass over it, for the documents still attached; a
@@ -1965,20 +2014,28 @@ class DocumentTask:
             raise ValueError("The saved conversation could not be read.")
         self._resume_layouts = list(layouts)
         budget = data.get("budget", {})
-        # A journal from a version with a spending allowance keeps its call count and spending, never its ceilings.
-        max_calls = budget.get("max_calls", STEPS_PER_PAUSE)
-        self._budget = self._new_budget(max_calls if type(max_calls) is int and max_calls > 0 else STEPS_PER_PAUSE)
-        # Retain conservative accounting; never reset spending by reopening the app.
+        # Retain conservative accounting; never reset spending by reopening the app. A journal from a version with a
+        # spending allowance or a call-count pause keeps its call count and spending, never its ceilings or pauses.
+        self._budget = self._new_budget()
         self._budget.calls = int(budget.get("calls", 0))
         self._budget._reserved_tokens = int(budget.get("accounted_tokens", 0))
         cost = budget.get("estimated_cost_usd", 0)
         self._budget._reserved_cost_usd = float(cost or 0)
-        exhausted = budget.get("exhausted_reason")
-        self._budget.exhausted_reason = exhausted if exhausted and "call limit" in exhausted else None
+        # the request that was open: its spending, and a pause at the spending check, under today's limit
+        request = data.get("request") if isinstance(data.get("request"), dict) else {}
+        self._request_budget = self._new_request()
+        number = lambda v: float(v) if isinstance(v, (int, float)) and not isinstance(v, bool) and v >= 0 else 0.0
+        self._request_budget._reserved_cost_usd = number(request.get("estimated_cost_usd"))
+        if self._request_budget.max_cost_usd is not None:   # a go-ahead given before the app closed still stands
+            self._request_budget.max_cost_usd = max(self._request_budget.max_cost_usd, number(request.get("max_cost_usd")))
+        exhausted = request.get("exhausted_reason")
+        self._request_budget.exhausted_reason = exhausted if isinstance(exhausted, str) and exhausted else None
+        if self.spending_limit is None and self._request_budget.exhausted_reason != INTERRUPTED:
+            self._request_budget.exhausted_reason = None          # the check is off now: nothing to ask
         if data.get("in_progress") or cost is None:
             # The app closed while work ran: its last call may have cost more than was recorded; ask before going on.
-            self._budget.exhausted_reason = "Previous work stopped before its final usage was recorded."
-        self.stage = ("budget" if self._budget.exhausted_reason else "resume" if self.decisions else
+            self._request_budget.exhausted_reason = INTERRUPTED
+        self.stage = ("budget" if self._request_budget.exhausted_reason else "resume" if self.decisions else
                       "done" if self.results and self.generation else "empty")
         if self.decisions:
             self.say("Your conversation is restored. I’ll recheck the documents before making further changes.")

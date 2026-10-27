@@ -238,7 +238,7 @@ function emptyView() {
     todo: [],
     focus: [],
     working: { generation: 0, from_originals: true, can_start_over: false },
-    budget: { paused: false, steps_per_pause: 48 },
+    budget: { paused: false, reason: "" },
     update: { state: "none", version: "", notes: "", progress: 0, error: "" },
     mode: "default",
     modes: ["safe", "default"],
@@ -372,9 +372,8 @@ const SCENARIOS = {
   paused: () => {
     const v = SCENARIOS.preview();
     v.stage = "budget";
-    v.budget = { paused: true, steps_per_pause: 48 };
-    v.cost = { usd: 2.41, text: "about $2.41", calls: 48 };
-    v.messages = [...v.messages, msg("app", "Work paused after 48 AI steps; your progress is saved.")];
+    v.budget = { paused: true, reason: "limit" };
+    v.cost = { usd: 18.41, text: "about $18.41", calls: 41, request: 17.62, limit: 20 };
     v.action = { label: "Continue", token: "tok-continue-1", kind: "continue", can_hold: false };
     return v;
   },
@@ -429,7 +428,7 @@ function undoFields() {
   const top = undoStack[undoStack.length - 1];
   return { undo: top ? top.request : "", undo_blocked: top && view.stage === "preview" ? "Discard the preview first." : "" };
 }
-let settings = { key_present: true, origin: "saved", can_remember: true, out_root: "C:/Users/abe/AppData/Local/Spec Surgeon/runs", logs_dir: "C:/Users/abe/AppData/Roaming/Spec Surgeon/logs", theme: "clay", fast_mode: false, show_obliterate: false, fast: { model: "claude-opus-5-5", available: true, speedup: 2.5, price_factor: 2, standard_usd_per_mtok: [4, 20], fast_usd_per_mtok: [8, 40], refused: null } };
+let settings = { key_present: true, origin: "saved", can_remember: true, out_root: "C:/Users/abe/AppData/Local/Spec Surgeon/runs", logs_dir: "C:/Users/abe/AppData/Roaming/Spec Surgeon/logs", theme: "clay", fast_mode: false, show_obliterate: false, spending_limit_usd: 20, spending_default_usd: 20, fast: { model: "claude-opus-5-5", available: true, speedup: 2.5, price_factor: 2, standard_usd_per_mtok: [4, 20], fast_usd_per_mtok: [8, 40], refused: null } };
 const THEMES = ["clay", "blueprint", "graphite", "carbon", "linen"];
 function keySettings() { return { ...settings, can_remove_key: ["saved", "session"].includes(settings.origin) }; }
 let running = null; // { stop: boolean }
@@ -605,7 +604,14 @@ function startStream(res) {
 }
 
 function spend(usd, calls) {
-  view.cost = { usd: Math.round((view.cost.usd + usd) * 100) / 100, text: "", calls: view.cost.calls + calls, fast: settings.fast_mode };
+  view.cost = {
+    usd: Math.round((view.cost.usd + usd) * 100) / 100,
+    text: "",
+    calls: view.cost.calls + calls,
+    fast: settings.fast_mode,
+    request: Math.round(((view.cost.request ?? 0) + usd) * 100) / 100,
+    limit: settings.spending_limit_usd,
+  };
   view.cost.text = view.cost.usd < 0.005 ? "less than $0.01" : `about $${view.cost.usd.toFixed(2)}`;
   return view.cost;
 }
@@ -770,22 +776,25 @@ async function pauseJob(res, userText) {
   await s.emit({ type: "status", kind: "planning", text: "" });
   await s.emit({ type: "activity", text: "Checking the files that still need work" });
   await s.emit({ type: "status", kind: "recovering", text: "" });
-  const note = msg("app", "Work paused after 48 AI steps; your progress is saved.");
-  view.messages.push(note);
-  await s.emit({ type: "message", message: note });
   view.stage = "budget";
-  view.budget = { paused: true, steps_per_pause: 48 };
+  view.budget = { paused: true, reason: "limit" };
   view.action = { label: "Continue", token: `tok-continue-${++seq}`, kind: "continue", can_hold: false };
-  await s.emit({ type: "cost", cost: spend(1.9, 48) });
+  await s.emit({ type: "cost", cost: spend(17.4, 38) });
   s.end();
 }
 
 async function primaryJob(res, token, hold = []) {
   const s = startStream(res);
   if (view.action.kind === "continue") {
-    view.budget = { paused: false, steps_per_pause: 48 };
+    view.budget = { paused: false, reason: "" };
     await s.emit({ type: "status", kind: "resuming", text: "" });
-    const note = msg("app", "Continuing where the conversation stopped.");
+    const limit = settings.spending_limit_usd;
+    const note = msg(
+      "app",
+      typeof limit === "number"
+        ? `Continuing: this request may spend up to $${limit.toFixed(2)} more before the spending check asks again.`
+        : "Continuing without a spending check for this request: it is off in Settings.",
+    );
     view.messages.push(note);
     await s.emit({ type: "message", message: note });
     view.stage = view.plan ? "preview" : "empty";
@@ -1215,6 +1224,15 @@ async function handle(req, res) {
           view.mode = "default";
           view.messages.push(msg("app", OBLITERATE_OFF));
         }
+        if (!("api_key" in body)) return json(res, 200, keySettings());
+      }
+      if ("spending_limit_usd" in body) {
+        const limit = body.spending_limit_usd;
+        if (limit !== null && (typeof limit !== "number" || !Number.isFinite(limit) || limit < 0)) {
+          return json(res, 400, { error: "The spending check is an amount in US dollars, or off." });
+        }
+        settings = { ...settings, spending_limit_usd: limit === 0 ? null : limit };
+        view.cost = { ...view.cost, limit: settings.spending_limit_usd };
         if (!("api_key" in body)) return json(res, 200, keySettings());
       }
       if ("fast_mode" in body) {
