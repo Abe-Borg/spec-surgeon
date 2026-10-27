@@ -5,8 +5,11 @@ classified. Every paragraph keeps the exact ordinal used by ``ooxml.paragraphs``
 unsupported or ambiguous content receives an explicit disposition. ``role_summary``
 condenses that analysis into how one file encodes each role (styles, typed or
 automatic markers, examples) and the concrete selector a planner can write for it
-when the file makes one unambiguous. Nothing here is imported by the independent
-verifier.
+when the file makes one unambiguous. A paragraph with a wording redline takes part
+when it reads alike with its changes accepted and with them rejected; a revision that
+can change a list number or the paragraph's existence (a paragraph mark inserted,
+deleted or moved, a tracked paragraph-property change, a numbering change) excludes it
+and unsettles its list. Nothing here is imported by the independent verifier.
 """
 from __future__ import annotations
 
@@ -21,7 +24,7 @@ from .ops.selectors import StyleSheet
 from .package import DocxPackage, W
 
 SCHEMA_VERSION = 1
-ANALYZER_VERSION = "1"
+ANALYZER_VERSION = "2"
 ROLES = ("section_id", "section_title", "part", "article", "paragraph", "subparagraph",
          "subparagraph_2", "subparagraph_3", "subparagraph_4", "end_of_section")
 _NUMBER = r"[0-9]{2}[ \u00a0–—-]*[0-9]{2}[ \u00a0–—-]*[0-9]{2}(?:\.[0-9]{2})?"
@@ -39,22 +42,62 @@ _DEPTH_ROLES = {3: "paragraph", 4: "subparagraph", 5: "subparagraph_2",
 # marker shape these paragraphs share with a role as ambiguous; a missing parent or a pending revision does not.
 NO_MARKER = "no unambiguous supported specification marker"
 UNSUPPORTED_LIST = "automatic numbering pattern has no supported unambiguous specification role"
+# The exclusions a pending revision brings: one that can change the paragraph's existence or its number, and a
+# wording redline whose two views read as different things. A wording redline that reads alike in both takes part.
+STRUCTURAL_REVISION = "pending revision: accept/reject views may have different structure"
+VIEWS_DIFFER = ("pending revision: the wording reads as one thing with its changes accepted and as another with "
+                "them rejected")
+# The revision kinds (ooxml.revision_kind) that can change no list number and no paragraph's existence: wording
+# inserted, deleted or moved inside the paragraph, a run's or the mark's formatting change, a section property
+# change. Every other kind is structural — a paragraph mark inserted, deleted or moved, a tracked paragraph-property
+# change (its old properties may have numbered the paragraph otherwise), a numbering change, a table revision — and
+# so is a revision wrapper around the paragraph: the accept and reject views may not hold the same paragraphs.
+WORDING_REVISIONS = frozenset({"ins", "del", "moveFrom", "moveTo", "rPrChange", "sectPrChange"})
+# The revision wrappers a view leaves out: with every change accepted, deleted and moved-away wording is gone; with
+# every change rejected, inserted and moved-in wording is.
+_LEFT_OUT = {None: (), "accept": (W + "del", W + "moveFrom"), "reject": (W + "ins", W + "moveTo")}
+_MARKER_LIKE = re.compile(r"^(?:[A-Z]|[0-9]+)[.)]\s|^\([A-Za-z0-9]+\)")
 
 
-def _paragraph_text(p):
-    """Full text, retaining deleted wording as evidence on excluded revisions."""
+def _paragraph_text(p, view=None):
+    """Full text — the kept and the deleted wording together, as a selector's regex meets it
+    (``ooxml.block_full_text``) and as the evidence on an excluded revision — or, with ``view`` ``"accept"`` or
+    ``"reject"``, the text as Word shows it with every pending change accepted or with every one rejected."""
     pieces = []
+    left_out = _LEFT_OUT[view]
     for el in p.iter(W + "t", W + "delText", W + "tab", W + "br", W + "cr", W + "noBreakHyphen"):
         if next((a for a in el.iterancestors() if a.tag == W + "p"), None) is not p:
             continue
         if el.tag not in (W + "t", W + "delText") and el.getparent().tag != W + "r":
+            continue
+        if left_out and any(a.tag in left_out for a in _within(el, p)):
             continue
         pieces.append(el.text or "" if el.tag in (W + "t", W + "delText") else
                       "\t" if el.tag == W + "tab" else "‑" if el.tag == W + "noBreakHyphen" else "\n")
     return "".join(pieces)
 
 
-def _exclusion(p):
+def _within(el, p):
+    """``el``'s ancestors below the paragraph ``p``."""
+    for a in el.iterancestors():
+        if a is p:
+            return
+        yield a
+
+
+def _revision(p):
+    """None, ``"wording"`` or ``"structural"``: the pending revisions ``p`` carries, by what they can change
+    (``WORDING_REVISIONS``)."""
+    if any(revision_kind(a) for a in p.iterancestors()):
+        return "structural"
+    kinds = {revision_kind(el) for el in p.iter()} - {None}
+    if not kinds:
+        return None
+    return "wording" if kinds <= WORDING_REVISIONS else "structural"
+
+
+def _exclusion(p, revision):
+    """Why ``p`` is outside structural coverage, or None; ``revision`` is ``_revision(p)``."""
     ancestors = list(p.iterancestors())
     if any(a.tag == W + "tbl" for a in ancestors):
         return "table paragraph: table structure is outside this analyzer's coverage"
@@ -62,8 +105,8 @@ def _exclusion(p):
         return "textbox or alternate-content paragraph is outside coverage"
     if any(el.tag in (W + "drawing", W + "pict", W + "object", _MC + "AlternateContent") for el in p.iter()):
         return "drawing, object or alternate-content host paragraph is outside coverage"
-    if any(revision_kind(el) for el in p.iter()) or any(revision_kind(a) for a in ancestors):
-        return "pending revision: accept/reject views may have different structure"
+    if revision == "structural":
+        return STRUCTURAL_REVISION
     if any(el.tag in (W + "fldChar", W + "fldSimple", W + "instrText") for el in p.iter()):
         return "field-bearing paragraph: displayed field results are not structural evidence"
     if not any(a.tag == W + "body" for a in ancestors):
@@ -113,6 +156,35 @@ def _provision(text, fmt=None, previous=None):
     return None, None, None, None
 
 
+def _line(text, num):
+    """The line the role decision reads: the rendered list marker, if any, before the text."""
+    return ((num.text or "") + " " + text).strip() if num is not None else text.strip()
+
+
+def _reading(line, num, first_nonblank, previous):
+    """What the role decision in ``analyze_structure`` sees in ``line``, in the order it looks: the marker's kind and
+    label, whether the line could be a title, nothing of the wording after the marker. Two views of a redlined
+    paragraph with the same reading take the same role in the same context."""
+    if not line and num is None:
+        return ("empty",)
+    section = _SECTION.fullmatch(line)
+    if section is None and first_nonblank and num is None:
+        section = _BARE_SECTION.fullmatch(line)
+    if section:
+        return ("section_id", _section_id(section[1]))
+    if _END.fullmatch(line):
+        return ("end_of_section",)
+    part = _PART.fullmatch(line)
+    if part:
+        return ("part", str(int(part[1])))
+    article = _ARTICLE.fullmatch(line)
+    if article:
+        return ("article", canonical_reference(article[1]))
+    title = num is None and line.isupper() and any(c.isalpha() for c in line) and not _MARKER_LIKE.match(line)
+    depth, label, _, ambiguity = _provision(line, num.fmt if num else None, previous)
+    return ("provision", depth, label, ambiguity, title)
+
+
 def analyze_structure(pkg: DocxPackage) -> dict:
     """Analyze immutable source bytes; analysis is evidence for a reviewed proposal.
 
@@ -120,7 +192,11 @@ def analyze_structure(pkg: DocxPackage) -> dict:
     parent is an occurrence, not a potentially repeated label. ``reference_id``
     is section-local; repeated labels explicitly lose hierarchy reliability.
     ``text`` is never truncated, while ``content`` removes only a recognized
-    typed marker (automatic markers were never in the source text).
+    typed marker (automatic markers were never in the source text). A paragraph
+    with a wording redline carries ``views`` (its text with every change accepted
+    and with every one rejected) when both read alike; ``text`` keeps the kept and
+    the deleted wording together, as a selector's regex meets it, and ``content``
+    is the accepted view.
     """
     if pkg.is_modified():
         raise ValueError("structure analysis requires unmodified source bytes")
@@ -137,6 +213,7 @@ def analyze_structure(pkg: DocxPackage) -> dict:
     first_nonblank = True
     for index, p in enumerate(paragraphs(root)):
         text = _paragraph_text(p)
+        revision = _revision(p)
         row = {"part": main, "paragraph": index, "text": text, "content": text,
                "role": None, "disposition": "unresolved", "evidence": [],
                "reason": NO_MARKER,
@@ -144,7 +221,7 @@ def analyze_structure(pkg: DocxPackage) -> dict:
                "section_id": section, "section_paragraph": section_paragraph,
                "article_label": article_label, "label": None, "reference_id": None,
                "hierarchy_reliable": False}
-        excluded = _exclusion(p)
+        excluded = _exclusion(p, revision)
         line = text.strip()
         num = numbered.get(index)
         # Resolve effective numbering before considering any typed prefix. A
@@ -159,9 +236,23 @@ def analyze_structure(pkg: DocxPackage) -> dict:
             properties = [r.find(W + "rPr") for r in runs] + [p.find(W + "pPr/" + W + "rPr")]
             if any(look.hidden(pr, p) is not False for pr in properties):
                 excluded = "hidden text or ambiguous effective visibility is outside structural coverage"
-        if numbering is not None and (any(revision_kind(el) for el in p.iter()) or
-                                      any(revision_kind(el) for el in p.iterancestors())):
+        if numbering is not None and revision == "structural":
             revised_lists.add(numbering.num_id)
+        for old in p.iterfind(W + "pPr/" + W + "pPrChange/" + W + "pPr/" + W + "numPr/" + W + "numId"):
+            if (old.get(W + "val") or "").isdecimal():      # the list a tracked property change took it out of
+                revised_lists.add(int(old.get(W + "val")))
+        if excluded is None and revision == "wording":
+            # Read with every change accepted and with every change rejected: the same reading is the same role.
+            accept, reject = _paragraph_text(p, "accept"), _paragraph_text(p, "reject")
+            previous = {k: rows[v]["label"] for k, v in stack.items() if k >= 3}
+            if _reading(_line(accept, num), num, first_nonblank, previous) != \
+                    _reading(_line(reject, num), num, first_nonblank, previous):
+                excluded = VIEWS_DIFFER
+            else:
+                row["views"] = {"accept": accept, "reject": reject}
+                row["evidence"].append("wording redline: reads alike with its changes accepted and rejected")
+                row["content"] = text = accept
+                line = accept.strip()
         if excluded:
             row.update(disposition="excluded", reason=excluded)
             pending_title = None
@@ -227,7 +318,7 @@ def analyze_structure(pkg: DocxPackage) -> dict:
                     stack = {k: v for k, v in stack.items() if k < 2} | {2: index}
                 pending_title = None
             elif (pending_title is not None and num is None and line.isupper() and any(c.isalpha() for c in line)
-                  and not re.match(r"^(?:[A-Z]|[0-9]+)[.)]\s|^\([A-Za-z0-9]+\)", line)):
+                  and not _MARKER_LIKE.match(line)):
                 # A title is the next nonblank, plain uppercase line, not an
                 # arbitrary prose paragraph following a section number.
                 row.update(role="section_title", depth=0, parent=pending_title, hierarchy_reliable=True)
@@ -288,7 +379,9 @@ def analyze_structure(pkg: DocxPackage) -> dict:
             "paragraphs": rows, "coverage": coverage, "report_only": True,
             "limitations": ["Roles are reviewable evidence, not authorization to edit.",
                             "Only ordinary main-body paragraphs with supported markers are classified.",
-                            "Tables, drawings, textboxes, fields, hidden text and pending revisions are excluded.",
+                            "Tables, drawings, textboxes, fields, hidden text and pending revisions that can change "
+                            "the structure (a paragraph mark, a paragraph property, a number) are excluded; a wording "
+                            "redline takes part when it reads alike with its changes accepted and rejected.",
                             "Unsupported numbering, ambiguous Roman markers and unmarked prose remain unresolved.",
                             "Headers, footers, notes and comments are outside structural coverage."]}
 
@@ -329,7 +422,7 @@ def _marker(row) -> str | None:
         return (row.get("numbering") or {}).get("marker") or None
     if kind != "typed":
         return None
-    line = (row.get("text") or "").strip()
+    line = ((row.get("views") or {}).get("accept") or row.get("text") or "").strip()   # the view the content is from
     content = row.get("content") or ""
     if content and content != line and line.endswith(content):
         return line[:len(line) - len(content)].strip() or None
