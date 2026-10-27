@@ -17,7 +17,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
-from .editspec import is_template_file, plan_spec, spec_templates, validate_spec
+from .editspec import is_template_file, plan_chain, plan_spec, spec_templates, validate_spec
 from .fingerprint import fingerprint
 from .ops import Plan
 from .ops.base import CASE_DIFFERS, LEFT_ELSEWHERE, text_diffs
@@ -39,6 +39,13 @@ def left_notes(flags: Sequence[str], superseded: Sequence[str] = ()) -> List[str
         if not any(what.casefold().startswith(f"“{find}”".casefold()) for find in superseded):
             out.append(what)
     return out
+
+
+def replaced_after(stages: Sequence[Dict[str, Any]], n: int) -> List[str]:
+    """The find texts a replacement in a chain's steps after step ``n`` (1-based) replaces: a step's note that the
+    same words remain elsewhere may not hold once those run (C3)."""
+    return [op["params"]["find"] for st in stages[n:] for op in (st.get("spec") or {}).get("ops") or []
+            if op.get("op") == "replace_text" and (op.get("params") or {}).get("find")]
 
 
 def left_elsewhere_warnings(bp: "BatchPlan") -> List[str]:
@@ -124,11 +131,12 @@ class FilePlan:
     exception: Optional[Dict[str, Any]] = None
     ms: float = 0.0
     source_md5: Optional[str] = None             # exact bytes read for this plan, independently of later disk state
+    later_notes: List[str] = field(default_factory=list)   # a chain: the later steps' wording left elsewhere, this file
 
     def to_dict(self):
         result = {"source": str(self.source), "pattern_id": self.pattern_id, "status": self.status,
                 "summary": self.summary, "exception": self.exception, "ms": round(self.ms, 1),
-                "source_md5": self.source_md5}
+                "source_md5": self.source_md5, **({"later_notes": self.later_notes} if self.later_notes else {})}
         if self.plan and any(a.get("kind") == "character_hygiene" for a in self.plan.get("property_assertions", [])):
             result["character_changes"] = [c for a in self.plan["property_assertions"]
                                            if a.get("kind") == "character_hygiene" for c in a["changes"]]
@@ -158,7 +166,7 @@ class BatchPlan:
         """(file name, what) for every planned file's flag that a change kept to one place leaves the same words
         elsewhere (``LEFT_ELSEWHERE``, C3) — every file's, where the summaries show one file per pattern."""
         return [(f.source.name, what) for f in self.files if f.status == "planned"
-                for what in left_notes(f.summary, self.superseded)]
+                for what in left_notes(f.summary, self.superseded) + f.later_notes]
 
     def case_notes(self) -> List[Tuple[str, str]]:
         """(file name, what) for every planned file's flag that a header/footer fill will show in another case than
@@ -247,6 +255,45 @@ def plan_file(path: Path, spec: Dict[str, Any]) -> FilePlan:
     return fp
 
 
+def plan_file_chain(path: Path, chain: Dict[str, Any]) -> FilePlan:
+    """One file's dry plan through every step of a chain (``editspec.plan_chain``: step 1 on the file, each later
+    step on the bytes the step before it would make, applied in memory and never written). The plan and summary are
+    step 1's, as the batch's text shows them; ``later_notes`` carries the later steps' wording-left-elsewhere notes
+    for this file. A step that refuses is this file's exception, its reason prefixed "step N:" and ``chain_stage``
+    set, so the file waits under Left untouched before anything runs instead of stopping at that step in the run
+    (backlog Q2: the later steps were planned on the samples alone)."""
+    from .diagnostics import exception_record
+    t0 = time.perf_counter()
+    pid = None
+    stage, data, op = "open", None, None
+    stages = chain.get("stages") or []
+    try:
+        data = Path(path).read_bytes()
+        pkg = DocxPackage(data, name=str(path))
+        pkg.main_part()
+        stage = "fingerprint"
+        pid = fingerprint(pkg)["pattern_id"]
+        stage = "plan"
+
+        def hook(phase, number, name, state, fragment=None):
+            nonlocal op
+            op = (number, name) if state == "start" else None
+        planned = plan_chain(pkg, chain, pid, trace=hook)
+        first = planned[0][0]
+        later = [f"after step {i}: {what}" for i, (plan, _frags) in enumerate(planned, 1) if i > 1
+                 for what in left_notes(plan.flags, replaced_after(stages, i))]
+        fp = FilePlan(Path(path), pid, "planned", summarize_plan(first), first.to_dict(), later_notes=later)
+    except Exception as e:  # noqa: BLE001 — a refusal at any step, unreadable or unexpected: recorded, not raised
+        record = exception_record(e, stage, data, op)
+        step = (record.get("details") or {}).get("chain_stage")
+        if isinstance(step, int):
+            record["chain_stage"] = step
+        fp = FilePlan(Path(path), pid, "exception", exception=record)
+    fp.source_md5 = hashlib.md5(data).hexdigest() if data is not None else None
+    fp.ms = (time.perf_counter() - t0) * 1000
+    return fp
+
+
 # Planning is a fraction of a file's run (no apply, no verify): a batch is shared over worker processes for its plans
 # only from this many files, where the workers' start costs less than it saves (batch.map_files).
 PLAN_PROCESS_MIN_FILES = 12
@@ -269,5 +316,30 @@ def plan_batch(inputs: Sequence[str], spec: Dict[str, Any]) -> BatchPlan:
         else:
             planned.append(f)
     bp.files = map_files(plan_file, [(f, spec) for f in planned], min_files=PLAN_PROCESS_MIN_FILES)
+    bp.seconds = time.perf_counter() - t0
+    return bp
+
+
+def plan_batch_chain(inputs: Sequence[str], chain: Dict[str, Any]) -> BatchPlan:
+    """``plan_batch`` for a chain: every step planned on every input file (``plan_file_chain``), side by side in
+    worker processes from ``PLAN_PROCESS_MIN_FILES`` files. The batch plan's spec is step 1's (its text shows step
+    1's summaries); every stage's template files are skipped from the inputs, as a run skips them."""
+    from .batch import expand_inputs, map_files
+    stages = chain.get("stages") or []
+    if not stages:
+        raise ValueError("a chain needs at least one stage")
+    for st in stages:
+        validate_spec(st["spec"])
+    t0 = time.perf_counter()
+    files = expand_inputs(inputs)
+    templates = [t for st in stages for t in spec_templates(st["spec"])]
+    bp = BatchPlan(spec=stages[0]["spec"], superseded=replaced_after(stages, 1))
+    planned = []
+    for f in files:
+        if is_template_file(f, templates):
+            bp.skipped.append(str(f))
+        else:
+            planned.append(f)
+    bp.files = map_files(plan_file_chain, [(f, chain) for f in planned], min_files=PLAN_PROCESS_MIN_FILES)
     bp.seconds = time.perf_counter() - t0
     return bp

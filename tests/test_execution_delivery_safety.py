@@ -255,7 +255,7 @@ def test_preview_never_reapproves_a_source_restored_after_different_bytes_were_r
     chain = chain_from_specs([("font", spec)])
     key = chain_key(chain) if chain_preview else spec
     original_token = preview.approval_token(key, [source])
-    real_plan_batch = preview.plan_batch
+    real_plan_batch = preview.plan_batch_chain if chain_preview else preview.plan_batch
 
     def restore():
         source.write_bytes(original)
@@ -272,7 +272,8 @@ def test_preview_never_reapproves_a_source_restored_after_different_bytes_were_r
         restore()
         return None
 
-    monkeypatch.setattr(preview, "plan_batch", read_other_version_for_plan)
+    # a chain's every step is planned by plan_batch_chain (backlog Q2); a spec's by plan_batch
+    monkeypatch.setattr(preview, "plan_batch_chain" if chain_preview else "plan_batch", read_other_version_for_plan)
     monkeypatch.setattr(preview, "render_samples", restore_before_final_identity_check)
     maker = preview.make_chain_preview if chain_preview else preview.make_preview
     pv = maker(chain if chain_preview else spec, [str(source)], tmp_path / "preview", do_render=False)
@@ -403,7 +404,8 @@ def test_preview_consumes_only_approved_auxiliary_snapshots_during_transient_sav
     chain = chain_from_specs([("edit", spec)])
     key = chain_key(chain) if chain_preview else spec
     token = preview.approval_token(key, [source])
-    real_batch, real_plan, real_suite = preview.plan_batch, preview.plan_spec, verify.run_suite
+    planner = "plan_batch_chain" if chain_preview else "plan_batch"      # a chain's every step, or the spec
+    real_batch, real_plan, real_suite = getattr(preview, planner), preview.plan_spec, verify.run_suite
 
     def restore():
         auxiliary.write_bytes(original)
@@ -426,7 +428,7 @@ def test_preview_consumes_only_approved_auxiliary_snapshots_during_transient_sav
         finally:
             restore()
 
-    monkeypatch.setattr(preview, "plan_batch", transient_batch)
+    monkeypatch.setattr(preview, planner, transient_batch)
     monkeypatch.setattr(preview, "plan_spec", transient_plan)
     monkeypatch.setattr(verify, "run_suite", transient_suite)
     maker = preview.make_chain_preview if chain_preview else preview.make_preview
@@ -495,13 +497,14 @@ def test_modified_private_snapshot_cannot_authorize_delivery_or_preview(tmp_path
             corrupt_snapshot()
 
     if "preview" in surface:
-        real_plan_batch = preview.plan_batch
+        planner = "plan_batch_chain" if surface == "chain_preview" else "plan_batch"
+        real_plan_batch = getattr(preview, planner)
 
         def after_acquisition(*args, **kwargs):
             corrupt_snapshot()
             return real_plan_batch(*args, **kwargs)
 
-        monkeypatch.setattr(preview, "plan_batch", after_acquisition)
+        monkeypatch.setattr(preview, planner, after_acquisition)
         maker = preview.make_chain_preview if surface == "chain_preview" else preview.make_preview
         result = maker(chain_from_specs([("edit", spec)]) if surface == "chain_preview" else spec,
                        [str(source)], out, do_render=False)

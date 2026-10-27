@@ -27,11 +27,12 @@ from __future__ import annotations
 
 import copy
 import re
-from typing import Any, Dict, List, Tuple
+from types import SimpleNamespace
+from typing import Any, Dict, List, Optional, Tuple
 
 from lxml import etree
 
-from .font_numbering import V_PRESERVE, v_level_element
+from .font_numbering import V_PRESERVE, v_label_rows, v_level_element
 from .lists import V_NUMBERING_REL
 from .props import first_difference, sig
 from .reader import W
@@ -157,6 +158,37 @@ def _numbering_labels(ctx, a: Dict[str, Any], errs: List[str]) -> str:
                     f"{first_difference(expected, got)}")
     ctx.verified_members.add(part)
     return f"numbering_labels: {len(seen)} list label level(s) formatted"
+
+
+def v_label_fonts_effect(source, output, styles, fonts: Dict[str, str],
+                         skip: Any = ()) -> Tuple[Optional[str], List[str]]:
+    """What a whole-document font effect may leave in the numbering part, read from the SOURCE by this module alone:
+    every used, readable list level whose label is not a symbol or picture bullet carries ``fonts`` (the slots named,
+    their theme attributes gone), and nothing else in the part changed — the label change the font operations make
+    (backlog P3: copies refused for an "unapproved package-member change" of the numbering part). Returns the part
+    and the errors: none when the part is absent or untouched (a method may leave the labels alone), or when the
+    change is exactly that; otherwise what differs. The part is never approved on a reading this module cannot make.
+    A part in ``skip`` — one another approved effect's proof already owns whole — is neither read nor judged."""
+    part = source.related(V_NUMBERING_REL)
+    if part is None or output.related(V_NUMBERING_REL) != part or part in skip:
+        return None, []
+    if source.read(part) == output.read(part):
+        return part, []
+    try:
+        rows = v_label_rows(source, styles, V_PRESERVE)
+    except ValueError as e:
+        return part, [f"the list labels cannot be read, so their change cannot be approved: {e}"]
+    targets = sorted({tuple(row[3]) for row in rows if not row[5]})
+    if not targets:
+        return part, ["the numbering part changed, but no used list level takes the font"]
+    levels = [{kind: owner, "ilvl": k, "set": {"fonts": dict(fonts)}} for kind, owner, k in targets]
+    errs: List[str] = []
+    try:
+        _numbering_labels(SimpleNamespace(src=source, out=output, verified_members=set()),
+                          {"numbering_part": part, "levels": levels, "expected_levels": len(levels)}, errs)
+    except ValueError as e:
+        errs.append(str(e))
+    return part, errs
 
 
 NUMBERING_LABEL_KINDS: Dict[str, Any] = {"numbering_labels": _numbering_labels}
