@@ -19,9 +19,9 @@ export const MODE_TIPS: Record<Mode, string> = {
 
 /** What Obliterate grants: the three guardrails it lifts. */
 export const OBLITERATE_GRANTS: readonly string[] = [
-  "Claude may write wording itself — drafts, rewrites, new paragraphs — and place it. Every word it will place is in the plan you approve, but it no longer has to be yours.",
+  "Claude may write wording itself — drafts, rewrites, new paragraphs — and place it. It no longer has to be yours, but every word it will place must be in the reply you read before you approve: the app refuses a plan whose words are not there.",
   "Claude may write a custom method that changes anything Word stores: text in any part, text boxes, shapes, structure — not only formatting.",
-  "A copy whose checks fail is delivered anyway, marked UNVERIFIED with the checks it failed, instead of being held back.",
+  "A copy whose checks fail is delivered anyway, marked UNVERIFIED with the checks it failed, instead of being held back; the mark stays on every later copy built on it.",
 ];
 
 /** What Obliterate costs. */

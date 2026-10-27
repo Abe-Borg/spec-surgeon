@@ -3,8 +3,8 @@
 Offered when it is needed (decided 2026-10-15): when the conversation ends with ``unsupported`` and Claude judged the
 request within the catalog's ``custom_transform_limits``, the conversation offers a one-off custom transform. The
 window takes that offer itself (``document_task.DocumentTask`` acting on ``Session.outcome``): the user sees the
-result as a plan, a preview and the one action, never the offer. At the terminal the user picks the choice, or
-``do --allow-codegen`` accepts it without a terminal. ``generate_op`` gives
+result as a plan, a preview and the one action, never the offer. There is no other way in: the command line was
+removed on 2026-10-21, and a test drives ``Session.reply`` with the choice. ``generate_op`` gives
 Claude the whole conversation as its brief, read-only tools to look at the sample files' XML (``show_xml``,
 ``find_paragraphs``, ``list_styles``, ``show_part_text``), and asks for ONE op module against a restricted API (the
 ``Op`` interface, ``DocxPackage``, ``ooxml`` helpers, selectors, lxml); it tests it:
@@ -637,6 +637,9 @@ brief say what they want; Claude's earlier understanding is context, not instruc
 Rules:
 - Imports: only `from <module> import <names>` from this whitelist: {allowed}; plus `import` of {plain}. No other \
 imports, no file or network access, no open/exec/eval/getattr, no dunder names or attributes except __init__. A plainly imported module (and etree) is used ONLY as `module.name` with these names: {module_attrs} — never passed, assigned or returned as an object. No attributes starting with f_, gi_, cr_, ag_, tb_, co_ (frames, generators).
+- Builtins: the sandbox has ONLY these names: {builtins}. Any other builtin name (type, getattr, open, OSError, \
+MemoryError) raises NameError at run time, and struct, base64 and zipfile cannot be imported: parse bytes with \
+slicing and int.from_bytes.
 - Define exactly one class deriving from Op with: name, mode = "formatting", description, params_schema, \
 select_schema, plan(self, pkg, select, params) -> PlanFragment, apply(self, pkg, frag) -> None. No decorators \
 from the engine (no @register) and no describe() — the examples import `prose` and phrase helpers for the sentence \
@@ -687,6 +690,12 @@ CODEGEN_TOOLS = INSPECTION_TOOLS + [
 
 
 UNGUARDED_CHECK_ROUNDS = 3   # Obliterate: times a method's failed checks go back to the writer before it is used anyway
+# Obliterate: the checks a writer may never keep as "part of the change" (``accept_failures``): their failure is a
+# member the plan did not predict (V1), a revision the plan did not predict or an id Word cannot read (V4), XML Word
+# must repair (V5a, V5c), or a source that moved (V9) — a wrong method, never a change the request asked for. Every
+# other check (the text, the structure, the views, the properties, the pages) can be what the request asks for, and
+# the user reads the writer's reason beside every copy.
+NEVER_KEPT_CHECKS = ("V1", "V4", "V5A", "V5C", "V9")
 
 
 def _unguarded_tools() -> List[Dict[str, Any]]:
@@ -699,7 +708,9 @@ def _unguarded_tools() -> List[Dict[str, Any]]:
     submit["input_schema"]["properties"]["accept_failures"] = {
         "type": "array", "description": "Only after a submission came back with failed checks: each failed check "
         "that IS the change the request asks for (a check that cannot describe that change), with the reason the "
-        "user will read beside every copy. Never to hide a mistake.",
+        "user will read beside every copy. Never to hide a mistake. " + ", ".join(NEVER_KEPT_CHECKS[:-1])
+        + f" and {NEVER_KEPT_CHECKS[-1]} can never be kept: their failure is a member, revision or XML the method "
+        "got wrong, or a source that moved — fix the method.",
         "items": {"type": "object", "properties": {"check": {"type": "string", "description": "the check id, e.g. V10"},
                                                     "reason": {"type": "string"}},
                   "required": ["check", "reason"]}}
@@ -739,16 +750,19 @@ UNGUARDED_LIMITS = (
     "- The independent checks run on every sample. In this mode a failed check does not stop the method, but it "
     "comes back to you: fix what you did not intend and submit again. When a failure IS the change the request "
     "asks for (a check that cannot describe it), submit again with accept_failures [{{check, reason}}]: the user "
-    "reads your reason beside every copy. After {rounds} such rounds the latest method is used with its failures "
-    "shown.\n")
+    "reads your reason beside every copy. {never_kept} can never be kept: their failure is a member, revision or "
+    "XML the method got wrong, or a source that moved. After {rounds} such rounds the latest method is used with "
+    "its failures shown.\n")
 
 
 def system_prompt(goal_contract=None, unguarded: bool = False) -> str:
     from .catalog import CUSTOM_TRANSFORM_LIMITS
+    from .sandbox_runner import SAFE_BUILTINS
     prompt = CODEGEN_SYSTEM.format(allowed=json.dumps({k: sorted(v) for k, v in
                                                      allowed_imports(goal_contract, unguarded).items()}),
                                  plain=sorted(ALLOWED_IMPORT), examples=_examples(),
                                  module_attrs=json.dumps({k: sorted(v) for k, v in MODULE_ATTRS.items()}),
+                                 builtins=", ".join(sorted(SAFE_BUILTINS)),
                                  limits=json.dumps(CUSTOM_TRANSFORM_LIMITS, ensure_ascii=False))
     if goal_contract is not None:
         start, end = prompt.index("- PLAIN formatting only:"), prompt.index("- Only these property families")
@@ -806,7 +820,8 @@ def system_prompt(goal_contract=None, unguarded: bool = False) -> str:
         from .verify.props import KINDS
         start, end = prompt.index("- apply() mutates"), prompt.index("- If the request cannot")
         prompt = prompt[:start] + UNGUARDED_LIMITS.format(kinds=json.dumps(sorted(KINDS)),
-                                                          rounds=UNGUARDED_CHECK_ROUNDS) + prompt[end:]
+                                                          rounds=UNGUARDED_CHECK_ROUNDS,
+                                                          never_kept=", ".join(NEVER_KEPT_CHECKS)) + prompt[end:]
         prompt = prompt.replace('name, mode = "formatting", description', 'name, mode, description')
         helper = Path(__file__).resolve().parent / "ops" / "textedit.py"
         prompt += "\nPure text-edit planning/application helper reference:\n" + helper.read_text(encoding="utf-8")
@@ -999,6 +1014,7 @@ def _generate_op(request, proposal, samples, out_dir, client, model, max_iter, l
                 attempt = len(g.attempts) + 1
                 src, select, params = inp.get("source") or "", inp.get("select") or {}, inp.get("params") or {}
                 accepted = _accepted_failures(inp.get("accept_failures")) if unguarded else {}
+                refused_keeps = _never_kept(inp.get("accept_failures")) if unguarded else []
                 checks: List[str] = []                 # Obliterate: failed checks not kept on purpose (warnings)
                 with diag.scope(codegen_attempt=attempt), \
                         diag.span("codegen.attempt", model_turn=calls, tool_use_id=b.id) as record:
@@ -1033,8 +1049,11 @@ def _generate_op(request, proposal, samples, out_dir, client, model, max_iter, l
                         f"RAN, BUT {len(checks)} CHECK(S) FAILED (round {check_rounds} of {UNGUARDED_CHECK_ROUNDS}; "
                         "Obliterate mode: failed checks do not stop the method, the user reads them beside each "
                         "copy). Fix what you did not intend and submit again; if a failure IS the change the "
-                        "request asks for, submit again with accept_failures [{check, reason}].\n- "
-                        + "\n- ".join(checks))[:12000]})
+                        "request asks for, submit again with accept_failures [{check, reason}]."
+                        + (f" accept_failures cannot keep {', '.join(refused_keeps)}: that failure is a member, "
+                           "revision or XML the method got wrong, or a source that moved — fix the method."
+                           if refused_keeps else "")
+                        + "\n- " + "\n- ".join(checks))[:12000]})
                     stalled = progress.rejected([ast.dump(ast.parse(src), include_attributes=False), select, params],
                                                 checks)
                     continue
@@ -1078,13 +1097,25 @@ def _generate_op(request, proposal, samples, out_dir, client, model, max_iter, l
 
 def _accepted_failures(raw: Any) -> Dict[str, str]:
     """``submit_op``'s ``accept_failures`` (Obliterate): check id → the writer's reason; entries without both are
-    dropped, so an unexplained failure is never kept on purpose."""
+    dropped, so an unexplained failure is never kept on purpose, and so are the checks no reason can keep
+    (``NEVER_KEPT_CHECKS``: ``_never_kept`` names them for the writer)."""
     out: Dict[str, str] = {}
     for item in raw if isinstance(raw, list) else []:
         if isinstance(item, dict):
             check, reason = str(item.get("check") or "").strip().upper(), " ".join(str(item.get("reason") or "").split())
-            if check and reason:
+            if check and reason and check not in NEVER_KEPT_CHECKS:
                 out[check] = reason[:600]
+    return out
+
+
+def _never_kept(raw: Any) -> List[str]:
+    """The checks a submission asked to keep that no reason can keep (``NEVER_KEPT_CHECKS``), as the writer wrote them."""
+    out: List[str] = []
+    for item in raw if isinstance(raw, list) else []:
+        if isinstance(item, dict):
+            check = str(item.get("check") or "").strip().upper()
+            if check in NEVER_KEPT_CHECKS and check not in out:
+                out.append(check)
     return out
 
 

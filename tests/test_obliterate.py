@@ -14,7 +14,7 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from fake_claude import FakeClient, resp, tool
+from fake_claude import FakeClient, resp, text, tool
 from make_fixtures import build
 from spec_surgeon import batch as batch_module, codegen, compiler, preview
 from spec_surgeon.batch import load_set_aside, run_batch
@@ -162,22 +162,58 @@ def test_the_window_shows_it_from_settings_and_keeps_default_on_disk(tmp_path, m
 
 # ---- the words ------------------------------------------------------------------------------------------------------
 
-def test_the_gate_traces_placed_words_except_in_obliterate(folder):
+SHOWN = f"Each file gets the stamp “{STAMP}” in place of “SPEC 0”."
+
+
+def test_the_gate_traces_placed_words_to_the_user_or_in_obliterate_to_the_reply_the_user_reads(folder):
     files = sorted(folder.glob("*.docx"))
     _, errs = compose_submission(PLACES_STAMP, _Batch(files, None), ["replace SPEC 0"])
     assert any("untraceable" in e or STAMP in e for e in errs), errs
-    outcome, errs = compose_submission(PLACES_STAMP, _Batch(files, None), ["replace SPEC 0"], unguarded=True)
+    # Obliterate: Claude's words may be placed, but only once the reply the user reads shows them whole (the window
+    # shows no plan card, so the chat is the one place the user can read what will be placed)
+    _, errs = compose_submission(PLACES_STAMP, _Batch(files, None), ["replace SPEC 0"], unguarded=True)
+    assert len(errs) == 1 and "the user has not read them" in errs[0] and STAMP in errs[0], errs
+    _, errs = compose_submission(PLACES_STAMP, _Batch(files, None), ["replace SPEC 0"], unguarded=True,
+                                 shown=["Each file gets the stamp ISSUED FOR PERMIT in place of SPEC 0."])
+    assert len(errs) == 1 and STAMP in errs[0]                                 # a piece of the words is not the words
+    outcome, errs = compose_submission(PLACES_STAMP, _Batch(files, None), ["replace SPEC 0"], unguarded=True,
+                                       shown=[SHOWN])
+    assert errs == [] and outcome == PLACES_STAMP
+    # the user's own words still count, shown or not
+    outcome, errs = compose_submission(PLACES_STAMP, _Batch(files, None), [f"stamp each one {STAMP}"], unguarded=True)
     assert errs == [] and outcome == PLACES_STAMP
     # everything else at the gate is the same: an op that does not exist is refused either way
     bad = dict(PLACES_STAMP, ops=[{"op": "no_such_op", "params": {}}])
-    assert compose_submission(bad, _Batch(files, None), [], unguarded=True)[1]
+    assert compose_submission(bad, _Batch(files, None), [], unguarded=True, shown=[SHOWN])[1]
+
+
+def test_the_reply_the_user_reads_is_what_the_gate_traces_obliterate_wording_to(folder):
+    """A plan whose wording the reply does not show is rejected back to Claude; the same plan with the words in its
+    message (or its plain text) is accepted, and that text is the message the chat shows."""
+    files = sorted(folder.glob("*.docx"))
+    silent = tool("submit_editspec", {"spec": PLACES_STAMP, "message": "I will stamp each file."}, "t1")
+    told = tool("submit_editspec", {"spec": PLACES_STAMP, "message": SHOWN}, "t2")
+    fake = FakeClient(resp(silent), resp(told))
+    c = Conversation("stamp it", files, client=fake, unguarded=True)
+    t = c.start()
+    assert t.status == "ok" and t.spec["ops"][0]["params"]["replace"] == STAMP and t.message == SHOWN
+    back = fake.requests[1]["messages"][-1]["content"][0]
+    assert back["is_error"] and "REJECTED" in back["content"] and "the user has not read them" in back["content"]
+    # the plain text of the turn counts as much as the message, and the summary stands in for a model that wrote
+    # neither: exactly what the chat shows
+    assert Conversation.shown_text("", {}, {"summary": "The summary"}) == "The summary"
+    assert Conversation.shown_text(" said ", {"message": "said"}, {"summary": "s"}) == "said"
+    assert Conversation.shown_text("one", {"message": "two"}, {}) == "one\n\ntwo"
+    spoken = FakeClient(resp(text(SHOWN), tool("submit_editspec", {"spec": PLACES_STAMP}, "t3")))
+    t = Conversation("stamp it", files, client=spoken, unguarded=True).start()
+    assert t.status == "ok" and t.message == SHOWN
 
 
 def test_the_conversation_says_obliterate_and_offers_a_custom_method_past_the_formatting_limits(folder):
     files = sorted(folder.glob("*.docx"))
     guarded = Conversation("stamp it", files, client=FakeClient(resp(tool("ask_user", {"message": "?"}))))
-    loose = Conversation("stamp it", files, client=FakeClient(resp(tool("submit_editspec", {"spec": PLACES_STAMP}))),
-                         unguarded=True)
+    loose = Conversation("stamp it", files, unguarded=True,
+                         client=FakeClient(resp(tool("submit_editspec", {"spec": PLACES_STAMP, "message": SHOWN}))))
     assert "OBLITERATE MODE" not in guarded.system and loose.system == compiler.system_prompt(True, True)
     assert loose.system.endswith(compiler.UNGUARDED_PROMPT)
     # the rules it lifts are rewritten where they stand, never left in to contradict the mode (item 5 of the review)
@@ -185,8 +221,9 @@ def test_the_conversation_says_obliterate_and_offers_a_custom_method_past_the_fo
         assert kept in guarded.system and kept not in loose.system and lifted in loose.system
     assert "Never invent, reword" in guarded.system and "Never invent, reword" not in loose.system
     assert "never invent project facts" in loose.system                    # what it never lifts stays
+    assert "the reply the user reads" in loose.system                      # where the placed words must be
     t = loose.start()
-    assert t.status == "ok" and t.spec["ops"][0]["params"]["replace"] == STAMP   # Claude's words, not traced
+    assert t.status == "ok" and t.spec["ops"][0]["params"]["replace"] == STAMP   # Claude's words, read by the user
     outside = Conversation("move the logo", files, unguarded=True, client=FakeClient(resp(tool(
         "submit_editspec", {"spec": UNSUPPORTED, "custom_transform": "outside_limits",
                             "custom_transform_reason": "text boxes are not formatting"}))))
@@ -251,6 +288,34 @@ def test_a_failed_check_the_writer_keeps_on_purpose_carries_its_reason_to_every_
     assert preview.generated_key(g)["accepted_failures"] == {"V10": why}     # what the user approves, reasons included
     results = codegen.run_generated(g, [str(p) for p in f], tmp_path / "run")
     assert all(r.passed and any(why in u for u in r.unverified) for r in results)
+
+
+def test_a_package_integrity_check_can_never_be_kept_as_part_of_the_change(folder, tmp_path, monkeypatch):
+    """V1, V4, V5a, V5c and V9 mean a member, revision or XML the method got wrong, or a source that moved — never a
+    change the request asks for: accept_failures cannot keep them, and the writer is told why."""
+    import spec_surgeon.verify as verify_module
+    real = verify_module.run_suite
+
+    def failing(src, out, plan, s, o):
+        rec = real(src, out, plan, s, o)
+        rec.set(CheckResult("V1", "Package whitelist", "FAIL", "planted"))
+        return rec
+    monkeypatch.setattr(verify_module, "run_suite", failing)
+    f = sorted(folder.glob("*.docx"))[:1]
+    rounds = codegen.UNGUARDED_CHECK_ROUNDS
+    keep = [{"check": "v1", "reason": "the request adds a part"}]
+    fake = write_op((GOOD_OP, {"twips": 900}, None),
+                    *[(GOOD_OP, {"twips": 900 + i}, keep) for i in range(1, rounds + 1)])
+    g = codegen.generate_op("x", "y", f, tmp_path / "cg", client=fake, unguarded=True)
+    assert g.passed and g.accepted_failures == {} and len(g.attempts) == rounds + 1
+    assert g.trials[0].unverified[0].startswith("V1 (") and "Claude says" not in g.trials[0].unverified[0]
+    back = fake.requests[2]["messages"][-1]["content"][0]["content"]
+    assert "accept_failures cannot keep V1" in back and "fix the method" in back
+    assert "cannot keep" not in fake.requests[1]["messages"][-1]["content"][0]["content"]   # nothing was asked yet
+    assert codegen._accepted_failures(keep) == {}
+    assert codegen._never_kept(keep + [{"check": "V5a", "reason": "r"}, {"check": "V10", "reason": "r"}]) == ["V1", "V5A"]
+    assert "V1, V4, V5A, V5C and V9 can never be kept" in json.dumps(codegen.CODEGEN_TOOLS_UNGUARDED)
+    assert "V1, V4, V5A, V5C, V9 can never be kept" in codegen.system_prompt(unguarded=True)
 
 
 def test_after_its_rounds_the_latest_method_is_used_with_its_failures_shown(folder, tmp_path):
@@ -360,6 +425,33 @@ def test_the_whitelist_and_the_sandbox_hold_in_obliterate(folder, tmp_path):
     assert "import whitelist" in prompt and "sandbox" in prompt
 
 
+BYTES_OP = GOOD_OP.replace('        twips = params.get("twips")',
+                           '        raw = bytes([137, 80, 78, 71]) + bytearray(4)\n'
+                           '        assert isinstance(raw, bytes) and hex(int.from_bytes(raw[:2], "big")) == "0x8950"\n'
+                           '        try:\n'
+                           '            1 // 0\n'
+                           '        except ZeroDivisionError:\n'
+                           '            pass\n'
+                           '        twips = params.get("twips")')
+
+
+def test_the_sandbox_has_the_builtins_a_method_needs_and_none_that_reach_the_system(folder, tmp_path):
+    """A method that handles a picture or a media member needs bytes, bytearray, hex and the arithmetic exceptions:
+    they are builtins of the sandbox, in every mode; what reaches the file system or the interpreter is not."""
+    from spec_surgeon.sandbox_runner import SAFE_BUILTINS
+    f = sorted(folder.glob("*.docx"))[0]
+    assert BYTES_OP != GOOD_OP
+    for unguarded in (False, True):
+        t = trial(BYTES_OP, f, {}, {"twips": 900}, tmp_path / f"b{unguarded}", unguarded=unguarded)
+        assert t.passed and t.unverified == [], t.problems
+    for name in ("open", "exec", "eval", "getattr", "type", "__import__", "OSError", "PermissionError",
+                 "MemoryError", "RecursionError", "SystemExit", "BaseException"):
+        assert name not in SAFE_BUILTINS
+    prompt = codegen.system_prompt(unguarded=True)
+    assert "the sandbox has ONLY these names: " + ", ".join(sorted(SAFE_BUILTINS)) in prompt
+    assert "the sandbox has ONLY these names: " + ", ".join(sorted(SAFE_BUILTINS)) in codegen.system_prompt()
+
+
 def test_an_obliterate_methods_approval_is_never_a_guarded_ones():
     from types import SimpleNamespace
     g = SimpleNamespace(source="x", select={}, params={}, goal_contract=None, goal_bindings={})
@@ -442,10 +534,70 @@ def test_the_window_delivers_unverified_copies_and_starts_no_recovery_in_obliter
     assert view["unverified"] == {str(path): ["V2 (Text preservation)"]}
     assert "delivered UNVERIFIED" in task.messages[-1]["text"]
     assert path.read_bytes() == before
-    # the mark survives the journal; a later verified copy clears it
+    # the mark survives the journal, and a later verified copy keeps it: that copy was checked against the unverified
+    # one, not against the original
     task.save()
     task._mark_unverified(str(path), [])
-    assert str(path) not in task.unverified
+    assert task.unverified[str(path)] == ["in an earlier copy: V2 (Text preservation)"]
+    task._mark_unverified(str(path), ["V10 (Property assertions)", "V2 (Text preservation)"])
+    assert task.unverified[str(path)] == ["V10 (Property assertions)", "V2 (Text preservation)"]
+    task._mark_unverified(str(path), [])
+    assert task.unverified[str(path)] == ["in an earlier copy: V10 (Property assertions)",
+                                          "in an earlier copy: V2 (Text preservation)"]
+
+
+@pytest.fixture
+def planted_v2_once(monkeypatch):
+    """The first copy a run checks fails V2; every later one passes."""
+    real = batch_module.run_suite
+    state = {"planted": False}
+
+    def failing(src, out, plan, s, o):
+        rec = real(src, out, plan, s, o)
+        if not state["planted"]:
+            state["planted"] = True
+            rec.set(CheckResult("V2", "Text preservation", "FAIL", "planted"))
+        return rec
+    monkeypatch.setattr(batch_module, "run_suite", failing)
+
+
+def test_an_unverified_copy_keeps_its_mark_through_later_runs_and_the_model_hears_it(tmp_path, planted_v2_once):
+    """A later request builds on the unverified copy, in any mode: its verified copy was checked against the broken
+    one, so the mark stays (saying so), the model is told, and only Start over clears it."""
+    path = document(tmp_path / "Spec.docx")
+    italic = {**SPEC, "summary": "Make the title italic",
+              "ops": [{"op": "set_properties", "select": {"paragraphs": {"text_regex": "^FIRE SUPPRESSION$"}},
+                       "params": {"run": {"i": True}, "tracked": False}}]}
+    fake = FakeClient(resp(tool("submit_editspec", {"spec": SPEC})), resp(tool("submit_editspec", {"spec": italic})))
+    task = task_for(tmp_path, fake, obliterate_allowed=True)
+    task.set_mode("obliterate", acknowledged=True)
+    task.attach([path])
+    view = task.perform("send", text=REQUEST)
+    view = task.perform("primary", token=view["token"])
+    first = task.results[str(path)]
+    assert task.unverified[str(path)] == ["V2 (Text preservation)"]
+    # Default mode builds on the copy: the model hears what it builds on, the copy passes, the mark stays
+    task.set_mode("default")
+    view = task.perform("send", text="Also make it italic")
+    told = fake.requests[1]["messages"][0]["content"]
+    assert "Spec.docx was delivered UNVERIFIED (Obliterate mode): V2 (Text preservation) failed" in told
+    assert view["stage"] == "preview"
+    view = task.perform("primary", token=view["token"])
+    assert view["stage"] == "done" and task.results[str(path)] != first
+    assert task.session.last_batch.files[0].status == "PASS"
+    assert task.unverified[str(path)] == ["in an earlier copy: V2 (Text preservation)"]
+    assert view["unverified"] == {str(path): ["in an earlier copy: V2 (Text preservation)"]}
+    assert "in an earlier copy: V2 (Text preservation)" in "; ".join(task._history_in_scope())
+    # a Safe-mode button keeps it too, through its preview and its run
+    task.set_mode("safe")
+    view = task.perform("recipe", recipe="remove_highlight", inputs={})
+    assert view["stage"] == "preview" and task.unverified[str(path)] == ["in an earlier copy: V2 (Text preservation)"]
+    view = task.perform("primary", token=view["token"])
+    assert view["stage"] == "done" and task.unverified[str(path)] == ["in an earlier copy: V2 (Text preservation)"]
+    # the journal keeps it; Start over clears it with the copies
+    task.save()
+    task.start_over()
+    assert task.unverified == {}
 
 
 def test_default_mode_is_untouched_by_all_of_it(tmp_path, planted_v2):

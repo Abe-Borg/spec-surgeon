@@ -119,10 +119,13 @@ Safe or Default, and a window closed in Obliterate opens in Default.
 
 What it lifts (`Session.unguarded`; CLAUDE.md, "Modes"):
 
-- **Wording.** The gate no longer traces placed words to the user's own (`compose_submission(unguarded=True)` skips
-  `_content_checks`). Claude may write wording itself and is told to put every word it will place in the plan the
-  user approves. The conversation's prompt rewrites the rules it lifts where they stand (`compiler.UNGUARDED_RULES`)
-  instead of leaving them in to contradict the mode; "never invent project facts, requirements or citations" stays.
+- **Wording.** The gate no longer requires placed words to be the user's own: Claude may write wording itself, but
+  every word it places must be in the reply you read in the chat (its plain text or its message; the window shows
+  no plan card). `compose_submission(unguarded=True)` traces each placed word to your own words or to that reply
+  (`Conversation.shown_text`) and refuses a plan whose words appear in neither, so what you read before approving is
+  what will be placed. The conversation's prompt rewrites the rules it lifts where they stand
+  (`compiler.UNGUARDED_RULES`) instead of leaving them in to contradict the mode; "never invent project facts,
+  requirements or citations" stays.
 - **Custom methods.** When no operation fits, the custom method is offered whenever any method could make the change,
   and it may change anything Word stores: the writer's prompt drops the plain-formatting limits and `codegen` skips
   `hard_limits`. The writer gets what that takes: the governed path's helpers (`GOAL_FROM`: text edits, tracked
@@ -133,7 +136,9 @@ What it lifts (`Session.unguarded`; CLAUDE.md, "Modes"):
   `read_input_file`. A trial whose only failures are its checks — the verifier read the copy, the source did not
   move — goes back to the writer up to `codegen.UNGUARDED_CHECK_ROUNDS` times: it fixes what it did not intend, or
   resubmits with `accept_failures` (a check and its reason, which the user reads beside every copy:
-  `GeneratedOp.accepted_failures`, in the approval too). After those rounds the latest method passes with its
+  `GeneratedOp.accepted_failures`, in the approval too; V1, V4, V5a, V5c and V9 can never be kept, since their
+  failure is a member, revision or XML the method got wrong, or a source that moved: `codegen.NEVER_KEPT_CHECKS`).
+  After those rounds the latest method passes with its
   failures listed; a writer that stops otherwise (an API error, a stall, its attempts) leaves the best such method,
   but the pause for the user's go-ahead never does.
 - **Holding back.** A copy that fails a check is delivered to the run's `outputs/` instead of `failed/`, its record
@@ -142,7 +147,10 @@ What it lifts (`Session.unguarded`; CLAUDE.md, "Modes"):
   pass** and the plan stands (no outcome investigation; a chain's sample goes on through every step, as the run will),
   and a custom method's sample shows the checks it failed, never a pass. The copies list marks it **UNVERIFIED** with
   the checks it failed, and the done message counts them. No recovery runs after a run in this mode; a document whose copy could not be made at all
-  goes on the to-do list as in Default.
+  goes on the to-do list as in Default. The mark stays with the document: a later copy that builds on an unverified
+  one was checked against it, not against the original, so in every mode it is marked *in an earlier copy* with the
+  checks that failed (`DocumentTask._mark_unverified`) until Start over, Undo or removing the document, and the next
+  request's history tells the assistant so.
 
 What holds, in every mode: copies only (the window never writes in place, and an unverified copy is never written
 back); the source guard (a source that moved is never delivered over); the sandbox, its import whitelist and its time
@@ -427,6 +435,14 @@ covered has no specification to recover against; it stays as it was and is named
 When no built-in operation fits a request, Spec Surgeon may prepare a custom method internally, prove it on
 the sample documents, and show its result as a preview like any other. You never choose a method; you see what
 will change and decide once. Custom methods write edited copies only and run under the same verification.
+
+When no ordinary plan fits (no operation for the request, a plan that covers no file, a sample that fails its
+check, or a preview whose every sample is refused), the outcome planner proposes the outcomes it would check
+instead, and the conversation offers them as one choice, **Use these outcomes and continue**, with every word they
+would place beneath it and the outcomes in full above. Nothing runs until you pick it, and the pick approves those
+words as any pick does (`Session.outcome` takes a custom method on its own, never an outcome plan;
+`continuous_recovery.approve`). The documents you left out of the request stay out of the outcomes and their trials
+(`Conversation.left_out`); they wait under **Left untouched**, and the planner is told they are out of scope.
 
 Normalizing a file (typed numbers to automatic numbering, clearing direct formatting, whitespace, pending
 tracked changes) is never automatic. It is only ever offered to you as an explicit first stage and runs only if

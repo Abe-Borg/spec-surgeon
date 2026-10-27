@@ -1,5 +1,6 @@
 """Input files beside the documents (built-in batch 1): the tables (``.json``, ``.csv``, ``.xlsx``) and pictures
-(``.png``, ``.jpg``, ``.jpeg``, ``.gif``, ``.bmp``) in the folders of the batch's files and of the attached template. The
+(``.png``, ``.jpg``, ``.jpeg``, ``.gif``, ``.bmp``) the user attached for the edit to use ("Add a picture or table", or
+a drop on the window) — only those; nothing is looked for in a folder. The
 conversation lists them in its first message (``listing``: path, kind, and an overview — a table's sheets and column
 headers, a picture's format and size) and Claude reads one with ``read_input_file`` — only a listed file, by its exact
 path, never any other path. A spec names them by that path (``fill_variables.table.file``,

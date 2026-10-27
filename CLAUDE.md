@@ -45,13 +45,15 @@ embedded objects, data-bound content controls and the theme.
 
 Every invariant binds **Safe** and **Default**. **Obliterate** (`Session.unguarded`)
 is the owner's decision to lift, for that mode only, the guardrails that protect a document's content: the placed-words
-trace (invariant 6: `compose_submission(unguarded=)` skips `_content_checks`, Claude may write wording and must show it
-in the plan; `compiler.UNGUARDED_RULES` rewrites the prompt's rules it lifts), a custom method's formatting-only limits
+trace (invariant 6: `compose_submission(unguarded=, shown=)` traces placed words to the user's words or to the reply
+the user reads, `Conversation.shown_text`, never to nothing; Claude may write wording once its reply shows it;
+`compiler.UNGUARDED_RULES` rewrites the prompt's rules it lifts), a custom method's formatting-only limits
 (`codegen` skips `hard_limits`; `UNGUARDED_LIMITS`; the writer gets the `GOAL_FROM` helpers and the user's attachments
 as `pkg.inputs`, pinned in `GeneratedOp.attachments`, and its failed checks go back to it `UNGUARDED_CHECK_ROUNDS`
-times, to fix or to keep with a reason in `GeneratedOp.accepted_failures`), and the
-holding back of a copy that fails a check (`deliver_unverified`: delivered to `outputs/` marked UNVERIFIED, its
-failed checks in `FileResult.unverified`/`ChainFile.unverified`, no recovery). The verifier still runs on every copy
+times, to fix or to keep with a reason in `GeneratedOp.accepted_failures`; `NEVER_KEPT_CHECKS` can never be kept), and
+the holding back of a copy that fails a check (`deliver_unverified`: delivered to `outputs/` marked UNVERIFIED, its
+failed checks in `FileResult.unverified`/`ChainFile.unverified`, no recovery; the mark stays on every later copy built
+on it, `DocumentTask._mark_unverified`, in every mode). The verifier still runs on every copy
 and reports; invariants 1, 2, 3, 4, 5 (built-in ops still refuse what they cannot predict; Obliterate's way past a
 refusal is a custom method) and 7 bind every mode, and so do copies only, the source guard, the sandbox and its
 whitelist, and the governed outcome path (never unguarded). Obliterate is hidden unless `Settings.show_obliterate`,
@@ -120,7 +122,9 @@ jobs). Details: `docs/CONVERSATIONAL_DESKTOP.md`.
     cannot take is re-sent at standard speed. `compiler.compose_submission` is the one gate a submission passes.
   - `preview.py`, `codegen.py` + `sandbox_runner.py` (custom transforms), `goals.py`, `goal_contracts.py`,
     `goal_operations.py` (reviewed outcome contracts), `recovery*.py`, `continuous_recovery.py`, `campaign_planner.py`
-    (bounded investigation of set-aside files), `inventory.py` (the content digest that pins a file).
+    (bounded investigation of set-aside files: the outcome plan is a choice the user picks, its words beneath it —
+    `Session.outcome` auto-takes a custom transform only — and the documents the user left out of the request stay
+    out of it, `Conversation.left_out`), `inventory.py` (the content digest that pins a file).
   - `recipes.py` — Safe mode's buttons: each a fixed EditSpec from its form (`build`), the header/footer template's kind
     (`template_kind`); the page's copy of the list (`frontend/mock/recipes.json`) is pinned to `catalog()`.
     `template_roles.py` (a template's style per role, page and font, read without a model) and `body_match.py` (match

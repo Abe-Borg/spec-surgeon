@@ -3,6 +3,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from .ops.replace_text import default_author
+
 
 EFFECT_NAMES = {
     "format": "Change text formatting", "format_section_title": "Format section titles",
@@ -155,7 +157,7 @@ def effects(contract):
             lines.append("Show changes in Word: " + ("no" if kind == "format" else "yes"))
         if kind in {"format", "replace_text", "insert_paragraph", "delete_paragraphs"} and effect.get("tracked", kind != "format"):
             if "author" not in effect:
-                lines.append("Change author: " + contract.get("author", "Abraham Borg"))
+                lines.append("Change author: " + (contract.get("author") or default_author()))
         if kind == "page_setup":
             lines.append("Page dimensions and margins are in twips (1,440 = 1 inch).")
         title = EFFECT_NAMES.get(kind, readable(kind).capitalize())

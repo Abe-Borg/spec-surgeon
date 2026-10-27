@@ -6,7 +6,9 @@ missed by rels resolution) cannot hide behind the same bug in the check.
 """
 from __future__ import annotations
 
+import getpass
 import hashlib
+import os
 import io
 import posixpath
 import zipfile
@@ -67,6 +69,14 @@ class VDoctype(ValueError):
 def _has_doctype(root: etree._Element) -> bool:
     info = root.getroottree().docinfo
     return info.internalDTD is not None or info.externalDTD is not None or bool(info.doctype)
+
+
+def default_author() -> str:
+    """The author a tracked change carries when a contract names none: the verifier's own reading of the engine's
+    rule (``SPEC_SURGEON_AUTHOR``, else the account name) — the same answer, never imported from the transform side
+    (``ops/replace_text.default_author``; tests/test_independence.py)."""
+    return os.environ.get("SPEC_SURGEON_AUTHOR") or getpass.getuser()
+
 
 
 class VPackage:

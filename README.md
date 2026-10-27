@@ -185,11 +185,12 @@ mode you last used (Safe the first time; never Obliterate).
   spending, and the AI can misread a request, so you read what it plans and look at the pages before you approve.
 - **Obliterate — the conversation without guardrails (hidden).** Off the switch until Settings → **Advanced** →
   *Show Obliterate mode* is on, and chosen only after its warning, every time (tick *I understand*, then **Turn on
-  Obliterate**). What you control: Claude may write wording itself (it is in the plan you approve); when no operation
+  Obliterate**). What you control: Claude may write wording itself (every word it places must be in its reply to
+  you, which the app checks before the plan is previewed); when no operation
   fits, Claude may write a custom method that changes anything Word stores, not only formatting, and may use the
   template, pictures and tables you attached (a check the method fails goes back to Claude first, to fix or to keep
   with a reason you read beside the copy); and a copy that fails a check is delivered anyway, marked **UNVERIFIED**
-  with the checks it failed, instead of being held back. What it
+  with the checks it failed, instead of being held back (the mark stays on every later copy built on it). What it
   costs: no proof that the rest of the file is untouched, content can be lost or invented without a refusal, a copy
   may need Word's repair, results can differ from run to run, and more AI spending. What still holds: copies only
   (your originals are never written), a source that changed is never delivered over, the custom method's sandbox, and
@@ -378,7 +379,9 @@ recorded for the requests that follow.
 - Header/footer templating pins the properties it models; conditional table-style formatting, east-Asian and
   complex-script fonts and sizes are not modelled. A toggle set at more than one style level is refused.
 - Custom transforms are plain formatting on text parts, the styles part and (for list labels only) the numbering
-  part, write edited copies only, and run in a sandbox that is not an operating-system security boundary.
+  part, write edited copies only, and run in a sandbox that is not an operating-system security boundary. Obliterate
+  mode lifts the plain-formatting limit and nothing else about the sandbox (above, and
+  [docs/CONVERSATIONAL_DESKTOP.md](docs/CONVERSATIONAL_DESKTOP.md)).
 - The installer is unsigned: the checksum checks prove the download is the file the release lists, not who published it.
 - Costs shown for Claude calls are estimates from a built-in price table.
 

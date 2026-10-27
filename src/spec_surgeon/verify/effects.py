@@ -23,7 +23,7 @@ from .outcomes import _conditional
 from .props import (Styles, Theme, _check_effective_para, _check_effective_run, _check_ppr_change,
                     _check_rpr_change, _v_inherit_ppr, _v_inherit_rpr, _v_run_elements,
                     effective_fonts, effective_size, first_difference, sect_prs, sig, symbolic)
-from .reader import STYLES_REL, THEME_REL, VPackage, W
+from .reader import STYLES_REL, THEME_REL, VPackage, W, default_author
 from .template import _v_field_runs
 from .goal_operations import (TYPES as OPERATION_EFFECTS, validate as validate_operation,
                               verify_operations, normalize_operations, paragraph_selector)
@@ -467,7 +467,7 @@ def _programs(roots, contract, targets):
     pars = {part: list(root.iter(W + "p")) for part, root in roots.items()}
     for effect in contract["effects"]:
         kind = effect["type"]
-        author = effect.get("author", contract.get("author", "Abraham Borg"))
+        author = effect.get("author") or contract.get("author") or default_author()
         tracked = effect.get("tracked", kind in {"replace_text", "insert_paragraph", "delete_paragraphs"})
         count = 0
         for target in targets[effect["id"]]:
@@ -1043,7 +1043,7 @@ def verify_effects(original: bytes | Path, candidate: bytes | Path, contract: di
         operation_context = None
         if operation_effects:
             operation_context = verify_operations(source, output, operation_effects,
-                                                  contract.get("author", "Abraham Borg"), errors, binding)
+                                                  contract.get("author") or default_author(), errors, binding)
             allowed_changed.update(operation_context.verified_members)
             if operation_effects[0]["type"] == "review_comments":
                 # Only the standalone comment proof can account for added text

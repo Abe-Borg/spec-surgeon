@@ -1,4 +1,6 @@
 """Ordinary chat reaches outcome recovery without a separate project workflow."""
+import json
+
 import pytest
 
 from fake_claude import FakeClient, resp, tool
@@ -46,6 +48,26 @@ def test_ordinary_refusal_becomes_reviewed_outcome_and_verified_copies(tmp_path)
     assert c.calls == 2 and c.usage.calls == 2
     with pytest.raises(ValueError, match="not offered"):
         approve(c, turn.choices[0].id)
+
+
+def test_an_outcome_plans_tracked_changes_carry_the_users_author_never_a_literal_name(tmp_path, monkeypatch):
+    """The planner's contract names no author (the fixtures' never do): the app fills in the engine's own default,
+    as every built-in op uses (SPEC_SURGEON_AUTHOR, else the account name) — the code holds no name of its own."""
+    import inspect
+    from spec_surgeon import campaign_planner, goal_contracts, goal_operations, goals, review_display
+    from spec_surgeon.verify import effects, goal_numbering, reader
+    from spec_surgeon.verify import goals as verify_goals
+    monkeypatch.setenv("SPEC_SURGEON_AUTHOR", "Outcome Tester")
+    c, _ = conversation(tmp_path, proposal())
+    turn = c.start()
+    assert turn.choices[0].snapshot["contract"]["author"] == "Outcome Tester"
+    assert campaign_planner.contract_author({}) == "Outcome Tester"
+    assert campaign_planner.contract_author({"author": "Reviewer"}) == "Reviewer"
+    assert goals.contract_author(None) == "Outcome Tester"
+    assert reader.default_author() == "Outcome Tester"          # the verifier's own reading of the same rule
+    for module in (campaign_planner, goal_contracts, goal_operations, goals, review_display,
+                   effects, goal_numbering, reader, verify_goals):
+        assert "Abraham" not in inspect.getsource(module), module.__name__
 
 
 def test_followup_question_stays_in_same_conversation_and_authority(tmp_path):
@@ -120,6 +142,53 @@ def _one_file_refuses(tmp_path, *responses):
     s = Session(documents=sorted(tmp_path.glob("*.docx")), out_root=tmp_path / "out", client=client)
     assert s.compile("Make the title bold", lambda _: None) == "Compiled."
     return s, client, source
+
+
+BOLD = {"request": "Make the title bold", "summary": "Bold", "mode": "formatting",
+        "ops": [{"op": "set_properties", "params": {"run": {"b": True}}}]}
+
+
+def test_the_outcome_plan_is_a_choice_the_user_picks_and_leaves_out_what_they_left_out(tmp_path, monkeypatch):
+    """F1 and P2 (the 1.10.0 run over test-set-3: eight documents left out, the planner asked again which to do,
+    then planned all 27): the outcome plan is offered as a choice, its words beneath it, and carried out only once
+    the user picks it; the documents the user left out of the request stay out of its documents, its trials and its
+    questions, and the planner is told they are out of scope."""
+    from pathlib import Path
+    from spec_surgeon import continuous_recovery, preview as preview_module
+    from spec_surgeon.gui import Session
+    from spec_surgeon.recovery import RecoveryOptions
+    real = preview_module.make_preview
+
+    def failing(*args, **kwargs):
+        pv = real(*args, **kwargs)
+        pv.samples[0].passed = False
+        return pv
+    monkeypatch.setattr(preview_module, "make_preview", failing)
+    monkeypatch.setattr(continuous_recovery, "options_for", lambda *a, **kw:
+                        RecoveryOptions(render=False, critic_review=False, visual_review=False))
+    source, easy = _two_documents(tmp_path)
+    client = FakeClient(resp(tool("submit_editspec", {"spec": BOLD, "leave_out": ["easy.docx"]})), proposal())
+    s = Session(documents=[easy, source], out_root=tmp_path / "out", client=client, visual_check=False)
+    assert s.compile("Make the title bold", lambda _: None) == "Compiled."
+    assert s.left_out == [easy.resolve()] and s.conversation.left_out == [str(easy.resolve())]
+    s.make_preview(False, lambda _: None)
+    # the failed sample sent the request to the outcome planner, which was given source.docx alone
+    assert s.spec is None and s.preview is None and len(client.requests) == 2
+    asked = client.requests[-1]["messages"][0]["content"]
+    # the paths as the message's JSON writes them (a Windows path's backslashes escaped)
+    source_json, easy_json = (json.dumps(str(p.resolve()), ensure_ascii=False) for p in (source, easy))
+    assert '"documents": [{"id": "0", "source": ' + source_json in asked and easy_json[1:-1] not in asked
+    assert "easy.docx: the user left it out of this request" in asked
+    outcome = s.outcome()
+    assert outcome.kind == "question" and [c.kind for c in outcome.choices] == ["recovery_plan"]
+    choice = outcome.choices[0]
+    assert choice.label == "Use these outcomes and continue" and choice.words == []
+    assert s.left_out == [easy.resolve()]                     # Left untouched keeps it while the question is open
+    # the pick carries the plan out, on source.docx alone; easy.docx is still left out
+    s.reply(choice_id=choice.id, log=lambda _: None)
+    assert s.recovery is not None and [Path(f.source).name for f in s.recovery.files] == ["source.docx"]
+    assert s.left_out == [easy.resolve()] and s.outcome().kind in ("preview", "question")
+    assert len(client.requests) == 2                          # the deterministic route: no further model call
 
 
 def test_a_file_the_plan_refuses_leaves_the_preview_of_the_others_standing(tmp_path):

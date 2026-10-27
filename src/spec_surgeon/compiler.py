@@ -641,8 +641,10 @@ CHAT_TOOLS = ([_streamed(ASK_USER_CHAT if t["name"] == "ask_user" else t) for t 
 UNGUARDED_PROMPT = """
 OBLITERATE MODE (the user's own choice, for this whole conversation): the rules above that every placed word
 must be the user's and that a custom method does formatting only are lifted, and the rules above say so where they
-apply. A custom method still runs in the sandbox, on copies, and the independent checks
-still run on every copy; their failures are shown to the user beside the copy instead of stopping it. Built-in
+apply. Your own wording may be placed, but the user must read it first: the app traces every placed word to the
+user's own words or to the reply shown in the chat (your plain text and submit_editspec's message), and refuses a
+plan whose placed words appear in neither. A custom method still runs in the sandbox, on copies, and the independent
+checks still run on every copy; their failures are shown to the user beside the copy instead of stopping it. Built-in
 operations still refuse what they cannot predict: a custom method is the way past such a refusal. Change only what
 the user asked for.
 """
@@ -653,10 +655,12 @@ UNGUARDED_RULES = (
     ('Content edits place only words the user gave verbatim (or a template\'s own words). Never invent, reword, or '
      '"improve" document text; if the user did not give the exact words, ask.',
      "Content edits may place your own wording in this mode (Obliterate): drafts, rewrites, new paragraphs, placed "
-     "without asking for them verbatim. Put every word you will place in the plan's summary so the user reads it "
-     "before approving, and never invent project facts, technical requirements or citations."),
+     "without asking for them verbatim. Put every word you will place in the reply the user reads, whole and exactly "
+     "as it will be placed (your plain text or submit_editspec's message; the window shows no plan card): the app "
+     "refuses a plan whose placed words the user has not read there; never invent project facts, technical "
+     "requirements or citations."),
     ("the user's pick approves them; your own text never does.",
-     "the user's pick approves them (in this mode your own wording may also be placed, shown in the summary)."),
+     "the user's pick approves them (in this mode your own wording may also be placed, once your reply shows it)."),
     ('set custom_transform to "possible" only when a one-off transform could do it within the catalog\'s '
      'custom_transform_limits, else "outside_limits" with custom_transform_reason.',
      'set custom_transform to "possible" whenever a one-off method could do it at all: in this mode a custom method '
@@ -1425,7 +1429,8 @@ def _dry_errors(spec: Dict[str, Any], batch: _Batch, patterns: Optional[Sequence
 
 
 def _check_layouts(spec: Dict[str, Any], batch: _Batch, sources: Sequence[str],
-                   leave_out: Sequence[Path] = (), unguarded: bool = False) -> Tuple[Dict[str, Any], List[str]]:
+                   leave_out: Sequence[Path] = (), unguarded: bool = False,
+                   shown: Sequence[str] = ()) -> Tuple[Dict[str, Any], List[str]]:
     """A submission with ``layouts``: the plan is well formed, every pattern of THE BATCH belongs to exactly one
     layout (a pattern the model cannot plan is a question, never a silent omission), and each layout's spec passes
     every check a single spec passes — on that layout's documents alone. Returns ``(submission, errors)``: the
@@ -1455,7 +1460,7 @@ def _check_layouts(spec: Dict[str, Any], batch: _Batch, sources: Sequence[str],
     composed = copy.deepcopy(spec)
     for i, layout in enumerate(plan["layouts"]):
         outcome, errs = compose_submission(layout_spec(plan, layout), batch, sources, patterns=layout["pattern_ids"],
-                                           leave_out=leave_out, unguarded=unguarded)
+                                           leave_out=leave_out, unguarded=unguarded, shown=shown)
         if errs:
             return spec, [f"layout {layout['id']!r}: {e}" for e in errs]
         if is_chain(outcome) and not is_chain(layout["spec"]):
@@ -1497,10 +1502,23 @@ def _attached_checks(spec: Dict[str, Any], batch: _Batch) -> List[str]:
     return []
 
 
-def _content_checks(spec: Dict[str, Any], sources: Sequence[str]) -> List[str]:
+def _content_checks(spec: Dict[str, Any], sources: Sequence[str], *, unguarded: bool = False,
+                    shown: Sequence[str] = ()) -> List[str]:
     """The checks a spec's content must pass before any dry run: case-only replacements go through picked
-    capitalization records, each capitalization record was picked, and every placed word is the user's."""
+    capitalization records, each capitalization record was picked, and every placed word is the user's.
+
+    Obliterate mode (``unguarded``) lifts the first two and loosens the third: Claude's own wording may be placed,
+    but only wording the user reads before approving — every placed word traces to the user's sources or to
+    ``shown``, the reply the window puts in the chat (``Conversation.shown_text``). The window shows no plan card, so
+    the reply is the one place the user can read what will be placed."""
     from .ops.hygiene import approval_source
+    if unguarded:
+        bad = untraceable(spec, [*sources, *shown])
+        if bad:
+            return [f"these words would be placed in the documents, but the user has not read them: {bad}. Obliterate "
+                    f"mode lets you place your own wording, but every word must be in the reply the user reads before "
+                    f"approving: put the exact words, whole, in your plain text or in submit_editspec's message."]
+        return []
     for operation in spec.get("ops", []):
         params = operation.get("params", {})
         pairs = params.get("pairs", []) if operation.get("op") == "replace_table" else (
@@ -1583,15 +1601,17 @@ def _compose_conflicts(spec: Dict[str, Any], batch: _Batch, patterns: Optional[S
 
 def compose_submission(spec: Any, batch: _Batch, sources: Sequence[str],
                        patterns: Optional[Sequence[str]] = None,
-                       leave_out: Sequence[Path] = (), unguarded: bool = False) -> Tuple[Any, List[str]]:
+                       leave_out: Sequence[Path] = (), unguarded: bool = False,
+                       shown: Sequence[str] = ()) -> Tuple[Any, List[str]]:
     """``(outcome, errors)``: the submission as the engine will run it, and ``[]`` when it is acceptable (or is a
     clean question/unsupported outcome). The outcome is the spec itself, the model's own stages as a chain, or — when
     the spec's ops overlap (rule 5: never ordered by guess inside one plan) — the chain the app composes from them,
     each step planned and dry-run on the step before it. ``patterns`` limits the dry plan to those structure
     patterns (a layout's own); ``leave_out`` names the documents the user left out of the request, which nothing
     plans. A layout plan comes back with each layout's spec composed the same way. ``unguarded`` (Obliterate mode
-    only) skips the content checks (``_content_checks``: every placed word traced to ``sources``); everything else —
-    validation, attached files, the dry plan, the composition — is the same."""
+    only) loosens the content checks (``_content_checks``): every placed word must trace to ``sources`` or to
+    ``shown``, the reply the user reads in the chat; everything else — validation, attached files, the dry plan, the
+    composition — is the same."""
     from .chain import validate_chain
     from .editspec import is_chain
     if not isinstance(spec, dict):
@@ -1604,7 +1624,7 @@ def compose_submission(spec: Any, batch: _Batch, sources: Sequence[str],
                           "never both: drop the stages or layouts, or drop the questions / unsupported"]
         return spec, []
     if isinstance(spec.get("layouts"), list):
-        return _check_layouts(spec, batch, sources, leave_out, unguarded)
+        return _check_layouts(spec, batch, sources, leave_out, unguarded, shown)
     if is_chain(spec):
         chain = _normalize_chain(spec)
         try:
@@ -1612,7 +1632,8 @@ def compose_submission(spec: Any, batch: _Batch, sources: Sequence[str],
         except SpecError as e:
             return spec, [f"[{e.code}] {e.reason}"]
         for st in chain["stages"]:
-            errs = _attached_checks(st["spec"], batch) or ([] if unguarded else _content_checks(st["spec"], sources))
+            errs = (_attached_checks(st["spec"], batch)
+                    or _content_checks(st["spec"], sources, unguarded=unguarded, shown=shown))
             if errs:
                 return spec, errs
         return chain, _dry_errors(chain, batch, patterns, leave_out)
@@ -1620,7 +1641,7 @@ def compose_submission(spec: Any, batch: _Batch, sources: Sequence[str],
         validate_spec(spec)
     except SpecError as e:
         return spec, [f"[{e.code}] {e.reason}"]
-    errs = _attached_checks(spec, batch) or ([] if unguarded else _content_checks(spec, sources))
+    errs = _attached_checks(spec, batch) or _content_checks(spec, sources, unguarded=unguarded, shown=shown)
     if errs:
         return spec, errs
     errs = _dry_errors(spec, batch, patterns, leave_out)

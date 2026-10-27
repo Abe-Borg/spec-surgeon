@@ -553,7 +553,7 @@ function Dossier() {
               "Open, write, move or delete any file on your computer. Its programs write only inside their own temporary folder.",
               "Reach the internet. It has no web search or fetch tool, and its programs’ network calls are blocked.",
               "Deliver a copy, or write over an original. Only your click delivers, and only copies.",
-              "Approve its own wording — except the outcome-plan path named above, and Obliterate mode (below), whose wording you see in the plan.",
+              "Approve its own wording — an outcome plan’s wording is approved by your pick of it; in Obliterate mode (below) Claude may write wording, but only wording its reply shows you, and your click approves it.",
               "Change your settings, your key or the app.",
             ]}
           />
@@ -744,12 +744,12 @@ function Dossier() {
             </>,
             <>
               <b className="text-ink">Some steps run before you see anything:</b> a custom method is written and tried on
-              copies, and an outcome plan is carried out on copies, without a separate click. Nothing is delivered until
-              you approve, but the AI work — and its cost — happens.
+              copies without a separate click. Nothing is delivered until you approve, but the AI work — and its cost —
+              happens. An outcome plan is proposed on its own, but carried out only once you pick it.
             </>,
             <>
-              <b className="text-ink">An outcome plan’s wording is not traced to you</b> the way an ordinary plan’s is.
-              Read it in the plan.
+              <b className="text-ink">An outcome plan’s wording is not traced to you</b> the way an ordinary plan’s is:
+              it is Claude’s, shown beneath the choice, and your pick approves it. Read it before you pick.
             </>,
             <>
               <b className="text-ink">A custom method writes its own prediction.</b> For a built-in operation the

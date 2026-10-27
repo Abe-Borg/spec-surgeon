@@ -62,6 +62,13 @@ def _digest(value: Any) -> str:
     return hashlib.sha256(data.encode("utf-8")).hexdigest()
 
 
+def contract_author(contract: Any) -> str:
+    """The author a contract's tracked changes carry: the one it names, else the engine's own default
+    (``ops.replace_text.default_author``: ``SPEC_SURGEON_AUTHOR`` or the user's account name), never a literal name."""
+    from .ops.replace_text import default_author
+    return (contract.get("author") if isinstance(contract, dict) else None) or default_author()
+
+
 def validate_contract(contract: Dict[str, Any]) -> None:
     """Validate a closed, explicit goal grammar without inventing defaults for intent."""
     if isinstance(contract, dict) and contract.get("kind") == "document_effects":
@@ -263,7 +270,7 @@ def compile_goal(source: Path, contract: Dict[str, Any], binding: Optional[Dict[
             predicate["style_in"] = [contract["target"]["style_id"]]
         params = {key: copy.deepcopy(contract[key]) for key in ("run", "paragraph", "author") if key in contract}
         params.update({"tracked": contract.get("tracked", False), "include_paragraph_marks": True,
-                       "author": contract.get("author", "Abraham Borg"),
+                       "author": contract_author(contract),
                        "preserve_fonts": [], "skip_sym_runs": False})
         spec = {"request": contract.get("request", "Format the explicitly approved section title " + repr(target["text"])),
                 "summary": "Format one source-bound section title; preserve its exact text and document structure.",

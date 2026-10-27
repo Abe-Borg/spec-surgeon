@@ -382,7 +382,9 @@ class Session:
         if self._compiled_dir is None:            # a preview or custom transform used the folder: its records stay
             self.chat_dir = self._compiled_dir = self._next_session_dir()   # as they were; this reply's go here
             log(f"The conversation continues in {self.chat_dir} (conversation.json, compile.json)")
-        self._set_outcome()                       # whatever was previewed before this reply is void now
+        # whatever was previewed before this reply is void now; the documents the user left out of the request stay
+        # left out while an outcome plan they picked is carried out (the plan covers the others: Conversation.left_out)
+        self._set_outcome(left_out=self.left_out if chosen is not None and chosen.kind == "recovery_plan" else ())
         if chosen is not None and chosen.kind == "recovery_plan":
             from .continuous_recovery import approve, execute, result_turn, options_for
             snapshot = approve(c, chosen.id)
@@ -412,7 +414,7 @@ class Session:
             except TransformFailed as e:          # the recorded outcome (no attempt passed, or the call failed)
                 c.note(str(e))
                 if c.continuous_recovery and e.recoverable:
-                    self._set_outcome()
+                    self._set_outcome(left_out=left_out)
                     return self._after_turn(c.investigate_failure({"reason": str(e), "proposal": proposal}))
                 self._save_chat()
                 raise
@@ -746,7 +748,7 @@ class Session:
                        for s in samples)
                 or (samples and all(sample_refused(s) for s in samples))):
             evidence = {"reason": self.preview.to_text(), "candidate": copy.deepcopy(self.spec)}
-            self._set_outcome()
+            self._set_outcome(left_out=self.left_out)   # the documents left out stay out of the outcome plan too
             return self._after_turn(c.investigate_failure(evidence))
         return self.preview.to_text()
 
@@ -813,7 +815,10 @@ class Session:
             return Outcome("preview", preview=r, token=r.token, blocking=blocking)
         turn = self.turn
         if turn is not None and self.generated is None:
-            app = [c for c in turn.choices if c.kind in ("custom_transform", "recovery_plan")]
+            # the one choice the app takes on its own: a custom transform, written and tried on copies. An outcome
+            # plan (``recovery_plan``) is the user's to pick, its words beneath it: the pick approves them, as any
+            # pick does (invariant 6) — the app never carries it out unasked
+            app = [c for c in turn.choices if c.kind == "custom_transform"]
             if app:
                 return Outcome("auto", auto_choice=app[0].id)
         # An outcome (a spec, a chain, a prepared custom method) outranks the turn that led to it: a reply voids the
@@ -827,7 +832,9 @@ class Session:
                            blocking=bool(review is not None and review.blocking()),
                            chips=list(getattr(turn, "chips", []) or []) if turn is not None else [])
         if turn is not None and turn.needs_user():
-            user = [c for c in turn.choices if c.kind not in APP_CHOICE_KINDS]
+            # the app's choices the user does not see: a recovery target has its own question (the window numbers
+            # the candidates); an outcome plan is offered as a choice like Claude's own
+            user = [c for c in turn.choices if c.kind not in APP_CHOICE_KINDS or c.kind == "recovery_plan"]
             return Outcome("question", message=turn.message, questions=list(turn.questions), choices=user,
                            chips=list(getattr(turn, "chips", []) or []))
         if self.conversation is not None:
@@ -1160,7 +1167,8 @@ class Session:
         return result.to_text()
 
     def _adopt_recovery(self, result, *, keep_conversation=False) -> None:
-        self._set_outcome()
+        # a recovery never changes which documents the user left out of the request: they stay under Left untouched
+        self._set_outcome(left_out=self.left_out)
         if not keep_conversation:
             self.end_conversation()
         else:

@@ -49,10 +49,10 @@ export default function WhyTrustIt({ onDeepDive }: { onDeepDive: () => void }) {
             d: (
               <>
                 Text placed in a document must trace to your request, your answers, a choice you picked, or a file you
-                attached; a suggested reply you tap is never used as wording. One exception: when the app falls back to
-                an outcome plan Claude proposed, that plan’s wording is used without a separate pick, and it is shown in
-                the plan you approve. In Obliterate mode, chosen after its warning, Claude may write wording itself; it
-                is in the plan you approve.
+                attached; a suggested reply you tap is never used as wording. When the app falls back to an outcome plan
+                Claude proposed, that plan’s wording is shown beneath the choice you pick, and only your pick approves
+                it. In Obliterate mode, chosen after its warning, Claude may write wording itself; every word it places
+                must be in the reply you read, and the app checks that before the plan is previewed.
               </>
             ),
           },

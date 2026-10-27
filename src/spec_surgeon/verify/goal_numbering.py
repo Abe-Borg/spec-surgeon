@@ -17,7 +17,7 @@ from .lists import (VListDefs, v_count, v_counted, v_list_defs, v_main_abstract,
 from .numberingconvert import (V_LEVEL_KNOWN, V_NUMPR_REVISIONS, _v_from, _v_level_map,
                               _v_scheme_params, v_destination, v_row, v_visible)
 from .props import Ctx, PartView, Styles, _has_ancestor, para_matches
-from .reader import STYLES_REL, W
+from .reader import STYLES_REL, W, default_author
 from .restyle import v_resolve_style
 from .styleimport import NUMBERING_REL, v_derive_import, v_used_ids
 from .template import _template
@@ -218,7 +218,7 @@ def derive(ctx: Ctx, effect: dict) -> tuple[list[dict], int]:
                  "op_index": effect["id"], "part": ctx.src.main_part(), "params": params,
                  "template": params.get("template"), "template_md5": md5,
                  "author": (params.get("author") or effect.get("_assertion", {}).get("author")
-                            or effect.get("author") or "Abraham Borg")}
+                            or effect.get("author") or default_author())}
     if typed:
         assertion["select"] = select
     source_ctx = Ctx(ctx.src, ctx.src, {"property_assertions": imports})

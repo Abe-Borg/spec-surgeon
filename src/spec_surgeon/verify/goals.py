@@ -18,7 +18,7 @@ from .outcomes import _conditional
 from .props import (Styles, _check_effective_para, _check_effective_run, _check_props_ppr,
                     _check_props_rpr, _v_gets_para, _v_gets_run, _v_run_elements,
                     first_difference, sig)
-from .reader import STYLES_REL, VPackage, W
+from .reader import STYLES_REL, VPackage, W, default_author
 
 
 _RUN = {"b", "i", "caps", "smallCaps", "strike"}
@@ -228,7 +228,7 @@ def _formatting(source_root, output_root, source_styles: Styles, output_styles: 
     for label, styles, paragraph in (("source", source_styles, source_p), ("output", output_styles, output_p)):
         if _conditional(styles, paragraph, conditional_run, asked_para):
             errors.append(f"{label} target: conditional table-style formatting cannot be resolved independently")
-    tracked, author = contract.get("tracked", False), contract.get("author", "Abraham Borg")
+    tracked, author = contract.get("tracked", False), contract.get("author") or default_author()
     source_ppr = _single(source_p, "pPr", "source target", errors)
     output_ppr = _single(output_p, "pPr", "output target", errors)
     source_runs = [element for element in _own_elements(source_p) if element.tag == W + "r"]
