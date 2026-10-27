@@ -163,3 +163,29 @@ def test_a_shared_rule_that_runs_each_stretch_past_the_next_title_is_caught(monk
     monkeypatch.setattr(dp, "paragraph_selected", to_the_end_match)
     _, rec = _empty_articles(SRC)
     assert not rec.passed and rec.get("V10").status == "FAIL"
+
+
+def test_the_stretch_walk_is_one_pass_on_both_sides():
+    """Codex on #117: the every-stretch walk must not scan every stop for every start — a selector is resolved once
+    per paragraph, so that made a spec with many headings cubic. Both walks agree with a plain oracle on random
+    boundaries and stay linear: two hundred thousand headings in well under a second."""
+    import random
+    import time
+    from spec_surgeon.ops.selectors import every_stretch
+    from spec_surgeon.verify.props import _v_every_stretch
+
+    def oracle(starts, stops, n):
+        return [(s, next((i for i in stops if i > s), n)) for s in starts]
+    rng = random.Random(7)
+    for _ in range(200):
+        n = rng.randint(1, 60)
+        starts = sorted(rng.sample(range(n), rng.randint(0, n)))
+        stops = sorted(set(starts) | set(rng.sample(range(n), rng.randint(0, n))))
+        assert every_stretch(starts, stops, n) == _v_every_stretch(starts, stops, n) == oracle(starts, stops, n)
+    n = 400_000
+    starts = list(range(0, n, 2))
+    stops = list(range(n))
+    began = time.perf_counter()
+    assert every_stretch(starts, stops, n)[-1] == (n - 2, n - 1)
+    assert _v_every_stretch(starts, stops, n)[-1] == (n - 2, n - 1)
+    assert time.perf_counter() - began < 5.0

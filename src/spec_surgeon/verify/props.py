@@ -427,6 +427,18 @@ def _v_rx_matches(pattern: str, raw_text: str, p, options=None) -> bool:
         return True
     return rx.search(_v_block_text_with_tabs(p)) is not None
 
+def _v_every_stretch(starts, boundary, n: int):
+    """Each start with the first boundary index after it (the end of the part, ``n``, when there is none): the
+    boundaries are ascending and include every start, so an index into them only ever moves forward."""
+    pairs = []
+    at = 0
+    for s_idx in starts:
+        while at < len(boundary) and boundary[at] <= s_idx:
+            at += 1
+        pairs.append((s_idx, boundary[at] if at < len(boundary) else n))
+    return pairs
+
+
 def para_matches(pred, p, bi: int, view: PartView, styles: Styles) -> bool:
     if pred in (None, "all") or pred == {}:
         return True
@@ -468,15 +480,10 @@ def para_matches(pred, p, bi: int, view: PartView, styles: Styles) -> bool:
         erx = _v_selector_regex(bp["end_regex"], pred) if bp.get("end_regex") is not None else None
         bounds = bp.get("include_bounds", False)             # True (both), False (neither), "start" or "end"
         if bp.get("every") is True:
-            # every stretch: each start match up to the next start or end match, the last to the end of the part
-            pairs = []
-            for s_idx in starts:
-                e_idx = n
-                for i in range(s_idx + 1, n):
-                    if srx.search(view.texts[i]) or (erx is not None and erx.search(view.texts[i])):
-                        e_idx = i
-                        break
-                pairs.append((s_idx, e_idx))
+            # every stretch: each start match up to the next start or end match, the last to the end of the part;
+            # the boundaries read once, then one pass over them beside the starts (never a rescan per start)
+            boundary = [i for i, t in enumerate(view.texts) if srx.search(t) or (erx is not None and erx.search(t))]
+            pairs = _v_every_stretch(starts, boundary, n)
         else:
             s_idx = starts[0]
             e_idx = n

@@ -33,7 +33,7 @@ a w:sym (unless ``skip_sym_runs`` is false). Theme font references are never sym
 from __future__ import annotations
 
 import re
-from typing import Any, Dict, List, Optional, Sequence, Set
+from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 
 from lxml import etree
 
@@ -472,6 +472,20 @@ def _part_texts(p: etree._Element, all_pars: Optional[Sequence[etree._Element]])
     return [block_full_text(x) for x in all_pars]
 
 
+def every_stretch(starts: Sequence[int], stops: Sequence[int], n: int) -> List[Tuple[int, int]]:
+    """``(start, stop)`` for each start: the stop is the first index in ``stops`` after it, else ``n``. One forward
+    walk over the two sorted lists (every start is a stop, so the walk never goes back): a selector is resolved
+    once per paragraph, and a spec with hundreds of headings must not pay a scan of every stop for every start each
+    time (Codex on #117)."""
+    out: List[Tuple[int, int]] = []
+    k = 0
+    for s_idx in starts:
+        while k < len(stops) and stops[k] <= s_idx:
+            k += 1
+        out.append((s_idx, stops[k] if k < len(stops) else n))
+    return out
+
+
 def paragraph_selected(pred, p: etree._Element, index: int, text: str, sheet: StyleSheet,
                        all_pars: Optional[Sequence[etree._Element]] = None) -> bool:
     if pred in (None, "all") or pred == {}:
@@ -514,7 +528,7 @@ def paragraph_selected(pred, p: etree._Element, index: int, text: str, sheet: St
             # every stretch: from each start match to the next paragraph that matches end_regex or start_regex (the
             # next article or the next PART), else the end of the part — "empty every article, keep the titles"
             stops = [i for i, t in enumerate(texts) if srx.search(t) or (erx is not None and erx.search(t))]
-            stretches = [(s_idx, next((i for i in stops if i > s_idx), len(texts))) for s_idx in starts]
+            stretches = every_stretch(starts, stops, len(texts))
         else:
             s_idx = starts[0]
             e_idx = len(texts)
