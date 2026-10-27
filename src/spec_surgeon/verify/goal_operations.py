@@ -67,9 +67,11 @@ def paragraph_selector(value):
             raise ValueError("invalid paragraph index_range")
     if "between_paragraphs" in value:
         b = value["between_paragraphs"]
-        _object(b, {"start_regex", "end_regex", "include_bounds"}, "between_paragraphs")
+        _object(b, {"start_regex", "end_regex", "include_bounds", "every"}, "between_paragraphs")
         if not isinstance(b.get("start_regex"), str):
             raise ValueError("between_paragraphs needs start_regex")
+        if "every" in b and type(b["every"]) is not bool:
+            raise ValueError("every must be boolean")
         re.compile(b["start_regex"])
         if b.get("end_regex") is not None:
             re.compile(b["end_regex"])

@@ -145,6 +145,9 @@ export interface Sample {
   passed: boolean;
   /** Actual failed checks in plain language; absent from older servers. */
   failures?: { check: string; reason: string }[];
+  /** The page-layout verdict (check V7) in plain words: checked on the rendered pages, not asserted and why, or
+   *  checked when the copies are created; null before the pages are rendered, absent from older servers. */
+  geometry?: { status: "PASS" | "FAIL" | "NA"; note: string; at?: "run" } | null;
 }
 
 export interface Result {

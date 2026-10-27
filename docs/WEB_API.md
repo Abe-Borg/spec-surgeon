@@ -43,7 +43,8 @@ that ends a job is authoritative.
   "choices": [{"id": "c1", "label": "Only the body text", "words": [], "detail": "", "editable": false}],
   "chips": ["Everything, including the headers", "Just the body"],
   "samples": [{"source": "…", "name": "21 13 13.docx", "images": ["/api/image?path=…"],
-               "pages_before": 12, "pages_after": 12, "passed": true}],
+               "pages_before": 12, "pages_after": 12, "passed": true, "failures": [],
+               "geometry": {"status": "PASS", "note": "Page layout checked on the rendered pages: …"}}],
   "warnings": ["…"], "blocking": false,
   "results": [{"source": "…", "output": "…", "name": "21 13 13.docx", "unverified": []}],
   "action": {"label": "Create edited copies", "token": "…", "kind": "approve | continue | save | none",
@@ -97,7 +98,11 @@ Rules the page relies on:
 - `samples[].images` are URLs served by `GET /api/image?path=…&token=…` (PNG side-by-side before/after pages).
 - `samples[].failures` lists actual failed checks as `{check, reason}` in plain language, including earlier chain
   steps that failed before a later step passed. A preview that could not complete says so; a missing renderer is
-  not a failed verification. Common refusal reasons under Left untouched are presented without operation numbers
+  not a failed verification. `samples[].geometry` is the page-layout verdict (check V7) in plain words — `status`
+  `PASS`, `FAIL` (then V7 is among the failures and the sample did not pass) or `NA` with a `note` saying why: no
+  layout reference by design, a wording change that reflows the text, or no pages rendered here (the run checks
+  it); a plan done in steps renders its last step's pages only, so an earlier step's layout is checked at the run.
+  `"at": "run"` marks the verdicts the run will give. `null` for a sample the plan refused. Common refusal reasons under Left untouched are presented without operation numbers
   or extraction patterns; the engine's original exceptions and check records remain in diagnostics.
 - `samples` are the pages of the plan waiting for the user (stages `preview` and `question`), less any document
   whose copy a partial save already delivered; every other stage sends none, so a finished run takes its

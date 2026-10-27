@@ -45,7 +45,7 @@ from concurrent.futures.process import BrokenProcessPool
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple, Union
+from typing import Any, Callable, Dict, List, Optional, Sequence, Set, Tuple, Union
 
 from . import __version__, guard
 from . import diagnostics as diag
@@ -1000,9 +1000,139 @@ def _transform_and_verify(batch: BatchResult, files: List[Path], job_name: str, 
         batch.files.append(fr)
 
 
+@dataclass
+class RenderPair:
+    """A document and the copy made from it, the plan between them and their renders: what V6 and V7 compare.
+    ``source`` is the file the plan was made from (a chain stage's input); ``out_name`` the output's name, unique
+    across the batch, which names the reference copies made for it."""
+    source: Path
+    output: Path
+    plan: Dict[str, Any]
+    source_pdf: Optional[Path] = None
+    output_pdf: Optional[Path] = None
+    out_name: str = ""
+
+
+@dataclass
+class GeometryReferences:
+    """What V7 compares against beside the source render: each template's headers and footers rendered alone and
+    the outputs' headers and footers rendered alone (template references), and the independent header/footer-removal
+    references (a source reference whose plan removes headers or footers)."""
+    template_pdfs: Dict[str, Path] = field(default_factory=dict)
+    output_hf: Dict[Path, Tuple[Path, int]] = field(default_factory=dict)
+    removed_hf_required: Set[Path] = field(default_factory=set)
+    removed_hf_pdfs: Dict[Path, Path] = field(default_factory=dict)
+
+
+def geometry_references(pairs: Sequence[RenderPair], out_dir: Path, backend: str, workers: int, cache,
+                        rlog: Callable[[str], None], log: Any) -> GeometryReferences:
+    """Render the references V7 needs for ``pairs`` — the run's and the preview's alike, so a sample's verdict in the
+    preview is the one the run gives. ``rlog`` takes what the renderer says (a line per file); ``log`` is called for
+    progress and has ``detail`` and ``block``."""
+    refs = GeometryReferences()
+    templates = sorted({p.plan.get("geometry_template") for p in pairs
+                        if p.plan.get("geometry_reference") == "template" and p.plan.get("geometry_template")})
+    if templates:
+        log(f"rendering {len(templates)} template(s) (headers/footers alone) with {backend}")
+        hf_docs: Dict[Path, str] = {}
+        for k, t in enumerate(templates):
+            try:
+                # numbered, never named after the file: the path stays short of Windows' 260 characters (the
+                # owner's 1.10.0 run: an 84-character name under a recovery attempt's folders made 261)
+                hf_docs[geom.hf_only_copy(Path(t), out_dir / "render" / "template" /
+                                          f"{k:02d} headers-footers.docx")[0]] = str(Path(t))
+            except Exception as e:  # noqa: BLE001 — its files' V7 fails for want of the reference, and says so
+                rlog(f"{Path(t).name}: the template's headers/footers-only copy could not be made "
+                     f"({type(e).__name__}: {e})")
+                log.block(traceback.format_exc())
+        rendered = render_mod.render_pdfs(list(hf_docs), out_dir / "render" / "template", backend, 1, log=rlog,
+                                          detail=log.detail, cache=cache)
+        refs.template_pdfs = {hf_docs[k]: v for k, v in rendered.items() if k in hf_docs}
+    # V7 template mode compares headers/footers-only renders of the output and the template, page for page
+    templated = [p for p in pairs if p.plan.get("geometry_reference") == "template"]
+    if templated:
+        hf_dir = out_dir / "render" / "output-hf"
+        copies = {}
+        for k, p in enumerate(templated):
+            try:
+                path, n = geom.hf_only_copy(p.output, hf_dir / f"{k:03d} headers-footers.docx")
+                copies[path] = (p.output, n)
+            except Exception as e:  # noqa: BLE001
+                rlog(f"{p.output.name}: its headers/footers-only copy could not be made ({type(e).__name__}: {e})")
+                log.block(traceback.format_exc())
+        log(f"rendering {len(copies)} headers/footers-only output(s) with {backend}")
+        for k, v in render_mod.render_pdfs(list(copies), hf_dir, backend, workers, log=rlog,
+                                           detail=log.detail, cache=cache).items():
+            if k in copies:
+                refs.output_hf[copies[k][0]] = (v, copies[k][1])
+    removed_hf_inputs: Dict[Path, Path] = {}
+    for p in pairs:
+        plan = p.plan
+        if plan.get("geometry_reference", "source") != "source" or (plan.get("mode") in ("content", "untracked")
+                                                                   and plan.get("diffs")):
+            continue
+        try:
+            reference = geom.hf_removal_copy(p.source, out_dir / "render" / "removed-hf-reference" /
+                                             (p.out_name or p.source.name), plan)
+            if reference is not None:
+                refs.removed_hf_required.add(p.source)
+                removed_hf_inputs[reference] = p.source
+        except Exception as exc:  # noqa: BLE001
+            refs.removed_hf_required.add(p.source)
+            rlog(f"{p.source.name}: the independent header/footer-removal reference could not be made "
+                 f"({type(exc).__name__}: {exc})")
+            log.block(traceback.format_exc())
+    if removed_hf_inputs:
+        log(f"rendering {len(removed_hf_inputs)} independent header/footer-removal reference(s) with {backend}")
+        references = render_mod.render_pdfs(list(removed_hf_inputs), out_dir / "render" / "removed-hf-reference-pdf",
+                                           backend, workers, log=rlog, detail=log.detail, cache=cache)
+        refs.removed_hf_pdfs = {removed_hf_inputs[path]: pdf for path, pdf in references.items()
+                                if path in removed_hf_inputs}
+    return refs
+
+
+def compare_pair(pair: RenderPair, refs: GeometryReferences, backend: str,
+                 pages_dir: Optional[Path] = None) -> Tuple[CheckResult, CheckResult, "geom.GeometryResult"]:
+    """V6 and V7 of one rendered pair, from the plan's geometry reference (``geometry_check``) and the references
+    rendered for it. ``pages_dir`` rasterizes the output's pages to look at (the run; the preview makes its own
+    before/after pictures). Raises when the comparison cannot be made: the caller's V6 FAIL."""
+    plan = pair.plan
+    sp, op = pair.source_pdf, pair.output_pdf
+    expected_pages = plan.get("geometry_pages_expected_to_change", [])
+    removed_reference = refs.removed_hf_pdfs.get(pair.source)
+    removal = ({"removed_hf_pdf": removed_reference, "removed_hf_source": pair.source} if removed_reference else {})
+    g = geom.compare_pdfs(sp, op, expected_pages, **removal)
+    look_pages = sorted({1} | {p.page for p in g.pages if p.max_dy > GEOM_TOL_PT or p.words_only_in_out or p.words_only_in_ref})
+    pngs = geom.rasterize(op, pages_dir, look_pages[:6]) if pages_dir is not None else []
+    v6 = CheckResult(
+        "V6", "Automated render comparison", "PASS",
+        f"renderer {backend}; pages {g.ref_pages}→{g.out_pages}; "
+        + (f"rasterized pages {look_pages[:6]} → {pages_dir.name}/; " if pages_dir is not None
+           else f"pages to look at {look_pages[:6]}; ")
+        + "page-count delta is not evidence of body change (XML checks are character truth)",
+        {"renderer": backend, "source_pdf": str(sp), "output_pdf": str(op), "pages": [str(p) for p in pngs]})
+    tg = None
+    tref = plan.get("geometry_template")
+    top = _template_op_params(plan)
+    if (plan.get("geometry_reference") == "template" and tref and str(Path(tref)) in refs.template_pdfs
+            and pair.output in refs.output_hf and top is not None):
+        hf_pdf, n_sections = refs.output_hf[pair.output]
+        tg = geom.compare_template_bands(refs.template_pdfs[str(Path(tref))], hf_pdf,
+                                         geom.template_section_map(top["template_sections"], n_sections),
+                                         top.get("kinds", ["header", "footer"]), GEOM_TOL_PT)
+    if pair.source in refs.removed_hf_required and not removed_reference:
+        v7 = CheckResult("V7", "Geometry assertion", "FAIL",
+                         "The independent header/footer-removal reference could not be rendered; "
+                         "refusing a source-layout claim without that evidence.", g.to_dict())
+    else:
+        v7 = geometry_check(plan, g, tg)
+    return v6, v7, g
+
+
 def _render_and_compare(batch: BatchResult, renderer: str, do_render: bool, workers: int, log: "diag.RunLog") -> None:
     """3-4. render + geometry (V6/V7). A renderer that cannot run, a file it cannot convert, or a comparison that
-    fails on one file is that file's failed V6 — with what the renderer said — never a crashed batch."""
+    fails on one file is that file's failed V6 — with what the renderer said — never a crashed batch. The references
+    and the comparison are ``geometry_references`` and ``compare_pair``, which the preview runs on its samples too."""
     out_dir = batch.out_dir
     t_r = time.perf_counter()
     backend = render_mod.pick(renderer) if do_render else None
@@ -1042,70 +1172,13 @@ def _render_and_compare(batch: BatchResult, renderer: str, do_render: bool, work
         src_pdfs = {src_in[k]: v for k, v in rendered.items() if k in src_in}
         out_pdfs = render_mod.render_pdfs([fr.output for fr in renderable], out_dir / "render" / "output", backend,
                                           workers, log=rlog, detail=log.detail, cache=cache)
-        templates = sorted({(fr.plan or {}).get("geometry_template") for fr in renderable
-                            if (fr.plan or {}).get("geometry_reference") == "template" and (fr.plan or {}).get("geometry_template")})
-        tpl_pdfs: Dict[str, Path] = {}
-        if templates:
-            log(f"rendering {len(templates)} template(s) (headers/footers alone) with {backend}")
-            hf_docs: Dict[Path, str] = {}
-            for k, t in enumerate(templates):
-                try:
-                    # numbered, never named after the file: the path stays short of Windows' 260 characters (the
-                    # owner's 1.10.0 run: an 84-character name under a recovery attempt's folders made 261)
-                    hf_docs[geom.hf_only_copy(Path(t), out_dir / "render" / "template" /
-                                              f"{k:02d} headers-footers.docx")[0]] = str(Path(t))
-                except Exception as e:  # noqa: BLE001 — its files' V7 fails for want of the reference, and says so
-                    rlog(f"{Path(t).name}: the template's headers/footers-only copy could not be made "
-                         f"({type(e).__name__}: {e})")
-                    log.block(traceback.format_exc())
-            rendered = render_mod.render_pdfs(list(hf_docs), out_dir / "render" / "template", backend, 1, log=rlog,
-                                              detail=log.detail, cache=cache)
-            tpl_pdfs = {hf_docs[k]: v for k, v in rendered.items() if k in hf_docs}
-        # V7 template mode compares headers/footers-only renders of the output and the template, page for page
-        out_hf: Dict[Path, Tuple[Path, int]] = {}
-        templated = [fr for fr in renderable if (fr.plan or {}).get("geometry_reference") == "template"]
-        if templated:
-            hf_dir = out_dir / "render" / "output-hf"
-            copies = {}
-            for k, fr in enumerate(templated):
-                try:
-                    path, n = geom.hf_only_copy(fr.output, hf_dir / f"{k:03d} headers-footers.docx")
-                    copies[path] = (fr.output, n)
-                except Exception as e:  # noqa: BLE001
-                    rlog(f"{fr.output.name}: its headers/footers-only copy could not be made ({type(e).__name__}: {e})")
-                    log.block(traceback.format_exc())
-            log(f"rendering {len(copies)} headers/footers-only output(s) with {backend}")
-            for k, v in render_mod.render_pdfs(list(copies), hf_dir, backend, workers, log=rlog,
-                                               detail=log.detail, cache=cache).items():
-                if k in copies:
-                    out_hf[copies[k][0]] = (v, copies[k][1])
-        removed_hf_required, removed_hf_inputs = set(), {}
-        for fr in renderable:
-            plan = fr.plan or {}
-            if plan.get("geometry_reference", "source") != "source" or (plan.get("mode") in ("content", "untracked")
-                                                                       and plan.get("diffs")):
-                continue
-            try:
-                reference = geom.hf_removal_copy(fr.source, out_dir / "render" / "removed-hf-reference" /
-                                                 (fr.out_name or fr.source.name), plan)
-                if reference is not None:
-                    removed_hf_required.add(fr.source)
-                    removed_hf_inputs[reference] = fr.source
-            except Exception as exc:
-                removed_hf_required.add(fr.source)
-                rlog(f"{fr.source.name}: the independent header/footer-removal reference could not be made "
-                     f"({type(exc).__name__}: {exc})")
-                log.block(traceback.format_exc())
-        removed_hf_pdfs = {}
-        if removed_hf_inputs:
-            log(f"rendering {len(removed_hf_inputs)} independent header/footer-removal reference(s) with {backend}")
-            references = render_mod.render_pdfs(list(removed_hf_inputs), out_dir / "render" / "removed-hf-reference-pdf",
-                                               backend, workers, log=rlog, detail=log.detail, cache=cache)
-            removed_hf_pdfs = {removed_hf_inputs[path]: pdf for path, pdf in references.items() if path in removed_hf_inputs}
+        pairs = [RenderPair(fr.source, fr.output, fr.plan or {}, src_pdfs.get(fr.source), out_pdfs.get(fr.output),
+                            fr.out_name) for fr in renderable]
+        refs = geometry_references(pairs, out_dir, backend, workers, cache, rlog, log)
         pages_dir = out_dir / "render" / "pages"
-        for fr in renderable:
+        for fr, pair in zip(renderable, pairs):
             fr.render_messages = _file_messages(messages, [fr.source.name, fr.out_name])
-            sp, op = src_pdfs.get(fr.source), out_pdfs.get(fr.output)
+            sp, op = pair.source_pdf, pair.output_pdf
             if not sp or not op:
                 said = fr.render_messages
                 fr.record.set(CheckResult("V6", "Automated render comparison", "FAIL",
@@ -1119,33 +1192,9 @@ def _render_and_compare(batch: BatchResult, renderer: str, do_render: bool, work
                 continue
             try:
                 with diag.span("render.compare", source=str(fr.source), source_pdf=str(sp), output_pdf=str(op)):
-                    expected_pages = (fr.plan or {}).get("geometry_pages_expected_to_change", [])
-                    removed_reference = removed_hf_pdfs.get(fr.source)
-                    removal = ({"removed_hf_pdf": removed_reference, "removed_hf_source": fr.source}
-                               if removed_reference else {})
-                    g = geom.compare_pdfs(sp, op, expected_pages, **removal)
-                    look_pages = sorted({1} | {p.page for p in g.pages if p.max_dy > GEOM_TOL_PT or p.words_only_in_out or p.words_only_in_ref})
-                    pngs = geom.rasterize(op, pages_dir, look_pages[:6])
-                    fr.record.set(CheckResult(
-                        "V6", "Automated render comparison", "PASS",
-                        f"renderer {backend}; pages {g.ref_pages}→{g.out_pages}; rasterized pages {look_pages[:6]} → "
-                        f"{pages_dir.name}/; page-count delta is not evidence of body change (XML checks are character truth)",
-                        {"renderer": backend, "source_pdf": str(sp), "output_pdf": str(op), "pages": [str(p) for p in pngs]}))
-                    tg = None
-                    tref = (fr.plan or {}).get("geometry_template")
-                    top = _template_op_params(fr.plan or {})
-                    if ((fr.plan or {}).get("geometry_reference") == "template" and tref and str(Path(tref)) in tpl_pdfs
-                            and fr.output in out_hf and top is not None):
-                        hf_pdf, n_sections = out_hf[fr.output]
-                        tg = geom.compare_template_bands(tpl_pdfs[str(Path(tref))], hf_pdf,
-                                                         geom.template_section_map(top["template_sections"], n_sections),
-                                                         top.get("kinds", ["header", "footer"]), GEOM_TOL_PT)
-                    if fr.source in removed_hf_required and not removed_reference:
-                        fr.record.set(CheckResult("V7", "Geometry assertion", "FAIL",
-                                                  "The independent header/footer-removal reference could not be rendered; "
-                                                  "refusing a source-layout claim without that evidence.", g.to_dict()))
-                    else:
-                        fr.record.set(geometry_check(fr.plan or {}, g, tg))
+                    v6, v7, _geometry = compare_pair(pair, refs, backend, pages_dir)
+                    fr.record.set(v6)
+                    fr.record.set(v7)
             except Exception as e:  # noqa: BLE001 — a comparison that cannot run is this file's failure, not a skip
                 tb = traceback.format_exc()
                 fr.record.set(CheckResult("V6", "Automated render comparison", "FAIL",

@@ -105,6 +105,11 @@ export default function PreviewCard({ sample, mark, canReview, onMark, onZoom }:
           ))}
         </ul>
       )}
+      {sample.geometry?.note && (
+        <p className={`mb-1 text-xs leading-relaxed ${sample.geometry.status === "FAIL" ? "text-err" : "text-paper-dim"}`}>
+          {sample.geometry.note}
+        </p>
+      )}
       {pages.text && (
         <p className="text-xs text-paper-dim tabular-nums">
           {pages.text.replace(/ \(.*\)$/, "")}

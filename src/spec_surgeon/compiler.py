@@ -405,7 +405,10 @@ make_values_agree with the file name among its places, rename the outputs: they 
 - Deleting: delete_paragraphs takes select.paragraphs "all" or any predicate; a table every paragraph of which is \
 chosen goes whole, and a cell, the document or a note keeps one emptied paragraph. A request is never refused for \
 being large: deleting a whole PART, an article (between_paragraphs with include_bounds "start") or the whole body is \
-an edit like any other, shown in the preview. Wiping a document is delete_paragraphs "all", remove_header_footer, \
+an edit like any other, shown in the preview. Every article's body with its title kept is between_paragraphs \
+{start_regex: the article-title pattern, end_regex: the PART and END OF SECTION pattern, every: true} with no bounds: \
+each stretch runs from a title up to the next title or PART; "every PART 2" is {start_regex: "^PART 2", end_regex: \
+"^PART 3", every: true, include_bounds: "start"}. Wiping a document is delete_paragraphs "all", remove_header_footer, \
 remove_comments and remove_footnotes in one spec (the app orders them); there is no wipe op. A tracked deletion goes \
 over someone's pending tracked changes as Word does (what they inserted is deleted inside their insertion, what they \
 deleted stays deleted); it refuses only moved text, an inserted or deleted table row or cell, and a paragraph that \

@@ -724,7 +724,8 @@ def _end_core(end: str) -> str:
 def _stretch_words(pred) -> str:
     """The paragraphs to move, in words: a between_paragraphs stretch by its bounds (the 'up to the one before' idiom —
     the end included and ruled out again by a text_regex ``^(?!<end>)`` — read as such), anything else as prose does."""
-    if not isinstance(pred, dict) or not isinstance(pred.get("between_paragraphs"), dict):
+    if (not isinstance(pred, dict) or not isinstance(pred.get("between_paragraphs"), dict)
+            or pred["between_paragraphs"].get("every")):
         words = prose.where({"paragraphs": pred})[3:]
         return "the " + words if not words.startswith("every") else "the chosen paragraphs"
     bp = pred["between_paragraphs"]

@@ -764,7 +764,10 @@ SELECTOR_GRAMMAR = {
                   "outside regex character classes matches one or more whitespace characters), "
                   "between_paragraphs {start_regex, end_regex?, include_bounds?: true (both) | false (neither, the default) | "
                   "'start' (the start paragraph included, the end one not: an article from its heading up to the next) "
-                  "| 'end'}",
+                  "| 'end', every?: true — every stretch, from each start match to the next paragraph matching "
+                  "end_regex or start_regex (the next article or PART), else the end of the part: 'empty every "
+                  "article, keep the titles' is the article-title pattern as start_regex, the PART and END OF SECTION "
+                  "pattern as end_regex, every true and no bounds; without every, the first stretch only}",
     "runs": "'all' or {has_direct_font: bool, font_in: [names], not_in_revisions: bool, color_in: [colours]} — "
             "color_in: the run's effective colour (direct, else its character/paragraph style's) is one of the listed "
             "6-hex values, theme colour names (accent1, text2 …) or 'auto'",

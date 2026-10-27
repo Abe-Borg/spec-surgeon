@@ -1745,7 +1745,7 @@ class DocumentTask:
         return {"samples": [{"source": str(sv.source), "name": Path(sv.source).name,
                              "images": [str(p) for p in sv.images if Path(p).is_file()],
                              "pages_before": sv.pages_before, "pages_after": sv.pages_after, "passed": sv.passed,
-                             "failures": failed_preview_checks(sv)}
+                             "failures": failed_preview_checks(sv), "geometry": sv.geometry}
                             for sv in samples],
                 "warnings": list(dict.fromkeys(getattr(preview, "warnings", []) or [])),
                 "blocking": any(f.get("severity") == "block"

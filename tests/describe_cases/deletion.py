@@ -17,6 +17,11 @@ CASES = {
           "fields, comments, footnotes and bookmarks lying wholly inside go with them"]),
         ({"paragraphs": "all", "scope": ["document", "footnotes"]}, {},
          ["Delete every paragraph in the document body and the footnotes", "shown as tracked changes"]),
+        # every article's body, its title kept: each stretch from a title up to the next title or PART heading
+        ({"paragraphs": {"between_paragraphs": {"start_regex": "^\\d+\\.\\d+", "end_regex": "^PART|^END OF SECTION",
+                                                "every": True}}}, {"tracked": False},
+         ["Delete all paragraphs between each “^\\d+\\.\\d+” and the next “^PART|^END OF SECTION” or “^\\d+\\.\\d+”",
+          "without tracked changes"]),
     ],
     "remove_footnotes": [
         ({}, {}, ["Remove every footnote and endnote, with its reference mark in the text", "shown as tracked changes",
