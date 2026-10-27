@@ -24,6 +24,8 @@ interface Props {
    *  and the pages have the room; a click opens it again. */
   compact: boolean;
   onAdd: (kind: "documents" | "template" | "references") => void;
+  /** Add a folder of documents: the native folder dialog, then the folder's own .docx files. */
+  onAddFolder: () => void;
   onRemove: (attachment: Attachment) => void;
 }
 
@@ -166,7 +168,7 @@ function Section({
  * exist and opens on a click. Dropping a file anywhere in the window works
  * too (App owns the drop ring).
  */
-export default function DocumentsTray({ attachments, todo, focus, busy, uploading, compact, onAdd, onRemove }: Props) {
+export default function DocumentsTray({ attachments, todo, focus, busy, uploading, compact, onAdd, onAddFolder, onRemove }: Props) {
   const held = busy || uploading;
   const holdTip = uploading ? "Reading the files you added…" : BUSY_TIP;
   const hasTemplate = attachments.some((a) => a.kind === "template");
@@ -199,6 +201,11 @@ export default function DocumentsTray({ attachments, todo, focus, busy, uploadin
           <Tip tip={held ? holdTip : "Attach one or more .docx files to edit"}>
             <button type="button" className={quietBtn} disabled={held} onClick={() => onAdd("documents")} data-capability="documents.add">
               Add Word documents
+            </button>
+          </Tip>
+          <Tip tip={held ? holdTip : "Attach every .docx file in a folder (not its subfolders)"}>
+            <button type="button" className={quietBtn} disabled={held} onClick={onAddFolder} data-capability="documents.folder">
+              Add a folder of documents
             </button>
           </Tip>
         </div>

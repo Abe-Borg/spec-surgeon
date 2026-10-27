@@ -1,11 +1,13 @@
 import { memo, useEffect, useRef } from "react";
 import type { Attachment, View } from "../types";
 import type { Mark, Reviews } from "../lib/review";
+import type { Unticks } from "../lib/occurrences";
 import { copiesNote, pdfFolder, planHasContent, runFolder, undoLink } from "../lib/workbench";
 import { unverifiedLine } from "../lib/modes";
 import DocumentsTray from "./DocumentsTray";
 import Markdown from "./Markdown";
 import PaperCard from "./PaperCard";
+import OccurrencesCard from "./OccurrencesCard";
 import PreviewCard from "./PreviewCard";
 import Tip from "./Tip";
 import { paperBtn } from "./ModalShell";
@@ -19,7 +21,17 @@ interface Props {
   /** The marks can be given right now (the plan awaits approval, nothing runs). */
   canReview: boolean;
   onMark: (source: string, mark: Mark) => void;
+  /** The find-and-replace occurrences unticked on the page, by key (lib/occurrences.ts). */
+  unticks: Unticks;
+  /** The ticks can be changed and sent right now. */
+  canUntick: boolean;
+  /** The ticks differ from the previewed plan's: Update the preview is due. */
+  unticksPending: boolean;
+  onToggleUntick: (key: string) => void;
+  onUpdateOccurrences: () => void;
   onAdd: (kind: "documents" | "template" | "references") => void;
+  /** Add a folder of documents (the native folder dialog). */
+  onAddFolder: () => void;
   onRemove: (attachment: Attachment) => void;
   onOpen: (path: string) => void;
   onStartOver: () => void;
@@ -88,7 +100,13 @@ function Workbench({
   reviews,
   canReview,
   onMark,
+  unticks,
+  canUntick,
+  unticksPending,
+  onToggleUntick,
+  onUpdateOccurrences,
   onAdd,
+  onAddFolder,
   onRemove,
   onOpen,
   onStartOver,
@@ -97,6 +115,7 @@ function Workbench({
   onZoom,
   onHandOff,
 }: Props) {
+  const occurrences = view.occurrences ?? [];
   const safe = view.mode === "safe";
   const undo = undoLink(view, busy);
   const untouched = view.left_untouched ?? [];
@@ -138,6 +157,7 @@ function Workbench({
           uploading={uploading}
           compact={hasPlan || view.results.length > 0 || pdfs.length > 0}
           onAdd={onAdd}
+          onAddFolder={onAddFolder}
           onRemove={onRemove}
         />
 
@@ -169,6 +189,17 @@ function Workbench({
               />
             ))}
           </div>
+        )}
+
+        {occurrences.length > 0 && (
+          <OccurrencesCard
+            docs={occurrences}
+            unticks={unticks}
+            canUntick={canUntick}
+            pending={unticksPending}
+            onToggle={onToggleUntick}
+            onUpdate={onUpdateOccurrences}
+          />
         )}
 
         {view.warnings.length > 0 && (

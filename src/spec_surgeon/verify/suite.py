@@ -9,7 +9,7 @@ import json
 from contextlib import contextmanager
 from dataclasses import dataclass, field, asdict
 from pathlib import Path
-from typing import Any, Dict, Iterator, List, Optional
+from typing import Any, Dict, Iterator, List, Optional, Sequence, Tuple
 
 from lxml import etree
 
@@ -30,6 +30,46 @@ class CheckResult:
     status: str                  # PASS | FAIL | NA
     summary: str
     data: Dict[str, Any] = field(default_factory=dict)
+
+
+OCCURRENCE_LINES = 200      # occurrences a record's markdown lists in full (the JSON holds every one)
+
+
+def occurrence_log(record: "VerificationRecord") -> List[Dict[str, Any]]:
+    """The find-and-replace occurrences the checker found (backlog F2: the occurrence log is the checker's own
+    reading, recorded under V10's data, never the plan's claim): each with its place, the words around it, and
+    whether it was replaced or left at the user's word."""
+    v10 = record.get("V10")
+    occ = (v10.data or {}).get("occurrences") if v10 is not None else None
+    return [o for o in occ if isinstance(o, dict)] if isinstance(occ, list) else []
+
+
+def occurrence_counts(record: "VerificationRecord") -> Optional[Tuple[int, int]]:
+    """(replaced, left at the user's word) over the checker's occurrence log, or None when it found none."""
+    occ = occurrence_log(record)
+    if not occ:
+        return None
+    left = sum(1 for o in occ if o.get("skipped"))
+    return len(occ) - left, left
+
+
+def occurrence_lines(record: "VerificationRecord") -> List[str]:
+    """The occurrence log as a record's markdown shows it; the first ``OCCURRENCE_LINES`` in full."""
+    from ..readable import short
+    occ = occurrence_log(record)
+    counts = occurrence_counts(record)
+    if counts is None:
+        return []
+    replaced, left = counts
+    out = ["", f"FIND AND REPLACE, OCCURRENCE BY OCCURRENCE: {replaced} replaced, {left} left at the user's word"]
+    for o in occ[:OCCURRENCE_LINES]:
+        place = f"{o.get('where') or o.get('part')}, paragraph {int(o.get('paragraph', 0)) + 1}" + \
+                (f" · {o['heading']}" if o.get("heading") else "")
+        what = "left at the user's word" if o.get("skipped") else f"→ {short(o.get('replace', ''), 80)!r}"
+        out.append(f"  {place}: {short(o.get('before', ''), 60)} «{o.get('match', '')}» {short(o.get('after', ''), 60)} {what}")
+    if len(occ) > OCCURRENCE_LINES:
+        out.append(f"  … and {len(occ) - OCCURRENCE_LINES:,} more (every one is in the record's JSON)")
+    return out
 
 
 @dataclass
@@ -117,6 +157,7 @@ class VerificationRecord:
             for cid, name, _summary, details in self.failures():
                 lines.append(f"  {cid} {name}")
                 lines += [f"    - {x}" for x in details]
+        lines += occurrence_lines(self)
         lines += ["", f"Predicted diffs: {len(self.predicted_diffs):,} (written before the transform ran).",
                   f"Full predictions and check data: `{evidence}`."]
         if not self.predicted_diffs:

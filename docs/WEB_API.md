@@ -45,6 +45,10 @@ that ends a job is authoritative.
   "samples": [{"source": "…", "name": "21 13 13.docx", "images": ["/api/image?path=…"],
                "pages_before": 12, "pages_after": 12, "passed": true, "failures": [],
                "geometry": {"status": "PASS", "note": "Page layout checked on the rendered pages: …"}}],
+  "occurrences": [{"source": "…", "name": "21 13 13.docx", "status": "planned | refused", "reason": "",
+                   "items": [{"key": "…", "part": "word/document.xml", "paragraph": 11, "start": 30, "end": 38, "where": "the body",
+                              "heading": "2.01", "before": "H. See the", "match": "2022 CBC", "after": "portal.",
+                              "find": "2022 CBC", "replace": "2025 CBC", "skipped": false, "op_index": 0}]}],
   "warnings": ["…"], "blocking": false,
   "results": [{"source": "…", "output": "…", "name": "21 13 13.docx", "unverified": [], "saved_to": ""}],
   "pdfs": [{"source": "C:/Specs/21 13 13.docx", "output": "C:/.../scratch/20261027-090000-7/20261027-1/run/pdf/21 13 13.pdf",
@@ -124,6 +128,17 @@ Rules the page relies on:
   it); a plan done in steps renders its last step's pages only, so an earlier step's layout is checked at the run.
   `"at": "run"` marks the verdicts the run will give. `null` for a sample the plan refused. Common refusal reasons under Left untouched are presented without operation numbers
   or extraction patterns; the engine's original exceptions and check records remain in diagnostics.
+- `occurrences` is the find-and-replace list of the plan waiting for the user (stages `preview` and `question`; empty
+  otherwise, and empty when the plan has no `replace_table` op): one entry per document the plan covers — every
+  document, not the sampled ones only — with every occurrence the plan found, kept or unticked (`skipped`). `where`
+  says which part in words, `paragraph` is the paragraph's ordinal in that part from 0 (the page shows it from 1),
+  `heading` the article the body paragraph sits under when the structure analysis reads one (`""` otherwise), and
+  `before`/`match`/`after` the words around it, whitespace collapsed; none of these is verified, the occurrence's
+  place is. `key` is what the page sends back as `skip` (below); the server resolves it from its own record, never
+  from the page's numbers. A document with `status` `refused` is one the plan set aside (its `reason` as under Left
+  untouched); its items are what the op listed up to the refusal, the refused occurrence included, so the user can
+  untick the one the reason names and the document then plans. A plan done in steps lists its first step's only. An
+  older server sends no `occurrences`.
 - `samples` are the pages of the plan waiting for the user (stages `preview` and `question`), less any document
   whose copy a partial save already delivered; every other stage sends none, so a finished run takes its
   pages along. The visual check's findings in `warnings`, and `blocking`, follow the same rule.
@@ -191,6 +206,7 @@ explicitly injected clients are retained. Both key replacement and removal refus
 | POST | `/api/settings/remove-key` | | the settings; 409 while work runs; 400 for external-only credentials or secure-store deletion failure |
 | GET | `/api/state` | | the view |
 | POST | `/api/attach` | `{"paths": [..], "template": false}` | the view (400 with `{"error"}` for a refused file) |
+| POST | `/api/attach-folder` | `{"folder": "…"}`, optional: without it the native folder dialog asks | **Add a folder of documents**: the folder's own `.docx` files attached as if picked one by one (sorted by name, Word's `~$` lock files skipped, subfolders not entered — the `app` message says how many Word documents the subfolders hold, to add those folders too); each file is triaged as any attachment; the view. `{"cancelled": true}` when the dialog was dismissed; 400 with `{"error"}` for a folder with no Word documents of its own, or one of the app's own folders (the scratch tree, the run root, the config folder); 409 while work runs; 501 without a dialog and a folder |
 | POST | `/api/upload` | multipart `files[]`, `template` field | copies the bytes under the scratch folder's `attachments/<stamp>/` (deleted with it when the window closes) and attaches them; the view |
 | POST | `/api/pick` | `{"kind": "documents | template | references"}` | opens the NATIVE file dialog through the shell (pywebview); `{"paths": [...]}` — 501 when no shell |
 | POST | `/api/remove` | `{"path": "...", "template": false}` | the view |
@@ -199,6 +215,7 @@ explicitly injected clients are retained. Both key replacement and removal refus
 | POST | `/api/primary` | `{"token": "...", "hold"?: ["<sample source path>", …]}` — `hold` names the previewed documents marked with the red X: set aside on the to-do list, the others run; a path that is not one of the plan's documents is refused (400 for a malformed list, the job's `error` for an unknown path) | SSE stream |
 | GET | `/api/recipes` | | `{"recipes": [{"id", "label", "group", "summary", "needs": ["template" \| "picture" \| "pdf"], "fields": [{"name", "kind": "text \| pairs \| choice \| check \| picture \| table \| slots", "label", "required", "default"?, "options"?, "help"?, "placeholder"?, "optional_choice"?}]}], "groups": [...]}` — Safe mode's buttons (`recipes.catalog()`), the same for the whole session |
 | POST | `/api/recipe` | `{"recipe": "<id>", "inputs": {<field name>: value}}` — a Safe-mode button and its form; a form that cannot be used, or a plan the gate refuses, is said in one `app` message and nothing is previewed; 400 for inputs that are not an object | SSE stream |
+| POST | `/api/occurrences` | `{"skip": ["<key>", …]}` — every find-and-replace occurrence the user unticked in the preview's list, by its `key` (the whole unticked set: a key left out is an occurrence put back); the previewed plan is made again with those occurrences left as they are (backlog F1: each `replace_table` op's `skip` list is exactly the unticked occurrences of its own, the spec passes the gate again with those keys as the ones recorded from the user's unticks, and the preview is remade on the same documents; the approval token changes, so the page's marks start over); 400 for a body that is not a list of keys; the job's `error` when no preview waits or a key is not in the list; a plan the gate refuses keeps the preview as it was and says so in one `app` message | SSE stream |
 | POST | `/api/mode` | `{"mode": "safe \| default \| obliterate", "acknowledged"?: true}` — `obliterate` needs `show_obliterate` on and `acknowledged: true` (the user ticked its warning this time); entering or leaving it voids the plan | the view; Safe or Default is kept in settings.json, Obliterate never is (the next start opens in Default); 400 for another mode, a hidden Obliterate or a missing acknowledgement |
 | POST | `/api/handoff` | `{"paths": ["<left_untouched path>", …]}` — the documents go on the to-do list with the button's sentence as their request, and the mode becomes `default`; 400 for a path the last button did not leave untouched, or while a preview waits | the view |
 | POST | `/api/stop` | | `{"ok": true}` — the running model call is cut off; the stream then ends with `done` |
@@ -246,7 +263,7 @@ Unknown kinds and fields are passed over; text is cut to 2,000 characters and st
 
 Any report is a sign of life: a showing page (`visible`) that sends nothing for 45 s is journalled as unresponsive.
 
-## The job stream (`send`, `choose`, `primary`, `recipe`)
+## The job stream (`send`, `choose`, `primary`, `recipe`, `occurrences`)
 
 `Content-Type: text/event-stream`; each frame is `data: <json>\n\n`; the last frame is `done` or `error`.
 
@@ -258,7 +275,7 @@ Any report is a sign of life: a showing page (`visible`) that sends nothing for 
 | `text_delta` | `text` | a chunk of the assistant's reply as it is written: the model's plain text, then the `message` of its question or submission (read from the tool call's input as it streams, nothing else of it), a paragraph apart, as the reply joins them |
 | `message` | `message` | a complete message object (assistant or app) to append; the streaming bubble is finalized with it, and the page carries the reply on from the words already shown |
 | `plan` | `plan` | the plan became available (before previews render); the page drops the pages of the plan before it |
-| `samples` | `samples`, `warnings`, `blocking` | previews are in |
+| `samples` | `samples`, `occurrences`, `warnings`, `blocking` | previews are in (`occurrences` as the view carries them; absent from an older server) |
 | `results` | `results` | copies were written |
 | `question` | `questions`, `choices`, `chips` | the model needs the user |
 | `cost` | `cost` | the running spend |

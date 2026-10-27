@@ -10,6 +10,14 @@ matches skipped; with ``whole_word`` (default true) a match whose first (last) c
 must not have one right before (after) it. Matches of different pairs that overlap are refused (``ambiguous``). The
 *reader view* (run text with tabs and line breaks as spaces) must not hold more matches of a pair than the run text —
 an occurrence split by a tab or a line break is refused (``spans-structure``), never silently skipped.
+
+The skip list (backlog F1): ``params.skip`` names the occurrences the user unticked in the window's preview, each by
+its file, part, paragraph ordinal, run-text offsets and the pair's find text — the window writes it from the user's
+unticks (``compiler.compose_submission`` refuses one it did not record), never a request. The hits named for this file
+are dropped BEFORE the overlap check (unticking one of two overlapping matches says which applies); a skip that names
+this file but no hit of it is refused (``skip-unmatched``: the file is not the one previewed). Every hit, kept or
+skipped, is listed in the plan's ``replaced_text`` assertion (``occurrences``: where it sits, the words around it, the
+article it sits under — descriptive, read for the user; the offsets and find text are what the verifier re-finds).
 """
 from __future__ import annotations
 
@@ -30,6 +38,10 @@ from .textedit import Edit, RunText, apply_part_edits, edits_to_data, nearest_p,
 
 PAIR_KEYS = ("find", "replace", "regex", "match_case", "whole_word", "flexible_whitespace")
 DEFAULT_SCOPE = ["document", "headers", "footers"]
+SKIP_KEYS = ("file", "part", "paragraph", "start", "end", "find")
+CONTEXT_CHARS = 48       # the words shown on either side of an occurrence in the preview's list
+WHERE_WORDS = {"document": "the body", "headers": "a header", "footers": "a footer", "footnotes": "a footnote",
+               "endnotes": "an endnote", "comments": "a comment"}
 
 
 def default_author() -> str:
@@ -94,8 +106,9 @@ def reader_view(text: str) -> str:
     return text.replace("\t", " ").replace("\n", " ")
 
 
-def find_all(text: str, pairs: Sequence[Dict[str, Any]], compiled: Sequence[Any], where: str) -> List[Tuple[int, int, int]]:
-    """[(start, end, pair index)] in run-text order, after the overlap and near-miss refusals."""
+def all_hits(text: str, pairs: Sequence[Dict[str, Any]], compiled: Sequence[Any], where: str) -> List[Tuple[int, int, int]]:
+    """Every hit [(start, end, pair index)] in run-text order, after the near-miss refusal (an occurrence split by a
+    tab or a line break) and before the overlap check — the occurrences the preview lists, kept or skipped."""
     found = []
     reader = reader_view(text)
     for k, (pair, rx) in enumerate(zip(pairs, compiled)):
@@ -106,12 +119,70 @@ def find_all(text: str, pairs: Sequence[Dict[str, Any]], compiled: Sequence[Any]
                                {"where": where, "find": pair["find"], "text": shown(text)})
         found += [(a, b, k) for a, b in hits]
     found.sort()
+    return found
+
+
+def find_all(text: str, pairs: Sequence[Dict[str, Any]], compiled: Sequence[Any], where: str,
+             skipped: Any = frozenset()) -> List[Tuple[int, int, int]]:
+    """[(start, end, pair index)] in run-text order, after the overlap and near-miss refusals — less ``skipped``, the
+    hits the user unticked as (start, end, find text), dropped before the overlap check."""
+    found = [(a, b, k) for a, b, k in all_hits(text, pairs, compiled, where) if (a, b, pairs[k]["find"]) not in skipped]
     for (a1, b1, k1), (a2, b2, k2) in zip(found, found[1:]):
         if a2 < b1:
             raise JobException(f"{where}: {pairs[k1]['find']!r} and {pairs[k2]['find']!r} both match "
                                f"{shown(text[a1:max(b1, b2)])!r}; say which one applies", "ambiguous",
                                {"where": where, "text": shown(text)})
     return found
+
+
+def normalize_skip(raw: Any, where: str) -> Dict[str, Any]:
+    """One unticked occurrence with every key checked: the window writes it, and a malformed one is a defect."""
+    if not isinstance(raw, dict):
+        raise JobException(f"{where}: an unticked occurrence is an object {{file, part, paragraph, start, end, find}}",
+                           "bad-params")
+    unknown = set(raw) - set(SKIP_KEYS)
+    missing = [k for k in SKIP_KEYS if k not in raw]
+    if unknown or missing:
+        raise JobException(f"{where}: an unticked occurrence has the keys {list(SKIP_KEYS)}"
+                           + (f"; unknown {sorted(unknown)}" if unknown else "") + (f"; missing {missing}" if missing else ""),
+                           "bad-params")
+    for k in ("file", "part", "find"):
+        if not isinstance(raw[k], str) or not raw[k]:
+            raise JobException(f"{where}: {k!r} must be non-empty text", "bad-params")
+    for k in ("paragraph", "start", "end"):
+        if not isinstance(raw[k], int) or isinstance(raw[k], bool) or raw[k] < 0:
+            raise JobException(f"{where}: {k!r} must be a whole number of 0 or more", "bad-params")
+    if raw["end"] <= raw["start"]:
+        raise JobException(f"{where}: 'end' must be after 'start'", "bad-params")
+    return {k: raw[k] for k in SKIP_KEYS}
+
+
+def same_file(a: str, b: str) -> bool:
+    """The skip's file is this package: the same path as the window planned (a resolved path on both sides), read
+    the way the file system reads it."""
+    norm = lambda x: os.path.normcase(os.path.normpath(str(x)))  # noqa: E731
+    return norm(a) == norm(b)
+
+
+def skip_key(part: str, paragraph: int, start: int, end: int, find: str) -> str:
+    """The occurrence's key as the window sends it back (``DocumentTask`` resolves it from its own record)."""
+    return f"{part}|{paragraph}|{start}|{end}|{find}"
+
+
+def article_labels(pkg: DocxPackage) -> Dict[int, str]:
+    """The article each body paragraph sits under ("2.01"), read for the user from the structure analysis; nothing is
+    predicted from it, and a file the analysis cannot read gives no labels."""
+    try:
+        from ..structure import analyze_structure
+        rows = analyze_structure(pkg).get("rows") or []
+    except Exception:  # noqa: BLE001 — descriptive only: never a refusal
+        return {}
+    out: Dict[int, str] = {}
+    for row in rows:
+        label = row.get("article_label") or ""
+        if isinstance(label, str) and label and isinstance(row.get("paragraph"), int):
+            out[row["paragraph"]] = label
+    return out
 
 
 def resolve_scope(select: Dict[str, Any], params: Dict[str, Any], default: List[str]) -> List[str]:
@@ -150,6 +221,15 @@ class _Replacing(Op):
         unknown = set(select) - {"scope", "paragraphs"}
         if unknown:
             raise JobException(f"{self.name} selects by scope/paragraphs only; unknown {sorted(unknown)}", "bad-params")
+        raw_skips = params.get("skip") or []
+        if not isinstance(raw_skips, list):
+            raise JobException("'skip' must be a list of unticked occurrences", "bad-params")
+        skips = [normalize_skip(x, f"skip {n}") for n, x in enumerate(raw_skips, 1)]
+        # this file's unticked occurrences: (part, paragraph, start, end, find) → the file the entry named (the
+        # verifier compares it with the file it was given, by its own reading)
+        mine = {(x["part"], x["paragraph"], x["start"], x["end"], x["find"]): x["file"]
+                for x in skips if same_file(x["file"], pkg.name)}
+        honoured: set = set()
         pred = select.get("paragraphs")
         check_paragraph_selector(pred)
         scope = resolve_scope(select, params, default_scope)
@@ -174,32 +254,71 @@ class _Replacing(Op):
         sheet = StyleSheet(pkg) if pred not in (None, "all") else None
         data: Dict[str, Dict[str, List[List[Any]]]] = {}
         total, per_pair = 0, [0] * len(pairs)
-        for part in parts:
-            root = pkg.xml(part)
-            pars = paragraphs(root)
-            in_field = field_runs(root)
-            for bi, p in enumerate(pars):
-                if sheet is not None and not paragraph_selected(pred, p, bi, block_full_text(p), sheet, all_pars=pars):
-                    continue
-                where = f"{part} paragraph {bi}"
-                rt = RunText(p)
-                found = find_all(rt.text, pairs, compiled, where)
-                if not found:
-                    continue
-                if nearest_p(p) is not None:
-                    raise JobException(f"{where} is inside a text box (Word keeps two copies of it); not changed",
-                                       "textbox", {"where": where, "text": shown(rt.text)})
-                edits = [Edit(a, b, pairs[k]["replace"]) for a, b, k in found]
-                done = plan_paragraph(frag, part, bi, p, edits, tracked, in_field, where)
-                if done:
-                    data.setdefault(part, {})[str(bi)] = edits_to_data(done)
-                    total += len(done)
-                    for a, b, k in found:
-                        per_pair[k] += 1
-        # the typed pairs and the table FILE (its md5): the verifier reads the table's rows again with its own reader
+        occurrences: List[Dict[str, Any]] = []
+        kinds = pkg.parts_by_kind()
+        where_of = {part: WHERE_WORDS.get(kind, kind) for kind, names in kinds.items() for part in names}
+        main = pkg.main_part()
+        labels: Optional[Dict[int, str]] = None
+        try:
+            for part in parts:
+                root = pkg.xml(part)
+                pars = paragraphs(root)
+                in_field = field_runs(root)
+                for bi, p in enumerate(pars):
+                    if sheet is not None and not paragraph_selected(pred, p, bi, block_full_text(p), sheet, all_pars=pars):
+                        continue
+                    where = f"{part} paragraph {bi}"
+                    rt = RunText(p)
+                    hits = all_hits(rt.text, pairs, compiled, where)
+                    if not hits:
+                        continue
+                    # the paragraph's occurrences are listed before anything about it can refuse: a refusal carries
+                    # the list (``details["occurrences"]``), so the user can untick the occurrence it names
+                    here = {(a, b, f) for pt, pi, a, b, f in mine if pt == part and pi == bi}
+                    if part == main and labels is None:
+                        labels = article_labels(pkg)
+                    for a, b, k in hits:
+                        if rt.text[a:b] == pairs[k]["replace"]:
+                            continue                                # a no-op hit is no edit (plan_paragraph's rule)
+                        skipped = (a, b, pairs[k]["find"]) in here  # unticked by the user — never a hit lost elsewhere
+                        if skipped:
+                            honoured.add((part, bi, a, b, pairs[k]["find"]))
+                        occurrences.append({
+                            "key": skip_key(part, bi, a, b, pairs[k]["find"]), "part": part, "paragraph": bi,
+                            "start": a, "end": b, "find": pairs[k]["find"], "replace": pairs[k]["replace"],
+                            "where": where_of.get(part, part),
+                            "heading": (labels or {}).get(bi, "") if part == main else "",
+                            "before": shown(rt.text[max(0, a - CONTEXT_CHARS):a]), "match": shown(rt.text[a:b]),
+                            "after": shown(rt.text[b:b + CONTEXT_CHARS]), "skipped": skipped})
+                    if nearest_p(p) is not None:
+                        raise JobException(f"{where} is inside a text box (Word keeps two copies of it); not changed",
+                                           "textbox", {"where": where, "text": shown(rt.text)})
+                    found = find_all(rt.text, pairs, compiled, where, skipped=here)
+                    if not found:
+                        continue
+                    edits = [Edit(a, b, pairs[k]["replace"]) for a, b, k in found]
+                    done = plan_paragraph(frag, part, bi, p, edits, tracked, in_field, where)
+                    if done:
+                        data.setdefault(part, {})[str(bi)] = edits_to_data(done)
+                        total += len(done)
+                        for a, b, k in found:
+                            per_pair[k] += 1
+        except JobException as e:
+            if isinstance(e.details, dict) and occurrences:
+                e.details["occurrences"] = occurrences   # what was listed up to the refusal, the refused one included
+            raise
+        unmatched = sorted(set(mine) - honoured)
+        if unmatched:
+            pt, pi, a, b, f = unmatched[0]
+            raise JobException(f"an occurrence you unticked ({f!r} in {pt} paragraph {pi}, characters {a}–{b}) is "
+                               f"not there now: the document is not the one previewed — preview it again",
+                               "skip-unmatched", {"unmatched": [list(x) for x in unmatched]})
+        # the typed pairs and the table FILE (its md5): the verifier reads the table's rows again with its own reader;
+        # the skips this file honoured and every occurrence, kept or skipped, for the verifier to re-find
         assertion = {"kind": "replaced_text", "scope": scope, "select": sel, "pairs": [dict(p) for p in typed],
                      "table": table, "tracked": tracked, "author": author, "expected_edits": total,
-                     "edited_blocks": {part: sorted(int(b) for b in blocks) for part, blocks in data.items()}}
+                     "edited_blocks": {part: sorted(int(b) for b in blocks) for part, blocks in data.items()},
+                     "skip": [[mine[x], *x] for x in sorted(honoured)], "occurrences": occurrences}
         frag.property_assertions.append(assertion)
         if total == 0:
             if params.get("allow_missing"):
@@ -219,6 +338,9 @@ class _Replacing(Op):
         frag.notes.append(f"{self.name}: {total} replacement(s) in {len(data)} part(s) "
                           f"({'tracked' if tracked else 'untracked'}): "
                           + "; ".join(f"{p['find']!r} → {p['replace']!r} ×{n}" for p, n in zip(pairs, per_pair) if n)[:900])
+        if honoured:
+            frag.notes.append(f"{self.name}: {len(honoured)} occurrence(s) left as they are at the user's word (unticked in "
+                              f"the preview)")
         if not tracked:
             frag.flags.append("UNTRACKED wording change at the user's request: no revision marks; V2's list is the proof.")
         return frag
@@ -267,6 +389,22 @@ PAIR_SCHEMA = {
                                 "description": "spaces match any run of spaces/no-break spaces, hyphens any dash"},
     },
 }
+SKIP_SCHEMA = {
+    "type": "array",
+    "description": "the occurrences the user unticked in the window's preview, each identified in its file's source "
+                   "(the window writes this list from the user's unticks; a request never writes it)",
+    "items": {
+        "type": "object",
+        "properties": {
+            "file": {"type": "string", "description": "the document's path as the window planned it"},
+            "part": {"type": "string", "description": "the part (word/document.xml, word/header1.xml …)"},
+            "paragraph": {"type": "integer", "description": "the paragraph's ordinal in that part, from 0"},
+            "start": {"type": "integer", "description": "the occurrence's first character in the paragraph's run text"},
+            "end": {"type": "integer", "description": "one past its last character"},
+            "find": {"type": "string", "description": "the pair's find text"},
+        },
+    },
+}
 TABLE_SCHEMA = {
     "type": "object",
     "properties": {
@@ -292,6 +430,7 @@ class ReplaceTable(_Replacing):
             "pairs": {"type": "array", "items": PAIR_SCHEMA,
                       "description": "typed pairs; each 'replace' must be the user's own words"},
             "pairs_table": TABLE_SCHEMA,
+            "skip": SKIP_SCHEMA,
             **COMMON_PARAMS,
         },
     }
@@ -364,8 +503,11 @@ class ReplaceTable(_Replacing):
         else:
             tail = "without tracked changes"
         first = f"{head} {prose.where(select)}, {tail}."
+        skips = params.get("skip") if isinstance(params.get("skip"), list) else []
+        third = (f"{prose.count(len(skips), 'occurrence')} you unticked in the preview "
+                 f"{'is' if len(skips) == 1 else 'are'} left as {'it is' if len(skips) == 1 else 'they are'}.") if skips else ""
         second = "Files in which none of them occurs are left unchanged." if params.get("allow_missing") else ""
-        return prose.sentence(first, second)
+        return prose.sentence(first, third, second)
 
 
 @register

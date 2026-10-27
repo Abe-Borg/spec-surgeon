@@ -154,6 +154,14 @@ export async function openPath(path: string): Promise<void> {
 /** Export → Save the copies…: the working copies written into the folder the native dialog asks for (it opens where
  *  the last export went). null when the dialog was dismissed; an ApiError from a window without a dialog (501), with
  *  nothing to save or a folder that refuses (400), or while work runs (409). */
+/** Add a folder of documents: the native folder dialog, then the folder's own .docx files attached. The view, null
+ *  when the dialog was dismissed; a 501 (no dialog here) is thrown as any other failure. */
+export async function attachFolder(): Promise<View | null> {
+  const answer = await post<unknown>("/api/attach-folder");
+  if (answer && typeof answer === "object" && (answer as { cancelled?: unknown }).cancelled === true) return null;
+  return normalizeView(answer);
+}
+
 export async function exportCopies(): Promise<View | null> {
   const answer = await post<unknown>("/api/export");
   if (answer && typeof answer === "object" && (answer as { cancelled?: unknown }).cancelled === true) return null;
@@ -227,6 +235,9 @@ export const primary = (token: string, hold: string[] = []) =>
   streamJob("/api/primary", hold.length > 0 ? { token, hold } : { token });
 /** A Safe-mode button and its form: the fixed spec is previewed, no AI call (docs/WEB_API.md). */
 export const recipe = (id: string, inputs: RecipeInputs) => streamJob("/api/recipe", { recipe: id, inputs });
+/** The find-and-replace occurrences unticked in the preview's list (the whole unticked set, by key): the plan is made
+ *  again with them left as they are. */
+export const occurrences = (skip: string[]) => streamJob("/api/occurrences", { skip });
 
 // --- Settings, about, updates, logs ---------------------------------------
 

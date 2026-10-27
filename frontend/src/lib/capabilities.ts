@@ -28,6 +28,7 @@ export const END_USER_CAPABILITIES = [
   "settings.advanced",
   // the attachments
   "documents.add",
+  "documents.folder",
   "documents.remove",
   "documents.template",
   "documents.references",
@@ -37,6 +38,7 @@ export const END_USER_CAPABILITIES = [
   // the previews and the one button
   "preview.pages",
   "preview.marks",
+  "preview.occurrences",
   "preview.left-untouched",
   "action.primary",
   "action.discard",

@@ -425,8 +425,8 @@ def test_defect_a_character_outside_the_edit_is_lost(doc):
 def test_shared_defect_matcher_skips_the_last_occurrence(doc, monkeypatch):
     real = replace_module.find_all
 
-    def skip_last(text, pairs, compiled, where):
-        found = real(text, pairs, compiled, where)
+    def skip_last(text, pairs, compiled, where, **kw):
+        found = real(text, pairs, compiled, where, **kw)
         return found[:-1] if len(found) > 1 else found
     monkeypatch.setattr(replace_module, "find_all", skip_last)
     plan, out, rec = run_op(doc, "replace_table", {"pairs": [{"find": "a", "replace": "A", "whole_word": False}],
@@ -675,3 +675,216 @@ def test_replace_text_refuses_a_toc_entry_in_a_later_paragraph_of_the_field():
         "find": "standpipes per NFPA 14", "replace": "standpipes per NFPA 13"}}]))
     assert [(d.part, d.block_index) for d in plan.diffs] == [("word/document.xml", 4)]
     assert run_suite(pkg.data, apply_spec(pkg, frags).output_bytes(), plan.to_dict(), "a.docx", "b.docx").passed
+
+
+# ---- the skip list (backlog F1): the occurrences the user unticked in the preview ----------------------------------
+
+FILE = "/specs/21 13 19.docx"
+PAIRS = [{"find": "Owner", "replace": "Client"}]
+
+
+def run_named(src: bytes, params: Dict[str, Any], select: Dict[str, Any] = None, name: str = FILE):
+    """As ``run_op``, with the package and the verifier told the same file name (a skip names its file)."""
+    pkg = DocxPackage(src, name=name)
+    frag = get_op("replace_table").plan(pkg, select or {}, {"author": AUTHOR, **params})
+    plan = merge_fragments([frag])
+    work = pkg.copy()
+    get_op("replace_table").apply(work, frag)
+    out = work.output_bytes()
+    return plan, out, run_suite(src, out, plan.to_dict(), name, "out.docx")
+
+
+def replaced_text_assertion(plan) -> Dict[str, Any]:
+    return next(a for a in plan.property_assertions if a["kind"] == "replaced_text")
+
+
+def entry(o: Dict[str, Any], file: str = FILE) -> Dict[str, Any]:
+    """The skip entry the window writes for a listed occurrence."""
+    return {"file": file, "part": o["part"], "paragraph": o["paragraph"], "start": o["start"], "end": o["end"],
+            "find": o["find"]}
+
+
+def test_the_plan_lists_every_occurrence_with_its_context(doc):
+    plan, out, rec = run_named(doc, {"pairs": PAIRS, "tracked": False}, {"scope": ["document"]})
+    assert rec.passed, rec.to_markdown()
+    occ = replaced_text_assertion(plan)["occurrences"]
+    assert [o["paragraph"] for o in occ] == [4, 10, 11, 12, 13, 14, 15] and not any(o["skipped"] for o in occ)
+    h = occ[2]
+    assert h["where"] == "the body" and h["match"] == "Owner" and h["find"] == "Owner" and h["replace"] == "Client"
+    assert h["before"] == "H. See the" and h["after"] == "portal."       # whitespace collapsed, read for the user
+    assert h["key"] == f"word/document.xml|11|{h['start']}|{h['end']}|Owner" and isinstance(h["heading"], str)
+    assert replaced_text_assertion(plan)["skip"] == []
+
+
+@pytest.mark.parametrize("tracked", [True, False])
+def test_unticked_occurrences_are_left_as_they_are(doc, tracked):
+    first, _, _ = run_named(doc, {"pairs": PAIRS, "tracked": False}, {"scope": ["document"]})
+    occ = replaced_text_assertion(first)["occurrences"]
+    skip = [entry(o) for o in occ if o["paragraph"] in (11, 15)]
+    # (tracked: paragraph H's occurrence sits in a hyperlink, which a tracked change refuses — unticked, the rest go)
+    plan, out, rec = run_named(doc, {"pairs": PAIRS, "tracked": tracked, "skip": skip}, {"scope": ["document"]})
+    assert rec.passed, rec.to_markdown()
+    assert accepted_text(para(out, "H.")) == "H.\tSee the Owner portal."         # left as it is
+    assert accepted_text(para(out, "K.")) == "K.\tThe Client shall approve."     # the others replaced
+    assert accepted_text(para(out, "L.")).endswith("for the Owner.")
+    a = replaced_text_assertion(plan)
+    assert [o["paragraph"] for o in a["occurrences"] if o["skipped"]] == [11, 15]
+    assert a["skip"] == sorted([FILE, o["part"], o["paragraph"], o["start"], o["end"], "Owner"]
+                               for o in occ if o["paragraph"] in (11, 15))
+    assert a["expected_edits"] == len(occ) - 2 and 11 not in a["edited_blocks"]["word/document.xml"]
+    assert any("2 occurrence(s) left as they are at the user's word" in n for n in plan.notes)
+    assert "2 occurrence(s) left as they are" in rec.get("V10").data["results"][0] if "results" in rec.get("V10").data else True
+    sentence = get_op("replace_table").describe({}, {"pairs": PAIRS, "skip": skip})
+    assert "2 occurrences you unticked in the preview are left as they are" in sentence
+    one = get_op("replace_table").describe({}, {"pairs": PAIRS, "skip": skip[:1]})
+    assert "1 occurrence you unticked in the preview is left as it is" in one
+
+
+def test_unticking_one_of_two_overlapping_matches_says_which_applies(doc):
+    pairs = [{"find": "sprinkler systems", "replace": "wet systems"}, {"find": "systems for", "replace": "plants of"}]
+    with pytest.raises(JobException) as e:
+        run_named(doc, {"pairs": pairs}, {"scope": ["document"]})
+    assert e.value.code == "ambiguous"
+    p = para(doc, "C.")
+    text = textedit.RunText(p).text
+    a = text.index("systems for")
+    skip = [{"file": FILE, "part": "word/document.xml", "paragraph": 6, "start": a, "end": a + len("systems for"),
+             "find": "systems for"}]
+    plan, out, rec = run_named(doc, {"pairs": pairs, "tracked": False, "skip": skip}, {"scope": ["document"]})
+    assert rec.passed, rec.to_markdown()
+    assert accepted_text(para(out, "C.")) == "C.\tProvide [wet-pipe] [dry-pipe] [preaction] wet systems for the data halls."
+    occ = replaced_text_assertion(plan)["occurrences"]
+    assert [(o["find"], o["skipped"]) for o in occ] == [("sprinkler systems", False), ("systems for", True)]
+
+
+def test_a_skip_of_another_file_is_not_this_files_and_an_unmatched_one_is_refused(doc):
+    other = [{"file": "/specs/other.docx", "part": "word/document.xml", "paragraph": 11, "start": 0, "end": 5,
+              "find": "Owner"}]
+    plan, out, rec = run_named(doc, {"pairs": PAIRS, "tracked": False, "skip": other}, {"scope": ["document"]})
+    assert rec.passed and replaced_text_assertion(plan)["skip"] == []
+    assert accepted_text(para(out, "H.")) == "H.\tSee the Client portal."
+    stale = [{"file": FILE, "part": "word/document.xml", "paragraph": 11, "start": 0, "end": 5, "find": "Owner"}]
+    with pytest.raises(JobException) as e:
+        run_named(doc, {"pairs": PAIRS, "tracked": False, "skip": stale}, {"scope": ["document"]})
+    assert e.value.code == "skip-unmatched" and e.value.details["unmatched"] == [["word/document.xml", 11, 0, 5, "Owner"]]
+    from spec_surgeon.report import FAILURE_EXPLANATIONS
+    assert "skip-unmatched" in FAILURE_EXPLANATIONS
+    # the same path written another way is the same file
+    plan, out, rec = run_named(doc, {"pairs": PAIRS, "tracked": False, "skip": [
+        {**stale[0], "file": "/specs/../specs/21 13 19.docx", "start": 11, "end": 16}]}, {"scope": ["document"]})
+    assert rec.passed and accepted_text(para(out, "H.")) == "H.\tSee the Owner portal."
+
+
+@pytest.mark.parametrize("bad", [
+    "not a list", [1], [{"file": FILE}], [{"file": FILE, "part": "word/document.xml", "paragraph": 1, "start": 2,
+                                           "end": 1, "find": "Owner"}],
+    [{"file": FILE, "part": "word/document.xml", "paragraph": -1, "start": 0, "end": 1, "find": "Owner"}],
+    [{"file": FILE, "part": "word/document.xml", "paragraph": 1, "start": 0, "end": 1, "find": "Owner", "x": 1}],
+    [{"file": "", "part": "word/document.xml", "paragraph": 1, "start": 0, "end": 1, "find": "Owner"}],
+])
+def test_skip_entries_are_validated(doc, bad):
+    with pytest.raises(JobException) as e:
+        run_named(doc, {"pairs": PAIRS, "skip": bad}, {"scope": ["document"]})
+    assert e.value.code == "bad-params"
+
+
+# ---- planted defects around the skip list: each caught by V10 alone ------------------------------------------------
+
+def _skip_plan(doc, paragraph=11):
+    first, _, _ = run_named(doc, {"pairs": PAIRS, "tracked": False}, {"scope": ["document"]})
+    occ = replaced_text_assertion(first)["occurrences"]
+    return [entry(o) for o in occ if o["paragraph"] == paragraph]
+
+
+def test_defect_an_unticked_occurrence_replaced_anyway(doc):
+    """The plan honours the skip; the output replaced the occurrence regardless (a wrong OUTPUT)."""
+    skip = _skip_plan(doc)
+    pkg = DocxPackage(doc, name=FILE)
+    op = get_op("replace_table")
+    frag_skip = op.plan(pkg, {"scope": ["document"]}, {"author": AUTHOR, "pairs": PAIRS, "tracked": False, "skip": skip})
+    frag_all = op.plan(pkg, {"scope": ["document"]}, {"author": AUTHOR, "pairs": PAIRS, "tracked": False})
+    work = pkg.copy()
+    op.apply(work, frag_all)
+    rec = run_suite(doc, work.output_bytes(), merge_fragments([frag_skip]).to_dict(), FILE, "out.docx")
+    assert "V10" in failed(rec)
+    assert any("unpredicted change" in e and "Owner portal" in e for e in v10_errors(rec))   # the residual check
+
+
+def test_defect_the_plan_hides_the_skip_it_honoured(doc):
+    """The output leaves the occurrence; the plan's record says no skip was honoured (a wrong RECORD)."""
+    skip = _skip_plan(doc)
+    plan, out, rec = run_named(doc, {"pairs": PAIRS, "tracked": False, "skip": skip}, {"scope": ["document"]})
+    assert rec.passed
+    hidden = plan.to_dict()
+    a = next(x for x in hidden["property_assertions"] if x["kind"] == "replaced_text")
+    a["skip"] = []
+    for o in a["occurrences"]:
+        o["skipped"] = False
+    rec = run_suite(doc, out, hidden, FILE, "out.docx")
+    assert failed(rec) == ["V10"]
+    assert any("found here, the plan predicted" in e for e in v10_errors(rec))
+
+
+def test_defect_the_occurrence_list_is_wrong(doc):
+    """The preview's list misses an occurrence, or marks one skipped that was replaced: V10 says so."""
+    skip = _skip_plan(doc)
+    plan, out, rec = run_named(doc, {"pairs": PAIRS, "tracked": False, "skip": skip}, {"scope": ["document"]})
+    short = plan.to_dict()
+    a = next(x for x in short["property_assertions"] if x["kind"] == "replaced_text")
+    a["occurrences"] = a["occurrences"][1:]
+    rec = run_suite(doc, out, short, FILE, "out.docx")
+    assert failed(rec) == ["V10"] and any("list of occurrences differs" in e for e in v10_errors(rec))
+    flipped = plan.to_dict()
+    a = next(x for x in flipped["property_assertions"] if x["kind"] == "replaced_text")
+    a["occurrences"][0]["skipped"] = True
+    rec = run_suite(doc, out, flipped, FILE, "out.docx")
+    assert failed(rec) == ["V10"] and any("list of occurrences differs" in e for e in v10_errors(rec))
+
+
+def test_shared_defect_another_files_skip_honoured(doc, monkeypatch):
+    """A wrong IMPLEMENTATION shared by plan and apply: every file is read as the skip's file. The op honours and
+    records another file's skip; the verifier reads the path on its own and refuses."""
+    monkeypatch.setattr(replace_module, "same_file", lambda a, b: True)
+    other = [{**_skip_plan(doc)[0], "file": "/specs/other.docx"}]
+    plan, out, rec = run_named(doc, {"pairs": PAIRS, "tracked": False, "skip": other}, {"scope": ["document"]})
+    assert accepted_text(para(out, "H.")) == "H.\tSee the Owner portal."         # both sides of the op agree …
+    assert failed(rec) == ["V10"]                                               # … the verifier does not
+    assert any("another file" in e for e in v10_errors(rec))
+
+
+def test_shared_defect_a_skip_also_drops_the_hit_from_the_list(doc, monkeypatch):
+    """A wrong IMPLEMENTATION: the matcher drops the unticked hit before anyone lists it, so the plan honours the skip
+    silently and lists nothing for it. The verifier finds the occurrence and the list differs."""
+    real = replace_module.all_hits
+    skip = _skip_plan(doc)                                       # listed by the sound matcher
+
+    def without_skipped(text, pairs, compiled, where):
+        return [h for h in real(text, pairs, compiled, where) if not text[h[0]:h[1]] == "Owner" or "portal" not in text]
+    monkeypatch.setattr(replace_module, "all_hits", without_skipped)
+    with pytest.raises(JobException) as e:                       # the skip names a hit the defective matcher lost
+        run_named(doc, {"pairs": PAIRS, "tracked": False, "skip": skip}, {"scope": ["document"]})
+    assert e.value.code == "skip-unmatched"
+    plan, out, rec = run_named(doc, {"pairs": PAIRS, "tracked": False}, {"scope": ["document"]})
+    assert accepted_text(para(out, "H.")) == "H.\tSee the Owner portal."
+    assert failed(rec) == ["V10"] and any("list of occurrences differs" in e for e in v10_errors(rec))
+
+
+def test_a_refusal_carries_the_occurrences_so_the_user_can_untick_the_one_it_names(doc):
+    """Tracked, paragraph H's occurrence sits in a hyperlink: the plan refuses the file (nested-container) and the
+    refusal lists every occurrence found up to it, the refused one included; unticked, the tracked plan goes ahead."""
+    with pytest.raises(JobException) as e:
+        run_named(doc, {"pairs": PAIRS, "tracked": True}, {"scope": ["document"]})
+    assert e.value.code == "nested-container"
+    listed = e.value.details["occurrences"]
+    assert [o["paragraph"] for o in listed] == [4, 10, 11] and not any(o["skipped"] for o in listed)
+    skip = [entry(o) for o in listed if o["paragraph"] == 11]
+    plan, out, rec = run_named(doc, {"pairs": PAIRS, "tracked": True, "skip": skip}, {"scope": ["document"]})
+    assert rec.passed, rec.to_markdown()
+    assert accepted_text(para(out, "H.")) == "H.\tSee the Owner portal."
+    assert accepted_text(para(out, "K.")) == "K.\tThe Client shall approve."
+    # the same for two pairs that overlap: the refusal lists both, and unticking one says which applies
+    pairs = [{"find": "sprinkler systems", "replace": "wet systems"}, {"find": "systems for", "replace": "plants of"}]
+    with pytest.raises(JobException) as e:
+        run_named(doc, {"pairs": pairs}, {"scope": ["document"]})
+    assert e.value.code == "ambiguous"
+    assert [(o["find"], o["paragraph"]) for o in e.value.details["occurrences"]] == [("sprinkler systems", 6), ("systems for", 6)]

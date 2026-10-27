@@ -236,6 +236,39 @@ def test_typed_words_are_the_only_words_a_button_may_place(folder):
     assert errors and "never gave them verbatim" in " ".join(errors)
 
 
+def test_a_skip_is_accepted_only_as_the_user_unticked_it(folder):
+    """Backlog F1, rule 1: a replace_table.skip entry passes the gate only when the window recorded it from the user's
+    unticks (its key); a spec that writes one on its own is refused, in every mode."""
+    from spec_surgeon.ops import get_op
+    files = docs(folder)
+    built = recipes.build("find_replace", {"pairs": [{"find": "sprinkler", "replace": "fire sprinkler"}],
+                                           "whole_word": False, "match_case": False},
+                          recipes.Context(files, None, []))
+    first = files[0]
+    op = built.spec["ops"][0]
+    listed = get_op("replace_table").plan(DocxPackage.from_path(first), op.get("select") or {}, op["params"])
+    occ = next(a for a in listed.property_assertions if a["kind"] == "replaced_text")["occurrences"]
+    assert occ, "the fixture holds the word"
+    o = occ[0]
+    skip = {"file": str(first), "part": o["part"], "paragraph": o["paragraph"], "start": o["start"], "end": o["end"],
+            "find": o["find"]}
+    spec = {**built.spec, "ops": [{**op, "params": {**op["params"], "skip": [skip]}}]}
+    batch = compiler._Batch(files, None)
+    sources = [built.request, *built.sources]
+    _, errors = compiler.compose_submission(spec, batch, sources)
+    assert errors and "did not untick" in errors[0]
+    _, errors = compiler.compose_submission(spec, batch, sources, skips=[compiler.skip_record_key({**skip, "start": 99})])
+    assert errors and "did not untick" in errors[0]
+    _, errors = compiler.compose_submission(spec, batch, sources, unguarded=True, shown=["anything"])
+    assert errors and "did not untick" in errors[0]              # Obliterate lifts no part of this
+    outcome, errors = compiler.compose_submission(spec, batch, sources, skips=[compiler.skip_record_key(skip)])
+    assert errors == [] and outcome["ops"][0]["params"]["skip"] == [skip]
+    # a malformed entry is validate_spec's refusal, in its own words
+    bad = {**built.spec, "ops": [{**op, "params": {**op["params"], "skip": [{**skip, "offset": 1}]}}]}
+    _, errors = compiler.compose_submission(bad, batch, sources, skips=[compiler.skip_record_key(skip)])
+    assert errors and "offset" in errors[0]
+
+
 def test_the_tracked_checkbox_sets_the_mode_and_clean_copies_are_the_default(folder):
     files = docs(folder)
     built, _, _ = built_and_gated("remove_hidden_text", {}, files)

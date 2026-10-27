@@ -551,6 +551,43 @@ class DocumentTask:
                          f"“{START_OVER}” and ask again.")
         self.save()
 
+    def attach_folder(self, folder) -> Dict[str, Any]:
+        """**Add a folder of documents** (backlog F3): the folder's own ``.docx`` files, sorted by name, attached
+        through ``attach`` like any other (Word's ``~$`` lock files skipped, subfolders not entered); the app message
+        says how many documents its subfolders hold, to add those folders too. The app's own folders (the scratch
+        tree, the run root, the config folder) are refused as a source, like Export refuses them as a destination.
+        Returns ``{"folder", "attached", "subfolders"}``."""
+        from .settings import config_dir, scratch_root
+        folder = Path(folder)
+        if not folder.is_dir():
+            raise ValueError(f"{folder} is not a folder.")
+        folder = folder.resolve()
+        for own in (self.session.out_root, scratch_root(), config_dir()):
+            root = _same_file_key(own)
+            if _same_file_key(folder) == root or _same_file_key(folder).startswith(root.rstrip("\\/") + os.sep):
+                raise ValueError(f"{folder} is one of the app's own folders; choose a folder of your documents.")
+        docs = sorted((p for p in folder.iterdir() if p.is_file() and p.suffix.lower() == ".docx"
+                       and not p.name.startswith("~$")), key=lambda p: p.name.casefold())
+        below = 0
+        for sub in folder.iterdir():
+            if sub.is_dir():
+                below += sum(1 for p in sub.iterdir() if p.is_file() and p.suffix.lower() == ".docx"
+                             and not p.name.startswith("~$"))
+        if not docs:
+            raise ValueError(f"{folder.name} holds no Word documents of its own"
+                             + (f"; its subfolders hold {below}. Add those folders instead." if below else "."))
+        known = {a.path for a in self.attachments}
+        fresh = [p for p in docs if p.resolve() not in known]
+        self.attach([str(p) for p in docs])
+        note = (f"{len(fresh)} document{'s' if len(fresh) != 1 else ''} added from {folder.name}"
+                + (f" ({len(docs) - len(fresh)} already attached)" if len(docs) != len(fresh) else "") + ".")
+        if below:
+            note += (f" Its subfolders hold {below} more Word document{'s' if below != 1 else ''}, not added; add "
+                     f"those folders too if you want them.")
+        self.say(note)
+        self.save()
+        return {"folder": str(folder), "attached": len(fresh), "subfolders": below}
+
     def _say_same_names(self, fresh: List[Path]) -> None:
         """A document attached beside another of the same name (the 1.8.0 live run: a template's folder copy of
         21 13 13 attached as a 13th document) is named once, with both folders, so a template attached as a document
@@ -841,12 +878,13 @@ class DocumentTask:
         return None
 
     def perform(self, action, *, text="", token="", choice_id="", chip=False, hold=(), wording=None, recipe="",
-                inputs=None, log=lambda _: None, events=None):
+                inputs=None, skip=(), log=lambda _: None, events=None):
         """Worker entry point. One ledger covers every nested model call and every turn. ``events`` is the window's
         live channel (docs/WEB_API.md: status, activity, text_delta, thinking_delta, message, plan, samples, results,
         question, cost); without one the job runs silently and the view says everything at the end. ``hold`` (the
         primary action) names the previewed documents the user set aside: they go on the to-do list, the others run.
-        ``recipe`` and ``inputs`` (the ``recipe`` action) are a Safe-mode button and its form."""
+        ``recipe`` and ``inputs`` (the ``recipe`` action) are a Safe-mode button and its form. ``skip`` (the
+        ``occurrences`` action) names, by key, the find-and-replace occurrences the user unticked in the preview."""
         self.problem = ""
         self._events = events
         self.save(in_progress=True)
@@ -872,6 +910,8 @@ class DocumentTask:
                     self._primary(token, checkpointed_log, hold=hold)
                 elif action == "recipe":
                     self._recipe(recipe, inputs, checkpointed_log)
+                elif action == "occurrences":
+                    self._occurrences(skip, checkpointed_log)
                 else:
                     raise ValueError("Unknown task action")
         except llm.BudgetExceeded:
@@ -1086,6 +1126,95 @@ class DocumentTask:
         if nothing:
             self.say("None of the documents can take this change as they are; each one's reason is under Left "
                      "untouched.")
+
+    def _occurrences_view(self, preview) -> List[Dict[str, Any]]:
+        """The find-and-replace occurrences the waiting plan lists (backlog F1), per document of the plan — every
+        planned document, not the sampled ones only — each item with the key the page sends back to leave it as it
+        is. A document the plan refused lists what was found up to the refusal, with the reason, so the user can
+        untick the occurrence the refusal names. Empty when no plan lists any. A plan done in steps lists its first
+        step's only."""
+        from .compiler import skip_record_key
+        bp = getattr(preview, "batch_plan", None)
+        out: List[Dict[str, Any]] = []
+        for f in getattr(bp, "files", None) or []:
+            listed = f.occurrences()
+            if not listed:
+                continue
+            source = str(f.source)
+            refused = f.status != "planned"
+            out.append({"source": source, "name": Path(source).name, "status": "refused" if refused else "planned",
+                        "reason": refusal_message(f.exception) if refused else "",
+                        "items": [{"key": skip_record_key({"file": source, **o}), "part": o.get("part", ""),
+                                   "paragraph": o.get("paragraph", 0), "start": o.get("start", 0),
+                                   "end": o.get("end", 0), "where": o.get("where", ""),
+                                   "heading": o.get("heading", ""), "before": o.get("before", ""),
+                                   "match": o.get("match", ""), "after": o.get("after", ""),
+                                   "find": o.get("find", ""), "replace": o.get("replace", ""),
+                                   "skipped": bool(o.get("skipped")), "op_index": o.get("op_index", 0)}
+                                  for o in listed]})
+        return out
+
+    def _occurrences(self, keys, log):
+        """The user's unticks taken into the waiting plan (backlog F1): every find-and-replace op of the previewed
+        spec gets the unticked occurrences of its own as its skip list (an op's skip list is exactly the unticked
+        set; a tick puts an occurrence back), the spec passes the gate again with those keys as the ones recorded
+        from the user's unticks (``compiler.compose_submission(skips=)``), and the preview is made again on the same
+        documents. Nothing is created; a preview the gate refuses stays as it was; in Safe mode Discard still shows
+        what came before the button."""
+        import copy
+        from . import compiler
+        from .editspec import is_chain
+        from .layouts import is_layout_plan
+        s = self.session
+        if not isinstance(keys, (list, tuple)) or not all(isinstance(k, str) for k in keys):
+            raise ValueError("The unticked occurrences could not be read.")
+        preview = s.outcome().preview
+        if self.stage != "preview" or s.spec is None or preview is None or s.recovery is not None:
+            self.say("There is no preview to update.")          # said, as a button's unusable form is; nothing voided
+            return
+        listed = {item["key"]: (doc["source"], item) for doc in self._occurrences_view(preview) for item in doc["items"]}
+        if any(k not in listed for k in keys):
+            self.say("An occurrence to leave is not in the preview's list; look at the list again.")
+            return                                              # the preview and its token stand as they were
+        by_op: Dict[int, List[Dict[str, Any]]] = {}
+        for key in dict.fromkeys(keys):
+            source, item = listed[key]
+            by_op.setdefault(int(item["op_index"]), []).append(
+                {"file": source, "part": item["part"], "paragraph": int(item["paragraph"]), "start": int(item["start"]),
+                 "end": int(item["end"]), "find": item["find"]})
+        spec = copy.deepcopy(s.spec)
+        if is_layout_plan(spec):
+            targets = [layout["spec"] for layout in spec.get("layouts") or []]
+        else:
+            targets = [spec]
+        ops_lists = [(t["stages"][0]["spec"] if is_chain(t) else t).get("ops") or [] for t in targets]
+        for ops in ops_lists:
+            for i, op in enumerate(ops):
+                if op.get("op") != "replace_table":
+                    continue
+                params = op.setdefault("params", {})
+                if by_op.get(i):
+                    params["skip"] = [dict(e) for e in by_op[i]]
+                else:
+                    params.pop("skip", None)
+        files = s.files(outcome=False)
+        batch = compiler._Batch(files, self.template(), input_files=self.references())
+        sources = [w for w in (*self.decisions, *self.word_sources) if isinstance(w, str) and w.strip()]
+        shown = [m["text"] for m in self.messages if m.get("role") == "assistant" and isinstance(m.get("text"), str)]
+        self._emit({"type": "status", "kind": "checking", "text": "Checking the documents…"})
+        outcome, errors = compiler.compose_submission(spec, batch, sources, leave_out=list(s.left_out),
+                                                      unguarded=s.unguarded, shown=shown if s.unguarded else (),
+                                                      skips=[compiler.skip_record_key(e) for es in by_op.values() for e in es])
+        if errors or outcome is None:
+            self._revision += 1
+            self.say("The preview could not be updated with those occurrences left as they are: " + "; ".join(errors[:3]))
+            return
+        n = sum(len(es) for es in by_op.values())
+        s._set_outcome(spec=outcome, source=s.outcome_source, left_out=list(s.left_out),
+                       left_out_reasons=dict(s.left_out_reasons), export=s.export)
+        self.say(f"{n} occurrence{'s' if n != 1 else ''} will be left as {'they are' if n != 1 else 'it is'}; the "
+                 f"preview is being made again." if n else "Every occurrence is back in; the preview is being made again.")
+        self._settle(log)
 
     def hand_off(self, paths) -> None:
         """Safe mode's "Try these in Default mode": documents a button left untouched go on the to-do list with the
@@ -1833,6 +1962,7 @@ class DocumentTask:
                              "pages_before": sv.pages_before, "pages_after": sv.pages_after, "passed": sv.passed,
                              "failures": failed_preview_checks(sv), "geometry": sv.geometry}
                             for sv in samples],
+                "occurrences": self._occurrences_view(preview),
                 "warnings": list(dict.fromkeys(getattr(preview, "warnings", []) or [])),
                 "blocking": any(f.get("severity") == "block"
                                 for f in self._undelivered_findings(getattr(preview, "review", None)))}
@@ -1942,6 +2072,7 @@ class DocumentTask:
                 "choices": [{"id": c.id, "label": c.label, "words": list(c.words), "detail": c.detail,
                              "editable": getattr(c, "editable", False)} for c in choices],
                 "samples": samples, "set_aside": set_aside,
+                "occurrences": self._occurrences_view(pages) if pages is not None else [],
                 "warnings": list(dict.fromkeys(warnings)), "results": dict(self.results),
                 "pdfs": dict(self.pdfs), "pdf_unverified": self._pdf_marks(),
                 "export": s.export if self.stage == "preview" else "",

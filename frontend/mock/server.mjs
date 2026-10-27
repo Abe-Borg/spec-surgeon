@@ -214,6 +214,26 @@ function samples() {
   }));
 }
 
+/** The find-and-replace list of a waiting plan (docs/WEB_API.md `occurrences`): every occurrence per document. */
+function occurrences(skipped = []) {
+  const item = (source, paragraph, before, match, after, heading = "", part = "word/document.xml") => ({
+    key: `${source}\t${part}\t${paragraph}\t${before.length}\t${before.length + match.length}\t${match}`,
+    part, paragraph, start: before.length, end: before.length + match.length,
+    where: part === "word/document.xml" ? "the body" : "a footer", heading, before, match, after,
+    find: "FM Global", replace: "FM Approvals", skipped: false, op_index: 0,
+  });
+  const docs = DOCS.slice(0, 3).map((d, i) => ({
+    source: d.path, name: name(d.path), status: "planned", reason: "",
+    items: [
+      item(d.path, 12, "A. The Owner's insurer is", "FM Global", "and all equipment shall be FM Approved.", "1.03"),
+      item(d.path, 13, "B. The auditor is", "FM Global", "and reviews the hydraulic calculations.", "1.03"),
+      item(d.path, 16 + i, "E. See Section 21 10 00 for", "FM Global", "coordination.", "1.05"),
+    ],
+  }));
+  for (const doc of docs) for (const it of doc.items) it.skipped = skipped.includes(it.key);
+  return docs;
+}
+
 // document_task.OBLITERATE_ON / OBLITERATE_OFF
 const OBLITERATE_ON = "Obliterate mode is on. Claude may write wording and custom methods that change anything Word stores, and a copy whose checks fail is delivered marked UNVERIFIED instead of being held back. Copies only; your originals are never written. What was planned before is void.";
 const OBLITERATE_OFF = "Obliterate mode is off: every placed word is yours again, custom methods are formatting only, and a copy whose checks fail is held back. What was planned in Obliterate mode is void.";
@@ -280,6 +300,16 @@ const TUTORIAL_SCENARIOS = {
     return v;
   },
   copies: () => SCENARIOS["safe-done"](),
+  find: () => {
+    const v = SCENARIOS.safe();
+    v.stage = "preview";
+    v.messages = [msg("user", "Find and replace: “FM Global” → “FM Approvals”"), msg("app", "1 occurrence will be left as it is; the preview is being made again.")];
+    v.samples = samples();
+    v.occurrences = occurrences([occurrences()[1].items[0].key]);
+    v.action = { label: "Create edited copies", token: "tok-tour-find", kind: "approve", can_hold: true };
+    v.plan = { groups: [], targets: [], set_aside: [], stages: 1 };
+    return v;
+  },
   conversation: () => SCENARIOS.attached(),
   question: () => SCENARIOS.question(),
   plan: () => {
@@ -793,7 +823,8 @@ async function recipeJob(res, recipe) {
   await s.emit({ type: "plan", plan: view.plan });
   await s.emit({ type: "status", kind: "rendering", text: "" });
   view.samples = samples();
-  await s.emit({ type: "samples", samples: view.samples, warnings: [], blocking: false });
+  view.occurrences = recipe.id === "find_replace" ? occurrences() : [];
+  await s.emit({ type: "samples", samples: view.samples, occurrences: view.occurrences, warnings: [], blocking: false });
   view.stage = "preview";
   view.action = exporting
     ? { label: "Save clean PDFs", token: `tok-approve-${++seq}`, kind: "approve", can_hold: true, export: "pdf" }
@@ -848,6 +879,33 @@ async function pauseJob(res, userText) {
   view.budget = { paused: true, reason: "limit" };
   view.action = { label: "Continue", token: `tok-continue-${++seq}`, kind: "continue", can_hold: false };
   await s.emit({ type: "cost", cost: spend(17.4, 38) });
+  s.end();
+}
+
+/** The unticks taken into the waiting plan: the list marked, the pages made again, a new token. */
+async function occurrencesJob(res, skip) {
+  const s = startStream(res);
+  if (view.stage !== "preview" || (view.occurrences ?? []).length === 0) {
+    view.messages.push(msg("app", "There is no preview to update."));
+    s.end();
+    return;
+  }
+  const known = new Set(view.occurrences.flatMap((d) => d.items.map((i) => i.key)));
+  if (!skip.every((k) => known.has(k))) {
+    view.messages.push(msg("app", "An occurrence to leave is not in the preview's list; look at the list again."));
+    s.end();
+    return;
+  }
+  await s.emit({ type: "status", kind: "checking", text: "Checking the documents…" });
+  const n = skip.length;
+  view.messages.push(msg("app", n ? `${n} occurrence${n === 1 ? "" : "s"} will be left as ${n === 1 ? "it is" : "they are"}; the preview is being made again.` : "Every occurrence is back in; the preview is being made again."));
+  view.samples = [];
+  await s.emit({ type: "plan", plan: view.plan });
+  await s.emit({ type: "status", kind: "rendering", text: "" });
+  view.samples = samples();
+  view.occurrences = occurrences(skip);
+  await s.emit({ type: "samples", samples: view.samples, occurrences: view.occurrences, warnings: [], blocking: false });
+  view.action = { ...view.action, token: `tok-approve-${++seq}` };
   s.end();
 }
 
@@ -1134,6 +1192,13 @@ async function handle(req, res) {
       if (files.length) voidPlan();
       return json(res, 200, view);
     }
+    case "POST /api/attach-folder": {
+      if (view.busy) return busyRefusal();
+      if (!process.env.MOCK_PICK) return json(res, 501, { error: "This window has no native folder dialog; drop the files on the page instead." });
+      for (const d of DOCS) if (!view.attachments.some((a) => a.path === d.path)) view.attachments.push({ ...d });
+      view.messages.push(msg("app", `${DOCS.length} documents added from Specs.`));
+      return json(res, 200, view);
+    }
     case "POST /api/pick":
       if (process.env.MOCK_PICK) {
         const body = await readJson(req);
@@ -1223,6 +1288,14 @@ async function handle(req, res) {
       const hold = Array.isArray(body.hold) ? body.hold.filter((p) => typeof p === "string") : [];
       if (hold.length && !view.action.can_hold) return json(res, 409, { error: "A document cannot be set aside right now." });
       return primaryJob(res, body.token, hold);
+    }
+    case "POST /api/occurrences": {
+      if (view.busy) return busyRefusal();
+      const body = await readJson(req);
+      if (!Array.isArray(body.skip) || !body.skip.every((k) => typeof k === "string")) {
+        return json(res, 400, { error: "The unticked occurrences could not be read." });
+      }
+      return occurrencesJob(res, body.skip);
     }
     case "POST /api/stop":
       if (!running) return json(res, 409, { error: "Nothing is running." });

@@ -17,14 +17,14 @@ import { TRUST_FACTS as F } from "./trustFacts.ts";
  * Bump whenever chapter or step ORDER changes: the resume record (lib/tourStorage.ts) keeps numeric indexes, and a
  * stale one would land a reload on another chapter than the one it was left at. A bump discards it.
  */
-export const TOUR_VERSION = 1;
+export const TOUR_VERSION = 2;
 
 /** The version a finished tour is recorded as (settings.json `tutorial_version`); bump it when the tour changes
  *  enough that someone who finished the old one should be invited again. */
-export const TOUR_COMPLETION_VERSION = 1;
+export const TOUR_COMPLETION_VERSION = 2;
 
 /** The chapter states the server builds (src/spec_surgeon/tutorial.py SCENARIOS; tests/tour.test.ts pins the two). */
-export type TourScenario = "start" | "button" | "copies" | "conversation" | "question" | "plan" | "todo";
+export type TourScenario = "start" | "button" | "copies" | "find" | "conversation" | "question" | "plan" | "todo";
 
 /** The form the Safe-mode chapter opens on the page before its button is pressed: the template button, with the
  *  value the server's `button` state was built with (tutorial.STAMP_VALUE; the test pins it). */
@@ -43,7 +43,7 @@ export type TourMode = "optional" | "explanatory";
 
 /** What the view must hold for a step's control to be on screen; unmet, the step keeps its words beside the
  *  workbench and says the control is not available, never a pretend one. */
-export type TourNeeds = "samples" | "set-aside" | "action" | "results" | "left-untouched" | "todo" | "question";
+export type TourNeeds = "samples" | "set-aside" | "action" | "results" | "left-untouched" | "todo" | "question" | "occurrences";
 
 export interface TourStep {
   id: string;
@@ -147,6 +147,16 @@ export const TOUR: readonly TourChapter[] = [
         title: "Every file is checked when it arrives",
         body:
           `Add Word documents opens a file dialog, and dropping .docx files anywhere in the window attaches them too; only the files you attach are edited, nothing is picked up from their folders. The moment a file arrives it is read, in milliseconds and with no AI call. One file here is greyed out with its reason: it is not a Word package at all, so it never enters a plan. The rest are listed by name; a .docx is opened up to ${F.maxDocxMB} MiB.`,
+      },
+      {
+        id: "folder",
+        capabilities: ["documents.folder"],
+        mode: "explanatory",
+        anchor: "tray-documents",
+        placement: "left",
+        title: "A whole folder at once",
+        body:
+          "Add a folder of documents opens a folder dialog and attaches every .docx file the folder holds, as if you had picked them one by one: each is checked on arrival the same way. Its subfolders are not entered; the window says how many documents they hold, and you add those folders too if you want them. Word's own lock files are skipped. Nothing is remembered about the folder.",
       },
       {
         id: "template",
@@ -318,6 +328,24 @@ export const TOUR: readonly TourChapter[] = [
         title: "Set aside for more work",
         body:
           "The document marked with the red X is on your to-do list, with why. In Safe mode there is no conversation to plan it again, so the card offers Default mode. Documents on the list are tagged To do among your documents and stay out of every plan until you work on them or put one back. Nothing on the list is changed.",
+      },
+    ],
+  },
+  {
+    id: "find",
+    title: "Find and replace, occurrence by occurrence",
+    scenario: "find",
+    steps: [
+      {
+        id: "occurrences",
+        capabilities: ["preview.occurrences"],
+        mode: "explanatory",
+        anchor: "occurrences",
+        needs: "occurrences",
+        placement: "left",
+        title: "Every occurrence, with a checkbox",
+        body:
+          "The Find and replace button lists every occurrence it found, in every document of the plan, with the words around it and the article it sits under. Untick one to leave it as it is: a historical reference, a line that should keep the old wording. Update the preview makes the plan and the pages again with the unticked ones left out, and Create edited copies waits until you do. The checker confirms that each unticked occurrence was left untouched and that nothing else was skipped. Here one occurrence in the second document is already unticked. A document the plan set aside lists what it found too, so the occurrence its reason names can be unticked and the document then goes ahead.",
       },
     ],
   },
@@ -544,6 +572,8 @@ export function stepNeedsMet(step: Pick<TourStep, "needs">, view: View): boolean
       return (view.left_untouched ?? []).length > 0;
     case "todo":
       return (view.todo ?? []).length > 0;
+    case "occurrences":
+      return (view.occurrences ?? []).length > 0;
     case "question":
       return view.stage === "question";
   }

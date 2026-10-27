@@ -26,7 +26,7 @@ step: what it leaves untouched waits beside the copies instead of going to recov
 
 In Safe mode the box you type in gives way to buttons, in groups: headers and footers (match to template, remove, a
 watermark, swap the logo), fonts and formatting (match body formatting to template, match font to template), text
-(find and replace), clean up (accept all tracked changes,
+(find and replace, with every occurrence listed to untick), clean up (accept all tracked changes,
 remove comments, highlighting, hidden text or empty paragraphs) and files and properties (name the copies by section
 number and title, the document title property, Track Changes off, save clean PDFs). A button that cannot be pressed yet says why when
 the pointer rests on it (no documents, no template, no picture). Pressing one opens a short form — the words to find
@@ -269,7 +269,11 @@ touched:
 
 Drop `.docx` files anywhere in the window or use **Add Word documents**. Dropping a file attaches that file
 only; it never selects the other documents in its folder, and tables or pictures beside the documents are not
-listed. Files from different folders can be used together, including files with the same name. Each file has
+listed. **Add a folder of documents** opens a folder dialog and attaches the folder's own `.docx` files, as if
+you had picked them one by one (`DocumentTask.attach_folder`): its subfolders are not entered, and the chat says how
+many documents they hold so you can add those folders too; Word's `~$` lock files are skipped, the app's own folders
+are refused as a source, and nothing about the folder is remembered. Files from different folders can be used
+together, including files with the same name. Each file has
 a remove button. **Add a template (optional)** attaches one reference document; it is never part of the batch,
 and if one of the documents is a copy of the template the window says so and asks you to remove one of them.
 
@@ -391,6 +395,21 @@ in steps and only its last step's pages are rendered (a step whose reference is 
 step when the copies are created). If no renderer can provide usable page evidence, a card
 says that page appearance was not checked and asks you to check the edited copies in Word.
 
+**Find and replace, occurrence by occurrence.** A plan with a find-and-replace (`replace_table`: Safe mode's button,
+or a conversation's) lists every occurrence it found under the previews, in every document of the plan — not the
+sampled ones only — with the part it sits in, its paragraph, the article it sits under where the structure analysis
+reads one, and the words around it. Each has a checkbox. Untick an occurrence to leave it as it is (a historical
+reference, a line that should keep the old wording) and press **Update the preview**: the window writes the unticked
+occurrences into the plan (`replace_table.params.skip`, each by its file, part, paragraph and place in the text), the
+plan passes the gate again with exactly those as the ones you unticked (a request can never write `skip` on its own),
+and the preview is made again with them left out; **Create edited copies** waits while your ticks differ from the
+preview's. The checker re-finds every occurrence on its own, confirms each unticked one is untouched and every other
+one replaced, and each copy's record and the batch report list them all (the occurrence log). A document the plan set
+aside — two pairs overlapping on the same words, an occurrence inside a hyperlink that a tracked change cannot take —
+lists what was found up to the refusal too, so the occurrence its reason names can be unticked and the document then
+plans with the others. A plan done in steps lists its first step's occurrences only. The ticks belong to the plan on
+screen; a new plan starts them over.
+
 The pages are those of the plan in front of you, and nothing older. Sending a message or picking a choice takes
 the plan and its pages off the window while the reply is worked out, and a new plan's pages replace them; once
 copies are created, their pages leave with the plan. During recovery, a document whose copy you already saved
@@ -477,7 +496,8 @@ what it does. Its label says what it does:
 
 The button is tied to what is on screen. If a document, the template, the plan, a preview or a visual finding
 changes, the displayed action is void and the window says "The documents or plan changed. Review the updated
-plan first." Typing a new message disables the button until the message is sent. The marks on the previews
+plan first." Typing a new message disables the button until the message is sent, and unticking a find-and-replace
+occurrence holds it until **Update the preview** has made the plan again. The marks on the previews
 belong to the displayed plan too: a new plan or preview starts the review over.
 
 ## What is left untouched, and why
