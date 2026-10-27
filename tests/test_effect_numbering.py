@@ -106,3 +106,41 @@ def test_labels_the_verifier_cannot_read_are_never_approved(source, monkeypatch)
     monkeypatch.setattr(labels, "v_label_rows", unreadable)
     said = errors_of(source, output, goal, binding)
     assert "cannot be read" in said and "unapproved package-member change: word/numbering.xml" in said
+
+
+def test_a_numbering_scheme_another_effect_imports_is_left_to_that_effects_proof(tmp_path, monkeypatch):
+    """Codex on #118: beside a numbering effect that imports a scheme, the numbering part is proven whole by that
+    effect's own check (which refuses label fonts changed on the imported levels, so such a method leaves the labels
+    alone, numbering_levels false); the label-font check must not judge that part against the original plus label
+    fonts, nor read it at all."""
+    import copy
+    import hashlib
+    from make_fixtures import SCHEME_LEVELS, build_numbering, build_scheme_example
+    from spec_surgeon.editspec import apply_spec, plan_spec
+    from spec_surgeon.goals import compile_goal_candidate
+    from spec_surgeon.package import DocxPackage
+    from test_goal_operation_contracts import effect
+    import spec_surgeon.verify.numberinglabels as labels
+    source, template = tmp_path / "spec.docx", tmp_path / "scheme.docx"
+    source.write_bytes(build_numbering(shared_restart=False))
+    template.write_bytes(build_scheme_example())
+    pin = hashlib.sha256(template.read_bytes()).hexdigest()
+    goal = contract(effect("numbering", {"levels": list(SCHEME_LEVELS)}, template=str(template), template_sha256=pin),
+                    FONT_ALL)
+    binding = resolve_goal(source, goal)["binding"]
+    data = source.read_bytes()
+    for stage in compile_goal_candidate(source, goal, binding)["chain"]["stages"]:
+        spec = copy.deepcopy(stage["spec"])
+        for op in spec["ops"]:
+            if op["op"] == "set_font":
+                op["params"]["numbering_levels"] = False          # the labels left alone: the scheme's own fonts
+        pkg = DocxPackage(data)
+        plan, fragments = plan_spec(pkg, spec)
+        data = apply_spec(pkg, fragments).output_bytes()
+    assert VPackage(data).read(NUMBERING) != VPackage(source.read_bytes()).read(NUMBERING)   # the imported scheme
+
+    def never(*a, **k):
+        raise AssertionError("the label-font check read a part another proof owns")
+    monkeypatch.setattr(labels, "v_label_rows", never)
+    result = verify_effects(source, data, goal, binding)
+    assert result["passed"], result

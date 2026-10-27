@@ -1059,7 +1059,9 @@ def verify_effects(original: bytes | Path, candidate: bytes | Path, contract: di
                 allowed_changed.add(operation_context.styles_part)
         # A whole-document font effect reaches the list labels: the font operations set every used level's label
         # font, symbol and picture bullets kept. The used levels are read here from the original, and exactly that
-        # change of the numbering part is approved — or the part stays unapproved and E6 refuses the copy.
+        # change of the numbering part is approved — or the part stays unapproved and E6 refuses the copy. A part
+        # another approved effect's proof already owns whole (a numbering scheme imported and verified by
+        # ``verify_operations``) is left to that proof: this one never second-guesses it (Codex on #118).
         label_fonts = {effect["font"]["name"] for effect in contract["effects"]
                        if effect["type"] == "format" and isinstance(effect.get("font"), dict)
                        and "name" in effect["font"] and effect["target"].get("all") is True
@@ -1068,7 +1070,8 @@ def verify_effects(original: bytes | Path, candidate: bytes | Path, contract: di
             from .numberinglabels import v_label_fonts_effect
             name = next(iter(label_fonts))
             label_part, label_errors = v_label_fonts_effect(
-                source, output, source_styles, {slot: name for slot in ("ascii", "hAnsi", "cs", "eastAsia")})
+                source, output, source_styles, {slot: name for slot in ("ascii", "hAnsi", "cs", "eastAsia")},
+                skip=allowed_changed)
             if label_part is not None:
                 if label_errors:
                     errors.extend(f"{label_part}: {error}" for error in label_errors)

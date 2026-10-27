@@ -160,15 +160,17 @@ def _numbering_labels(ctx, a: Dict[str, Any], errs: List[str]) -> str:
     return f"numbering_labels: {len(seen)} list label level(s) formatted"
 
 
-def v_label_fonts_effect(source, output, styles, fonts: Dict[str, str]) -> Tuple[Optional[str], List[str]]:
+def v_label_fonts_effect(source, output, styles, fonts: Dict[str, str],
+                         skip: Any = ()) -> Tuple[Optional[str], List[str]]:
     """What a whole-document font effect may leave in the numbering part, read from the SOURCE by this module alone:
     every used, readable list level whose label is not a symbol or picture bullet carries ``fonts`` (the slots named,
     their theme attributes gone), and nothing else in the part changed — the label change the font operations make
     (backlog P3: copies refused for an "unapproved package-member change" of the numbering part). Returns the part
     and the errors: none when the part is absent or untouched (a method may leave the labels alone), or when the
-    change is exactly that; otherwise what differs. The part is never approved on a reading this module cannot make."""
+    change is exactly that; otherwise what differs. The part is never approved on a reading this module cannot make.
+    A part in ``skip`` — one another approved effect's proof already owns whole — is neither read nor judged."""
     part = source.related(V_NUMBERING_REL)
-    if part is None or output.related(V_NUMBERING_REL) != part:
+    if part is None or output.related(V_NUMBERING_REL) != part or part in skip:
         return None, []
     if source.read(part) == output.read(part):
         return part, []
