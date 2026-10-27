@@ -167,8 +167,13 @@ tab strip:
 
 - **How to use** — the modes (Obliterate's entry says it is hidden and how to show it), what each lets you control and what it costs, Safe mode in four steps, a Default
   first pass in eight steps, what a refused file means, and how spending, Stop now and the pause work.
-- **Workflows** — recipes for the usual jobs: a Safe-mode clean-up before issue, fonts across a set, headers and footers from a template, a logo, values
-  from a sheet, an issue stamp, a mixed batch, one change after another, a file left untouched, stopped or paused work.
+- **Workflows** — first **Typical operations**: three tables, one per mode (`frontend/src/lib/typicalOperations.ts`),
+  each row a job in a spec writer's words, the Safe buttons that do it (pinned to the catalog by
+  `frontend/tests/typicalOperations.test.ts`), whether the app can, and what to know; the words above them say the
+  lists are not exhaustive and that Obliterate can do everything Safe and Default can. Then the recipes: a Safe-mode
+  clean-up before issue, five Default requests word for word (fonts across a set, headers and footers from a template,
+  a logo, values from a sheet, an issue stamp), a mixed batch, one change after another (several changes in one request
+  included), a file left untouched, stopped or paused work.
 - **How it works** — the mechanics in plain words.
 - **Why trust it** — eight claims, each with the mechanism that makes it true, and **I'm not convinced — show me
   exactly what runs →**, which opens the long answer on top of it: where every change comes from, what the engine is,

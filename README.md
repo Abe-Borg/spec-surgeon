@@ -71,7 +71,8 @@ render checks are recorded as N/A with the reason.
 
 The window is one conversation. On the left is the chat, with the one button above the box you type in; on the right
 are your documents (optionally with one template) and the before/after pages. The top bar, in the style of Build-a-Spec, carries the in-app guide —
-**How to use**, **Workflows**, **How it works** and **About** (the version, the model, the release notes, the license,
+**How to use**, **Workflows** (the typical operations of each mode, with whether the app can do each, and recipes for
+the usual jobs), **How it works** and **About** (the version, the model, the release notes, the license,
 **Check for updates**, **Open diagnostic logs** and **Save a diagnostic bundle**) — beside a line saying what the conversation works on ("3
 documents · 1 template · building on your copies"), the estimated spending, the connection, **New conversation**
 and Settings.
