@@ -14,6 +14,7 @@ import assert from "node:assert/strict";
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 
 import { END_USER_CAPABILITIES } from "../src/lib/capabilities.ts";
 import {
@@ -30,7 +31,8 @@ import {
 import { TRUST_FACTS } from "../src/lib/trustFacts.ts";
 import { EMPTY_VIEW, normalizeView } from "../src/lib/view.ts";
 
-const here = new URL(".", import.meta.url).pathname;
+// fileURLToPath, not `.pathname`: on Windows the latter is "/D:/…", which join() turns into "D:\D:\…" (CI, #122).
+const here = fileURLToPath(new URL(".", import.meta.url));
 const read = (path: string) => readFileSync(join(here, path), "utf8");
 const srcDir = join(here, "../src");
 
