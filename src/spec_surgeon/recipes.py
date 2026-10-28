@@ -800,6 +800,7 @@ def _issue_stamp(inputs: Dict[str, Any], ctx: Context) -> Built:
 
 
 SECTION_LINE = r"^\s*SECTION\s+\d{2}[\s-]*\d{2}[\s-]*\d{2}(?:\.\d{2})?\b"   # capitals: never a "Section 230513" reference
+END_LINE = re.compile(r"END\s+OF\s+SECTION\b", re.IGNORECASE)   # what ensure_end_of_section's detect_regex finds
 EOS_LOOK = Field("look", "choice", "Its look", default="section_line",
                  options=(("section_line", "Like the SECTION line at the top"),
                           ("plain", "The document's plain text style")))
@@ -808,12 +809,17 @@ EOS_LOOK = Field("look", "choice", "Its look", default="section_line",
 def _end_of_section(inputs: Dict[str, Any], ctx: Context) -> Built:
     """``ensure_end_of_section``: the line the user typed, with each document's own number where ``{number}`` stands
     (read from its SECTION line by the reference rule), after the last content; one that reads otherwise is
-    corrected."""
+    corrected. The line starts with END OF SECTION, the words the operation recognizes an end line by
+    (``end_of_section.DEFAULT_DETECT``): a line in other words would not be found again in a document that already
+    ends with it, and a second press would add another."""
     text = _text(inputs, "text", label="The line", limit=100)
     if text.count("{number}") != 1:
         raise RecipeError("The line needs {number} once, where each document's own section number goes.")
     if re.search(r"\{(?!number\})[^}]*\}", text):
         raise RecipeError("Only {number} can stand for each document's own value.")
+    if not END_LINE.match(text):
+        raise RecipeError("The line starts with END OF SECTION, so a document that already ends with it is "
+                          "recognized and never gets a second one.")
     look = _choice(inputs, EOS_LOOK)
     tracked = _flag(inputs, "tracked")
     params: Dict[str, Any] = {"number": REFERENCE_FILLS["SECTION_NUMBER"], "text": text, "tracked": tracked}
@@ -1236,7 +1242,8 @@ RECIPES: Tuple[Recipe, ...] = (
            "Ends every document with your closing line and its own section number, and corrects one that reads "
            "otherwise.", (),
            (Field("text", "text", "The line", required=True, default="END OF SECTION {number}",
-                  help="{number} is each document's own section number, from its SECTION line; it appears once."),
+                  help="It starts with END OF SECTION; {number} is each document's own section number, from its "
+                       "SECTION line, and appears once."),
             EOS_LOOK, TRACKED), _end_of_section),
     Recipe("nonbreaking_spaces", "Keep numbers with their units", "Text",
            "Puts non-breaking spaces in “150 psi” and “21 13 13” so Word never splits them across two lines; no "

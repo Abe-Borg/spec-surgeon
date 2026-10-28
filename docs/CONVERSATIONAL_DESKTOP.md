@@ -169,7 +169,8 @@ document. A header and footer distance left empty keeps each document's own.
 **Change the issue stamp** (`set_issue_stamp`) finds the stamp by the wordings typed in its rows, wherever it sits
 (the cover, a header or a footer), and replaces each with the new wording; a change of capitals alone is refused as
 find and replace refuses it. **Add END OF SECTION where missing** (`ensure_end_of_section`) takes each document's
-number from its SECTION line by the reference rule and the line as typed (`END OF SECTION {number}` to start), adds
+number from its SECTION line by the reference rule and the line as typed (`END OF SECTION {number}` to start; it
+starts with END OF SECTION, the words a line already there is recognized by, so a second press adds nothing), adds
 it after the last content or corrects one that reads otherwise, formatted like the SECTION line (written in
 capitals, so a "Section 230513" reference is never taken for it) or in the plain text style. **Keep numbers with their
 units** (`protect_nonbreaking_spaces`) puts non-breaking spaces between a number and the units typed and inside spaced

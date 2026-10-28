@@ -826,10 +826,18 @@ def test_end_of_section_ends_each_document_with_its_own_number_like_its_section_
         section_line = next(p for p in pars if paragraph_text(p).startswith("SECTION "))
         ppr = lambda p: etree.tostring(p.find(W + "pPr")) if p.find(W + "pPr") is not None else None  # noqa: E731
         assert ppr(pars[-1]) == ppr(section_line)
+        # pressed again on the copy: the line is recognized and nothing more is added
+        again, _ = plan_spec(pkg, built.spec)
+        assert [a["expected_case"] for a in again.property_assertions if a["kind"] == "end_of_section"] == ["none"]
+    # the line, in any capitals, is the one the operation recognizes by its default: a second press changes nothing
+    from spec_surgeon.ops.end_of_section import DEFAULT_DETECT
+    assert re.search(DEFAULT_DETECT, "End of Section 21 13 13") and recipes.END_LINE.match("end of section {number}")
     plain, _, errors = built_and_gated("end_of_section", {"text": "END OF SECTION {number}", "look": "plain"}, files)
     assert errors == [] and "formatting" not in plain.spec["ops"][0]["params"]
+    # a line in other words would not be recognized in a document that already ends with it: a second one each press
     for text, said in (("END OF SECTION", "needs {number} once"), ("{number} END {number}", "needs {number} once"),
-                       ("END OF {title} {number}", "Only {number}")):
+                       ("END OF {title} {number}", "Only {number}"), ("END OF {number}", "starts with END OF SECTION"),
+                       ("SECTION {number} ENDS", "starts with END OF SECTION")):
         with pytest.raises(recipes.RecipeError, match=re.escape(said)):
             recipes.build("end_of_section", {"text": text}, recipes.Context(files))
 

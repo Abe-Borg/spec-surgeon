@@ -395,7 +395,7 @@
      "label": "The line",
      "required": true,
      "default": "END OF SECTION {number}",
-     "help": "{number} is each document's own section number, from its SECTION line; it appears once."
+     "help": "It starts with END OF SECTION; {number} is each document's own section number, from its SECTION line, and appears once."
     },
     {
      "name": "look",

@@ -225,7 +225,8 @@ mode you last used (Safe the first time; never Obliterate).
   chosen, a document with landscape pages is left untouched so a landscape schedule never turns upright. *Change the
   issue stamp* finds the stamp by the wordings you type (ISSUED FOR BID, ISSUED FOR PERMIT) wherever it sits, on the
   cover, in a header or a footer, and replaces each with your new wording. *Add END OF SECTION where missing* ends
-  each document with your line (`END OF SECTION {number}` to start), its own number read from its SECTION line,
+  each document with your line (`END OF SECTION {number}` to start; it begins with END OF SECTION, so pressing it
+  again adds nothing), its own number read from its SECTION line,
   formatted like that line or as plain text, and corrects one that reads otherwise. *Keep numbers with their units*
   puts non-breaking spaces in "150 psi" and "21 13 13" so Word never splits them; no words change. *Clean up spaces*,
   *Standardize quotes and dashes* (straight or curly quotes, `--` as an en or em dash, section numbers with spaces or
