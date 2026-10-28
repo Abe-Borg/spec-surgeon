@@ -56,6 +56,7 @@ from .ops import JobException
 from .package import DocxPackage
 from .verify import run_suite, VerificationRecord, CheckResult, GEOM_TOL_PT
 from .verify import geometry as geom
+from .verify.template_layout import template_reference
 from .report import words_missing_sentence
 from . import render as render_mod
 
@@ -663,10 +664,12 @@ def geometry_check(plan: Dict[str, Any], g: "geom.GeometryResult",
       declared expected-to-change; for a content edit with diffs the numbers are informational (text reflows);
     * ``none`` — the op changes layout by design (a font or page-setup change reflows everything); N/A with the
       plan's reason, and a FAIL when the plan gives no reason;
-    * ``template`` — the output's headers/footers rendered alone vs the template's, page for page (output section k
-      ↔ template section map[k], first/even/odd variant ↔ the same variant; verify/geometry.hf_only_copy): a region
-      the template leaves blank must be blank, any other must be found at the template's position, its outer edge
-      and every shared word within tolerance; FAIL when either render (or the op's section map) is missing.
+    * ``template`` — the output's headers/footers rendered alone vs the template's as the plan makes this document
+      show them (its fills in the slots, laid at its own text widths: verify/template_layout.py), page for page
+      (output section k ↔ the reference section of template section map[k] at k's width, first/even/odd variant ↔
+      the same variant; verify/geometry.hf_only_copy): a region the template leaves blank must be blank, any other
+      must be found at the template's position, its outer edge and every shared word within tolerance; FAIL when
+      either render (or the op's section map) is missing.
     """
     ref = plan.get("geometry_reference", "source")
     expected_pages = plan.get("geometry_pages_expected_to_change", [])
@@ -686,12 +689,14 @@ def geometry_check(plan: Dict[str, Any], g: "geom.GeometryResult",
         if tg is None:
             return CheckResult("V7", "Geometry assertion", "FAIL",
                                f"geometry_reference 'template' ({plan.get('geometry_template')}) but no comparison could "
-                               f"be made (template render, headers/footers-only output render or the templating op's "
-                               f"section map missing); refusing to pass without the reference", g.to_dict())
+                               f"be made (the template reference or its render, the headers/footers-only output render "
+                               f"or the templating op's section map missing); refusing to pass without the reference",
+                               g.to_dict())
         bad = [p for p in tg.pages if p.problems]
         return CheckResult(
             "V7", "Geometry assertion", "FAIL" if bad else "PASS",
-            f"reference = the template's headers/footers rendered alone ({Path(plan.get('geometry_template', '')).name}), "
+            f"reference = the template's headers/footers as this document's plan fills them, at its own text "
+            f"widths, rendered alone ({Path(plan.get('geometry_template', '')).name}), "
             f"page for page against the output's ({'/'.join(tg.kinds)}): max |Δy| {tg.worst_dy:.2f}pt over "
             f"{sum(p.anchors for p in tg.pages)} anchor word(s) and every region edge on {len(tg.pages)} page(s) "
             f"(tol {GEOM_TOL_PT}pt)"
@@ -1016,10 +1021,12 @@ class RenderPair:
 
 @dataclass
 class GeometryReferences:
-    """What V7 compares against beside the source render: each template's headers and footers rendered alone and
-    the outputs' headers and footers rendered alone (template references), and the independent header/footer-removal
-    references (a source reference whose plan removes headers or footers)."""
-    template_pdfs: Dict[str, Path] = field(default_factory=dict)
+    """What V7 compares against beside the source render: for a templated output, its template reference — the
+    template as the plan makes that document show it, headers and footers rendered alone, with the map of the
+    output's sections to the reference's (verify/template_layout.py) — and the output's own headers and footers
+    rendered alone; and the independent header/footer-removal references (a source reference whose plan removes
+    headers or footers)."""
+    template_refs: Dict[Path, Tuple[Path, List[int]]] = field(default_factory=dict)
     output_hf: Dict[Path, Tuple[Path, int]] = field(default_factory=dict)
     removed_hf_required: Set[Path] = field(default_factory=set)
     removed_hf_pdfs: Dict[Path, Path] = field(default_factory=dict)
@@ -1031,37 +1038,40 @@ def geometry_references(pairs: Sequence[RenderPair], out_dir: Path, backend: str
     preview is the one the run gives. ``rlog`` takes what the renderer says (a line per file); ``log`` is called for
     progress and has ``detail`` and ``block``."""
     refs = GeometryReferences()
-    templates = sorted({p.plan.get("geometry_template") for p in pairs
-                        if p.plan.get("geometry_reference") == "template" and p.plan.get("geometry_template")})
-    if templates:
-        log(f"rendering {len(templates)} template(s) (headers/footers alone) with {backend}")
-        hf_docs: Dict[Path, str] = {}
-        for k, t in enumerate(templates):
+    # V7 template mode compares headers/footers-only renders of the output and of its template reference, page for
+    # page; the reference is made per output, from its plan and its sections (the fills and the text widths are the
+    # document's own: live QA finding F08)
+    templated = [p for p in pairs if p.plan.get("geometry_reference") == "template"]
+    if templated:
+        hf_dir, tpl_dir = out_dir / "render" / "output-hf", out_dir / "render" / "template"
+        copies, references = {}, {}
+        for k, p in enumerate(templated):
             try:
                 # numbered, never named after the file: the path stays short of Windows' 260 characters (the
                 # owner's 1.10.0 run: an 84-character name under a recovery attempt's folders made 261)
-                hf_docs[geom.hf_only_copy(Path(t), out_dir / "render" / "template" /
-                                          f"{k:02d} headers-footers.docx")[0]] = str(Path(t))
-            except Exception as e:  # noqa: BLE001 — its files' V7 fails for want of the reference, and says so
-                rlog(f"{Path(t).name}: the template's headers/footers-only copy could not be made "
-                     f"({type(e).__name__}: {e})")
-                log.block(traceback.format_exc())
-        rendered = render_mod.render_pdfs(list(hf_docs), out_dir / "render" / "template", backend, 1, log=rlog,
-                                          detail=log.detail, cache=cache)
-        refs.template_pdfs = {hf_docs[k]: v for k, v in rendered.items() if k in hf_docs}
-    # V7 template mode compares headers/footers-only renders of the output and the template, page for page
-    templated = [p for p in pairs if p.plan.get("geometry_reference") == "template"]
-    if templated:
-        hf_dir = out_dir / "render" / "output-hf"
-        copies = {}
-        for k, p in enumerate(templated):
-            try:
                 path, n = geom.hf_only_copy(p.output, hf_dir / f"{k:03d} headers-footers.docx")
                 copies[path] = (p.output, n)
             except Exception as e:  # noqa: BLE001
                 rlog(f"{p.output.name}: its headers/footers-only copy could not be made ({type(e).__name__}: {e})")
                 log.block(traceback.format_exc())
-        log(f"rendering {len(copies)} headers/footers-only output(s) with {backend}")
+                continue
+            top = _template_op_params(p.plan)
+            try:
+                if top is None:
+                    raise ValueError("the plan's templating op states no template_sections")
+                data, smap = template_reference(p.plan, p.output.read_bytes(),
+                                                geom.template_section_map(top["template_sections"], n),
+                                                top.get("kinds", ["header", "footer"]))
+                references[geom.hf_only_copy(data, tpl_dir / f"{k:03d} headers-footers.docx")[0]] = (p.output, smap)
+            except Exception as e:  # noqa: BLE001 — its V7 fails for want of the reference, and says so
+                rlog(f"{p.output.name}: its template reference could not be made ({type(e).__name__}: {e})")
+                log.block(traceback.format_exc())
+        log(f"rendering {len(references)} template reference(s) and {len(copies)} headers/footers-only output(s) "
+            f"with {backend}")
+        for k, v in render_mod.render_pdfs(list(references), tpl_dir, backend, workers, log=rlog,
+                                           detail=log.detail, cache=cache).items():
+            if k in references:
+                refs.template_refs[references[k][0]] = (v, references[k][1])
         for k, v in render_mod.render_pdfs(list(copies), hf_dir, backend, workers, log=rlog,
                                            detail=log.detail, cache=cache).items():
             if k in copies:
@@ -1119,13 +1129,11 @@ def compare_pair(pair: RenderPair, refs: GeometryReferences, backend: str,
         + (f"; {missing}" if missing else ""),
         data)
     tg = None
-    tref = plan.get("geometry_template")
     top = _template_op_params(plan)
-    if (plan.get("geometry_reference") == "template" and tref and str(Path(tref)) in refs.template_pdfs
+    if (plan.get("geometry_reference") == "template" and pair.output in refs.template_refs
             and pair.output in refs.output_hf and top is not None):
-        hf_pdf, n_sections = refs.output_hf[pair.output]
-        tg = geom.compare_template_bands(refs.template_pdfs[str(Path(tref))], hf_pdf,
-                                         geom.template_section_map(top["template_sections"], n_sections),
+        ref_pdf, smap = refs.template_refs[pair.output]
+        tg = geom.compare_template_bands(ref_pdf, refs.output_hf[pair.output][0], smap,
                                          top.get("kinds", ["header", "footer"]), GEOM_TOL_PT)
     if pair.source in refs.removed_hf_required and not removed_reference:
         v7 = CheckResult("V7", "Geometry assertion", "FAIL",

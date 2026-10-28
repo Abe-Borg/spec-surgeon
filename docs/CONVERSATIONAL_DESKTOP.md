@@ -425,7 +425,8 @@ no words change; a plan's sample carries no such list, since the chat's sentence
 are applied and verified in memory; sources are never touched. Rendering is requested automatically and uses
 Microsoft Word when available, otherwise LibreOffice. The rendered pages are then compared as the run compares
 them (checks V6 and V7, `batch.compare_pair` over the same references: the source render, the template's headers
-and footers rendered alone, the independent header/footer-removal reference), so a sample's **Checked** covers its
+and footers as the sample's plan fills them — its own values in the slots, at its own text width — rendered alone,
+the independent header/footer-removal reference), so a sample's **Checked** covers its
 page layout: a layout that moved is a sample that did not pass, and the plan goes the way a failed check sends it.
 The card says in one line what the layout check found, or why it is not asserted (no layout reference by design, a
 wording change that reflows the text), or that it waits for the run and why: no pages were rendered; the pages

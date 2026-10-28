@@ -13,7 +13,7 @@ import difflib
 from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Set, Tuple, Union
 
 try:
     import pymupdf as fitz
@@ -425,16 +425,23 @@ def page_text(pdf: Path) -> List[str]:
 # template and in the output alike, whatever either document's body, section types or numbering. Every word on
 # such a render is header or footer text (upper / lower half of the page).
 #
-# Output section k is compared with template section map[k] (the spec's own template_sections), page for page,
-# for each templated kind (header / footer):
+# The template side is the template as the plan makes this document show it (verify/template_layout.py): every slot
+# showing its fill, each template section the output uses laid at the output section's text width with its tab
+# stops rescaled as the plan declares — so a fill shorter or longer than its placeholder, or a narrower page, wraps
+# the reference's lines as it wraps the copy's (live QA finding F08: against the unfilled template, a hyphen a short
+# section number let up onto the header's first line read as moved 11.50 pt). Its section map pairs output section
+# k with the reference section made for template section map[k] (the spec's own template_sections) at k's width.
+#
+# Output section k is compared with its reference section, page for page, for each templated kind (header /
+# footer):
 #   * the template shows nothing there → the output must show nothing there;
 #   * otherwise the output's words within BAND_SLACK_PT of the template region's extent must exist ("not found"
 #     — a header pushed down by a different distance lands outside it), the region's outer edge — the header's
 #     top line, the footer's bottom line measured from the page bottom (page heights may differ) — must sit where
-#     the template's does, and every word both regions share (difflib; fills differ from placeholders and are
-#     simply not matched) must sit at the template's height, all within the tolerance.
-# Lines a long fill wraps onto beyond the template region's extent are outside the window (the first header line
-# and the last footer line still are checked). x positions are not asserted (fills and rescaled tabs move them).
+#     the template's does, and every word both regions share (difflib: the fills among them) must sit at the
+#     template's height, all within the tolerance.
+# Lines beyond the template region's extent are outside the window (the first header line and the last footer line
+# still are checked). x positions are not asserted (side margins and rescaled tabs move them).
 
 BAND_SLACK_PT = 2.0
 _SECTPR_ORDER = ("headerReference", "footerReference", "footnotePr", "endnotePr", "type", "pgSz", "pgMar",
@@ -459,16 +466,16 @@ def _sect_set(sp, name: str, attrs: Dict[str, str]) -> None:
         el.set(W + k, v)
 
 
-def hf_only_copy(docx: Path, out_docx: Path) -> Tuple[Path, int]:
-    """Write a copy of ``docx`` whose body is only its section breaks, three pages each (``pageBreakBefore`` —
-    LibreOffice folds a paragraph holding nothing but a run-level break), every section of type ``nextPage`` with
-    ``pgNumType/@start`` = 1 (blank pages for oddPage/evenPage sections and continuous sections sharing a page
-    would break the page-for-page correspondence). Verifier-side: own zip reader/writer; every member but the
-    main part copied byte for byte. Returns (path, number of sections)."""
+def hf_only_copy(docx: Union[Path, bytes], out_docx: Path) -> Tuple[Path, int]:
+    """Write a copy of ``docx`` (a file, or its bytes) whose body is only its section breaks, three pages each
+    (``pageBreakBefore`` — LibreOffice folds a paragraph holding nothing but a run-level break), every section of
+    type ``nextPage`` with ``pgNumType/@start`` = 1 (blank pages for oddPage/evenPage sections and continuous
+    sections sharing a page would break the page-for-page correspondence). Verifier-side: own zip reader/writer;
+    every member but the main part copied byte for byte. Returns (path, number of sections)."""
     import zipfile
     from lxml import etree
     from .reader import VPackage, W
-    data = Path(docx).read_bytes()
+    data = docx if isinstance(docx, bytes) else Path(docx).read_bytes()
     pkg = VPackage(data)
     main = pkg.main_part()
     root = pkg.xml(main)
