@@ -132,7 +132,10 @@ FAILURE_EXPLANATIONS: Dict[str, Tuple[str, str]] = {
     ),
     "bad-params": (
         "Operation Parameters Rejected",
-        "The spec gave this operation a parameter or selector it refuses (wrong type, unknown key, missing value).",
+        "The spec gave this operation a parameter or selector it refuses (wrong type, unknown key, missing value, or a "
+        "value outside what Word itself accepts: a page side outside 0.1 to 22 inches, margins that leave less than "
+        "half an inch of text width or height, a header or footer off the page, or a table column narrower than 0.1 "
+        "inch). The reason names the section or paragraph and the value.",
     ),
     "conflict": (
         "Two Operations Touch the Same Thing",

@@ -32,7 +32,10 @@ Refused, per anchor: in a text box (``textbox``); inside a table, or where the t
 or after the body's last paragraph (``table-placement`` — Word joins two tables standing together, and a document ends
 with a paragraph); ``after`` an anchor carrying a section break (``section-break``: the table would land in the next
 section); without ``column_widths``, a section whose page width or side margins are missing or leave no text width
-(``table-placement``). Per file: the style missing (``missing-style``) or not a table style (``style-mismatch``).
+(``table-placement``), or whose text width cut into the table's columns leaves one narrower than 0.1 inch
+(``MIN_COLUMN_TWIPS`` 144; ``bad-params``, naming the count and the text width — Word's dialogs refuse such a column,
+and a table of 100 columns across a page renders without its text). Per spec: a given column width below 0.1 inch or
+above 22 (``bad-params``). Per file: the style missing (``missing-style``) or not a table style (``style-mismatch``).
 
 Verified by V10's ``inserted_tables`` kind (verify/tablestructure.py), which reads the table file again with its own
 reader, builds the tables itself and compares the body whole.
@@ -58,6 +61,7 @@ POSITIONS = ("after", "before")
 SIDES = ("top", "left", "bottom", "right", "insideH", "insideV")
 FULL_WIDTH = "5000"                     # w:tblW pct is in fiftieths of a percent
 MAX_TWIPS = 31680
+MIN_COLUMN_TWIPS = 144                  # 0.1 inch, the narrowest column Word's dialogs accept
 TABLE_FILE_SCHEMA = {"type": "object", "properties": {
     "file": {"type": "string", "description": "a .csv, .xlsx or .json file the user attached (its path)"},
     "sheet": {"type": "string", "description": "xlsx: the sheet's name (default: the first)"},
@@ -73,7 +77,8 @@ PARAMS = {
     "style": {"type": "string", "description": "a table style the document has (id or name); none: single-line "
                                                "borders around and between every cell"},
     "column_widths": {"type": "array", "items": {"type": "number"},
-                      "description": "inches, one per column (default: the full text width in equal columns)"},
+                      "description": "inches, one per column, each 0.1 to 22 (default: the full text width in equal "
+                                     "columns, each at least 0.1 inch)"},
     **TRACKING_PARAMS,
 }
 REFLOW_REASON = "a new table reflows the content after it"
@@ -203,6 +208,11 @@ def clean_params(params: Dict[str, Any]):
                 isinstance(w, (int, float)) and not isinstance(w, bool) and 0 < w * 1440 <= MAX_TWIPS for w in widths):
             raise JobException(f"column_widths must give {len(rows[0])} width(s) in inches (more than 0, at most 22), "
                                f"one per column", "bad-params")
+        narrow = [(k, w) for k, w in enumerate(widths) if w * 1440 < MIN_COLUMN_TWIPS]
+        if narrow:
+            k, w = narrow[0]
+            raise JobException(f"column_widths: column {k + 1} of {len(widths)} would be {w} inch wide; a column is "
+                               f"at least 0.1 inch ({MIN_COLUMN_TWIPS} twips)", "bad-params")
         widths = [max(1, round(w * 1440)) for w in widths]
     return rows, spec, position, n, style, widths
 
@@ -333,6 +343,13 @@ class InsertTable(Op):
                 raise JobException(f"{where}: its section states no page width and side margins, so the table's full "
                                    f"width is not known — give column_widths", "table-placement", {"where": where})
             widths = fixed or equal_columns(width, len(texts[0]))
+            if fixed is None and min(widths) < MIN_COLUMN_TWIPS:
+                n = len(texts[0])
+                raise JobException(f"{where}: {n} equal columns across its text width of {prose.inches(width)} "
+                                   f"({width} twips) leave each column {prose.inches(min(widths))} wide; a column is "
+                                   f"at least 0.1 inch ({MIN_COLUMN_TWIPS} twips), so at most "
+                                   f"{width // MIN_COLUMN_TWIPS} fit — give fewer columns or column_widths",
+                                   "bad-params", {"where": where, "columns": n, "text_width": width})
             if fixed is not None and width is not None and sum(fixed) > width:
                 wide.append(f"{where} ({prose.inches(sum(fixed))} in a text width of {prose.inches(width)})")
             at = (index[p] if position == "before" else index[list(p.iter(W + "p"))[-1]] + 1) + offset

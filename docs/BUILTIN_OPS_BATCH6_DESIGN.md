@@ -226,7 +226,9 @@ Nearest relatives: `set_table_props` (the table selector), `delete_paragraphs` (
   margins; the gutter is not counted) in equal columns ⌊W(k+1)/n⌋ − ⌊Wk/n⌋, or `column_widths` (inches; `w:tblW`
   their sum). Cells: one paragraph with no properties of its own. Refused: an anchor in a table, a new table beside
   another table or after the body's last paragraph, a section without page width and margins (`table-placement`);
-  `after` a section break (`section-break`). Tracked by default. V10 kind `inserted_tables`.
+  `after` a section break (`section-break`); a column narrower than 0.1 inch (144 twips), equal or given
+  (`bad-params`, naming the count that fits the text width — Word's dialogs refuse such a column, and a table of 100
+  columns renders without its text). Tracked by default. V10 kind `inserted_tables`.
 * **`resolve_tracked_changes`** accepts and rejects tracked row insertions and deletions (accept an inserted row: the
   marker goes, an emptied `w:trPr` with it; accept a deleted row: the row goes with all it holds; reject the
   reverse), both sides. A row that goes is content that goes for its anchor rules (a bookmark end inside whose
