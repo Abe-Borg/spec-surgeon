@@ -154,6 +154,12 @@ why each one waited; **Put back** beside one returns it to the other documents a
 assistant what is on the list, so it can answer "what did I set aside?" without planning those files. The list is
 kept in the saved conversation; **Start over from the originals** clears it.
 
+**Questions.** A question the assistant answers in words, with no plan and nothing to pick ("which of these carry a
+Subject property? don't make an edit"), ends there: no button follows the answer, and your next message is a new
+request, even after you put a document back or attach one. The assistant is told the last five such exchanges with each
+new request (what you asked, and the first sentence of its answer), so it can refer back to them without answering
+again.
+
 **Mixed batches.** Documents from different projects are often built differently: styled article titles in one,
 plain paragraphs with typed numbers in another. For such a batch the plan has one specification per layout, and the
 previews cover at least one sample of each. One button still approves all of them. A document built differently

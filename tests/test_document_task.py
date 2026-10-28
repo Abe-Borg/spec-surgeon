@@ -171,12 +171,14 @@ def said(view):
 
 
 def test_a_plain_reply_shows_in_the_chat_and_never_again_in_the_card(tmp_path):
-    for answer in (resp(text(REPLY), stop="end_turn"),                                   # words, no tool
-                   resp(tool("ask_user", {"message": REPLY, "suggested_replies": ["Fix the sizes"]}))):
+    # words alone finish the request with the answer (stage "empty"); words with a reply offered keep it open
+    for answer, stage in ((resp(text(REPLY), stop="end_turn"), "empty"),                 # words, no tool
+                          (resp(tool("ask_user", {"message": REPLY, "suggested_replies": ["Fix the sizes"]})),
+                           "question")):
         task = task_for(tmp_path, FakeClient(answer))
         task.attach([document(tmp_path / "Spec.docx")])
         view = task.perform("send", text=REQUEST)
-        assert view["stage"] == "question"
+        assert view["stage"] == stage
         assert said(view) == [REPLY]                    # Claude's own "• " lines stay in its bubble
         assert view["questions"] == [] and view["choices"] == []
     assert view["chips"] == ["Fix the sizes"]           # the card keeps only what the user can tap
@@ -214,7 +216,9 @@ def test_a_reply_the_chat_did_not_say_still_reaches_the_card(tmp_path):
 
 def test_an_older_bubble_with_the_same_words_does_not_hide_a_reply_the_chat_did_not_say(tmp_path):
     words = "Planning paused after APIStatusError: Overloaded"     # what the recovery turn below will say
-    fake = FakeClient(resp(text(words), stop="end_turn"), raise_on_enter(api_error("Overloaded", 529)))
+    # the first reply keeps the request open (a reply is offered): words alone would finish it with the answer
+    fake = FakeClient(resp(tool("ask_user", {"message": words, "suggested_replies": ["Go on"]})),
+                      raise_on_enter(api_error("Overloaded", 529)))
     task = task_for(tmp_path, fake)
     task.attach([document(tmp_path / "Spec.docx")])
     task.perform("send", text=REQUEST)
@@ -967,6 +971,153 @@ def test_a_conversation_waiting_for_the_users_answer_is_not_resumed(tmp_path):
     assert task.stage == "question" and not task.session.conversation.resumable()
     with pytest.raises(ValueError, match="waiting for the user"):
         task.session.conversation.resume()
+
+
+# ---- an answer without a plan finishes the request ----------------------------------------------------------------
+# The stress test's F7: a status question answered without a plan stayed the open request (Continue), and after a
+# put-back the next edit went out as a revision of it, with Claude's answer nowhere. An answer with nothing pending
+# ends the request; the exchange is kept as context for the next one.
+
+STATUS = "Which of these carry a Subject property? Do not prepare or make an edit."
+ANSWER = ("Only 21 13 13.docx carries one; the other two have none.\n\n"
+          "Say the word and I will set it in all three.")
+FIRST_SENTENCE = "Only 21 13 13.docx carries one; the other two have none."
+EDIT = "Set the Subject property to “Fire suppression” in all three."
+
+
+def answered(answer=ANSWER):
+    return resp(text(answer), stop="end_turn")
+
+
+def submit(tid="t1"):
+    return resp(tool("submit_editspec", {"spec": SPEC}, tid))
+
+
+def test_an_answer_with_nothing_pending_finishes_the_request(tmp_path):
+    task = task_for(tmp_path, FakeClient(answered()))
+    task.attach([document(tmp_path / "Spec.docx")])
+    view = task.perform("send", text=STATUS)
+    assert view["stage"] == "empty" and view["action"] == ""           # not "resume", no Continue
+    assert task.decisions == [] and task.session.conversation is None
+    assert said(view) == [ANSWER]                                       # the exchange stays in the transcript as it is
+    assert [m["text"] for m in view["messages"] if m["role"] == "user"] == [STATUS]
+    assert task.exchanges == [{"asked": [STATUS], "answered": FIRST_SENTENCE}]
+
+
+def test_an_answer_after_a_run_rests_on_the_copies(tmp_path):
+    fake = FakeClient(submit(), answered())
+    task = task_for(tmp_path, fake)
+    task.attach([document(tmp_path / "Spec.docx")])
+    view = task.perform("send", text=REQUEST)
+    task.perform("primary", token=view["token"])
+    view = task.perform("send", text=STATUS)
+    assert view["stage"] == "done" and view["action"] == "" and task.decisions == []
+    assert task.generation == 1 and len(task.history) == 1 and task.results   # the copies stand as they were
+
+
+def test_the_message_after_an_answer_and_a_put_back_is_a_new_request_with_the_exchange_as_context(tmp_path):
+    """F7 as reproduced live: one document parked, the other two edited, a status question answered, the parked
+    document put back, then an edit asked for all three. The edit is the REQUEST; the exchange is told as context."""
+    docs = [document(tmp_path / f"{name}.docx") for name in ("21 05 00", "21 13 13", "28 46 21")]
+    fake = FakeClient(submit(), answered(), submit("s2"))
+    task = task_for(tmp_path, fake)
+    task.attach(docs)
+    view = task.perform("send", text=REQUEST)
+    task.perform("primary", token=view["token"], hold=[str(docs[2])])          # the red X parks the third
+    assert task.stage == "done" and list(task.todo) == [str(docs[2])]
+    view = task.perform("send", text=STATUS)
+    assert view["stage"] == "done" and task.decisions == []
+    task.put_back(docs[2])
+    assert task.stage != "resume" and task.view()["action"] != "Continue"
+    view = task.perform("send", text=EDIT)
+    assert view["stage"] == "preview" and task.decisions == [EDIT]
+    sent = fake.requests[-1]["messages"][0]["content"]
+    assert sent.startswith(f"REQUEST:\n{EDIT}\n\n")
+    assert "User decisions and revisions" not in sent and STATUS not in sent.split("\n\n")[0]
+    earlier = sent.split("EARLIER IN THIS CONVERSATION")[1].split("\n\n")[0]
+    assert f"“{STATUS}”" in earlier and f"“{FIRST_SENTENCE}”" in earlier
+    assert "Say the word" not in sent                                   # the first sentence, not the whole answer
+    assert len(task.session.planned_files()) == 3                       # the put-back document is in the plan
+
+
+def test_a_follow_up_while_a_question_or_a_reply_is_pending_is_a_revision_of_the_request(tmp_path):
+    fake = FakeClient(resp(tool("ask_user", {"questions": ["Which title should change?"]})),
+                      resp(tool("ask_user", {"message": "I see two titles.", "suggested_replies": ["Both"]}, "a2")),
+                      submit("s3"))
+    task = task_for(tmp_path, fake)
+    task.attach([document(tmp_path / "Spec.docx")])
+    view = task.perform("send", text=REQUEST)
+    assert view["stage"] == "question"
+    original = task.session.conversation
+    view = task.perform("send", text="The first one")
+    assert view["stage"] == "question" and view["chips"] == ["Both"]   # words with a reply offered: still pending
+    assert task.session.conversation is original and task.decisions == [REQUEST, "The first one"]
+    view = task.perform("send", text="Both")
+    assert view["stage"] == "preview" and task.session.conversation is original
+    assert task.decisions == [REQUEST, "The first one", "Both"] and task.exchanges == []
+
+
+def test_words_after_a_refused_plan_keep_the_request_open(tmp_path):
+    """Claude's words after the gate refused its plan are not an answer: the request stands, still to be planned."""
+    bad = dict(SPEC, ops=[{"op": "no_such_op", "select": {}, "params": {}}])
+    fake = FakeClient(resp(tool("submit_editspec", {"spec": bad})),
+                      resp(text("I could not plan that change."), stop="end_turn"), submit("s3"))
+    task = task_for(tmp_path, fake)
+    task.attach([document(tmp_path / "Spec.docx")])
+    view = task.perform("send", text=REQUEST)
+    assert view["stage"] == "question" and task.decisions == [REQUEST] and task.exchanges == []
+    original = task.session.conversation
+    view = task.perform("send", text="It is the second paragraph.")
+    assert view["stage"] == "preview" and task.session.conversation is original
+    assert task.decisions == [REQUEST, "It is the second paragraph."]
+
+
+def test_only_the_last_few_exchanges_are_kept(tmp_path):
+    from spec_surgeon.document_task import EXCHANGES_KEPT
+    fake = FakeClient(*[answered(f"Answer {n}.") for n in range(EXCHANGES_KEPT + 1)], submit("s9"))
+    task = task_for(tmp_path, fake)
+    task.attach([document(tmp_path / "Spec.docx")])
+    for n in range(EXCHANGES_KEPT + 1):
+        task.perform("send", text=f"Question {n}?")
+    assert [e["asked"] for e in task.exchanges] == [[f"Question {n}?"] for n in range(1, EXCHANGES_KEPT + 1)]
+    task.perform("send", text=REQUEST)
+    sent = fake.requests[-1]["messages"][0]["content"]
+    assert "Question 0?" not in sent and "“Question 1?”" in sent and f"“Answer {EXCHANGES_KEPT}.”" in sent
+
+
+def test_the_answer_line_is_the_first_sentence_cut_to_one_line():
+    from spec_surgeon.document_task import ANSWER_LINE, answer_line
+    assert answer_line("Yes, all three carry it. Two say Fire; one says Plumbing.\n\nMore here.") == \
+        "Yes, all three carry it."
+    assert answer_line("- 21 05 00 uses Arial 10 pt\n- 21 13 13 uses Times") == "21 05 00 uses Arial 10 pt"
+    assert answer_line("  \n\nThe logo in 21 13 13.docx is the old one") == "The logo in 21 13 13.docx is the old one"
+    long = "word " * 100
+    line = answer_line(long)
+    assert len(line) == ANSWER_LINE and line.endswith("…")
+    assert answer_line("") == ""
+
+
+def test_the_journal_keeps_the_finished_exchanges_and_an_older_one_loads_without_them(tmp_path):
+    journal = tmp_path / "conversation.json"
+    task = task_for(tmp_path, FakeClient(answered()), journal=journal)
+    task.attach([document(tmp_path / "Spec.docx")])
+    task.perform("send", text=STATUS)
+    assert json.loads(journal.read_text(encoding="utf-8"))["exchanges"] == task.exchanges
+    restored = task_for(tmp_path, FakeClient(submit()), journal=journal)
+    assert restored.restore()
+    assert restored.exchanges == task.exchanges and restored.stage == "empty" and restored.decisions == []
+    restored.perform("send", text=EDIT)                                  # the next request is told the exchange
+    sent = restored.session.client.requests[-1]["messages"][0]["content"]
+    assert sent.startswith(f"REQUEST:\n{EDIT}") and f"“{STATUS}”" in sent and f"“{FIRST_SENTENCE}”" in sent
+    data = json.loads(journal.read_text(encoding="utf-8"))
+    del data["exchanges"]                                                # a journal from before the field
+    journal.write_text(json.dumps(data), encoding="utf-8")
+    older = task_for(tmp_path, journal=journal)
+    assert older.restore() and older.exchanges == []
+    data["exchanges"] = [{"asked": "not a list"}]                        # a malformed record is refused
+    journal.write_text(json.dumps(data), encoding="utf-8")
+    with pytest.raises(ValueError, match="could not be read"):
+        task_for(tmp_path, journal=journal).restore()
 
 
 # ---- pictures and tables attached for the edit to use -------------------------------------------------------------

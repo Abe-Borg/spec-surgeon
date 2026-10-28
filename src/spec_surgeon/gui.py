@@ -319,13 +319,15 @@ class Session:
     @_session_action
     def compile(self, request: str, log: Log, history: Optional[List[str]] = None,
                 fresh: Optional[List[str]] = None, context: Optional[str] = None,
-                todo: Optional[List[str]] = None) -> str:
+                todo: Optional[List[str]] = None, earlier: Optional[List[str]] = None) -> str:
         """Start a conversation about ``request`` over the current files. Returns a status line; sets ``spec`` when
         Claude's first answer is a spec, otherwise ``turn`` says what Claude needs from the user. It opens the session
         folder (``out_dir``): conversation.json and compile.json there after every turn, and the first preview or
         custom transform beside them (``_session_dir``). ``context`` is the app's own account of how these documents
         come to be planned (set aside after a preview, say), never the user's words; ``todo`` names the documents
-        waiting on the user's to-do list (one line each, with why), which the conversation does not hold."""
+        waiting on the user's to-do list (one line each, with why), which the conversation does not hold; ``earlier``
+        is the window's account of the exchanges Claude answered without a plan (one line each: what the user asked,
+        the first sentence of the answer), finished requests this one may refer to."""
         from .conversation import Conversation
         if not request.strip():
             raise ValueError("Type what you want done.")
@@ -344,7 +346,7 @@ class Session:
                                          work_dir=out / "chat", log=log, continuous_recovery=True,
                                          word_sources=self.replay_word_sources, input_files=self.inputs,
                                          history=list(history or []), fresh=list(fresh or []), context=context or "",
-                                         todo=list(todo or []), unguarded=self.unguarded)
+                                         todo=list(todo or []), earlier=list(earlier or []), unguarded=self.unguarded)
         try:
             turn = self.conversation.start()
         except Exception:
