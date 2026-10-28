@@ -148,6 +148,27 @@ export interface Sample {
   /** The page-layout verdict (check V7) in plain words: checked on the rendered pages, not asserted and why, or
    *  checked when the copies are created; null before the pages are rendered, absent from older servers. */
   geometry?: { status: "PASS" | "FAIL" | "NA"; note: string; at?: "run" } | null;
+  /** A custom method's sample: the words its copy adds and removes, as the independent checker read them (its V2
+   *  record), one entry per changed paragraph; [] when the method changes no words; null for an ordinary plan's
+   *  sample (the chat's sentences say what changes) and for a sample without a record; absent from older servers. */
+  text_changes?: TextChange[] | null;
+}
+
+/** One paragraph a custom method's copy changes, from the checker's own comparison (docs/WEB_API.md,
+ *  `samples[].text_changes[]`). */
+export interface TextChange {
+  /** The part as the record names it ("word/footer1.xml"). */
+  part: string;
+  /** The place in plain words: "footer", "body paragraph 12". */
+  where: string;
+  /** The paragraph's ordinal in its part, from 0 (the source's; the copy's for a new paragraph); null when unknown. */
+  paragraph: number | null;
+  /** The stretches of words removed, in order. */
+  removed: string[];
+  /** The stretches of words added, in order. */
+  added: string[];
+  /** Set when the whole paragraph is new or gone. */
+  block?: "new" | "gone";
 }
 
 /** One find-and-replace occurrence the waiting plan found (docs/WEB_API.md, `occurrences[].items[]`). */

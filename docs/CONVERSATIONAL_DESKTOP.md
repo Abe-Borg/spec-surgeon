@@ -177,7 +177,14 @@ What it lifts (`Session.unguarded`; CLAUDE.md, "Modes"):
   failure is a member, revision or XML the method got wrong, or a source that moved: `codegen.NEVER_KEPT_CHECKS`).
   After those rounds the latest method passes with its
   failures listed; a writer that stops otherwise (an API error, a stall, its attempts) leaves the best such method,
-  but the pause for the user's go-ahead never does.
+  but the pause for the user's go-ahead never does. A custom method has no plan sentence (`Op.describe`) and the
+  gate's trace of placed words does not reach it, so before approval the window lists the words its sample copies add
+  and remove — in the chat, as the app's own note before the button, and under each sample's pages — taken from the
+  independent checker's V2 record of each copy (`preview.text_changes_of` → `SampleView.text_changes`,
+  `DocumentTask._say_text_changes`), never from the method's plan or the model: the exact words quoted, the part named
+  ("footer", "body paragraph 12"), the same change in several documents said once; a method that changes no words is
+  said to change none. The same list shows for a Default custom method (which is formatting only, so it reads "No
+  words change").
 - **Holding back.** A copy that fails a check is delivered to the run's `outputs/` instead of `failed/`, its record
   kept with every failure and V9 saying *delivered UNVERIFIED*; a chain's step hands its copy on and the chain's copy
   carries everything that failed. The preview already says so: a sample whose copy fails a check shows **Did not
@@ -395,8 +402,11 @@ sentence: attach it on its own, or ask for a plan that covers it.
 ## Previews and page counts
 
 Each sample document gets a card **Preview · name** with rendered before/after pages; click a page to enlarge
-it. The card shows the page count before and after and flags growth ("Pages: 12 → 13 (+1)"). Samples are
-applied and verified in memory; sources are never touched. Rendering is requested automatically and uses
+it. The card shows the page count before and after and flags growth ("Pages: 12 → 13 (+1)"). For a custom
+method's sample it also lists the words the copy adds and removes, paragraph by paragraph, as the independent checker
+read them (**Words removed … · Words added …**, from the checker's V2 record, `samples[].text_changes`), or says that
+no words change; a plan's sample carries no such list, since the chat's sentences say what the plan changes. Samples
+are applied and verified in memory; sources are never touched. Rendering is requested automatically and uses
 Microsoft Word when available, otherwise LibreOffice. The rendered pages are then compared as the run compares
 them (checks V6 and V7, `batch.compare_pair` over the same references: the source render, the template's headers
 and footers rendered alone, the independent header/footer-removal reference), so a sample's **Checked** covers its
@@ -563,7 +573,10 @@ covered has no specification to recover against; it stays as it was and is named
 
 When no built-in operation fits a request, Spec Surgeon may prepare a custom method internally, prove it on
 the sample documents, and show its result as a preview like any other. You never choose a method; you see what
-will change and decide once. Custom methods write edited copies only and run under the same verification.
+will change and decide once: before the button the chat says, as the app, the words the method's sample copies add
+and remove — derived from the independent checker's V2 record of each copy, never from the method or the model
+(`preview.text_changes_of`, `DocumentTask._say_text_changes`) — or that no words change, and each sample's card lists
+the same words. Custom methods write edited copies only and run under the same verification.
 The writer that prepares one reads before it writes, through tools that change nothing: the sample files'
 XML, paragraphs, styles and part texts (`show_xml`, `find_paragraphs`, `list_styles`, `show_part_text`, the
 inspection tools) and the verifier's own contract of each independent check it must satisfy

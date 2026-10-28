@@ -38,6 +38,7 @@ export const OBLITERATE_KEPT: readonly string[] = [
   "A source that changed while the work ran is never delivered over.",
   "A custom method still runs in a separate process, under the same import whitelist and time and memory limits, writing only in its own folder.",
   "The independent checks still run on every copy, and their results are kept beside it.",
+  "Before you approve a custom method, the chat and each sample's card list the words its sample copies add and remove, as the independent checker read them — never as the method describes them.",
 ];
 
 /** The box the user ticks before Obliterate turns on. */

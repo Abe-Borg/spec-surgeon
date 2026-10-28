@@ -44,7 +44,8 @@ that ends a job is authoritative.
   "chips": ["Everything, including the headers", "Just the body"],
   "samples": [{"source": "…", "name": "21 13 13.docx", "images": ["/api/image?path=…"],
                "pages_before": 12, "pages_after": 12, "passed": true, "failures": [],
-               "geometry": {"status": "PASS", "note": "Page layout checked on the rendered pages: …"}}],
+               "geometry": {"status": "PASS", "note": "Page layout checked on the rendered pages: …"},
+               "text_changes": null}],
   "occurrences": [{"source": "…", "name": "21 13 13.docx", "status": "planned | refused", "reason": "",
                    "items": [{"key": "…", "part": "word/document.xml", "paragraph": 11, "start": 30, "end": 38, "where": "the body",
                               "heading": "2.01", "before": "H. See the", "match": "2022 CBC", "after": "portal.",
@@ -133,6 +134,15 @@ Rules the page relies on:
   earlier step's layout is checked at the run. A note never says no pages were rendered when they were.
   `"at": "run"` marks the verdicts the run will give. `null` for a sample the plan refused. Common refusal reasons under Left untouched are presented without operation numbers
   or extraction patterns; the engine's original exceptions and check records remain in diagnostics.
+- `samples[].text_changes` is the words a custom method's sample copy adds and removes, as the independent checker
+  read them (its V2 record of the copy, `preview.text_changes_of`; never the method's or the model's account): one
+  entry per changed paragraph, `{part, where, paragraph, removed, added, block?}` — `part` as the record names it,
+  `where` the place in plain words ("footer", "body paragraph 12"), `paragraph` the paragraph's ordinal in its part
+  from 0 (the page shows it from 1; the source's, or the copy's for a new paragraph), `removed` and `added` the
+  stretches of words, in order, and `block` `new` or `gone` when the whole paragraph is. `[]` when the method
+  changes no words; `null` for an ordinary plan's sample (the chat's sentences say what the plan changes) and for a
+  sample the checker left no record of; absent from an older server. The chat says the same words as an app message
+  before the approval button, once per preview.
 - `occurrences` is the find-and-replace list of the plan waiting for the user (stages `preview` and `question`; empty
   otherwise, and empty when the plan has no `replace_table` op): one entry per document the plan covers — every
   document, not the sampled ones only — with every occurrence the plan found, kept or unticked (`skipped`). `where`

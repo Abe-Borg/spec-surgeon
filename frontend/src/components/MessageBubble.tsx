@@ -206,8 +206,19 @@ export function UserBubble({ text }: { text: string }) {
   );
 }
 
-/** The app's own note: a compact, muted, centred pill — an event, not the model speaking. */
+/**
+ * The app's own note: a compact, muted, centred pill — an event, not the model speaking. A note of several
+ * paragraphs (the words a custom method changes, said before the approval button) is a block the user reads, not
+ * a pill: its paragraphs stay apart and its words are quoted in full.
+ */
 export function AppNote({ text }: { text: string }) {
+  if (text.includes("\n")) {
+    return (
+      <div className="chat-in rounded-xl border border-edge bg-surface/50 px-4 py-2.5 text-xs leading-relaxed text-ink-dim" data-note="block">
+        <Markdown text={text} />
+      </div>
+    );
+  }
   return (
     <div className="chat-in flex justify-center">
       <span className="max-w-[90%] rounded-full border border-edge bg-surface/50 px-3 py-1 text-center text-[11px] text-ink-faint">

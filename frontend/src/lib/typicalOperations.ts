@@ -281,12 +281,16 @@ export const OBLITERATE_OPERATIONS: readonly TypicalOperation[] = [
     can: "Yes, via a custom method",
     note:
       "The sandbox, the import whitelist, and the time and memory limits still hold. Your attachments are " +
-      "available to the method.",
+      "available to the method. Before you approve, the exact words its sample copies add and remove are listed " +
+      "in the chat and under each sample, as the independent checker read them.",
   },
   {
     task: "Custom methods beyond formatting: text changes, new parts, tracked revisions in your name",
     can: "Yes",
-    note: "Failed checks go back to the writer up to three times.",
+    note:
+      "Failed checks go back to the writer up to three times. The exact words added and removed are listed before " +
+      "you approve — in the chat and under each sample — from the independent checker's own reading of the sample " +
+      "copies, never from the method's or the model's account; a method that changes no words is said to change none.",
   },
   {
     task: "Deliver a copy that fails a check anyway",

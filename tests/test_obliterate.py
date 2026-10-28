@@ -686,3 +686,180 @@ def test_a_custom_methods_preview_shows_the_checks_it_failed(folder, tmp_path):
     gp = preview_generated(SimpleNamespace(name="op", trials=[clean]), tmp_path / "pv2", renderer="none",
                            do_render=False)
     assert gp.samples[0].passed is True
+
+
+# ---- the words a custom method changes, said before approval (stress-test finding F1, P1) ---------------------------
+
+FOOTER_OP = '''from spec_surgeon.ops.base import Op, JobException
+from spec_surgeon.ooxml import paragraphs, max_revision_id
+from spec_surgeon.ops.textedit import Edit, RunText, plan_paragraph, edits_to_data, apply_part_edits
+
+class AddFooterNote(Op):
+    name = "add_footer_note"
+    mode = "content"
+    description = "Append a sentence to every footer line"
+    params_schema = {}
+    select_schema = {}
+    def plan(self, pkg, select, params):
+        frag = self.fragment(select, params)
+        frag.mode = "untracked"
+        data = {}
+        for part in pkg.text_parts():
+            if "footer" not in part:
+                continue
+            by_block = {}
+            for i, p in enumerate(paragraphs(pkg.xml(part))):
+                rt = RunText(p)
+                if not rt.text.strip() or any(ps.offset < 0 for ps in rt.positions):
+                    continue
+                edits = [Edit(0, len(rt.text), rt.text + " " + params["sentence"])]
+                edits = plan_paragraph(frag, part, i, p, edits, False, set(), "footer")
+                by_block[str(i)] = edits_to_data(edits)
+            if by_block:
+                data[part] = by_block
+        if not data:
+            raise JobException("no footer line to add to", "not-found")
+        frag.geometry_reference = "none"
+        frag.geometry_reason = "words are added by design"
+        frag.transform_data = {"edits": data, "next_id": max_revision_id(pkg) + 1}
+        return frag
+    def apply(self, pkg, frag):
+        td = frag.transform_data
+        for part, by_block in td["edits"].items():
+            root = pkg.xml(part)
+            apply_part_edits(root, by_block, False, None, [td["next_id"]])
+            pkg.write_xml(part, root)
+'''
+WIDEN = {"request": "widen the footer text boxes and add a coordination note", "summary": "Widen the footers.",
+         "unsupported": "Text boxes are not formatting.", "proposal": "widen each footer text box and add the note"}
+
+
+def custom_method_task(tmp_path, request, source, writer, *, mode="obliterate", submission=WIDEN):
+    """A window whose request Claude calls unsupported and answers with a custom method, written by ``writer``."""
+    fake = FakeClient(resp(tool("submit_editspec", {"spec": dict(submission, request=request),
+                                                     "custom_transform": "outside_limits",
+                                                     "custom_transform_reason": "beyond formatting"})),
+                      resp(tool("submit_op", writer)),
+                      resp(tool("ask_user", {"message": "Anything else?"}, "t3")))
+    task = task_for(tmp_path, fake, obliterate_allowed=mode == "obliterate")
+    if mode == "obliterate":
+        task.set_mode("obliterate", acknowledged=True)
+    task.attach([source])
+    return task, fake
+
+
+def test_a_custom_methods_added_words_are_said_in_the_chat_and_under_the_sample_before_approval(tmp_path):
+    """The finding: a method added "Coordination draft." to the footers and nothing before approval said so. Now the
+    chat says it, as the app, from the independent checker's own reading of the sample copy — the exact words quoted,
+    the part named — and the sample carries the same words for the preview card; the transcript keeps them."""
+    from spec_surgeon.preview import WORDS_CHANGE_HEAD, text_changes_of
+    source = tmp_path / "21 01 00 – SPEC 1.docx"
+    source.write_bytes(build("21 01 00", "SPEC 1", with_cover_page_field=False, single_section=True))
+    before = source.read_bytes()
+    request = ("Widen the footer text boxes and add “Coordination draft.” to each footer; show me the wording before "
+               "I approve.")
+    task, fake = custom_method_task(tmp_path, request, source,
+                                    {"source": FOOTER_OP, "params": {"sentence": "Coordination draft."}})
+    view = task.perform("send", text=request)
+    assert view["stage"] == "preview" and task.session.generated.passed and not task.results
+    # the sample passed every check (the method predicted its own words), and the view — the ``samples`` event's and
+    # the state's shape — says which words changed
+    assert view["samples"][0].text_changes == [{"part": "word/footer1.xml", "where": "footer", "paragraph": 0,
+                                                "removed": [], "added": ["Coordination draft."]}]
+    sample = task._samples_view()["samples"][0]
+    assert sample["passed"] is True and sample["name"] == source.name
+    assert sample["text_changes"] == [{"part": "word/footer1.xml", "where": "footer", "paragraph": 0, "removed": [],
+                                       "added": ["Coordination draft."]}]
+    # the chat, as the app and before the button: the heading, then the line quoting exactly those words
+    said = [m for m in task.messages if m["role"] == "app" and m["text"].startswith(WORDS_CHANGE_HEAD)]
+    assert len(said) == 1, [m["text"] for m in task.messages]
+    paragraphs = said[0]["text"].split("\n\n")
+    assert paragraphs[1:] == [f"• {source.name}, footer: words added “Coordination draft.”"]
+    assert view["messages"][-1]["text"] == said[0]["text"]                  # the last thing said before the button
+    assert not any(m["role"] == "assistant" and "Coordination draft." in m["text"] for m in task.messages)
+    # the transcript keeps the same words in place of the bare "prepared" line, and the model hears them next
+    kept = [e for e in task.session.conversation.entries if e.role == "app" and "words added" in e.text]
+    assert len(kept) == 1 and "footer: words added “Coordination draft.”" in kept[0].text
+    assert any("words added “Coordination draft.”" in n for n in task.session.conversation.notes)
+    # a method whose words change is never said twice for one preview
+    assert sum(1 for m in task.messages if m["text"].startswith(WORDS_CHANGE_HEAD)) == 1
+    view = task.perform("primary", token=view["token"])
+    assert view["stage"] == "done" and task.results[str(source)] and not task.unverified
+    # the copy the user got carries exactly the words that were disclosed: its own record, written by the verifier at
+    # the run, derives to the same entries as the preview's sample
+    records = list((task.session.last_run_dir / "records").glob("*.record.json"))
+    assert len(records) == 1
+    delivered = text_changes_of(json.loads(records[0].read_text(encoding="utf-8")))
+    assert delivered == sample["text_changes"]
+    xml = __import__("zipfile").ZipFile(task.results[str(source)]).read("word/footer1.xml").decode("utf-8")
+    assert "Coordination draft." in xml and source.read_bytes() == before
+
+
+def test_a_method_changed_since_its_words_were_shown_is_refused_with_the_approval_token(tmp_path):
+    """The disclosure is derived from the trials the approval already pins (``generated_key``: the method's code and
+    parameters, ``approval_inputs``: the files), so a method that changed since — other words — is refused at Create
+    exactly as any changed input is; nothing new is hashed."""
+    source = tmp_path / "21 01 00 – SPEC 1.docx"
+    source.write_bytes(build("21 01 00", "SPEC 1", with_cover_page_field=False, single_section=True))
+    before = source.read_bytes()
+    task, fake = custom_method_task(tmp_path, "add “Coordination draft.” to each footer", source,
+                                    {"source": FOOTER_OP, "params": {"sentence": "Coordination draft."}})
+    view = task.perform("send", text="add “Coordination draft.” to each footer")
+    assert view["stage"] == "preview"
+    assert task._samples_view()["samples"][0]["text_changes"][0]["added"] == ["Coordination draft."]
+    task.session.generated.params["sentence"] = "Something else."
+    with pytest.raises(ValueError, match="press Preview again"):
+        task.perform("primary", token=view["token"])
+    assert not task.results and source.read_bytes() == before
+
+
+def test_a_title_changed_despite_the_request_is_disclosed_as_removed_and_added_words(tmp_path):
+    """The second scripted case: "Keep the words as they are", and the method changed the title. Before approval the
+    chat lists the words removed and the words added, from the checker's record, under the body paragraph's ordinal."""
+    from test_governed_codegen import CONTENT_OP
+    from spec_surgeon.preview import WORDS_CHANGE_HEAD
+    source = document(tmp_path / "Spec.docx")
+    op = CONTENT_OP.replace('author="Tester"', "author=pkg.author").replace('RevisionStamp.now("Tester"',
+                                                                            "RevisionStamp.now(pkg.author")
+    task, fake = custom_method_task(tmp_path, "Make the title a text box. Keep the words as they are.", source,
+                                    {"source": op, "params": {"replacement": "WATER"}})
+    view = task.perform("send", text="Make the title a text box. Keep the words as they are.")
+    assert view["stage"] == "preview"
+    assert task._samples_view()["samples"][0]["text_changes"] == [
+        {"part": "word/document.xml", "where": "body paragraph 2", "paragraph": 1, "removed": ["FIRE"], "added": ["WATER"]}]
+    said = next(m["text"] for m in task.messages if m["role"] == "app" and m["text"].startswith(WORDS_CHANGE_HEAD))
+    assert said.split("\n\n")[1:] == [
+        f"• Spec.docx, body paragraph 2: words removed “FIRE”; words added “WATER”"]
+    assert view["messages"][-1]["text"] == said
+
+
+def test_a_formatting_only_method_says_that_no_words_change_in_every_mode(tmp_path):
+    from spec_surgeon.preview import NO_WORDS_CHANGE
+    for mode in ("default", "obliterate"):
+        source = document(tmp_path / mode / "Spec.docx")
+        task, fake = custom_method_task(tmp_path / mode, "Set the header distance to 900 twips.", source,
+                                        {"source": GOOD_OP, "params": {"twips": 900}}, mode=mode,
+                                        submission={"request": "r", "summary": "Move header",
+                                                    "unsupported": "Use a custom method", "proposal": "move it"})
+        if mode == "default":
+            # Default offers a formatting-only method as "possible"; the scripted reply says so
+            fake.responses[0] = resp(tool("submit_editspec", {"spec": {"request": "Set the header distance to 900 twips.",
+                "summary": "Move header", "unsupported": "Use a custom method", "proposal": "move it"},
+                "custom_transform": "possible", "custom_transform_reason": "Formatting only"}))
+        view = task.perform("send", text="Set the header distance to 900 twips.")
+        assert view["stage"] == "preview", mode
+        assert task._samples_view()["samples"][0]["text_changes"] == []
+        said = [m["text"] for m in task.messages if m["role"] == "app"]
+        assert NO_WORDS_CHANGE in said and view["messages"][-1]["text"] == NO_WORDS_CHANGE, (mode, said)
+        assert "Before you approve" not in "".join(said)
+
+
+def test_an_ordinary_plans_samples_carry_no_word_comparison(tmp_path):
+    """A plan's sentences say what changes (the gate traced its words); its samples carry ``null`` and the chat says
+    nothing about words, so the card shows nothing there."""
+    path = document(tmp_path / "Spec.docx")
+    task = task_for(tmp_path)
+    task.attach([path])
+    view = task.perform("send", text=REQUEST)
+    assert view["stage"] == "preview" and task._samples_view()["samples"][0]["text_changes"] is None
+    assert not any("words change" in m["text"] for m in task.messages)

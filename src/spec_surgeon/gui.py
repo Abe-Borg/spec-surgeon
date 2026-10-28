@@ -567,8 +567,14 @@ class Session:
             raise ValueError("The original files changed; press Preview to prepare the transform again.")
         message = self._generate_custom(pending, log, render)
         if self.conversation is not None:
-            self.conversation.note("The custom transform passed its independent sample verification.",
-                                   display="Custom transform prepared; review the resulting preview before Run.")
+            # the words the method's sample copies add and remove, as the independent checker read them (never the
+            # method's or the model's account): the transcript keeps them, and the window says them before the button
+            from .preview import text_changes_lines
+            words = text_changes_lines(getattr(self.generated_preview, "samples", None) or [])
+            self.conversation.note("The custom transform passed its independent sample verification."
+                                   + ("".join(f"\n{line}" for line in words) if words else ""),
+                                   display="Custom transform prepared; review the resulting preview before Run."
+                                   + ("".join(f"\n{line}" for line in words) if words else ""))
             self._save_chat()
         return message
 

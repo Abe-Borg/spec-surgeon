@@ -33,9 +33,12 @@ or picture that fails is a warning. A custom transform's preview (``preview_gene
 from __future__ import annotations
 
 import copy
+import difflib
 import hashlib
 import json
 import os
+import posixpath
+import re
 import traceback
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -219,12 +222,16 @@ class SampleView:
     left_later: List[str] = field(default_factory=list)   # a chain's sample: its later steps' wording left elsewhere
     plan: Optional[Dict[str, Any]] = None        # the plan the verdict is of (V6/V7 read its geometry reference); not saved
     geometry: Optional[Dict[str, str]] = None    # the page-layout verdict: status PASS | FAIL | NA, and a note in plain words
+    # a custom method's sample: the words its copy adds and removes, derived from the verifier's V2 record
+    # (``text_changes_of``); [] when the method changes no words; None for a plan's sample (its sentences say what
+    # changes) and for a sample the checker left no record of
+    text_changes: Optional[List[Dict[str, Any]]] = None
 
     def to_dict(self):
         return {"source": str(self.source), "output": str(self.output) if self.output else None, "passed": self.passed,
                 "checks": self.checks, "images": [str(i) for i in self.images], "exception": self.exception,
                 "look_pages": self.look_pages, "pages_before": self.pages_before, "pages_after": self.pages_after,
-                "geometry": self.geometry,
+                "geometry": self.geometry, "text_changes": self.text_changes,
                 **({"stages": self.stages} if self.stages else {}),
                 **({"outcomes": self.outcomes} if self.outcomes else {}),
                 **({"left_later": self.left_later} if self.left_later else {})}
@@ -390,6 +397,155 @@ def _pick_samples(bp: BatchPlan) -> List[Path]:
     samples = representative_samples(planned, pattern_key=lambda f: f.pattern_id or str(f.source),
                                      count=(bp.spec.get("review") or {}).get("sample_files"))
     return [f.source for f in samples]
+
+
+# ---- the words a custom method changes, read from the verifier's own record -------------------------------------------
+#
+# A built-in operation says what it changes in its own sentence (``Op.describe``) and the gate traces every placed word
+# to the user's sources or to the reply the user read. A custom method has neither: its words are checked only against
+# its own plan. So before approval the window lists the words its sample copies add and remove, taken from the
+# independent verifier's V2 record (``verify/suite.py``: ``data["actual"]``, one entry per changed text block —
+# ``{part, before, after, before_index, after_index}``), never from the method or the model. The derivation reads the
+# record as data (a dict); it imports nothing of the verifier, and the verifier knows nothing of it.
+
+_PART_WORDS = {"document": "body", "header": "header", "footer": "footer", "footnotes": "footnote",
+               "endnotes": "endnote", "comments": "comment"}
+_PART_NAME = re.compile(r"(document|header|footer|footnotes|endnotes|comments)(\d*)")
+
+
+def part_words(part: str, several: bool = False) -> str:
+    """A text part's name in plain words — ``body``, ``header``, ``footer``, ``footnote``, ``endnote``, ``comment`` —
+    from its usual name (``word/footer1.xml``); a name the rule does not know is shown as it is, never guessed.
+    ``several``: more than one part of the kind is in play, so Word's number tells them apart (``footer 2``)."""
+    stem = posixpath.basename(part or "").rsplit(".", 1)[0].lower()
+    m = _PART_NAME.fullmatch(stem)
+    if m is None:
+        return part
+    kind, number = m.groups()
+    word = _PART_WORDS[kind]
+    return f"{word} {number}" if several and number else word
+
+
+def word_changes(before: Optional[str], after: Optional[str]) -> Tuple[List[str], List[str]]:
+    """The words removed and the words added between one block's text before and after, at word granularity: each
+    entry is one unbroken stretch of words, in order. A block that is new (``before`` None) or gone (``after`` None) is
+    its whole text. Words are what whitespace separates; a change of spacing alone is no word change (both lists empty)."""
+    if before is None:
+        return [], ([after] if after else [])
+    if after is None:
+        return ([before] if before else []), []
+    a, b = before.split(), after.split()
+    removed: List[str] = []
+    added: List[str] = []
+    for op, i1, i2, j1, j2 in difflib.SequenceMatcher(a=a, b=b, autojunk=False).get_opcodes():
+        if op == "equal":
+            continue
+        if i2 > i1:
+            removed.append(" ".join(a[i1:i2]))
+        if j2 > j1:
+            added.append(" ".join(b[j1:j2]))
+    return removed, added
+
+
+def _v2_actual(record: Any) -> Optional[List[Dict[str, Any]]]:
+    """V2's ``actual`` entries from a verification record (``VerificationRecord.to_dict()``, or the object itself,
+    read through ``to_dict``); None when the record has no V2 check at all (nothing was compared)."""
+    if record is None:
+        return None
+    if not isinstance(record, dict):
+        record = record.to_dict()
+    for check in record.get("checks") or []:
+        if isinstance(check, dict) and check.get("id") == "V2":
+            actual = (check.get("data") or {}).get("actual")
+            return [a for a in actual if isinstance(a, dict)] if isinstance(actual, list) else []
+    return None
+
+
+def text_changes_of(record: Any) -> Optional[List[Dict[str, Any]]]:
+    """The words a copy adds and removes, derived from its verification record's V2 entries: one entry per changed
+    text block, in the record's order — ``part`` (as the record names it), ``where`` (the part in plain words and,
+    in the body, or past a part's first paragraph, the paragraph's ordinal from 1: ``footer``, ``body paragraph 12``),
+    ``paragraph`` (the block's ordinal in its part from 0: the source's, or the copy's for a new block), ``removed``
+    and ``added`` (``word_changes``), and ``block`` ``new`` or ``gone`` when the whole paragraph is. [] when the
+    record compared the texts and found the same words; None when it holds no V2 check."""
+    actual = _v2_actual(record)
+    if actual is None:
+        return None
+    kinds: Dict[str, set] = {}
+    for a in actual:
+        part = str(a.get("part") or "")
+        kinds.setdefault(part_words(part), set()).add(part)
+    out: List[Dict[str, Any]] = []
+    for a in actual:
+        part = str(a.get("part") or "")
+        before, after = a.get("before"), a.get("after")
+        before_index, after_index = a.get("before_index"), a.get("after_index")
+        index = before_index if isinstance(before_index, int) else after_index
+        label = part_words(part, several=len(kinds.get(part_words(part), ())) > 1)
+        where = label
+        if isinstance(index, int) and (label.startswith("body") or index > 0):
+            where = f"{label} paragraph {index + 1}"
+        removed, added = word_changes(before, after)
+        entry: Dict[str, Any] = {"part": part, "where": where, "paragraph": index if isinstance(index, int) else None,
+                                 "removed": removed, "added": added}
+        if before is None and after is not None:
+            entry["block"] = "new"
+        elif after is None and before is not None:
+            entry["block"] = "gone"
+        out.append(entry)
+    return out
+
+
+def _quoted(words: Sequence[str]) -> str:
+    return ", ".join(f"\u201c{w}\u201d" for w in words)
+
+
+def text_change_phrase(entry: Dict[str, Any]) -> str:
+    """One entry of ``text_changes_of`` as the window says it: ``words removed “FIRE”; words added “WATER”``, a whole
+    paragraph named as such, and a change of spacing alone said to be one."""
+    removed, added, block = entry.get("removed") or [], entry.get("added") or [], entry.get("block")
+    if block == "new":
+        return (f"a new paragraph, words added {_quoted(added)}" if added else "a new paragraph without words")
+    if block == "gone":
+        return (f"the whole paragraph removed, words removed {_quoted(removed)}" if removed
+                else "an empty paragraph removed")
+    parts = []
+    if removed:
+        parts.append(f"words removed {_quoted(removed)}")
+    if added:
+        parts.append(f"words added {_quoted(added)}")
+    return "; ".join(parts) if parts else "only the spacing changes, no words"
+
+
+NO_WORDS_CHANGE = ("No words change: the independent checker read the same words in the sample copies as in the "
+                   "originals, in the body, headers, footers, notes and comments.")
+WORDS_CHANGE_HEAD = ("Before you approve — the words the custom method changes, as the independent checker read them "
+                     "in the sample copies:")
+
+
+def text_changes_lines(samples: Sequence[Any]) -> List[str]:
+    """The app's own sentences about the words a custom method's samples change, said in the chat before the approval
+    button and kept in the transcript: nothing when no sample carries a derivation; ``NO_WORDS_CHANGE`` when every
+    sample's copy keeps its words; otherwise the heading and one line per distinct change (the same change in several
+    documents is one line naming them all), the exact words quoted."""
+    known = [s for s in samples if getattr(s, "text_changes", None) is not None]
+    if not known:
+        return []
+    lines: Dict[Tuple[str, str], List[str]] = {}
+    for s in known:
+        name = Path(s.source).name
+        for entry in s.text_changes:
+            key = (entry.get("where") or entry.get("part") or "", text_change_phrase(entry))
+            names = lines.setdefault(key, [])
+            if name not in names:
+                names.append(name)
+    if not lines:
+        return [NO_WORDS_CHANGE]
+    out = [WORDS_CHANGE_HEAD]
+    for (where, phrase), names in lines.items():
+        who = names[0] if len(names) == 1 else ", ".join(names[:-1]) + " and " + names[-1]
+        out.append(f"\u2022 {who}, {where}: {phrase}")
+    return out
 
 
 def _preview_log(out_dir: Path, title: str):
@@ -592,6 +748,9 @@ class GeneratedPreview:
                        + (f"; pages: {s.pages_before} → {s.pages_after}" if s.pages_before is not None else "")
                        + (f"; images: {[i.name for i in s.images]}" if s.images else "")
                        + geometry_text(s))
+        words = text_changes_lines(self.samples)
+        if words:
+            out += ["WORDS (the independent checker's reading of the sample copies, V2):"] + [f"   {w}" for w in words]
         if self.review is not None:
             out += ["", self.review.to_text()]
         from .readable import REPORT_BYTES, bounded
@@ -630,7 +789,11 @@ def _preview_generated(g: Any, out_dir: Path, renderer: str, do_render: bool) ->
             sv = SampleView(source=Path(t.source), passed=bool(t.passed) and not getattr(t, "unverified", None),
                             checks={c.id: c.status for c in t.record.checks} if t.record is not None else {})
             if t.record is not None:
+                # the words the copy adds and removes, from the verifier's own V2 record — the method's plan has no say
+                sv.text_changes = text_changes_of(t.record.to_dict())
                 _log_verification(log, Path(t.source).name, t.record)
+                for line in text_changes_lines([sv]):
+                    log.detail(f"sample {Path(t.source).name}: {line}")
             else:
                 log.detail(f"sample {Path(t.source).name}: no verification record — "
                            + "; ".join(str(x) for x in (getattr(t, "problems", None) or ["(no problems recorded)"])))

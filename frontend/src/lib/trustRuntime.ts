@@ -212,7 +212,10 @@ export const RUNTIME_CARDS: RuntimeCard[] = [
       "Claude writes one small Python program (an operation) after reading sample files. The app checks the program's " +
       "text (only whitelisted modules, no file, process or network calls), runs it on copies of the samples in a " +
       "separate Python process, and checks every result with the independent checker. It may change formatting only: " +
-      "no words, no new parts, no tracked changes. A failure goes back to Claude with the reason. In Obliterate mode " +
+      "no words, no new parts, no tracked changes. A failure goes back to Claude with the reason. Before you approve, " +
+      "the chat and each sample's card list the words the method's sample copies add and remove, taken from the " +
+      "independent checker's own comparison of each copy with its original (check V2), never from the method or the " +
+      "model, or say that no words change. In Obliterate mode " +
       "(its own card) it is offered whenever any method could make the change, may change anything Word stores, " +
       "and may use the template, pictures and tables you attached; a result whose only failures are its checks goes " +
       `back to Claude up to ${F.obliterateCheckRounds} times to fix them or keep each with a reason you read beside ` +
@@ -263,7 +266,9 @@ export const RUNTIME_CARDS: RuntimeCard[] = [
       "it is on, the conversation's gate traces placed words to you or to the reply you read (Claude may write " +
       "wording; every word it places must be in its reply, or the plan is refused), a custom method may change " +
       "anything Word stores and use the files you attached (its " +
-      `failed checks go back to Claude up to ${F.obliterateCheckRounds} times first), and a copy that fails its check is ` +
+      `failed checks go back to Claude up to ${F.obliterateCheckRounds} times first, and the words its sample copies ` +
+      "add and remove are listed in the chat and under each sample before you approve, from the independent " +
+      "checker's own record of each copy), and a copy that fails its check is " +
       "delivered marked UNVERIFIED instead of being held back, with no recovery after it; its preview page already " +
       "says Did not pass, and the plan stands. The mark stays on every later copy built on it, in every mode, " +
       "until Start over, Undo or removing the document. Entering or leaving it " +

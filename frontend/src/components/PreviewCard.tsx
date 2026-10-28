@@ -2,6 +2,7 @@ import type { Sample } from "../types";
 import { imageSrc } from "../lib/api";
 import type { Mark } from "../lib/review";
 import { pageCount } from "../lib/workbench";
+import { NO_WORDS_CHANGE, WORDS_CHANGE_TITLE, wordChangeLines } from "../lib/wordChanges";
 import PaperCard from "./PaperCard";
 
 interface Props {
@@ -61,7 +62,50 @@ function ReviewMarks({ name, mark, onMark }: { name: string; mark?: Mark; onMark
 }
 
 /**
+ * The words a custom method's copy adds and removes, under the sample: the independent checker's reading of the
+ * copy against its original (`samples[].text_changes`), "Words removed … · Words added …" per paragraph, or that
+ * no words change. An ordinary plan's sample carries none (the chat's sentences say what changes) and shows nothing.
+ */
+function WordChanges({ sample, name }: { sample: Sample; name: string }) {
+  const lines = wordChangeLines(sample);
+  if (lines === null) return null;
+  if (lines.length === 0) {
+    return (
+      <p className="mb-1 text-xs leading-relaxed text-paper-dim" data-words="none">
+        {NO_WORDS_CHANGE}
+      </p>
+    );
+  }
+  return (
+    <div className="mb-2 text-xs leading-relaxed" data-words="changed">
+      <p className="font-medium text-paper-ink">{WORDS_CHANGE_TITLE}</p>
+      <ul className="mt-1 space-y-1" aria-label={`Words changed in ${name}`}>
+        {lines.map((line, index) => (
+          <li key={`${index}-${line.where}`}>
+            <span className="text-paper-dim">{line.where}</span>
+            {line.note && <span className="text-paper-dim"> ({line.note})</span>}
+            {line.removed && (
+              <>
+                {" — "}
+                <span className="text-err">Words removed</span> {line.removed}
+              </>
+            )}
+            {line.added && (
+              <>
+                {line.removed ? " · " : " — "}
+                <span className="text-ok">Words added</span> {line.added}
+              </>
+            )}
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+/**
  * "Preview · name": the page count before and after with the growth flag,
+ * the words a custom method's copy adds and removes (or that none change),
  * the rendered before/after pages (a click opens the zoom), and the two marks
  * — the green checkmark says the pages look right, the red X sets the
  * document aside for more work after the others are created.
@@ -106,6 +150,7 @@ export default function PreviewCard({ sample, mark, canReview, onMark, onZoom }:
           ))}
         </ul>
       )}
+      <WordChanges sample={sample} name={name} />
       {sample.geometry?.note && (
         <p className={`mb-1 text-xs leading-relaxed ${sample.geometry.status === "FAIL" ? "text-err" : "text-paper-dim"}`}>
           {sample.geometry.note}

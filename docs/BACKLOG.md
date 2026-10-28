@@ -157,7 +157,11 @@ specifications, Windows and Word, and only the owner can do them. Record what a 
   only once picked, its trials cover the others alone, and the planner's message names the left-out documents as out
   of scope instead of asking which to do.
 - **Obliterate:** a request Default refuses (a text box, Claude's own wording), with Word; a copy marked UNVERIFIED
-  opened in Word. A request that needs a custom method using an attached file (a logo from an attached picture, a
+  opened in Word. The stress-test finding's request again (widen the footer text boxes and add a sentence, with the
+  wording to be shown before approval; built 2026-10-28): before Create the chat lists the exact sentence as words
+  added to the footer and each preview card lists the same, with rendering on and off; a request that says to keep the
+  words as they are, whose method changes a title anyway, lists the words removed and added before Create; a
+  formatting-only method reads "No words change". A request that needs a custom method using an attached file (a logo from an attached picture, a
   template's text box): its failed checks going back to the writer, any it keeps shown with its reason beside the
   copy, and the copy opened in Word.
 - **Save clean PDFs** (built 2026-10-27): over a real redlined and commented set, with Word. Each PDF shows no

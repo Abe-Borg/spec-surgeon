@@ -345,6 +345,7 @@ class DocumentTask:
         self._revision = 0
         self._resume_recovery = None
         self._resume_layouts = []           # layout batch folders still to recover, from the journal
+        self._words_said_for = None         # the custom method's preview whose word changes the chat has said
         self._budget = self._new_budget()
         self._request_budget = self._new_request()
         # Files a caller handed the session (tests, the installed smoke test) become attachments.
@@ -1378,6 +1379,7 @@ class DocumentTask:
             self._collect_conversation()
             self._take_set_aside()
             outcome = s.outcome()
+        self._say_text_changes()                 # a custom method's words, before the button that approves them
         self._revision += 1
         self.stage = {"question": "question", "preview": "preview", "resume": "resume", "auto": "question",
                       "empty": "resume" if self.decisions else "empty"}[outcome.kind]
@@ -1901,6 +1903,21 @@ class DocumentTask:
         if marks:
             self.unverified[origin] = marks
 
+    def _say_text_changes(self):
+        """A custom method's preview has no plan sentence to say what it changes (the window shows no plan card, and
+        the method's words are checked against its own plan only), so before the approval button the chat says the
+        words its sample copies add and remove — the independent checker's reading of each copy (V2), never the
+        method's or the model's (``preview.text_changes_of``) — or that no words change; once per preview."""
+        from .preview import text_changes_lines
+        s = self.session
+        gp = s.generated_preview if s.generated is not None else None
+        if gp is None or gp is self._words_said_for:
+            return
+        self._words_said_for = gp
+        lines = text_changes_lines(getattr(gp, "samples", None) or [])
+        if lines:
+            self.say("\n\n".join(lines))         # a paragraph each: the page shows a note of several as a block
+
     # ---- what the window shows ----
     def _groups(self):
         """What will change, grouped by layout: one group for an ordinary spec, one per layout for a plan."""
@@ -1993,7 +2010,8 @@ class DocumentTask:
         return {"samples": [{"source": str(sv.source), "name": Path(sv.source).name,
                              "images": [str(p) for p in sv.images if Path(p).is_file()],
                              "pages_before": sv.pages_before, "pages_after": sv.pages_after, "passed": sv.passed,
-                             "failures": failed_preview_checks(sv), "geometry": sv.geometry}
+                             "failures": failed_preview_checks(sv), "geometry": sv.geometry,
+                             "text_changes": getattr(sv, "text_changes", None)}
                             for sv in samples],
                 "occurrences": self._occurrences_view(preview),
                 "warnings": list(dict.fromkeys(getattr(preview, "warnings", []) or [])),
