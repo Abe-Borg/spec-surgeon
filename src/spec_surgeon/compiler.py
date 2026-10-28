@@ -386,7 +386,9 @@ untracked (tracked false) — say so.
 - Tables and pictures beside the documents are listed as INPUT FILES (read_input_file shows one): put the exact path \
 in fill_variables.table.file, replace_table.pairs_table.file, insert_table.table.file, insert_image.image or \
 swap_image.image / match.image — what a table holds is the user's. Words you type into a spec yourself (replace_table pairs, fill_variables values, set_issue_stamp text, the \
-END OF SECTION wording) must be the user's exact words, like any replacement.
+END OF SECTION wording) must be the user's exact words, like any replacement. Never write replace_table.skip: the window \
+lists every occurrence beside the preview and the user unticks the ones to leave; a request that should leave some \
+out names them with a paragraph selector, or asks.
 - Pictures: insert_image puts an attached picture (PNG, JPEG, GIF, BMP — its exact INPUT FILES path) in its own new \
 paragraph before/after targeted anchor paragraphs; width and/or height in inches only when the user names a size \
 (else its own size, made smaller to fit between the margins or in its table cell); description is the user's alt text verbatim. remove_images and \
@@ -1438,7 +1440,7 @@ def _dry_errors(spec: Dict[str, Any], batch: _Batch, patterns: Optional[Sequence
 
 def _check_layouts(spec: Dict[str, Any], batch: _Batch, sources: Sequence[str],
                    leave_out: Sequence[Path] = (), unguarded: bool = False,
-                   shown: Sequence[str] = ()) -> Tuple[Dict[str, Any], List[str]]:
+                   shown: Sequence[str] = (), skips: Optional[Sequence[str]] = None) -> Tuple[Dict[str, Any], List[str]]:
     """A submission with ``layouts``: the plan is well formed, every pattern of THE BATCH belongs to exactly one
     layout (a pattern the model cannot plan is a question, never a silent omission), and each layout's spec passes
     every check a single spec passes — on that layout's documents alone. Returns ``(submission, errors)``: the
@@ -1468,7 +1470,7 @@ def _check_layouts(spec: Dict[str, Any], batch: _Batch, sources: Sequence[str],
     composed = copy.deepcopy(spec)
     for i, layout in enumerate(plan["layouts"]):
         outcome, errs = compose_submission(layout_spec(plan, layout), batch, sources, patterns=layout["pattern_ids"],
-                                           leave_out=leave_out, unguarded=unguarded, shown=shown)
+                                           leave_out=leave_out, unguarded=unguarded, shown=shown, skips=skips)
         if errs:
             return spec, [f"layout {layout['id']!r}: {e}" for e in errs]
         if is_chain(outcome) and not is_chain(layout["spec"]):
@@ -1510,16 +1512,45 @@ def _attached_checks(spec: Dict[str, Any], batch: _Batch) -> List[str]:
     return []
 
 
+def skip_record_key(entry: Dict[str, Any]) -> str:
+    """The key the window records for an unticked occurrence (its file and the op's structural key), compared by
+    equality only; ``DocumentTask`` resolves a key back to its entry from its own record of the preview."""
+    return "\t".join(str(entry.get(k, "")) for k in ("file", "part", "paragraph", "start", "end", "find"))
+
+
+def _skip_checks(spec: Dict[str, Any], skips: Optional[Sequence[str]]) -> List[str]:
+    """Every ``replace_table.skip`` entry is one the window recorded from the user's unticks (``skips``, their keys):
+    a request never leaves an occurrence out on its own (backlog F1, rule 1). ``None``: no unticks were recorded, so
+    any skip is refused."""
+    allowed = set(skips or ())
+    for operation in spec.get("ops", []):
+        if operation.get("op") != "replace_table":
+            continue
+        entries = (operation.get("params") or {}).get("skip") or []
+        if not isinstance(entries, list):
+            continue                                   # validate_spec says so in its own words
+        for entry in entries:
+            if not isinstance(entry, dict) or skip_record_key(entry) not in allowed:
+                return ["replace_table.skip names an occurrence the user did not untick in the preview; a request "
+                        "never leaves occurrences out on its own — drop skip, and let the user untick occurrences "
+                        "in the preview's list"]
+    return []
+
+
 def _content_checks(spec: Dict[str, Any], sources: Sequence[str], *, unguarded: bool = False,
-                    shown: Sequence[str] = ()) -> List[str]:
+                    shown: Sequence[str] = (), skips: Optional[Sequence[str]] = None) -> List[str]:
     """The checks a spec's content must pass before any dry run: case-only replacements go through picked
-    capitalization records, each capitalization record was picked, and every placed word is the user's.
+    capitalization records, each capitalization record was picked, every placed word is the user's, and every
+    skipped occurrence is one the user unticked (``_skip_checks``, in every mode).
 
     Obliterate mode (``unguarded``) lifts the first two and loosens the third: Claude's own wording may be placed,
     but only wording the user reads before approving — every placed word traces to the user's sources or to
     ``shown``, the reply the window puts in the chat (``Conversation.shown_text``). The window shows no plan card, so
     the reply is the one place the user can read what will be placed."""
     from .ops.hygiene import approval_source
+    bad_skips = _skip_checks(spec, skips)
+    if bad_skips:
+        return bad_skips
     if unguarded:
         bad = untraceable(spec, [*sources, *shown])
         if bad:
@@ -1610,7 +1641,7 @@ def _compose_conflicts(spec: Dict[str, Any], batch: _Batch, patterns: Optional[S
 def compose_submission(spec: Any, batch: _Batch, sources: Sequence[str],
                        patterns: Optional[Sequence[str]] = None,
                        leave_out: Sequence[Path] = (), unguarded: bool = False,
-                       shown: Sequence[str] = ()) -> Tuple[Any, List[str]]:
+                       shown: Sequence[str] = (), skips: Optional[Sequence[str]] = None) -> Tuple[Any, List[str]]:
     """``(outcome, errors)``: the submission as the engine will run it, and ``[]`` when it is acceptable (or is a
     clean question/unsupported outcome). The outcome is the spec itself, the model's own stages as a chain, or — when
     the spec's ops overlap (rule 5: never ordered by guess inside one plan) — the chain the app composes from them,
@@ -1619,7 +1650,8 @@ def compose_submission(spec: Any, batch: _Batch, sources: Sequence[str],
     plans. A layout plan comes back with each layout's spec composed the same way. ``unguarded`` (Obliterate mode
     only) loosens the content checks (``_content_checks``): every placed word must trace to ``sources`` or to
     ``shown``, the reply the user reads in the chat; everything else — validation, attached files, the dry plan, the
-    composition — is the same."""
+    composition — is the same. ``skips`` are the keys of the occurrences the user unticked in the preview
+    (``skip_record_key``): a ``replace_table.skip`` entry that is not among them is refused in every mode."""
     from .chain import validate_chain
     from .editspec import is_chain
     if not isinstance(spec, dict):
@@ -1632,7 +1664,7 @@ def compose_submission(spec: Any, batch: _Batch, sources: Sequence[str],
                           "never both: drop the stages or layouts, or drop the questions / unsupported"]
         return spec, []
     if isinstance(spec.get("layouts"), list):
-        return _check_layouts(spec, batch, sources, leave_out, unguarded, shown)
+        return _check_layouts(spec, batch, sources, leave_out, unguarded, shown, skips)
     if is_chain(spec):
         chain = _normalize_chain(spec)
         try:
@@ -1641,7 +1673,7 @@ def compose_submission(spec: Any, batch: _Batch, sources: Sequence[str],
             return spec, [f"[{e.code}] {e.reason}"]
         for st in chain["stages"]:
             errs = (_attached_checks(st["spec"], batch)
-                    or _content_checks(st["spec"], sources, unguarded=unguarded, shown=shown))
+                    or _content_checks(st["spec"], sources, unguarded=unguarded, shown=shown, skips=skips))
             if errs:
                 return spec, errs
         return chain, _dry_errors(chain, batch, patterns, leave_out)
@@ -1649,7 +1681,7 @@ def compose_submission(spec: Any, batch: _Batch, sources: Sequence[str],
         validate_spec(spec)
     except SpecError as e:
         return spec, [f"[{e.code}] {e.reason}"]
-    errs = _attached_checks(spec, batch) or _content_checks(spec, sources, unguarded=unguarded, shown=shown)
+    errs = _attached_checks(spec, batch) or _content_checks(spec, sources, unguarded=unguarded, shown=shown, skips=skips)
     if errs:
         return spec, errs
     errs = _dry_errors(spec, batch, patterns, leave_out)

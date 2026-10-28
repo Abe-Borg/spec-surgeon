@@ -89,11 +89,13 @@ export const RUNTIME_CARDS: RuntimeCard[] = [
       "and by pattern). Removal does not revoke the key at Anthropic and makes no provider request.",
   },
   {
-    covers: ["A3", "B3"],
-    title: "Adding documents, a template, a picture or a table",
-    you: "Add Word documents, Add a template (optional), Add a picture or table (optional), or a drop anywhere in the window.",
+    covers: ["A3", "A36", "B3"],
+    title: "Adding documents, a folder of them, a template, a picture or a table",
+    you: "Add Word documents, Add a folder of documents, Add a template (optional), Add a picture or table (optional), or a drop anywhere in the window.",
     runs:
-      "A file you pick is used where it is. A file you drop is copied into the window's scratch folder (attachments) " +
+      "A file you pick is used where it is. A folder you pick gives its own .docx files, as if you had picked them " +
+      "one by one: its subfolders are not entered (the chat says how many documents they hold), Word's lock files " +
+      "are skipped, and nothing about the folder is remembered. A file you drop is copied into the window's scratch folder (attachments) " +
       "and used from there. Each file is then checked on arrival: does it open as a Word package, is it a .docx (not " +
       ".doc or .docm, not a ~$ lock file), does any part carry an XML document type declaration, does the body have a " +
       "paragraph. A refused file stays greyed out with the reason and never enters a plan. The rest are listed, with " +
@@ -307,6 +309,24 @@ export const RUNTIME_CARDS: RuntimeCard[] = [
       "and says so when there is neither. Discard and Undo " +
       "write and delete no file: the copies an undone button made stay where they were saved. Undo goes back one " +
       "button at a time, never while a preview waits, and refuses when a copy it would go back to is gone.",
+  },
+  {
+    covers: ["A35"],
+    title: "Find and replace, occurrence by occurrence",
+    you: "Untick an occurrence in the list under the previews, then Update the preview.",
+    runs:
+      "The list shows every occurrence a find-and-replace plan found, in every document of the plan, with the words " +
+      "around it. Update the preview writes the unticked occurrences into the plan (each by its file, paragraph and " +
+      "place in the text), the plan passes the same gate again, and the preview is made again with those " +
+      "occurrences left as they are; the checker then confirms, on every copy, that each unticked occurrence was " +
+      "left untouched and every other one replaced, and each copy's record lists them all. A document the plan set " +
+      "aside lists what it found too, so the occurrence its reason names can be unticked and the document goes ahead.",
+    sent: "Nothing in Safe mode. In Default mode the new preview's visual check, as any preview's.",
+    ai: "None to make the plan again. In Default mode the preview's visual check runs as always (advisory).",
+    bounds:
+      "Only the page remembers your ticks until you press Update the preview, and Create edited copies waits while " +
+      "they differ from the preview's. The gate refuses an unticked occurrence the window did not record from your " +
+      "own ticks, in every mode: no request can leave occurrences out on its own.",
   },
   {
     covers: ["A7"],

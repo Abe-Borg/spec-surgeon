@@ -134,7 +134,15 @@ jobs). Details: `docs/CONVERSATIONAL_DESKTOP.md`.
     `Session.outcome` auto-takes a custom transform only — and the documents the user left out of the request stay
     out of it, `Conversation.left_out`), `inventory.py` (the content digest that pins a file).
   - `recipes.py` — Safe mode's buttons: each a fixed EditSpec from its form (`build`), the header/footer template's kind
-    (`template_kind`); the page's copy of the list (`frontend/mock/recipes.json`) is pinned to `catalog()`.
+    (`template_kind`); the page's copy of the list (`frontend/mock/recipes.json`) is pinned to `catalog()`. Find and
+    replace, occurrence by occurrence (backlog F1): `replace_table` lists every occurrence it finds in its
+    `replaced_text` assertion (and in a refusal's details), `planner.FilePlan.occurrences` exposes them, the window
+    shows them per document (`DocumentTask._occurrences_view`, the page's `OccurrencesCard`), and an untick goes back
+    as `POST /api/occurrences` → `DocumentTask._occurrences`: the op's `skip` list, the gate again with the recorded
+    keys (`compiler.compose_submission(skips=)`: a request never writes `skip` itself), a new preview. The verifier
+    re-finds every occurrence, honours the plan's skips by its own reading and records the log under V10's data
+    (`verify/suite.occurrence_lines`). **Add a folder of documents** (`DocumentTask.attach_folder`, `/api/attach-folder`)
+    attaches a folder's own `.docx` files, subfolders not entered.
     `pdf_export.py` (Save clean PDFs: a PDF of each copy that passed, rendered through `render` and its cache, then
     `check_pdf`; the button's plan is a fixed chain, comments removed and then tracked changes accepted).
     `template_roles.py` (a template's style per role, page and font, read without a model) and `body_match.py` (match
@@ -231,3 +239,8 @@ Standing decisions from the earlier rounds (their plans are in the git history):
 - Capitals are a display property (`w:caps`) unless the user gives capitalised wording; nothing retypes a file's letters
   in another case.
 - The batch overview and the plan's flags describe and never decide: they change, choose and order nothing.
+- The standalone find-and-replace tool (`Abe-Borg/docx-find-and-replace`, python-docx and tkinter, editing in place)
+  is not merged into Spec Surgeon (the owner's decision, 2026-10-27): Safe mode's **Find and replace** button is where
+  that work lives (its rule-set CSV loads as the attached table), with every occurrence listed to untick (backlog F1,
+  built), the occurrence log in the records (F2) and a folder of documents attached at once (F3). Text boxes, editing
+  in place over the originals and re-scanning replaced text stay out, as decided above and by T1.

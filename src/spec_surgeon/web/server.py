@@ -119,6 +119,8 @@ def job_started_line(action: str, values: Dict[str, Any]) -> str:
         what = "the primary action" + (f", {len(hold)} document(s) held back" if hold else "")
     elif action == "recipe":
         what = f"the Safe-mode button {diag.snip(values.get('recipe') or '?', 40)}"
+    elif action == "occurrences":
+        what = f"{len(values.get('skip') or [])} occurrence(s) unticked in the preview"
     else:
         what = ""
     return f"Job {action} started" + (f" ({what})" if what else "")
@@ -335,7 +337,8 @@ class WindowState:
                 "connection": {"ready": task.session.claude_ready(), "origin": self.key_origin},
                 "cost": task._cost(), "attachments": attachments, "messages": messages, "plan": plan,
                 "questions": list(raw["questions"]), "choices": list(raw["choices"]), "chips": list(raw["chips"]),
-                "samples": samples, "warnings": list(raw["warnings"]), "blocking": bool(raw["blocking"]),
+                "samples": samples, "occurrences": [dict(d) for d in raw.get("occurrences") or []],
+                "warnings": list(raw["warnings"]), "blocking": bool(raw["blocking"]),
                 "results": results, "pdfs": pdfs, "pdf": task.pdf_info(),
                 "export": {"folder": raw.get("export_folder", ""), "unsaved": len(raw.get("unsaved") or []),
                            "copies": int(raw.get("copies") or 0)},
@@ -577,6 +580,32 @@ def create_app(state: WindowState, *, dev: bool = False) -> FastAPI:
             return error(str(e))
         return state.view()
 
+    @app.post("/api/attach-folder")
+    async def attach_folder(request: Request):
+        """**Add a folder of documents**: the folder in the body, else the one the native folder dialog returns; its
+        own .docx files are attached (``DocumentTask.attach_folder``). 501 without a dialog and a folder, 409 while
+        work runs, 400 for a folder that refuses; ``{"cancelled": true}`` when the dialog was dismissed; else the
+        view."""
+        if state.busy:
+            return busy_error()
+        try:
+            body = await request.json()
+        except ValueError:
+            body = {}
+        folder = str((body or {}).get("folder") or "") if isinstance(body, dict) else ""
+        if not folder:
+            chosen = state.shell.pick_folder(str(Path.home()))
+            if chosen is None:
+                return error("This window has no native folder dialog; drop the files on the page instead.", 501)
+            if not chosen:
+                return {"cancelled": True}
+            folder = chosen
+        try:
+            state.task.attach_folder(folder)
+        except (OSError, ValueError) as e:
+            return error(str(e))
+        return state.view()
+
     @app.post("/api/upload")
     async def upload(files: List[UploadFile] = File(...), template: str = Form("false")):
         """A dropped file's bytes go under the scratch folder's ``attachments/<stamp>/`` and are attached from there:
@@ -653,6 +682,14 @@ def create_app(state: WindowState, *, dev: bool = False) -> FastAPI:
         if inputs is not None and not isinstance(inputs, dict):
             return error("The button's form could not be read.")
         return stream("recipe", recipe=str(body.get("recipe") or ""), inputs=inputs or {})
+
+    @app.post("/api/occurrences")
+    async def occurrences(request: Request):
+        body = await request.json()
+        keys = body.get("skip") if isinstance(body, dict) else None
+        if not isinstance(keys, list) or not all(isinstance(k, str) for k in keys):
+            return error("The unticked occurrences could not be read.")
+        return stream("occurrences", skip=list(keys))
 
     @app.post("/api/mode")
     async def set_mode(request: Request):

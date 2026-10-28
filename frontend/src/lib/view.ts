@@ -86,6 +86,7 @@ export const EMPTY_VIEW: View = {
   choices: [],
   chips: [],
   samples: [],
+  occurrences: [],
   warnings: [],
   blocking: false,
   results: [],
@@ -155,6 +156,7 @@ export function normalizeView(raw: unknown): View {
     choices: list<Choice>(v.choices),
     chips: list<string>(v.chips),
     samples: list(v.samples),
+    occurrences: list(v.occurrences),
     warnings: list(v.warnings),
     blocking: v.blocking === true,
     results: list(v.results),
@@ -331,13 +333,14 @@ function reduceEvent(state: UiState, event: JobEvent): UiState {
     }
     case "plan":
       // The pages on screen belong to the plan before this one; this plan's pages follow in `samples`.
-      return { ...state, view: { ...state.view, plan: event.plan, samples: [], warnings: [], blocking: false } };
+      return { ...state, view: { ...state.view, plan: event.plan, samples: [], occurrences: [], warnings: [], blocking: false } };
     case "samples":
       return {
         ...state,
         view: {
           ...state.view,
           samples: event.samples ?? [],
+          occurrences: event.occurrences ?? [],
           warnings: event.warnings ?? [],
           blocking: event.blocking === true,
         },

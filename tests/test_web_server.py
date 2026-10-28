@@ -601,6 +601,72 @@ def test_safe_mode_routes_the_buttons_the_mode_and_the_hand_off(tmp_path, monkey
     assert bad.status_code == 400
 
 
+def test_the_occurrences_route_takes_the_unticks_and_the_view_lists_them(tmp_path, monkeypatch):
+    """Backlog F1 over the server: the view and the samples event carry the occurrence list; the route refuses a body
+    that is not a list of keys; the unticks stream a job that ends with the list marked and a new token."""
+    from make_fixtures import build
+    monkeypatch.setenv("SPEC_SURGEON_CONFIG_DIR", str(tmp_path / "config"))
+    state, client = window(tmp_path)
+    client.post("/api/mode", json={"mode": "safe"})
+    spec = tmp_path / "21 13 13.docx"
+    spec.write_bytes(build("21 13 13", "WET-PIPE SPRINKLER SYSTEMS"))
+    client.post("/api/attach", json={"paths": [str(spec)]})
+    assert client.post("/api/occurrences", json={"skip": "x"}).status_code == 400
+    assert client.post("/api/occurrences", json={"skip": [1]}).status_code == 400
+    with client.stream("POST", "/api/recipe", json={"recipe": "find_replace",
+                                                     "inputs": {"pairs": [{"find": "FM Global", "replace": "GRC"}]}}) as r:
+        got = frames(r)
+    samples = next(f for f in got if f["type"] == "samples")
+    assert samples["occurrences"][0]["name"] == "21 13 13.docx" and len(samples["occurrences"][0]["items"]) == 4
+    view = got[-1]["state"]
+    items = view["occurrences"][0]["items"]
+    assert view["stage"] == "preview" and all(not i["skipped"] for i in items)
+    assert {"key", "part", "paragraph", "start", "end", "where", "heading", "before", "match", "after", "find",
+            "replace", "skipped", "op_index"} <= set(items[0])
+    token = view["action"]["token"]
+    with client.stream("POST", "/api/occurrences", json={"skip": [items[1]["key"]]}) as r:
+        got = frames(r)
+    assert got[-1]["type"] == "done"
+    view = got[-1]["state"]
+    assert view["stage"] == "preview" and view["action"]["token"] != token
+    assert [i["skipped"] for i in view["occurrences"][0]["items"]] == [False, True, False, False]
+    assert client.get("/api/state").json()["occurrences"] == view["occurrences"]
+    with client.stream("POST", "/api/occurrences", json={"skip": ["no such key"]}) as r:
+        got = frames(r)
+    assert got[-1]["type"] == "done" and got[-1]["state"]["messages"][-1]["text"].startswith("An occurrence to leave")
+
+
+def test_the_folder_route_attaches_a_folders_documents_or_says_there_is_no_dialog(tmp_path, monkeypatch):
+    from make_fixtures import build
+    monkeypatch.setenv("SPEC_SURGEON_CONFIG_DIR", str(tmp_path / "config"))
+    state, client = window(tmp_path)
+    assert client.post("/api/attach-folder", json={}).status_code == 501        # no native dialog in a test window
+    folder = tmp_path / "Specs"
+    folder.mkdir()
+    (folder / "21 13 13.docx").write_bytes(build("21 13 13", "WET-PIPE SPRINKLER SYSTEMS"))
+    view = client.post("/api/attach-folder", json={"folder": str(folder)}).json()
+    assert [a["name"] for a in view["attachments"]] == ["21 13 13.docx"]
+    assert view["messages"][-1]["role"] == "app" and "1 document added from Specs." == view["messages"][-1]["text"]
+    assert client.post("/api/attach-folder", json={"folder": str(tmp_path / "config")}).status_code == 400
+    assert client.post("/api/attach-folder", json={"folder": str(tmp_path / "nowhere")}).status_code == 400
+
+    class Picks:
+        def __init__(self, answer):
+            self.answer = answer
+        def pick_folder(self, start=""):
+            return self.answer
+        def pick_files(self, kind):
+            return None
+        def confirm(self, title, message):
+            return False
+        def close(self):
+            pass
+    state.shell = Picks("")
+    assert client.post("/api/attach-folder").json() == {"cancelled": True}
+    state.shell = Picks(str(folder))
+    assert [a["name"] for a in client.post("/api/attach-folder").json()["attachments"]] == ["21 13 13.docx"]
+
+
 def test_safe_mode_routes_discard_and_undo(tmp_path, monkeypatch):
     from make_fixtures import build
     monkeypatch.setenv("SPEC_SURGEON_CONFIG_DIR", str(tmp_path / "config"))

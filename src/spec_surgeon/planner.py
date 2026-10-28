@@ -140,7 +140,30 @@ class FilePlan:
         if self.plan and any(a.get("kind") == "character_hygiene" for a in self.plan.get("property_assertions", [])):
             result["character_changes"] = [c for a in self.plan["property_assertions"]
                                            if a.get("kind") == "character_hygiene" for c in a["changes"]]
+        occurrences = self.occurrences()
+        if occurrences:
+            result["occurrences"] = occurrences
         return result
+
+    def occurrences(self) -> List[Dict[str, Any]]:
+        """Every occurrence a ``replace_table`` op of the plan lists (backlog F1), each with the index of the op it
+        belongs to: from the plan's ``replaced_text`` assertions, or — for a file the plan refused — from the
+        refusal's details, which carry every occurrence the op listed (a refusal waits until every paragraph is
+        listed), the refused one included.
+        ``set_issue_stamp`` shares the assertion kind but takes no skip list, so its occurrences are nobody's to
+        untick and are left out."""
+        out: List[Dict[str, Any]] = []
+        if self.plan:
+            for a in self.plan.get("property_assertions", []):
+                if a.get("kind") == "replaced_text" and a.get("op") == "replace_table" and isinstance(a.get("op_index"), int):
+                    out += [{**o, "op_index": a["op_index"]} for o in a.get("occurrences") or [] if isinstance(o, dict)]
+        elif self.exception:
+            details = self.exception.get("details") or {}
+            number = details.get("op_number")
+            if details.get("op") == "replace_table" and isinstance(number, int) \
+                    and isinstance(details.get("occurrences"), list):
+                out += [{**o, "op_index": number - 1} for o in details["occurrences"] if isinstance(o, dict)]
+        return out
 
 
 @dataclass

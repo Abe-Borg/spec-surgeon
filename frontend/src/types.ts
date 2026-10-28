@@ -150,6 +150,39 @@ export interface Sample {
   geometry?: { status: "PASS" | "FAIL" | "NA"; note: string; at?: "run" } | null;
 }
 
+/** One find-and-replace occurrence the waiting plan found (docs/WEB_API.md, `occurrences[].items[]`). */
+export interface OccurrenceItem {
+  /** What the page sends back as `skip` to leave the occurrence as it is; the server resolves it from its own record. */
+  key: string;
+  part: string;
+  /** The paragraph's ordinal in its part, from 0; shown from 1. */
+  paragraph: number;
+  start: number;
+  end: number;
+  /** Which part, in words: "the body", "a header" … */
+  where: string;
+  /** The article the body paragraph sits under ("2.01"), or "". */
+  heading: string;
+  before: string;
+  match: string;
+  after: string;
+  find: string;
+  replace: string;
+  /** Unticked in the previewed plan: left as it is. */
+  skipped: boolean;
+  op_index: number;
+}
+
+/** The occurrences of one document of the waiting plan. */
+export interface OccurrenceDoc {
+  source: string;
+  name: string;
+  /** `refused`: the plan set the document aside; its items are every occurrence found, the refused one included. */
+  status: "planned" | "refused";
+  reason: string;
+  items: OccurrenceItem[];
+}
+
 export interface Result {
   source: string;
   output: string;
@@ -300,6 +333,9 @@ export interface View {
   choices: Choice[];
   chips: string[];
   samples: Sample[];
+  /** The find-and-replace occurrences of the waiting plan, per document (every document, not the sampled ones only);
+   *  empty when no plan waits or it has no find-and-replace. Absent from an older server. */
+  occurrences: OccurrenceDoc[];
   warnings: string[];
   blocking: boolean;
   results: Result[];
@@ -354,7 +390,7 @@ export type JobEvent =
   | { type: "text_delta"; text: string }
   | { type: "message"; message: Message }
   | { type: "plan"; plan: Plan }
-  | { type: "samples"; samples: Sample[]; warnings: string[]; blocking: boolean }
+  | { type: "samples"; samples: Sample[]; occurrences?: OccurrenceDoc[]; warnings: string[]; blocking: boolean }
   | { type: "results"; results: Result[] }
   | { type: "question"; questions: string[]; choices: Choice[]; chips: string[] }
   | { type: "cost"; cost: Cost }

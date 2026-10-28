@@ -132,6 +132,15 @@ def test_every_chapter_state_builds_without_a_model_call(tmp_path, kind):
         assert view["working"]["undo"] and view["working"]["generation"] == 1
         for output in view["results"].values():
             assert Path(output).is_relative_to(folder)
+    elif kind == "find":
+        assert view["stage"] == "preview" and view["action"] == "Create edited copies" and view["can_hold"]
+        assert view["messages"][0]["role"] == "user" and "FM Global" in view["messages"][0]["text"]
+        listed = view["occurrences"]
+        assert [d["name"] for d in listed] == [tutorial.DOCUMENTS[0], tutorial.DOCUMENTS[1], tutorial.OTHER_FIRM]
+        assert all(d["status"] == "planned" for d in listed)
+        assert sum(i["skipped"] for d in listed for i in d["items"]) == 1 and listed[1]["items"][0]["skipped"]
+        assert task.session.spec["ops"][0]["params"]["skip"][0]["find"] == "FM Global"
+        assert view["messages"][-1]["role"] == "app" and "1 occurrence will be left as it is" in view["messages"][-1]["text"]
     elif kind == "conversation":
         assert view["stage"] == "empty" and not view["messages"]
     elif kind == "question":

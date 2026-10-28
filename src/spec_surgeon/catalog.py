@@ -449,6 +449,8 @@ COMMON_ASSUMPTIONS: Dict[str, List[str]] = {
         "changed — an occurrence there (or split by a tab or line break) sets the file aside rather than being skipped",
         "tracked unless the user asked for clean copies; a file with none of the words is set aside unless "
         "allow_missing (say which)",
+        "an occurrence the user unticks in the window's preview is left as it is (the window writes it into skip; a "
+        "request never writes skip itself), and the checker confirms nothing else was left out",
     ],
     "set_issue_stamp": [
         "the stamp is found wherever it sits — the cover, a header or a footer — by its current wording (the pattern or "

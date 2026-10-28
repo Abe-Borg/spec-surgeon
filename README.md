@@ -90,7 +90,8 @@ it was, and once you have finished it the chip stops inviting. Help → How to u
 
 1. **Add Word documents.** Drop `.docx` files anywhere in the window, or use **Add Word documents**. Files can come
    from different folders, including files with the same name. Only the files you attach are edited; nothing is
-   picked up from their folders.
+   picked up from their folders. **Add a folder of documents** attaches a folder's own `.docx` files at once (its
+   subfolders are not entered; the chat says how many documents they hold, so you can add those folders too).
 2. **Check the list of files.** The moment a file is attached, Spec Surgeon reads it (milliseconds, no model
    call) and lists it by its name. What it finds (typed numbers instead of automatic list numbering, no paragraph
    styles, text boxes in the headers or footers, an older compatibility mode, editing restrictions, pending tracked
@@ -174,7 +175,9 @@ mode you last used (Safe the first time; never Obliterate).
 - **Safe — buttons, no AI.** What you control: the common changes, one button each — *Match headers and footers to
   template*, *Remove headers and footers*, *Add or remove a watermark*, *Swap the logo*, *Match body formatting to
   template*, *Match font to template*,
-  *Find and replace* (typed pairs or an attached table; body, headers and footers), *Accept all tracked changes*,
+  *Find and replace* (typed pairs or an attached table; body, headers and footers; every occurrence found is listed
+  under the previews with a checkbox, so a historical reference can be unticked and left as it is, the plan remade
+  with **Update the preview**, and the checker confirms it was left untouched), *Accept all tracked changes*,
   *Remove all comments*, *Remove highlighting*, *Remove hidden text*, *Remove empty paragraphs*, *Name files by
   section number and title*, *Set the document title property*, *Turn off Track Changes* and *Save clean PDFs*. Each button has a short
   form (your words and choices only), then **Preview**, the same pages, checks and **Create edited copies** as Default

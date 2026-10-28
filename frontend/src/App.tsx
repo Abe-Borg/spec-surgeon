@@ -6,6 +6,7 @@ import * as api from "./lib/api";
 import { actionButton, canDiscard } from "./lib/action";
 import { composerState, transcript } from "./lib/chat";
 import { canReview, heldSources, keptAcrossTour, reviewKey, setMark, type KeptReviews, type Mark, type Reviews } from "./lib/review";
+import { canUntick, occurrencesKey, previewedUnticks, toggleUntick, untickedKeys, unticksPending, type Unticks } from "./lib/occurrences";
 import { INITIAL_STATE, reduce } from "./lib/view";
 import { ACCEPT } from "./lib/workbench";
 import { checkSettled, updatePill, type HelpTopic } from "./lib/help";
@@ -173,9 +174,29 @@ export default function App() {
     [runJob, view.action.kind, held],
   );
 
+  // --- Find and replace, occurrence by occurrence ---------------------------
+  // The ticks belong to one preview's list and start as the previewed plan has them (its unticked occurrences);
+  // Update the preview sends the whole unticked set, and the one button waits while the ticks differ.
+  const [unticks, setUnticks] = useState<Unticks>({});
+  const occKey = occurrencesKey(view);
+  const occKeyRef = useRef(occKey);
+  useEffect(() => {
+    if (occKeyRef.current === occKey) return;
+    occKeyRef.current = occKey;
+    setUnticks(previewedUnticks(view));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [occKey]);
+  const onToggleUntick = useCallback((key: string) => setUnticks((u) => toggleUntick(u, key)), []);
+  const unticking = canUntick(view, busy);
+  const pendingUnticks = unticking && unticksPending(unticks, view);
+  const onUpdateOccurrences = useCallback(
+    () => void runJob(api.occurrences(untickedKeys(unticks, view.occurrences ?? [])), null, "occurrences"),
+    [runJob, unticks, view.occurrences],
+  );
+
   const button = useMemo(
-    () => actionButton(view, busy, view.mode !== "safe" && !!draft.trim(), held.length),
-    [view, busy, draft, held.length],
+    () => actionButton(view, busy, view.mode !== "safe" && !!draft.trim(), held.length, pendingUnticks),
+    [view, busy, draft, held.length, pendingUnticks],
   );
   const items = useMemo(() => transcript(state), [state]);
   const composer = useMemo(() => composerState(view), [view]);
@@ -428,6 +449,11 @@ export default function App() {
   // delta would otherwise cause, as long as nothing handed to them is a new function each time.
   const onOpenSettings = useCallback(() => setSettingsOpen(true), []);
   const onAddKind = useCallback((kind: PickKind) => void onAdd(kind), [onAdd]);
+  // Add a folder of documents: the server opens the folder dialog and attaches the folder's own .docx files; a
+  // dismissed dialog changes nothing, and a window without a dialog says so.
+  const onAddFolder = useCallback(() => {
+    applyView(api.attachFolder().then((next) => next ?? api.getState()));
+  }, [applyView]);
   const onZoom = useCallback((src: string, title: string) => setZoom({ src, title }), []);
   const actionToken = view.action?.token;
   const onContinue = useCallback(() => {
@@ -590,7 +616,13 @@ export default function App() {
           reviews={reviews}
           canReview={reviewing}
           onMark={onMark}
+          unticks={unticks}
+          canUntick={unticking}
+          unticksPending={pendingUnticks}
+          onToggleUntick={onToggleUntick}
+          onUpdateOccurrences={onUpdateOccurrences}
           onAdd={onAddKind}
+          onAddFolder={onAddFolder}
           onRemove={onRemove}
           onOpen={onOpen}
           onStartOver={onStartOver}

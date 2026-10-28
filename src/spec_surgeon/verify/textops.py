@@ -4,6 +4,9 @@ hands every edited paragraph to the item model (verify/edits.py). Definitions: C
 docs/BUILTIN_OPS_BATCH1_DESIGN.md.
 
 * ``replaced_text`` — replace_table / set_issue_stamp: the pairs (typed, plus the table file read again) found in run text.
+  The assertion's ``skip`` (the occurrences the user unticked, as [part, paragraph, start, end, find]) is read here
+  on its own: each must be a hit this module finds, none of them is edited, nothing else is skipped, and the
+  assertion's ``occurrences`` (what the preview listed) are exactly the hits found here, kept or skipped.
 """
 from __future__ import annotations
 
@@ -31,6 +34,9 @@ def _v_owner(el):
 # ---- replacement pairs -------------------------------------------------------------------------------------------
 
 _V_PAIR_DEFAULTS = {"regex": False, "match_case": True, "whole_word": True, "flexible_whitespace": False}
+_V_WHERE = {"document": "the body", "headers": "a header", "footers": "a footer", "footnotes": "a footnote",
+            "endnotes": "an endnote", "comments": "a comment"}
+_V_CONTEXT = 48          # the words the record shows on either side of an occurrence (its own reading)
 
 
 def _v_pair(raw: Dict[str, Any]) -> Dict[str, Any]:
@@ -88,8 +94,8 @@ def _v_hits(text: str, rx, pair: Dict[str, Any]) -> List[Tuple[int, int]]:
     return out
 
 
-def v_find_pairs(text: str, pairs: Sequence[Dict[str, Any]], rxs: Sequence[Any]) -> List[Tuple[int, int, int]]:
-    """[(start, end, pair index)]; ValueError for overlapping matches or an occurrence split by a tab/line break."""
+def v_all_hits(text: str, pairs: Sequence[Dict[str, Any]], rxs: Sequence[Any]) -> List[Tuple[int, int, int]]:
+    """Every hit [(start, end, pair index)] in order; ValueError for an occurrence split by a tab/line break."""
     reader = re.sub(r"[\t\n]", " ", text)
     hits = []
     for k, (pair, rx) in enumerate(zip(pairs, rxs)):
@@ -98,10 +104,26 @@ def v_find_pairs(text: str, pairs: Sequence[Dict[str, Any]], rxs: Sequence[Any])
             raise ValueError(f"{pair['find']!r} also occurs split by a tab or a line break in {v_shown(text)!r}")
         hits += [(a, b, k) for a, b in mine]
     hits.sort()
+    return hits
+
+
+def v_no_overlap(text: str, hits: Sequence[Tuple[int, int, int]]) -> None:
     for x, y in zip(hits, hits[1:]):
         if y[0] < x[1]:
             raise ValueError(f"two pairs match overlapping text in {v_shown(text)!r}")
+
+
+def v_find_pairs(text: str, pairs: Sequence[Dict[str, Any]], rxs: Sequence[Any]) -> List[Tuple[int, int, int]]:
+    """[(start, end, pair index)]; ValueError for overlapping matches or an occurrence split by a tab/line break."""
+    hits = v_all_hits(text, pairs, rxs)
+    v_no_overlap(text, hits)
     return hits
+
+
+def _v_same_file(a: str, b: str) -> bool:
+    """This module's own reading of two paths as one file (normalised, case as the file system reads it)."""
+    import os
+    return os.path.normcase(os.path.normpath(a)) == os.path.normcase(os.path.normpath(b))
 
 
 def _replaced_text(ctx: Ctx, a: Dict[str, Any], errs: List[str]) -> str:
@@ -120,6 +142,27 @@ def _replaced_text(ctx: Ctx, a: Dict[str, Any], errs: List[str]) -> str:
     rxs = [_v_rx(p) for p in pairs]
     tracked, author = bool(a.get("tracked", True)), a.get("author")
     pred = (a.get("select") or {}).get("paragraphs")
+    # the user's unticked occurrences, as the plan says it honoured them: [file, part, paragraph, start, end, find];
+    # each names the file this record is of (its own reading of the path), or the plan skipped another file's
+    skips: Set[Tuple[str, int, int, int, str]] = set()
+    for row in a.get("skip") or []:
+        try:
+            fn, pt, pi, s, e, f = row
+            skips.add((str(pt), int(pi), int(s), int(e), str(f)))
+        except (TypeError, ValueError):
+            errs.append(f"replaced_text: a skip the plan declares is malformed: {row!r}")
+            continue
+        if ctx.source_name and not _v_same_file(str(fn), ctx.source_name):
+            errs.append(f"replaced_text: the plan skips an occurrence of another file ({fn!r}; this is "
+                        f"{ctx.source_name!r})")
+    honoured: Set[Tuple[str, int, int, int, str]] = set()
+    found_occurrences: List[Tuple[str, int, int, int, str, bool]] = []
+    # the occurrence log (backlog F2): what this check found, in its own reading, for the record
+    log: List[Dict[str, Any]] = ctx.findings.setdefault("occurrences", [])
+    where_of: Dict[str, str] = {}
+    for kind in a.get("scope") or ["document"]:
+        for part in ctx.src.part_of_kind(kind):
+            where_of.setdefault(part, _V_WHERE.get(kind, kind))
     n, edited = 0, {}
     for part in ctx.scope_parts(a.get("scope") or ["document"]):
         if part not in ctx.both:
@@ -135,13 +178,33 @@ def _replaced_text(ctx: Ctx, a: Dict[str, Any], errs: List[str]) -> str:
                 continue
             text = v_run_text(v_items(p))
             try:
-                hits = v_find_pairs(text, pairs, rxs)
+                hits = v_all_hits(text, pairs, rxs)
             except ValueError as e:
                 errs.append(f"replaced_text: {part} block {bi}: {e} — the op must refuse")
                 continue
-            edits = [(s, e, pairs[k]["replace"], False) for s, e, k in hits if text[s:e] != pairs[k]["replace"]]
-            if not edits:
+            kept = []
+            for s, e, k in hits:
+                if text[s:e] == pairs[k]["replace"]:
+                    continue                                       # a no-op hit is no edit, listed nowhere
+                key = (part, bi, s, e, pairs[k]["find"])
+                skipped = key in skips
+                if skipped:
+                    honoured.add(key)
+                else:
+                    kept.append((s, e, k))
+                found_occurrences.append((*key, skipped))
+                log.append({"part": part, "where": where_of.get(part, part), "paragraph": bi, "start": s, "end": e,
+                            "before": v_shown(text[max(0, s - _V_CONTEXT):s]), "match": v_shown(text[s:e]),
+                            "after": v_shown(text[e:e + _V_CONTEXT]), "find": pairs[k]["find"],
+                            "replace": pairs[k]["replace"], "skipped": skipped})
+            try:
+                v_no_overlap(text, kept)
+            except ValueError as e:
+                errs.append(f"replaced_text: {part} block {bi}: {e} — the op must refuse")
                 continue
+            edits = [(s, e, pairs[k]["replace"], False) for s, e, k in kept]
+            if not edits:
+                continue                      # (a paragraph whose every hit was unticked: the residual check holds it)
             if _v_owner(p) is not None:
                 errs.append(f"replaced_text: {part} block {bi} is in a text box — the op must refuse")
                 continue
@@ -150,11 +213,27 @@ def _replaced_text(ctx: Ctx, a: Dict[str, Any], errs: List[str]) -> str:
             check_edited_paragraph(p, ov.pars[bi], edits, tracked, author, in_field, old_ids,
                                    f"replaced_text {part} block {bi}", errs)
             ctx.verified_blocks.setdefault(part, {})[bi] = bi
+    for key in sorted(skips - honoured):
+        errs.append(f"replaced_text: the plan skips {key[4]!r} at {key[0]} block {key[1]} characters {key[2]}–{key[3]}, "
+                    f"which is no occurrence here — the op must refuse")
+    listed = []
+    for occ in a.get("occurrences") or []:
+        try:
+            listed.append((str(occ["part"]), int(occ["paragraph"]), int(occ["start"]), int(occ["end"]),
+                           str(occ["find"]), bool(occ.get("skipped"))))
+        except (TypeError, KeyError, ValueError):
+            errs.append(f"replaced_text: an occurrence the plan lists is malformed: {occ!r}")
+    if sorted(listed) != sorted(found_occurrences):
+        missing = sorted(set(found_occurrences) - set(listed))
+        extra = sorted(set(listed) - set(found_occurrences))
+        errs.append(f"replaced_text: the plan's list of occurrences differs from what is found here"
+                    + (f"; not listed: {missing[:5]}" if missing else "") + (f"; listed but not here: {extra[:5]}" if extra else ""))
     if n != a.get("expected_edits", -1):
         errs.append(f"replaced_text: {n} replacement(s) found here, the plan predicted {a.get('expected_edits')}")
     if edited != {k: list(v) for k, v in (a.get("edited_blocks") or {}).items()}:
         errs.append(f"replaced_text: edited paragraphs {edited} here, the plan predicted {a.get('edited_blocks')}")
-    return f"replaced_text: {n} replacement(s) of {len(pairs)} pair(s) ({'tracked' if tracked else 'untracked'})"
+    return (f"replaced_text: {n} replacement(s) of {len(pairs)} pair(s) ({'tracked' if tracked else 'untracked'})"
+            + (f"; {len(honoured)} occurrence(s) left as they are at the user's word" if honoured else ""))
 
 
 # ---- project variables ---------------------------------------------------------------------------------------------

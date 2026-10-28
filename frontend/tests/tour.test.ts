@@ -134,7 +134,7 @@ test("chapter and step ids are unique, and chapterIndex finds them", () => {
 
 test("every chapter's scenario is one the server builds, and the dev mock builds the same set", () => {
   const scenarios = pyTuple("SCENARIOS");
-  assert.deepEqual(scenarios, ["start", "button", "copies", "conversation", "question", "plan", "todo"]);
+  assert.deepEqual(scenarios, ["start", "button", "copies", "find", "conversation", "question", "plan", "todo"]);
   for (const chapter of TOUR) assert.ok(scenarios.includes(chapter.scenario), `${chapter.id}: ${chapter.scenario}`);
   for (const scenario of scenarios) assert.ok(TOUR.some((c) => c.scenario === scenario), `no chapter shows ${scenario}`);
   // Safe-mode chapters come first, then the conversation's: the server switches modes once.
@@ -174,6 +174,7 @@ test("a step's needs are read off the view, and unmet on an empty one", () => {
     plan: { groups: [], targets: [], set_aside: [{ path: "e", name: "e", reason: "x" }], stages: 1 },
     left_untouched: [{ path: "b", name: "b", reason: "x" }],
     action: { label: "Create", token: "t", kind: "approve", can_hold: true },
+    occurrences: [{ source: "a", name: "a", status: "planned", reason: "", items: [] }],
     results: [{ source: "a", output: "c", name: "a" }],
     todo: [{ path: "d", name: "d", why: "held", reason: "x" }],
     stage: "question",

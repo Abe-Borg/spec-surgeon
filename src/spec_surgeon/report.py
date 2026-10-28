@@ -252,6 +252,12 @@ FAILURE_EXPLANATIONS: Dict[str, Tuple[str, str]] = {
         "chain again.",
     ),
     # built-in batch 1 (docs/BUILTIN_OPS_BATCH1_DESIGN.md)
+    "skip-unmatched": (
+        "An Unticked Occurrence Is Not There",
+        "An occurrence you unticked in the preview is not at that place in this document now, so the document is "
+        "not the one the preview was made from (it changed, or it is another file). Nothing was changed; preview "
+        "it again and untick what should stay.",
+    ),
     "spans-structure": (
         "Text Split by a Tab, Line Break or Field",
         "The words to change run across a tab, a line break, a field or a picture in this paragraph, so they cannot be "
@@ -832,6 +838,16 @@ def write_batch_report(batch: "BatchResult") -> Path:
             code = (f.exception or {}).get("code", "?")
             lines.append(f"| {f.source.name} | **EXCEPTION** ({code}) | | | " + " | ".join(["-"] * 12) + " | |")
     lines.append("")
+    from .verify.suite import occurrence_counts
+    logged = [(f, occurrence_counts(f.record)) for f in batch.files if f.record]
+    logged = [(f, c) for f, c in logged if c is not None]
+    if logged:
+        lines.append("## Find and replace, occurrence by occurrence")
+        lines.append("Each copy's record lists every occurrence the checker found, with the words around it and "
+                     "whether it was replaced or left at the user's word (an occurrence unticked in the preview).")
+        for f, (replaced, left) in logged:
+            lines.append(f"- {f.source.name}: {replaced} replaced, {left} left at the user's word")
+        lines.append("")
     if manifest["files"]:
         lines.append("## Set-Aside Files (Ready for Next Pass or Manual Review)")
         lines.append(_set_aside_summary(manifest))

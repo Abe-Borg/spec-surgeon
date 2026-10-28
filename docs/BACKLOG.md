@@ -100,7 +100,7 @@ machine". What is left:
 | --- | --- |
 | H2 — the working set as bytes | `_transform_one` returns the copy's bytes with its record and plan (workers send them back over the pool; `FileResult.output` becomes a name plus bytes); the delivered set, `results`, `working` and `undo_points` are versions in memory (bytes, name, record, plan, the `applied` sentences), the approval token hashes them, a chain hands bytes between steps (`chain._deliver` already holds them) and a preview writes a sample to scratch for the renderer only. `/api/open` takes a result id and writes the copy to scratch on demand; `results[].output` becomes an id in `docs/WEB_API.md`. Recovery's checkpoints stay files in scratch (their lock and resume design holds). Records are written only by an export |
 | H3 — a session file | **Save this session…** / **Open a session…**: one file (a zip: the conversation, decisions and approved wording, the working set's versions with their records, the to-do list, undo points, spending; never the API key) in place of `config_dir()\conversation.json` and the `conversations\` archive. The crash journal of H1 is this file, autosaved under scratch after every step, removed at a clean exit |
-| H4 — more export choices | **Save the copies with their records…** (`records\`, `BATCH_REPORT.md`, `DIAGNOSTICS.md` beside the copies: the audit trail that today sits in the run folder); **Save beside the originals** (each copy in its original's folder under its planned name, refused where that name is an input's); the diagnostic bundle built from the scratch folder and memory. Write-back over the originals (`guard.write_back`, invariant 4, never bypassed) is possible as a further choice and is the owner's call: it reverses T1 |
+| H4 — more export choices | **Save the copies with their records…** (`records\`, `BATCH_REPORT.md`, `DIAGNOSTICS.md` beside the copies: the audit trail that today sits in the run folder, the find-and-replace occurrence log of F2 among it); **Save beside the originals** (each copy in its original's folder under its planned name, refused where that name is an input's); the diagnostic bundle built from the scratch folder and memory. Write-back over the originals (`guard.write_back`, invariant 4, never bypassed) is possible as a further choice and is the owner's call: it reverses T1 |
 
 Decisions taken (the owner, 2026-10-27): crash resume is kept through the scratch journal — the next start restores
 a window that never closed, once (H1); on export the copies alone, the records as a second choice (H4); no
@@ -111,6 +111,16 @@ write-back over the originals unless asked for (T1 is the claim most of the trus
 Everything else is built and tested on fixtures; nothing is done on fixtures alone. These runs need real
 specifications, Windows and Word, and only the owner can do them. Record what a run finds as a new item above.
 
+- **Find and replace, occurrence by occurrence (F1–F3, built 2026-10-27):** a real code-cycle rule set (the small
+  tool's `find,replace` CSV attached as the table, or typed pairs) over a real specification folder attached with
+  **Add a folder of documents**; the occurrence list under the previews reads right (the article labels, the words
+  around each occurrence, a header's occurrence named as a header's); untick a historical reference and a line in a
+  table, **Update the preview**, the previews return with those left as they are and Create waits until they do; the
+  copies in Word carry every other replacement and not those two; each copy's record (`records\*.record.md`, the
+  diagnostic bundle until H4) lists every occurrence with its status and `BATCH_REPORT.md` counts them; a tracked run
+  whose document the plan sets aside for a hyperlink's occurrence lists it, and unticking that one lets the document
+  through; the folder button over a folder with subfolders says how many documents they hold and attaches none of
+  them; the guided tour's new chapter reads well at 1280 px wide.
 - **The scratch folder and Export (H1, built 2026-10-27):** a real batch attached, previewed, run, undone and
   saved with Export from the installed app (the dialog opening where the last export went; a second export of the
   same copies writing nothing; a different file under a copy's name left alone and the copy numbered; the originals'

@@ -35,6 +35,8 @@ export const PDF_TIP =
 export const CONTINUE_TIP =
   "Checks the documents against your request again before anything can be approved.";
 export const SAVE_TIP = "Saves the copies that are already verified while a question is still open.";
+export const UNTICKS_TIP =
+  "Update the preview first: the plan and pages shown here still change the find-and-replace occurrences you unticked.";
 
 /** The approve tip when `held` previews carry the red X (`pdf`: the approval saves clean PDFs). */
 export function heldTip(held: number, pdf = false): string {
@@ -62,8 +64,9 @@ export function defaultLabel(kind: "approve" | "continue" | "save", blocking: bo
  * @param busy a job is running (the page's own flag; `view.busy` while attached to a stream)
  * @param draft the composer holds an unsent message
  * @param held how many previews carry the red X (counted on the approve label only)
+ * @param unticksPending the find-and-replace ticks on the page differ from the previewed plan's (lib/occurrences.ts)
  */
-export function actionButton(view: View, busy: boolean, draft: boolean, held = 0): ActionButton | null {
+export function actionButton(view: View, busy: boolean, draft: boolean, held = 0, unticksPending = false): ActionButton | null {
   if (busy) return { kind: "stop", label: "Stop now", tip: STOP_TIP };
   const action = view.action;
   if (!action || action.kind === "none" || !action.kind) return null;
@@ -73,6 +76,7 @@ export function actionButton(view: View, busy: boolean, draft: boolean, held = 0
   const counted = kind === "approve" && held > 0;
   if (counted) label = `${label} (${held} set aside)`;
   if (draft) return { kind, label, token: action.token, disabled: true, tip: DRAFT_TIP };
+  if (unticksPending && kind === "approve") return { kind, label, token: action.token, disabled: true, tip: UNTICKS_TIP };
   if (action.disabled_reason) return { kind, label, token: action.token, disabled: true, tip: action.disabled_reason };
   const tip =
     kind === "approve"

@@ -591,6 +591,7 @@ class Ctx:
         # source block → output block of every paragraph an edit kind checked item by item (verify/edits.py): the
         # residual leaves exactly those out, by this mapping, whatever the text alignment paired them with
         self.verified_blocks: Dict[str, Dict[int, int]] = {}
+        self.findings: Dict[str, Any] = {}          # what a kind found, for the record (the occurrence log, F2)
         self.masked_extents: Dict[str, Set[int]] = {}       # part → ordinals of the w:drawings whose sizes image_swaps checked
         # built-in batch 2 (docs/BUILTIN_OPS_BATCH2_DESIGN.md §1.2):
         self.verified_parts: Set[str] = set()       # text parts a kind compared WHOLE with its own expected tree
@@ -2839,7 +2840,7 @@ def check_properties(src: VPackage, out: VPackage, plan: Dict[str, Any], source_
     summary = (head + f" | residual identity over {len(residual_parts)} changed part(s): "
                + ("everything not asserted is identical" if ok else f"{len(errs)} problem(s): {errs[:3]}"))
     return ok, summary, {"errors": errs[:50], "error_count": len(errs),
-                         "assertions": summaries, "residual_parts": residual_parts}
+                         "assertions": summaries, "residual_parts": residual_parts, **ctx.findings}
 
 
 # header/footer templating kinds live in verify/template.py, built-in batch 1's word-changing kinds in verify/textops.py

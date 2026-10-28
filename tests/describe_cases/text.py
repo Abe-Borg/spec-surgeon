@@ -68,6 +68,14 @@ CASES = {
                          "flexible_whitespace": True}], "author": "Jane Doe"},
          ["“\\bSection\\s+0?1\\b” with “Section 01” (as a pattern, allowing any spacing or dash)",
           "tracked changes by “Jane Doe”"]),
+        # backlog F1: the occurrences the user unticked in the preview are said, never listed
+        ({}, {"pairs": [{"find": "2022 CBC", "replace": "2025 CBC"}], "tracked": False,
+              "skip": [{"file": "C:/Specs/21 13 13.docx", "part": "word/document.xml", "paragraph": 12, "start": 30,
+                        "end": 38, "find": "2022 CBC"},
+                       {"file": "C:/Specs/21 13 16.docx", "part": "word/document.xml", "paragraph": 4, "start": 0,
+                        "end": 8, "find": "2022 CBC"}]},
+         ["Replace “2022 CBC” with “2025 CBC”", "without tracked changes",
+          "2 occurrences you unticked in the preview are left as they are"]),
     ],
     "fill_variables": [
         ({}, {"values": {"PROJECT NAME": "Lincoln High School Modernization", "PROJECT NUMBER": "21-034"}},

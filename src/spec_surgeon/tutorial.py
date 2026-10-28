@@ -46,10 +46,15 @@ BUTTON_INPUTS: Dict[str, Any] = {"slots": {"ISSUED FOR PERMIT": STAMP_VALUE}}
 FONT_REQUEST = f"Change every font to Arial, headings included. Leave out {LEFT_OUT.split(' - ')[0]} for now."
 FONT_EXAMPLE = Path(__file__).resolve().parent / "examples" / "specs" / "change-all-font-arial.json"
 STAMP_REQUEST = f"Change the issue stamp in every header to {STAMP_VALUE}."
+# The find-and-replace chapter (backlog F1): the button over the showcase, one occurrence of the second document
+# unticked, so the list shows a kept and a left occurrence side by side.
+FIND_RECIPE = "find_replace"
+FIND_INPUTS: Dict[str, Any] = {"pairs": [{"find": "FM Global", "replace": "FM Approvals"}]}
 # Every chapter state the page may ask for (frontend/src/lib/tour.ts names them; frontend/tests/tour.test.ts pins
-# the two lists to each other). Safe mode: start, button, copies. Default mode: conversation, question, plan, todo.
-SCENARIOS = ("start", "button", "copies", "conversation", "question", "plan", "todo")
-SAFE_SCENARIOS = ("start", "button", "copies")
+# the two lists to each other). Safe mode: start, button, copies, find. Default mode: conversation, question, plan,
+# todo.
+SCENARIOS = ("start", "button", "copies", "find", "conversation", "question", "plan", "todo")
+SAFE_SCENARIOS = ("start", "button", "copies", "find")
 NO_CONVERSATION = ("The tour's conversation is a recording: nothing here is sent to Claude. End the tour to talk to "
                    "the assistant about your own documents.")
 RECORDED = ("This conversation is a bundled example for the guided tour. Nothing here was sent to Claude, and nothing "
@@ -157,6 +162,13 @@ def build_scenario(kind: str, folder: Path, *, render: bool, spending_limit=None
         if kind == "button":
             return task
         task.perform("primary", token=view["token"], hold=[held], log=quiet)
+        return task
+    if kind == "find":
+        # the find-and-replace button, then one occurrence unticked as the page sends it (the occurrences action)
+        view = task.perform("recipe", recipe=FIND_RECIPE, inputs=copy.deepcopy(FIND_INPUTS), log=quiet)
+        listed = view["occurrences"]
+        key = listed[1]["items"][0]["key"] if len(listed) > 1 and listed[1]["items"] else listed[0]["items"][0]["key"]
+        task.perform("occurrences", skip=[key], log=quiet)
         return task
     if kind == "conversation":
         return task
