@@ -131,9 +131,12 @@ jobs). Details: `docs/CONVERSATIONAL_DESKTOP.md`.
     a kind whose module writes none gets that module's docstring, so every kind has one), `reader.py`,
     `textcheck.py`, `edits.py`, `xsd.py`, `geometry.py` (V6/V7's page evidence, and `shown_words`: the words the
     original's pages show that the copy's do not, less what the plan removes — V6's warning, never a FAIL;
-    `report.words_missing_sentence` is its one wording), `explain.py`, `patterns.py` (the verifier's own bounded
-    patterns, `v_compile`/`v_search`, the same deadline and length limit written independently: a pattern past its
-    deadline is a `ValueError`, a failed check with that reason, never an exception out of the suite).
+    `report.words_missing_sentence` is its one wording), `template_layout.py` (V7's template reference: the template
+    as each document's plan makes it show, its fills in the slots and each section at the document's own text
+    width, the template's vertical layout kept — live QA finding F08), `explain.py`, `patterns.py` (the verifier's
+    own bounded patterns, `v_compile`/`v_search`, the same deadline and length limit written independently: a
+    pattern past its deadline is a `ValueError`, a failed check with that reason, never an exception out of the
+    suite).
   - `editspec.py` — load, validate, plan, merge, apply; composition (`stage_cuts`, `compose_chain`, `plan_chain`).
   - `batch.py` (per-file pipeline, guarded delivery, records; `worker_plan`/`map_files`: three or more files go to
     spawned worker processes, each file whole in one, in the packaged app too — a test's patches never reach one,

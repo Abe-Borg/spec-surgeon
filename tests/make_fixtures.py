@@ -549,6 +549,35 @@ def build_template() -> bytes:
     return buf.getvalue()
 
 
+WRAPPING_HEADER = ("SECTION {{SECTION_NUMBER}} – {{SECTION_TITLE}} – AVC11 DATA CENTER PHASE 2 – 100% CONSTRUCTION "
+                   "DOCUMENTS – PROJECT 2026-0451 – ISSUED FOR PERMIT – REVISION 3")
+WRAPPING_FILLS = {
+    "SECTION_NUMBER": {"rule": "regex", "source": "footer.default", "pattern": r"^(\d{2} \d{2} \d{2})"},
+    "SECTION_TITLE": {"rule": "paragraph_after", "source": "document", "anchor_regex": r"^SECTION \d{2} \d{2} \d{2}$"},
+}
+
+
+def build_wrapping_template() -> bytes:
+    """A prepared template whose header is one paragraph that wraps (live QA finding F08): WRAPPING_HEADER in Arial
+    10 pt over three lines of a 6" text width (1.25" side margins, as build() targets have), the two placeholders on
+    its first line with literal words after them, so a fill shorter or longer than its placeholder moves words
+    between the lines; footer "{{SECTION_NUMBER}} - <PAGE>". One section (``template_sections: {"all": 0}``)."""
+    doc = Document()
+    doc.styles["Normal"].font.name = "Arial"; doc.styles["Normal"].font.size = Pt(10)
+    doc.styles["Header"].font.size = Pt(10)
+    s = doc.sections[0]
+    s.left_margin = s.right_margin = Inches(1.25)
+    h = s.header; h.is_linked_to_previous = False
+    h.paragraphs[0].add_run(WRAPPING_HEADER)
+    f = s.footer; f.is_linked_to_previous = False
+    p = f.paragraphs[0]
+    p.add_run("{{SECTION_NUMBER}} - ")
+    _page_field(p)
+    doc.add_paragraph("PART 1 - GENERAL")
+    buf = io.BytesIO(); doc.save(buf)
+    return buf.getvalue()
+
+
 def _styleref_field(paragraph, result: str):
     """A STYLEREF field whose cached result shows ``result`` (an architect's header showing the title by field)."""
     r1 = paragraph.add_run()

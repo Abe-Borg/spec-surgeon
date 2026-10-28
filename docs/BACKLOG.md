@@ -152,6 +152,12 @@ specifications, Windows and Word, and only the owner can do them. Record what a 
   the line; then a font change and a margin change over a real specification folder (the pages reflow, the page count
   changes) with no such warning, the header and footer words recorded under the record's
   `header_footer_words_not_compared`; a header/footer template over the same folder with none either.
+- **A prepared template whose header wraps (live QA finding F08, built 2026-10-28):** the finding's wrapped
+  prepared template over its three-page targets, with Word: the headers/footers request previews and runs without a
+  copy held on V7 because its own section number or title rewraps the header (the record's V7 line reads "as this
+  document's plan fills them, at its own text widths"); then specifications with other side margins than the
+  template's, and one with a landscape section, the same; then one with its header distance not aligned
+  (`align_header_footer_distance` off, a header 1" from the edge): V7 still holds that copy.
 - **Default mode:** a choice's drafted wording edited before it is picked, and the copy carrying the edit.
 - **A question answered without a plan (the stress test's F7, built 2026-10-28):** in Default mode over a real
   batch, park one document on the to-do list, edit the other two, ask a status question ending "Do not prepare or

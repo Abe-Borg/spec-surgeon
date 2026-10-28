@@ -16,7 +16,8 @@ from docx.oxml.ns import qn
 import pytest
 from lxml import etree
 
-from make_fixtures import TEMPLATE_FILLS, _styleref_field, build, build_rich, build_template
+from make_fixtures import (TEMPLATE_FILLS, WRAPPING_FILLS, _styleref_field, build, build_rich, build_template,
+                           build_wrapping_template)
 from spec_surgeon.batch import run_batch
 from spec_surgeon.compiler import _Batch, check_submission
 from spec_surgeon.editspec import apply_spec, load_spec, plan_spec
@@ -582,8 +583,8 @@ def test_v7_template_reference_rendered(tmp_path):
 def test_v7_copies_are_named_short_whatever_the_documents_name(tmp_path):
     """The owner's 1.10.0 run: the headers/footers-only copy of a document with an 84-character name, under a
     recovery attempt's folders, reached 261 characters and could not be written on Windows, so its V7 could not be
-    made. The copies are numbered, never named after the document or the template, and V7 still pairs each file
-    with its own."""
+    made. The copies are numbered, never named after the document or the template (the template reference is made
+    per document, from its plan), and V7 still pairs each file with its own."""
     spec = load_spec(SPEC)
     src = tmp_path / "in"
     src.mkdir()
@@ -594,7 +595,7 @@ def test_v7_copies_are_named_short_whatever_the_documents_name(tmp_path):
     assert rec.passed and rec.get("V7").status == "PASS", rec.to_markdown()
     render = tmp_path / "run" / "render"
     assert sorted(p.name for p in (render / "output-hf").glob("*.docx")) == ["000 headers-footers.docx"]
-    assert sorted(p.name for p in (render / "template").glob("*.docx")) == ["00 headers-footers.docx"]
+    assert sorted(p.name for p in (render / "template").glob("*.docx")) == ["000 headers-footers.docx"]
 
 
 def _title_page_on_cover(root):
@@ -625,6 +626,88 @@ def test_v7_blank_first_page_variant_does_not_hide_a_displaced_header(template, 
     assert failed(rec) == ["V7"], rec.to_markdown()
     bad = [p["page"] for p in rec.get("V7").data["pages"] if p["problems"]]
     assert bad == [2, 3, 4, 5, 6]
+
+
+def _wrapping_spec(tpl: Path, **params) -> dict:
+    return {"request": "make the header/footer look like this template", "summary": "the template's header/footer",
+            "assumptions": [], "questions": [], "applies_to": {"or": "all"}, "mode": "formatting",
+            "ops": [{"op": OP, "select": {"sections": "all"},
+                     "params": {"template": str(tpl), "template_sections": {"all": 0},
+                                "slot_fills": copy.deepcopy(WRAPPING_FILLS), **params}}],
+            "review": {"sample_files": 2, "geometry_reference": "template"}}
+
+
+@pytest.mark.skipif(shutil.which("soffice") is None, reason="LibreOffice not installed")
+def test_v7_template_reference_carries_each_documents_fills_and_text_width(tmp_path, monkeypatch):
+    """Live QA finding F08: V7 compared the filled header with the unfilled template, so a fill shorter than its
+    placeholder let a word up onto an earlier line and a correct copy was held for an 11.50 pt "shift". The template
+    reference is now the template as each document's plan makes it show: its fills in the slots, laid at its own
+    text width. Over a header that wraps: short fills pull words up (a), a long title pushes them down within the
+    template's own lines (b), a narrower page wraps the line elsewhere (c) — each fails against the unfilled template
+    and every copy passes, every word of its header (the fills among them) anchored at the reference's height."""
+    from spec_surgeon import render as render_mod
+    from spec_surgeon.verify import geometry as geom
+    from spec_surgeon.verify import template_layout
+    tpl = tmp_path / "wrapping template.docx"
+    tpl.write_bytes(build_wrapping_template())
+    src = tmp_path / "in"
+    src.mkdir()
+    (src / "a.docx").write_bytes(build("21 13 13", "SPRINKLERS"))
+    (src / "b.docx").write_bytes(build("21 05 00", "COMMON WORK RESULTS FOR FIRE SUPPRESSION"))
+    (src / "c.docx").write_bytes(build("21 13 13", "WET-PIPE SPRINKLER SYSTEMS", side_margin_twips=2520))
+    spec = _wrapping_spec(tpl)
+    batch = run_batch([str(src)], "edit-spec", {}, tmp_path / "run", workers=1, renderer="libreoffice", spec=spec)
+    for f in batch.files:
+        assert f.record.passed and f.record.get("V7").status == "PASS", f.record.to_markdown()
+        assert all(p["anchors"] >= 30 for p in f.record.get("V7").data["pages"]), f.record.get("V7").summary
+        assert "as this document's plan fills them" in f.record.get("V7").summary
+    # the unfilled template at its own width is the old reference: every one of the three is a reflow it fails
+    old_hf, _ = geom.hf_only_copy(tpl, tmp_path / "old" / "template.docx")
+    old_pdf = render_mod.render_pdfs([old_hf], tmp_path / "old", "libreoffice", 1)[old_hf]
+    for k, name in enumerate("abc"):
+        out_pdf = tmp_path / "run" / "render" / "output-hf" / f"{k:03d} headers-footers.pdf"
+        old = geom.compare_template_bands(old_pdf, out_pdf, [0, 0])
+        assert old.failed_pages == [1, 2, 3, 4, 5, 6] and "moved up to 11.5" in old.pages[0].problems[0], name
+    # the reference laid at the template's width instead of the document's: the narrower page fails again
+    monkeypatch.setattr(template_layout, "_width", lambda sp: 8640)
+    batch = run_batch([str(src)], "edit-spec", {}, tmp_path / "template width", workers=1, renderer="libreoffice",
+                      spec=spec)
+    assert {Path(f.source).name: failed(f.record) for f in batch.files} == {"a.docx": [], "b.docx": [],
+                                                                           "c.docx": ["V7"]}
+
+
+@pytest.mark.skipif(shutil.which("soffice") is None, reason="LibreOffice not installed")
+def test_v7_template_reference_still_holds_the_templates_vertical_layout(tmp_path, monkeypatch):
+    """The reference takes the document's fills and text width, never its vertical layout: a header distance set
+    wrong by plan and apply alike (1000 twips, not the template's 720: only V7 fails, the XML is exactly as planned)
+    and a header left 1" from the edge with alignment off are not where the template's header is, on every page."""
+    tpl = tmp_path / "wrapping template.docx"
+    tpl.write_bytes(build_wrapping_template())
+    src = tmp_path / "in"
+    src.mkdir()
+    (src / "a.docx").write_bytes(build("21 13 13", "SPRINKLERS", header_distance_twips=1440))
+    real = ApplyHeaderFooterTemplate.plan
+
+    def wrong_distance(self, pkg, select, params):
+        frag = real(self, pkg, select, params)
+        for a in frag.property_assertions:
+            if a["kind"] == "section_props" and "header" in a["elements"]["pgMar"]["set"]:
+                a["elements"]["pgMar"]["set"]["header"] = "1000"
+        for d in frag.transform_data["dist_changes"].values():
+            d["header"] = "1000"
+        return frag
+    monkeypatch.setattr(ApplyHeaderFooterTemplate, "plan", wrong_distance)
+    batch = run_batch([str(src)], "edit-spec", {}, tmp_path / "wrong", workers=1, renderer="libreoffice",
+                      spec=_wrapping_spec(tpl))
+    rec = batch.files[0].record
+    assert failed(rec) == ["V7"], rec.to_markdown()
+    assert [p["page"] for p in rec.get("V7").data["pages"] if p["problems"]] == [1, 2, 3, 4, 5, 6]
+    monkeypatch.undo()
+    batch = run_batch([str(src)], "edit-spec", {}, tmp_path / "unaligned", workers=1, renderer="libreoffice",
+                      spec=_wrapping_spec(tpl, align_header_footer_distance=False))
+    rec = batch.files[0].record
+    assert failed(rec) == ["V7"], rec.to_markdown()
+    assert "no words where the template's header is" in rec.get("V7").summary
 
 
 EXAMPLES = Path(__file__).resolve().parent.parent / "examples" / "specs"
