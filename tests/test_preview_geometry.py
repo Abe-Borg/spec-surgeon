@@ -1,8 +1,9 @@
 """The preview's sample verdict covers the page layout too (backlog P7): V6 and V7 run on the samples the preview
 renders, with the run's own geometry code, so a sample's PASS is what the run will find; where the preview cannot
-check the layout (no render; a chain's step whose reference is its own input; a custom method's trial, whose plan the
-preview does not hold; a layout reference it could not render or compare) the sample says so, in the text Claude
-reads and in what the window shows, and the layout check waits for the run. The note says what did happen: a sample
+check the layout (no render; a chain's step whose reference is its own input; a custom method's trial kept without
+its plan; a layout reference it could not render or compare) the sample says so, in the text Claude reads and in what
+the window shows, and the layout check waits for the run. A custom method's samples and copies get V6 and V7 by the
+plan the method predicted, in the preview and in the run (the deep-dive stress test's D3). The note says what did happen: a sample
 whose pages were rendered (its before/after pictures and page counts are real) never says no pages were rendered.
 
 V6's warning (the stress-test finding F4): the words the original's rendered pages show that the copy's do not, counted
@@ -12,6 +13,7 @@ brief, never a failed sample: a layout change moves words between pages, and hea
 from __future__ import annotations
 
 import copy
+import json
 import io
 import shutil
 from pathlib import Path
@@ -58,7 +60,7 @@ def fake_renderer(monkeypatch, *, shift_outputs: float = 0.0, hide=(), split_out
         for f in files:
             f = Path(f)
             texts = [block_full_text(p) for p in paragraphs(DocxPackage(f.read_bytes()).xml("word/document.xml"))]
-            is_output = "samples" in f.parts or "outputs" in f.parts or "output" in f.parts
+            is_output = any(part in f.parts for part in ("samples", "outputs", "output", "output-in"))
             dy = shift_outputs if is_output else 0.0
             doc = pymupdf.open()
             page = doc.new_page(width=612, height=792)
@@ -420,3 +422,141 @@ def test_with_a_real_renderer_smaller_margins_reflow_the_words_without_a_warning
     [sv] = pv.samples
     assert sv.passed is True and sv.checks["V6"] == "PASS", pv.to_text()
     assert sv.render_warnings == [] and not [w for w in pv.warnings if "not shown in the copy's" in w], pv.warnings
+
+
+# ---- a custom method's samples and copies: V6 and V7 by the plan it predicted (the deep-dive stress test's D3) ------
+
+def _method(layout_by_design: bool = False, unguarded: bool = False):
+    """The scripted custom method of tests/test_codegen.py (it sets every section's header distance), declaring the
+    source render as its layout reference — its own plan says no word moves — or, as written there, no reference by
+    design."""
+    from spec_surgeon import codegen
+    from test_codegen import GOOD_OP
+    source = GOOD_OP if layout_by_design else GOOD_OP.replace(
+        '        frag.geometry_reference = "none"\n        frag.geometry_reason = "the header moves by design"\n', "")
+    assert layout_by_design or 'geometry_reference = "none"' not in source
+    return codegen.GeneratedOp(source=source, name="set_header_distance", passed=True, params={"twips": 900},
+                               unguarded=unguarded)
+
+
+def _proved(g, folder: Path, tmp_path: Path):
+    from spec_surgeon import codegen
+    [f] = sorted(folder.glob("*.docx"))
+    g.trials = [codegen.trial(g.source, f, g.select, g.params, tmp_path / "trial", **codegen.trial_options(g))]
+    assert g.trials[0].passed and g.trials[0].plan is not None
+    return g
+
+
+def test_a_custom_methods_sample_is_layout_checked_by_the_plan_it_predicted(folder, tmp_path, monkeypatch):
+    from spec_surgeon import codegen
+    from spec_surgeon.preview import layout_failures
+    fake_renderer(monkeypatch)
+    g = _proved(_method(), folder, tmp_path)
+    gp = preview_generated(g, tmp_path / "pv", renderer="fake", do_render=True)
+    [sv] = gp.samples
+    assert sv.plan is g.trials[0].plan and sv.checks["V6"] == "PASS" and sv.checks["V7"] == "PASS"
+    assert sv.geometry["status"] == "PASS" and "at" not in sv.geometry and sv.passed is True
+    assert "page geometry (V7) PASS" in gp.to_text()
+    assert layout_failures(gp.samples) == [] and codegen.samples_verdict(g, []) == [codegen.SAMPLES_PASSED]
+
+
+def test_a_custom_sample_whose_words_moved_fails_and_is_never_called_passed(folder, tmp_path, monkeypatch):
+    from spec_surgeon import codegen
+    from spec_surgeon.preview import layout_failures
+    fake_renderer(monkeypatch, shift_outputs=6.0)
+    g = _proved(_method(), folder, tmp_path)
+    gp = preview_generated(g, tmp_path / "pv", renderer="fake", do_render=True)
+    [sv] = gp.samples
+    assert sv.checks["V7"] == "FAIL" and sv.passed is False and "MOVED" in sv.geometry["note"]
+    [line] = layout_failures(gp.samples)
+    assert line.startswith("21 13 13 – WET-PIPE.docx: Page layout differs from what the plan predicts")
+    verdict = codegen.samples_verdict(g, [line])
+    assert verdict == [codegen.SAMPLES_LAYOUT, line] and codegen.SAMPLES_PASSED not in verdict
+    assert codegen.samples_verdict(_method(unguarded=True), [line])[0] == codegen.SAMPLES_LAYOUT_UNVERIFIED
+
+
+def test_a_custom_sample_with_no_layout_reference_by_design_says_why(folder, tmp_path, monkeypatch):
+    fake_renderer(monkeypatch, shift_outputs=6.0)
+    gp = preview_generated(_proved(_method(layout_by_design=True), folder, tmp_path), tmp_path / "pv",
+                           renderer="fake", do_render=True)
+    [sv] = gp.samples
+    assert sv.checks["V7"] == "NA" and sv.passed is True and "the header moves by design" in sv.geometry["note"]
+
+
+def test_a_custom_methods_run_renders_and_compares_every_copy_before_delivering_it(folder, tmp_path, monkeypatch):
+    from spec_surgeon import codegen
+    rendered = fake_renderer(monkeypatch)
+    [t] = codegen.run_generated(_method(), [str(folder)], tmp_path / "run", renderer="fake", do_render=True)
+    assert t.passed and t.output == tmp_path / "run" / "outputs" / "21 13 13 – WET-PIPE.docx" and t.output.is_file()
+    assert t.record.get("V6").status == "PASS" and t.record.get("V7").status == "PASS"
+    assert any("output-in" in Path(r).parts for r in rendered)       # the copy, under its own name, not out.docx
+    record = (tmp_path / "run" / "records" / "21 13 13 – WET-PIPE.record.md").read_text(encoding="utf-8")
+    assert "no renderer run yet" not in record
+
+
+def test_a_custom_copy_whose_words_moved_is_held_like_any_failed_check(folder, tmp_path, monkeypatch):
+    from spec_surgeon import codegen
+    fake_renderer(monkeypatch, shift_outputs=6.0)
+    [t] = codegen.run_generated(_method(), [str(folder)], tmp_path / "run", renderer="fake", do_render=True)
+    assert not t.passed and t.output is None and t.record.get("V7").status == "FAIL"
+    assert any(p.startswith("V7 FAIL: ") and "MOVED" in p for p in t.problems)
+    assert not list((tmp_path / "run" / "outputs").glob("*.docx"))
+    record = json.loads((tmp_path / "run" / "records" / "21 13 13 – WET-PIPE.record.json").read_text(encoding="utf-8"))
+    assert {c["id"]: c["status"] for c in record["checks"]}["V7"] == "FAIL"
+
+
+def test_in_obliterate_a_custom_copy_whose_words_moved_is_delivered_unverified(folder, tmp_path, monkeypatch):
+    from spec_surgeon import codegen
+    fake_renderer(monkeypatch, shift_outputs=6.0)
+    [t] = codegen.run_generated(_method(unguarded=True), [str(folder)], tmp_path / "run", renderer="fake",
+                                do_render=True)
+    assert t.passed and t.output.is_file() and t.unverified == ["V7 (Geometry assertion)"]
+
+
+def test_a_custom_run_without_rendering_says_why_its_pages_were_not_checked(folder, tmp_path):
+    from spec_surgeon import codegen
+    [t] = codegen.run_generated(_method(), [str(folder)], tmp_path / "run")
+    assert t.passed and t.output.is_file()
+    assert t.record.get("V6").status == t.record.get("V7").status == "NA"
+    assert t.record.get("V7").summary == "rendering disabled"
+
+
+@pytest.mark.skipif(shutil.which("soffice") is None, reason="LibreOffice not installed")
+def test_with_a_real_renderer_a_custom_samples_layout_verdict_is_its_runs(folder, tmp_path):
+    from spec_surgeon import codegen
+    g = _proved(_method(layout_by_design=True), folder, tmp_path)
+    gp = preview_generated(g, tmp_path / "pv", renderer="libreoffice", do_render=True)
+    [sv] = gp.samples
+    [t] = codegen.run_generated(g, [str(folder)], tmp_path / "run", renderer="libreoffice", do_render=True)
+    assert sv.checks["V6"] == t.record.get("V6").status == "PASS", t.record.get("V6").summary
+    assert sv.checks["V7"] == t.record.get("V7").status == "NA" and "by design" in t.record.get("V7").summary
+
+
+def test_in_default_a_custom_sample_whose_words_moved_makes_create_unavailable_and_the_chat_says_why(
+        folder, tmp_path, monkeypatch):
+    from fake_claude import FakeClient, resp, tool
+    from spec_surgeon import codegen
+    from spec_surgeon.document_task import DocumentTask
+    from spec_surgeon.gui import Session
+    fake_renderer(monkeypatch, shift_outputs=6.0)
+    request = "Set the header distance to 900 twips."
+    fake = FakeClient(resp(tool("submit_editspec", {"spec": {"request": request, "summary": "Move header",
+        "unsupported": "Use a custom method", "proposal": "Set the header distance to 900 twips"},
+        "custom_transform": "possible", "custom_transform_reason": "Formatting only"})),
+        resp(tool("submit_op", {"source": _method().source, "params": {"twips": 900}})),
+        resp(tool("ask_user", {"message": "Anything else?"}, "t3")))
+    task = DocumentTask(Session(client=fake, out_root=tmp_path / "out", visual_check=False), render=True)
+    task.attach(sorted(folder.glob("*.docx")))
+    view = task.perform("send", text=request)
+    assert view["stage"] == "preview" and task.session.generated.passed      # its trial passed: no pages there
+    [sample] = task._samples_view()["samples"]
+    assert sample["passed"] is False and sample["geometry"]["status"] == "FAIL"
+    assert [f["check"] for f in sample["failures"]] == ["V7"]
+    said = [m["text"] for m in task.messages if m["role"] == "app"]
+    [verdict] = [t for t in said if t.startswith(codegen.SAMPLES_LAYOUT)]
+    assert "• 21 13 13 – WET-PIPE.docx: Page layout differs from what the plan predicts" in verdict
+    assert not any(codegen.SAMPLES_PASSED in t for t in said)
+    assert codegen.SAMPLES_LAYOUT in task._groups()[0]["changes"][0]["details"]
+    assert any(codegen.SAMPLES_LAYOUT in n for n in task.session.conversation.notes)   # the model hears it too
+    assert "did not pass its preview checks (V7)" in task.session.run_blocked_reason()
+    assert not task.results

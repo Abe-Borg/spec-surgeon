@@ -579,17 +579,27 @@ class Session:
         message = self._generate_custom(pending, log, render)
         if self.conversation is not None:
             from .codegen import kept_lines, samples_verdict, unverified_lines
-            from .preview import text_changes_lines
+            from .preview import layout_failures, text_changes_lines
             failed, kept = unverified_lines(self.generated), kept_lines(self.generated)
-            if not failed and not kept:
+            # samples whose rendered pages failed V7 in the preview: never called passed either
+            layout = layout_failures(getattr(self.generated_preview, "samples", None) or [])
+            if not failed and not kept and not layout:
                 self.conversation.note("The custom transform passed its independent sample verification.",
                                        display="Custom transform prepared; review the resulting preview before Run.")
             elif failed:
                 # Obliterate: a method kept with failed checks is never called passed — this note is what the model
                 # plans on next turn, and its transcript line is what the user reads
-                self.conversation.note("\n".join(samples_verdict(self.generated)),
-                                       display="Custom transform prepared, with failed checks — " + "; ".join(failed)
+                self.conversation.note("\n".join(samples_verdict(self.generated, layout)),
+                                       display="Custom transform prepared, with failed checks — "
+                                       + "; ".join(failed + layout)
                                        + ". Review the preview before Run: its copies are delivered marked UNVERIFIED.")
+            elif layout:
+                self.conversation.note("\n".join(samples_verdict(self.generated, layout)),
+                                       display="Custom transform prepared; its sample pages failed the page-layout "
+                                       "check (V7) — " + "; ".join(layout) + ". "
+                                       + ("Review the preview before Run: a copy that fails it is delivered marked "
+                                          "UNVERIFIED." if self.unguarded else
+                                          "Create is unavailable for this method; ask for the change another way."))
             else:                                 # Obliterate: the samples passed; a kept check is not a failure
                 self.conversation.note("\n".join(samples_verdict(self.generated)),
                                        display="Custom transform prepared; the samples passed, and the writer kept "
@@ -1113,7 +1123,8 @@ class Session:
             diag.event("session.approval.accepted", approval_digest=self.generated_token,
                        file_count=len(selected), in_place=False, run_dir=str(out), set_aside=len(files) - len(selected))
             res = run_generated(self.generated, [str(f) for f in selected], out, log=log,
-                                approved_inputs=narrow_approval_inputs(self.generated_inputs or current_inputs, selected))
+                                approved_inputs=narrow_approval_inputs(self.generated_inputs or current_inputs, selected),
+                                renderer="auto", do_render=render)
             self.last_run_dir, self.last_trials, self.last_batch = out, res, None
             ok = sum(r.passed for r in res)
             return f"{ok} of {len(res)} file(s) PASS. Outputs: {out / 'outputs'} (your files were not changed)."

@@ -450,10 +450,14 @@ the independent header/footer-removal reference), so a sample's **Checked** cove
 page layout: a layout that moved is a sample that did not pass, and the plan goes the way a failed check sends it.
 The card says in one line what the layout check found, or why it is not asserted (no layout reference by design, a
 wording change that reflows the text), or that it waits for the run and why: no pages were rendered; the pages
-were rendered but the preview could not check them (a custom method's trial, whose plan the preview does not hold;
+were rendered but the preview could not check them (a custom method's trial kept without its plan;
 a layout reference that could not be rendered or compared — the pictures and page counts on the card stand, and
 the line says the pages were rendered); or the plan is done in steps and only its last step's pages are rendered
-(a step whose reference is its own input is checked step by step when the copies are created). If no renderer can
+(a step whose reference is its own input is checked step by step when the copies are created). A custom method's
+samples are checked by the plan the method predicted (its trials are verified without pages), and its copies are
+rendered and compared before any is delivered, as a plan's are: a sample whose layout check fails is said in the chat
+before the button and, outside Obliterate, makes Create unavailable; in Obliterate its copies are delivered marked
+UNVERIFIED with that check beside them. If no renderer can
 provide usable page evidence, a card
 says that page appearance was not checked and asks you to check the edited copies in Word.
 

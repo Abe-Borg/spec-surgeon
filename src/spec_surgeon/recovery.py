@@ -1567,7 +1567,8 @@ def _custom_trial(ctx, group, proposal, pid, code, latest):
                     for f in eligible:
                         f.reason = "; ".join(g.errors or [p for a in g.attempts for p in a["problems"]])
                 else:
-                    trials = run_generated(g, [str(f.source) for f in eligible], folder / "trial", log=ctx["log"])
+                    trials = run_generated(g, [str(f.source) for f in eligible], folder / "trial", log=ctx["log"],
+                                           renderer=options.renderer, do_render=options.render)
                     by_source = {str(t.source): t for t in trials}
                     good = []
                     entry["approved_checks"] = []

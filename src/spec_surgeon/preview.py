@@ -294,6 +294,15 @@ def geometry_note(plan: Dict[str, Any], v7: Any) -> str:
     return "Page layout not asserted here: " + diag.snip(v7.summary, 400)
 
 
+def layout_failures(samples: Sequence[Any]) -> List[str]:
+    """One line per sample whose rendered pages failed the page-layout check (V7), labelled as the preview text labels
+    the sample, with V7's verdict in plain words: what a custom method's verdict says beside the checks its trials
+    passed (``codegen.samples_verdict``), since a trial is verified without its pages."""
+    labels = sample_labels(samples)
+    return [f"{labels[str(Path(s.source))]}: {s.geometry.get('note') or 'the page layout check failed'}"
+            for s in samples if (s.geometry or {}).get("status") == "FAIL"]
+
+
 def render_word_warnings(pv: Any) -> List[str]:
     """Each sample's V6 warning (``batch.compare_pair`` over its rendered pages: words the original's pages show that
     the copy's do not and the plan does not remove), labelled as the preview text labels the sample. What the chat
@@ -732,10 +741,11 @@ def _sample_geometry(samples: List[SampleView], out_dir: Path, backend: Optional
                      warn, detail, block) -> None:
     """V6 and V7 on the samples that rendered, with the run's own code (``batch.compare_pair`` over the references
     ``batch.geometry_references`` renders), so a sample's verdict here is the one the run will give: a layout that
-    moved fails the sample. A sample without a render says the layout is checked at the run and that no pages were
-    rendered here; one whose pages were rendered but whose plan the preview does not hold (a custom method's trial;
-    a chain's step whose reference is its own input is told apart earlier, ``GEOMETRY_AT_RUN_STEPS``) says its pages
-    were rendered and why the layout check waits. A comparison the preview cannot make is a warning beside the
+    moved fails the sample — a custom method's sample too, by the plan its trial predicted
+    (``codegen.FileTrial.plan``). A sample without a render says the layout is checked at the run and that no pages
+    were rendered here; one whose pages were rendered but whose plan the preview does not hold (a custom method's
+    trial kept without it; a chain's step whose reference is its own input is told apart earlier,
+    ``GEOMETRY_AT_RUN_STEPS``) says its pages were rendered and why the layout check waits. A comparison the preview cannot make is a warning beside the
     plan, never a failed sample: the run makes it again, and the sample's note says the pages were rendered."""
     from .batch import RenderPair, compare_pair, geometry_references
     from .report import words_missing_sentence
@@ -851,8 +861,12 @@ def _preview_generated(g: Any, out_dir: Path, renderer: str, do_render: bool) ->
         for t in trials:
             # a trial that passed with failed checks (Obliterate mode: FileTrial.unverified) may be delivered, but its
             # preview shows the checks it failed, never a pass
+            # the plan the method predicted rides with its sample, so its rendered pages get V6 and V7 here as a
+            # built-in sample's do (``_sample_geometry``) and the run's verdict is the one shown (the deep-dive stress
+            # test's D3: a custom sample's pages were rendered and never compared)
             sv = SampleView(source=Path(t.source), passed=bool(t.passed) and not getattr(t, "unverified", None),
-                            checks={c.id: c.status for c in t.record.checks} if t.record is not None else {})
+                            checks={c.id: c.status for c in t.record.checks} if t.record is not None else {},
+                            plan=getattr(t, "plan", None) if t.record is not None else None)
             if t.record is not None:
                 # the words the copy adds and removes, from the verifier's own V2 record — the method's plan has no say
                 sv.text_changes = text_changes_of(t.record.to_dict())
