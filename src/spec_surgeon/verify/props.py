@@ -24,6 +24,7 @@ from __future__ import annotations
 import copy
 import difflib
 import re
+import sys
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
 from lxml import etree
@@ -2492,6 +2493,204 @@ KINDS = {
 }
 
 
+# ---- the contracts ----------------------------------------------------------------------------------
+# Kind name → the plain-English contract of its assertion: the keys, each key's allowed values, what the kind compares
+# and what it proves whole, and what makes the op refuse. The verifier owns this text (it is what a custom method's
+# writer reads through ``codegen.describe_assertion_kind``; it never sees this code); each kind's module fills its own
+# entries at import, the way ``KINDS`` is filled, and a kind whose module writes none gets that module's docstring (the
+# loop at the end of this module), so every kind has a contract. ``KIND_EXAMPLES`` holds a worked assertion per kind
+# where one is kept: a static dict, never read from an op's plan.
+KIND_CONTRACTS: Dict[str, str] = {}
+KIND_EXAMPLES: Dict[str, Dict[str, Any]] = {}
+
+_SCOPE_KINDS = "document | headers | footers | footnotes | endnotes | comments"
+_PARA_PRED = ('a paragraph predicate: null or "all" for every paragraph, else an object with any of ' +
+              ", ".join(sorted(PARA_KEYS)) + " (index_range is [first, past-the-last] over the part's paragraphs in "
+              "document order; text_regex is a Python regex over the paragraph's text; case_insensitive and "
+              "flexible_whitespace are booleans)")
+_RUN_PRED = ('a run predicate: "all", or an object with any of ' + ", ".join(sorted(RUN_KEYS))
+             + " (font_in and color_in are lists; not_in_revisions a boolean)")
+_FONT_SET = ('"set": {slot: font name} for the slots ascii, hAnsi, cs and eastAsia (a slot absent or null is not '
+             'written); "clear_theme" (default true): each written slot\'s theme attribute (asciiTheme, hAnsiTheme, '
+             'cstheme, eastAsiaTheme) is removed, since Word shows the theme font over the name beside it; "size": '
+             'null, or {"sz": half-points, "from": [half-points, ...]} — w:sz becomes sz on a target whose own w:sz is '
+             'in from (every target when from is absent); "preserve_fonts": font names (symbol fonts) whose runs '
+             'are left alone; "tracked" (boolean) and "author"')
+_FONT_CHECK = ('Compared: each selected target\'s w:rPr is the source\'s with exactly the written rFonts slots '
+               '(their theme attributes gone when clear_theme) and, where the size applies, w:sz; every other child '
+               'identical. Untracked: w:rPrChange unchanged. Tracked: a new w:rPrChange as the last child, with w:id '
+               'and the author, whose snapshot is the source rPr (a source already carrying one is a refusal). Leave '
+               '"font_params" out unless the params are set_font\'s own (font, east_asia, ascii, hAnsi, cs, '
+               'eastAsia): the verifier cross-checks "set" against it.')
+
+KIND_CONTRACTS["run_fonts"] = (
+    'Font and size of selected runs and paragraph marks (set_font). Keys: "scope": [' + _SCOPE_KINDS + ', ...]; '
+    '"parts": the part names that scope resolves to in the source (re-resolved and compared); "select": {"runs": '
+    + _RUN_PRED + ', "paragraphs": ' + _PARA_PRED + '}; ' + _FONT_SET + '; "only_where_defined" (default false): the '
+    'font goes only to runs with a direct rFonts; "add_missing_size" (default false): a target with no own w:sz gets '
+    'sz when from is absent; "skip_sym_runs" (default true): runs holding w:sym are left alone; "in_revisions": '
+    '"include" (default) or "exclude" (runs inside w:ins/w:del/w:moveFrom/w:moveTo are left alone); '
+    '"include_paragraph_marks" (default true): the paragraph mark (w:pPr/w:rPr) is a target too; "expected_runs", '
+    '"expected_marks": the counts of runs and marks the selection yields in the source (the verifier counts them '
+    'itself; they must match); "expected_sized" (default 0): how many of those get the size. ' + _FONT_CHECK
+    + ' A selected paragraph whose run structure changed, or that also has predicted text changes, fails. Only the '
+    'checked rPr elements leave the residual identity check; everything else in the changed parts must be identical.')
+KIND_EXAMPLES["run_fonts"] = {
+    "kind": "run_fonts", "scope": ["document"], "parts": ["word/document.xml"],
+    "select": {"runs": "all", "paragraphs": {"style_in": ["Normal"]}}, "preserve_fonts": ["Symbol", "Wingdings"],
+    "skip_sym_runs": True, "in_revisions": "include", "set": {"ascii": "Arial", "hAnsi": "Arial", "cs": "Arial"},
+    "clear_theme": True, "include_paragraph_marks": True, "tracked": False, "author": None,
+    "expected_runs": 12, "expected_marks": 5, "size": {"sz": 20, "from": [22, 24]}, "expected_sized": 9,
+    "only_where_defined": False, "add_missing_size": False}
+
+KIND_CONTRACTS["style_fonts"] = (
+    'Font and size written into style definitions (set_style_font). Keys: "styles_part": the styles part; "select": '
+    '"all" (paragraph, character and table styles), "all-paragraph-and-character", or {"ids": [style ids], "types": '
+    '[paragraph | character | table | numbering]} (either key optional); ' + _FONT_SET + ' (never tracked: tracked '
+    'stays false); "only_where_defined" (default true): the font goes only to a style whose own rPr has rFonts, the '
+    'size only to one with its own w:sz (false: every selected style, the size added where missing); '
+    '"expected_ids": the styles the selection yields that get a change (symbol-font styles are skipped; a style '
+    'that gets neither font nor size is not listed); "expected_sized": those of them that get the size. ' + _FONT_CHECK
+    + ' Only the checked styles\' rPr leave the residual; every other style and docDefaults must be identical.')
+KIND_EXAMPLES["style_fonts"] = {
+    "kind": "style_fonts", "styles_part": "word/styles.xml", "select": {"ids": ["Heading1", "Heading2"]},
+    "preserve_fonts": [], "only_where_defined": True, "set": {"ascii": "Arial", "hAnsi": "Arial", "cs": "Arial"},
+    "clear_theme": True, "expected_ids": ["Heading1", "Heading2"], "size": None, "expected_sized": []}
+
+KIND_CONTRACTS["doc_defaults_fonts"] = (
+    'The document default font and size, w:docDefaults/w:rPrDefault/w:rPr (set_doc_defaults_font). Keys: '
+    '"styles_part"; ' + _FONT_SET + ' (never tracked); "expected_sized": a boolean — whether the size applies here: '
+    'the default rPr\'s own w:sz (10 pt, sz 20, when it has none) is in size.from, or from is absent. ' + _FONT_CHECK
+    + ' When neither a font nor the size applies, rPrDefault must be unchanged. Only rPrDefault leaves the residual.')
+KIND_EXAMPLES["doc_defaults_fonts"] = {
+    "kind": "doc_defaults_fonts", "styles_part": "word/styles.xml",
+    "set": {"ascii": "Arial", "hAnsi": "Arial", "cs": "Arial"}, "clear_theme": True,
+    "size": {"sz": 22}, "expected_sized": True}
+
+KIND_CONTRACTS["paragraph_props"] = (
+    'Spacing, indentation and alignment of paragraphs or of paragraph styles (set_paragraph_props). Direct target '
+    '("target" absent or "direct"): "scope": [' + _SCOPE_KINDS + ', ...]; "parts": what scope resolves to; "select": '
+    '{"paragraphs": ' + _PARA_PRED + '}; "set": any of "spacing": {before, after, line, lineRule, beforeLines, '
+    'afterLines}, "ind": {left, right, start, end, firstLine, hanging, leftChars, rightChars, startChars, endChars, '
+    'firstLineChars, hangingChars}, "jc": left | center | right | both | distribute | start | end — the values are '
+    'the attribute strings Word stores (twips, 240ths of a line, hundredths of a character; lineRule auto | exact | '
+    'atLeast); "tracked" and "author"; "expected_paragraphs": the count the selection yields. Compared: each '
+    'selected paragraph\'s w:spacing / w:ind / w:jc occurs once and holds exactly the source\'s attributes with the '
+    'asked ones merged (a firstLine asked drops hanging and hangingChars, a hanging asked drops firstLine and '
+    'firstLineChars); the pPrChange rules as for run properties (untracked: unchanged; tracked: last child, w:id, the '
+    'author, snapshot the source pPr without rPr, sectPr and pPrChange). Refused (the verifier re-derives it): '
+    'before/after asked where the nearest level naming beforeAutospacing/afterAutospacing turns it on, or where any '
+    'level of the paragraph\'s chain (own pPr, paragraph style chain, table style chain, docDefaults) sets '
+    'beforeLines/afterLines and the lines are not asked; an indentation side asked in twips where any level gives '
+    'it in characters; left asked where the paragraph\'s own w:ind uses start (and the other three aliases '
+    'likewise); a selected paragraph that also has predicted text changes. Styles target ("target": "styles"): '
+    '"styles_part"; "select": {"ids": [paragraph style ids]}; "params": the user\'s own set_paragraph_props '
+    'parameters (spacing, ind, jc; whole numbers, lineRule one of the three; tracked must be false — style '
+    'definitions are never tracked); "expected_ids": the styles that change (one already as asked is left alone and '
+    'not listed). Compared: each changed style\'s pPr merged the same way, every other child identical, and every '
+    'selected style shows the asked values in the output. Only the merged elements (and pPrChange) leave the residual.')
+KIND_EXAMPLES["paragraph_props"] = {
+    "kind": "paragraph_props", "scope": ["document"], "parts": ["word/document.xml"],
+    "select": {"paragraphs": {"style_in": ["BodyText"]}},
+    "set": {"spacing": {"after": "120", "line": "276", "lineRule": "auto"}, "jc": "both"},
+    "tracked": False, "author": None, "expected_paragraphs": 40}
+
+KIND_CONTRACTS["section_props"] = (
+    'Elements of w:sectPr per section — page size, margins, orientation, page numbering, title page, the references '
+    '(set_page_setup, fix_page_numbering, apply_header_footer_template). Keys: "part": the main part; "sections": '
+    'the indices of the sections that change (0-based, in document order, the body\'s final w:sectPr last); '
+    '"expected_sections": their count; and either "elements": {element name: spec}, shared by every listed section, '
+    'or "per_section": {"<index>": {element name: spec}} with exactly the listed sections as keys. An element name '
+    'is a child of w:sectPr without its prefix (pgSz, pgMar, pgNumType, titlePg, cols, headerReference, ...). A spec '
+    'is one of: {"set": {attribute: value}, "remove": [attribute, ...], "drop_if_empty": true} — the element holds '
+    'the source\'s attributes minus remove plus set (values as strings, twips for lengths) and the source\'s '
+    'children; absent from the output when nothing remains and the source had none or drop_if_empty is set; '
+    '{"present": true, "set": {...}, "remove": [...]} — the same, and the element must exist; {"absent": true} — '
+    'gone; {"exact": {attribute: value}} — exactly these w: attributes (attributes of other namespaces kept) and no '
+    'children. Compared: the number of sections must not change; each listed element of each listed section as its '
+    'spec says; only those elements leave the residual, every other child of every sectPr must be identical. The '
+    'keys "select", "params", "selected" and "op" are set_page_setup\'s: with them the verifier re-derives the '
+    'selection from the user\'s own words, and "op": "set_page_setup" without "select" is refused — a custom '
+    'method leaves all four out.')
+KIND_EXAMPLES["section_props"] = {
+    "kind": "section_props", "part": "word/document.xml", "sections": [0, 1], "expected_sections": 2,
+    "elements": {"pgMar": {"set": {"header": "720", "footer": "720"}}, "titlePg": {"absent": True}}}
+
+KIND_CONTRACTS["section_hf_refs"] = (
+    'Header/footer references removed from sections (remove_header_footer). Keys: "sections": the section indices; '
+    '"kinds": any of "header", "footer" (w:headerReference / w:footerReference); "types": any of "default", '
+    '"first", "even" (w:type, default when absent); "expected_removed": how many references of those kinds and '
+    'types the listed sections hold in the source. Compared: the number of sections must not change; in each listed '
+    'section every reference of an asked kind and type is gone and the other references are identical, in order; '
+    'the count must match. Only the references leave the residual. The parts those references named, their '
+    'relationships, media and content types are the method\'s to predict in the fragment (members_removed, '
+    'touches) and V1/V3\'s to check; a part another section still references must stay. Refused: a kind or type '
+    'outside those values, no section selected, or nothing to remove where the method must act; a section index '
+    'the document lacks fails the check.')
+KIND_EXAMPLES["section_hf_refs"] = {
+    "kind": "section_hf_refs", "sections": [0], "kinds": ["footer"], "types": ["default", "first"],
+    "expected_removed": 2}
+
+KIND_CONTRACTS["properties"] = (
+    'Character properties of selected runs and paragraph marks, paragraph flags of paragraphs, or both in style '
+    'definitions (set_properties). "set": {"run": {...}, "paragraph": {...}} (either group optional, not both '
+    'empty): run keys b, i, caps, smallCaps, strike, dstrike, vanish (booleans; b and i also write w:bCs / w:iCs; '
+    'true writes the element without w:val, false with w:val="0"), color (six hex digits or "auto": w:color with '
+    'exactly that w:val, its theme attributes gone), u (a w:u value such as single, double, none: the source '
+    'element\'s attributes with w:val replaced), vertAlign (superscript | subscript | baseline), highlight (one of '
+    'Word\'s highlight names or none), spacing (character spacing in points, a multiple of 0.05 within ±1584, '
+    'written as twentieths of a point); paragraph keys keepNext, keepLines, widowControl, pageBreakBefore '
+    '(booleans). Refused: caps and smallCaps both on; strike and dstrike both on (one asked on brings the other '
+    'off); caps or smallCaps reaching a symbol run; highlight in a style definition (Word shows none). Direct '
+    'target ("target": "direct"): "scope": [' + _SCOPE_KINDS + ', ...]; "parts"; "select": {"runs": ' + _RUN_PRED
+    + ', "paragraphs": ' + _PARA_PRED + '}; "preserve_fonts"; "skip_sym_runs" (default true); "in_revisions" '
+    '("include" | "exclude"); "include_paragraph_marks" (default true); "tracked" and "author"; "expected_runs", '
+    '"expected_marks", "expected_paragraphs": the counts the selection yields; "expected_shown_marks" (default 0): '
+    'paragraph marks asked hidden (vanish) that stay visible because their paragraph keeps visible text outside the '
+    'selection. Compared: each target\'s rPr / pPr is the source\'s with exactly the asked elements (once each) '
+    'and nothing else changed; the rPrChange / pPrChange rules (untracked unchanged; tracked last child, w:id, the '
+    'author, the source snapshot); and every target shows the asked value in the output. Styles target ("target": '
+    '"styles"): "styles_part"; "select": {"ids": [style ids]} (paragraph keys only on paragraph styles); '
+    '"preserve_fonts"; "skip_sym_runs"; "tracked": false; "expected_ids": the styles whose definition changes (one '
+    'already showing the value is left alone). Compared: each changed style\'s rPr / pPr as above, and — over every '
+    'text part of the output — everything that uses a selected style shows the asked value from that style or from '
+    'a nearer level\'s own definition; a disagreeing direct value or a toggle specified at several style levels '
+    '(Word XORs them) is a refusal. Only the checked elements leave the residual.')
+KIND_CONTRACTS["effective_font"] = (
+    'A post-condition over the OUTPUT (the "match the template\'s font" bundle: set_font + set_style_font + '
+    'set_doc_defaults_font): every text run and paragraph mark of the scope resolves, through the verifier\'s own '
+    'style chain and theme lookup, to the asked font and/or size. Keys: "value": the font name, or null for no font '
+    'check; "slots": the rFonts slots checked (default ascii, hAnsi, cs, plus eastAsia when "east_asia" is true); '
+    '"size": points, or null; "size_from": [points, ...] — with it only what resolved to one of those sizes in the '
+    'source must show the size, the rest keeps its own; "preserve_fonts": symbol fonts whose runs stay as they were; '
+    '"scope": [' + _SCOPE_KINDS + ', ...] (default ["document"]); "include_paragraph_marks" (default true); '
+    '"numbering_levels" (default: true when the scope holds document): the used list levels\' label fonts are '
+    'checked too. Compared: nothing of the source — it is a check of what the output shows; it strips nothing '
+    'from the residual, so the change itself needs its own kinds (run_fonts, style_fonts, doc_defaults_fonts).')
+KIND_CONTRACTS["inserted_paragraphs"] = (
+    'New paragraphs placed beside selected anchors (insert_paragraph; the wording must be the user\'s approved '
+    'words). Keys: "scope": [' + _SCOPE_KINDS + ', ...] (default ["document"]); "select": {"paragraphs": ' + _PARA_PRED
+    + '} — the anchors; "position": "after" (default) or "before"; exactly one of "text" (one paragraph\'s text), '
+    '"runs" (its runs as [{text, formatting}, ...]) or "paragraphs" ([{text | runs, style?}, ...], several); '
+    '"style": the paragraph style id (a paragraphs entry\'s own style wins); "formatting": "inherit" (default: the '
+    'anchor\'s paragraph properties and its first live run\'s properties, without revision marks) or "none"; '
+    '"tracked" (default true) and "author"; "expected_anchors": the count the selection yields. Compared: at each '
+    'anchor the new paragraphs exist in that position with exactly the expected runs, properties and (tracked) '
+    'w:ins marks with new ids, the author and a date; the anchors and everything else unchanged. Refused: none or '
+    'several of text/runs/paragraphs, an empty paragraphs list, an entry that is not {text | runs, style?}.')
+KIND_CONTRACTS["cover_unnumbered"] = (
+    'A post-condition of fix_page_numbering: the footer the cover section shows in the OUTPUT — its own first-page '
+    'footer while its w:titlePg is on and it has one, else its own default footer — is the footer the plan edited '
+    'and holds no PAGE field. Key: "footer": that footer part\'s name. Compared: the output\'s reading only; the '
+    'edit to the footer and the section needs its own kinds (section_props, and a text kind for the field).')
+KIND_EXAMPLES["properties"] = {
+    "kind": "properties", "target": "direct", "scope": ["document"], "parts": ["word/document.xml"],
+    "select": {"runs": "all", "paragraphs": {"text_regex": "^PART 1", "case_insensitive": False}},
+    "set": {"run": {"b": True, "caps": True}, "paragraph": {"keepNext": True}}, "preserve_fonts": [],
+    "skip_sym_runs": True, "in_revisions": "include", "include_paragraph_marks": True, "tracked": False,
+    "author": None, "expected_runs": 3, "expected_marks": 3, "expected_paragraphs": 3, "expected_shown_marks": 0}
+
+
 # ---- residual ---------------------------------------------------------------------------------------
 
 def element_path(el) -> Tuple[int, ...]:
@@ -2933,3 +3132,10 @@ KINDS.update(FOOTNOTE_KINDS)
 # custom methods: list label formatting at named levels
 from .numberinglabels import NUMBERING_LABEL_KINDS  # noqa: E402
 KINDS.update(NUMBERING_LABEL_KINDS)
+
+# every kind has a contract: a kind whose module wrote none gets that module's docstring, which states its reading
+for _kind_name, _kind_fn in KINDS.items():         # (not _name / _fn: those are this module's helpers)
+    KIND_CONTRACTS.setdefault(_kind_name, f"Kind {_kind_name}, as the verifier module that evaluates it states "
+                              f"its reading ({_kind_fn.__module__.rsplit('.', 1)[-1]}): "
+                              + (sys.modules[_kind_fn.__module__].__doc__ or "").strip())
+del _kind_name, _kind_fn

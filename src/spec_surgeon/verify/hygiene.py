@@ -159,3 +159,18 @@ def _character_hygiene(ctx, assertion, errs):
 
 
 HYGIENE_KINDS = {"character_hygiene": _character_hygiene}
+
+
+# the contract a custom method's writer reads (``props.KIND_CONTRACTS``; the verifier owns the text)
+from .props import KIND_CONTRACTS  # noqa: E402
+
+KIND_CONTRACTS["character_hygiene"] = (
+    'The character-hygiene operations of built-in batch 5 (normalise_whitespace, fix_quotes, capitalize_defined_terms '
+    'and their kin): their edits re-derived here from the user\'s own options. Keys: "operation": the op name; '
+    '"options": the op\'s own params (its "scope", "tracked", and for capitalize_defined_terms "approvals": the '
+    'approved [{file, term, ...}] rows for this file); "select": {"scope", "paragraphs"} as the op took it; "scope": '
+    'the resolved scope list (default document, headers, footers; an empty scope must be refused) and "tracked": the '
+    'resolved flag — both must equal what the options give; "approvals": the rows selected for this source. '
+    'Compared: paragraph counts per part unchanged; each paragraph\'s edits are exactly what the operation\'s own '
+    'rule yields over the source text, tracked as asked, fields and existing revisions kept. A custom method does '
+    'not emit this kind: its wording changes go through the text-edit helpers and paragraph_edits.')

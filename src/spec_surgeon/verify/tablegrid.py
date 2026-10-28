@@ -634,3 +634,33 @@ def _merged_table_cells(ctx: Ctx, a: Dict[str, Any], errs: List[str]) -> str:
 
 TABLE_GRID_KINDS = {"deleted_table_columns": _deleted_table_columns, "table_cells": _table_cells,
                     "merged_table_cells": _merged_table_cells}
+
+
+# the contract a custom method's writer reads (``props.KIND_CONTRACTS``; the verifier owns the text)
+from .props import KIND_CONTRACTS, KIND_EXAMPLES  # noqa: E402
+
+KIND_CONTRACTS["table_cells"] = (
+    'Shading, width, vertical alignment and no-wrap of table cells (set_table_cells). Keys: "select": {"scope": a '
+    'part kind or a list (default ["document"]), "tables": "all" or an object with any of index_range, style_in, '
+    'first_row_regex, text_regex, nested (as table_props), "rows": absent or "all", or {index_range: [first, '
+    'past-the-last], text_regex, header: boolean}, "columns": absent or "all", or {index: [grid column indices], '
+    'header_regex: a regex over the header cell\'s text}}; "parts": what the scope resolves to; "params": the '
+    'user\'s own words — "shading": "none" or six hex digits (w:shd clear / auto / that fill); '
+    '"vertical_alignment": top | center | bottom (w:vAlign); "no_wrap": boolean (w:noWrap); "width": inches, '
+    '0 < width ≤ 22 (w:tcW in twips, round(width × 1440), type dxa; the grid column and a fixed w:tblW follow); at '
+    'least one asked; never tracked; "expected_tables", "expected_cells", "expected_columns": how many tables '
+    'change, cells change, grid columns are resized; "changed": {part name: {"cells": [[table index, row index, '
+    'cell index, [element names written: tcW, shd, noWrap, vAlign]]], "rows": [[table index, row index, [one '
+    'element]]], "tables": [[table index, ["tblW"]]], "grids": [[table index, [every gridCol width after]]]}} — the '
+    'verifier derives its own and they must agree (a cell already as asked is left alone and not listed). '
+    'Compared: each changed cell\'s w:tcPr, row\'s w:trPr, table\'s w:tblPr and the grid are the source\'s with '
+    'exactly the expected elements in the schema\'s order, and — on the OUTPUT — every chosen cell\'s own elements '
+    'are the expected ones. Refused: a width with a row selection, a bad selector, the table refusals of '
+    'table_props. Only what it checked leaves the residual.')
+KIND_EXAMPLES["table_cells"] = {
+    "kind": "table_cells", "parts": ["word/document.xml"],
+    "select": {"scope": "document", "tables": {"first_row_regex": "^Item"}, "rows": {"header": True}},
+    "params": {"shading": "D9D9D9", "vertical_alignment": "center"},
+    "expected_tables": 1, "expected_cells": 3, "expected_columns": 0,
+    "changed": {"word/document.xml": {"cells": [[0, 0, 0, ["shd", "vAlign"]], [0, 0, 1, ["shd", "vAlign"]],
+                                                [0, 0, 2, ["shd", "vAlign"]]]}}}

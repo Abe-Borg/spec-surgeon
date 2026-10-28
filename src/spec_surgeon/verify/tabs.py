@@ -267,3 +267,36 @@ def _tab_stops(ctx: Ctx, a: Dict[str, Any], errs: List[str]) -> str:
 
 
 TAB_KINDS = {"tab_stops": _tab_stops}
+
+
+# the contract a custom method's writer reads (``props.KIND_CONTRACTS``; the verifier owns the text)
+from .props import KIND_CONTRACTS, KIND_EXAMPLES, PARA_KEYS  # noqa: E402
+
+KIND_CONTRACTS["tab_stops"] = (
+    'Tab stops of paragraphs: set, clear, clear the others (set_tab_stops). Keys: "select": {"scope": a part kind '
+    'or a list of them (document | headers | footers | footnotes | endnotes | comments; default ["document"]), '
+    '"paragraphs": a paragraph predicate (absent or "all" for every paragraph, else an object with any of ' +
+    ", ".join(sorted(PARA_KEYS)) + ')}; "parts": the part names the scope resolves to (re-resolved and compared); '
+    '"params": the user\'s own words, read with the verifier\'s defaults: "set": [{"pos": a position in twips '
+    'within ±31680, or "right_margin" or "center" (resolved from the section\'s page size and margins), "align": '
+    'left (default) | center | right | decimal | bar, "leader": none (default) | dot | hyphen | underscore | heavy | '
+    'middleDot}, ...], "clear": [positions], "clear_others": boolean (default false; at least one of the three '
+    'asked), "tracked": boolean (default: tracked when "paragraphs" narrows the selection, plain otherwise); '
+    '"author"; "expected_paragraphs": how many selected paragraphs change; "changed": {part name: [paragraph '
+    'indices that change, in document order over every w:p of the part]} — the verifier derives which selected '
+    'paragraphs need an entry from its own fold of the inherited stops (docDefaults, the style chain, the '
+    'paragraph\'s own w:tabs: a stop already in effect as asked, a position already clear, needs nothing) and the '
+    'lists must agree. Compared: each changed paragraph\'s output w:tabs is exactly the expected entries — the '
+    'untouched entries by full signature, the new ones (w:val, w:pos, w:leader) exact, in position order, the '
+    'element absent when no entry remains; the pPrChange rules (untracked: unchanged; tracked: last child of pPr '
+    'with w:id and the author, snapshot the source pPr); and — on the OUTPUT, for every selected paragraph, changed '
+    'or not — every asked stop is in effect, a cleared position shows no stop (a numbered paragraph needs its own '
+    'clear entry), and with clear_others no other stop is in effect. Refused: a w:tabs holding something other '
+    'than w:tab, two entries at one position. Only w:tabs and w:pPrChange of the changed paragraphs leave the '
+    'residual.')
+KIND_EXAMPLES["tab_stops"] = {
+    "kind": "tab_stops", "parts": ["word/document.xml"],
+    "select": {"scope": "document", "paragraphs": {"style_in": ["PRT", "ART"]}},
+    "params": {"set": [{"pos": 720, "align": "left"}, {"pos": "right_margin", "align": "right", "leader": "dot"}],
+               "clear": [360], "clear_others": False, "tracked": False},
+    "author": None, "expected_paragraphs": 6, "changed": {"word/document.xml": [3, 9, 15, 21, 27, 33]}}
