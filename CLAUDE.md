@@ -139,7 +139,8 @@ jobs). Details: `docs/CONVERSATIONAL_DESKTOP.md`.
     original's pages show that the copy's do not, less what the plan removes — V6's warning, never a FAIL;
     `report.words_missing_sentence` is its one wording), `template_layout.py` (V7's template reference: the template
     as each document's plan makes it show, its fills in the slots and each section at the document's own text
-    width, the template's vertical layout kept — live QA finding F08), `explain.py`, `patterns.py` (the verifier's
+    width, the template's vertical layout kept — live QA finding F08 — but the source's own header/footer distances
+    where the plan keeps them, `keeps_distances` — the deep-dive stress test's D4), `explain.py`, `patterns.py` (the verifier's
     own bounded patterns, `v_compile`/`v_search`, the same deadline and length limit written independently: a
     pattern past its deadline is a `ValueError`, a failed check with that reason, never an exception out of the
     suite).
@@ -168,7 +169,9 @@ jobs). Details: `docs/CONVERSATIONAL_DESKTOP.md`.
     a V10 kind's contract from `verify.props.KIND_CONTRACTS`; the prompt and tools are cached, so an addition to
     them is a deliberate change; a writer the spending check pauses stops with `GeneratedOp.budget_stop` and its
     state on disk, and `generate_op(resume_from=)` continues it from its checkpoint in the same folder —
-    `Session._generate_custom` keeps the folder in `pending["paused"]`), `goals.py`, `goal_contracts.py`,
+    `Session._generate_custom` keeps the folder in `pending["paused"]`; a trial is verified without pages, so its
+    samples get V6/V7 in the preview by the plan the trial predicted, `FileTrial.plan`, and `run_generated` renders
+    and compares every copy before delivering any, `_check_layout`), `goals.py`, `goal_contracts.py`,
     `goal_operations.py` (reviewed outcome contracts; a target with `all: true` is bound once, by count), `recovery*.py` (one checkpoint per model call, at the turn's end), `continuous_recovery.py`, `campaign_planner.py`
     (bounded investigation of set-aside files: the outcome plan is a choice the user picks, its words beneath it —
     `Session.outcome` auto-takes a custom transform only — and the documents the user left out of the request stay

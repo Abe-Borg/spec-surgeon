@@ -330,7 +330,8 @@ def custom_trial(ctx, group, proposal, pid, code, latest, *, remembered=None):
                 entry["candidate"] = repair_methods.remember(generated, contract)
             except ValueError as exc:
                 entry["memory_note"] = str(exc)  # Recording limits never invalidate a verified repair.
-            trials = run_generated(generated, [str(f.source) for f in pending], folder / "trial", log=ctx["log"])
+            trials = run_generated(generated, [str(f.source) for f in pending], folder / "trial", log=ctx["log"],
+                                   renderer=options.renderer, do_render=options.render)
             by_source = {str(t.source): t for t in trials}
             for file in pending:
                 trial = by_source.get(str(file.source))

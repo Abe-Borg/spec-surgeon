@@ -2065,20 +2065,24 @@ class DocumentTask:
         the method's words are checked against its own plan only), so before the approval button the chat says the
         words its sample copies add and remove — the independent checker's reading of each copy (V2), never the
         method's or the model's (``preview.text_changes_of``) — or that no words change; once per preview. Before
-        them, a method kept with failed checks, or with a check the writer kept with a reason (Obliterate), has its
-        verdict said too (``codegen.samples_verdict``): its copies are delivered marked UNVERIFIED, and that is said
-        where the user reads, not only in the notes the model hears."""
-        from .codegen import SAMPLES_KEPT, SAMPLES_PASSED, SAMPLES_UNVERIFIED, kept_lines, samples_verdict, \
-            unverified_lines
-        from .preview import text_changes_lines
+        them, a method kept with failed checks, or with a check the writer kept with a reason (Obliterate), or whose
+        sample pages failed the page-layout check in the preview (``preview.layout_failures``), has its verdict said
+        too (``codegen.samples_verdict``): its copies are delivered marked UNVERIFIED (outside Obliterate a failed
+        layout makes Create unavailable, ``Session.run_blocked_reason``), and that is said where the user reads, not
+        only in the notes the model hears."""
+        from .codegen import SAMPLES_KEPT, SAMPLES_LAYOUT, SAMPLES_LAYOUT_UNVERIFIED, SAMPLES_PASSED, \
+            SAMPLES_UNVERIFIED, kept_lines, samples_verdict, unverified_lines
+        from .preview import layout_failures, text_changes_lines
         s = self.session
         gp = s.generated_preview if s.generated is not None else None
         if gp is None or gp is self._words_said_for:
             return
         self._words_said_for = gp
-        if unverified_lines(s.generated) or kept_lines(s.generated):
-            heads = (SAMPLES_PASSED, SAMPLES_UNVERIFIED, SAMPLES_KEPT)
-            self.say("\n\n".join(line if line in heads else f"• {line}" for line in samples_verdict(s.generated)))
+        layout = layout_failures(getattr(gp, "samples", None) or [])
+        if unverified_lines(s.generated) or kept_lines(s.generated) or layout:
+            heads = (SAMPLES_PASSED, SAMPLES_UNVERIFIED, SAMPLES_KEPT, SAMPLES_LAYOUT, SAMPLES_LAYOUT_UNVERIFIED)
+            self.say("\n\n".join(line if line in heads else f"• {line}"
+                                  for line in samples_verdict(s.generated, layout)))
         lines = text_changes_lines(getattr(gp, "samples", None) or [])
         if lines:
             self.say("\n\n".join(lines))         # a paragraph each: the page shows a note of several as a block
@@ -2107,8 +2111,10 @@ class DocumentTask:
         if not changes and s.generated is not None:
             # a method kept with failed checks (Obliterate) is never called passed: the details name the checks
             from .codegen import samples_verdict
+            from .preview import layout_failures
+            layout = layout_failures(getattr(s.generated_preview, "samples", None) or [])
             changes = [{"title": "Requested changes", "summary": s.generated.proposal,
-                        "details": [s.generated.request, *samples_verdict(s.generated)]}]
+                        "details": [s.generated.request, *samples_verdict(s.generated, layout)]}]
         if not changes:
             return []
         return [{"id": "", "label": "", "count": count, "files": [], "changes": changes, "assumptions": assumptions}]

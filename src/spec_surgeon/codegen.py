@@ -483,6 +483,7 @@ class FileTrial:
     identity: Optional[Any] = None
     goal_binding: Optional[Dict[str, Any]] = None
     unverified: List[str] = field(default_factory=list)   # Obliterate: the failed checks it passed with
+    plan: Optional[Dict[str, Any]] = None         # the plan the method predicted (V6/V7 read its geometry reference)
 
     def to_dict(self):
         return {"source": str(self.source), "passed": self.passed, "problems": self.problems,
@@ -580,8 +581,9 @@ def _trial(source, f, select, params, workdir, goal_contract, goal_binding, ungu
         return FileTrial(f, True, [], sb.output, rec, hashlib.md5(out_bytes).hexdigest(), identity, goal_binding,
                          unverified=[f"{c.id} ({c.name})" + (f" — Claude says this is part of the change: {kept[c.id]}"
                                                              if kept.get(c.id) else "")
-                                     for c in rec.checks if c.status == "FAIL"])
-    return FileTrial(f, rec.passed, fails, sb.output, rec, hashlib.md5(out_bytes).hexdigest(), identity, goal_binding)
+                                     for c in rec.checks if c.status == "FAIL"], plan=sb.plan)
+    return FileTrial(f, rec.passed, fails, sb.output, rec, hashlib.md5(out_bytes).hexdigest(), identity, goal_binding,
+                     plan=sb.plan)
 
 
 @dataclass
@@ -628,6 +630,13 @@ SAMPLES_UNVERIFIED = ("The sample copies were checked independently and FAILED c
                       "and every copy it makes is delivered marked UNVERIFIED with its failed checks beside it:")
 SAMPLES_KEPT = ("The writer also kept a check with a reason that no sample failed (Obliterate mode): a copy that fails "
                 "it is delivered marked UNVERIFIED with that reason beside it:")
+# a trial is verified without its pages; the preview renders the samples and checks their layout (V7) as the run will
+SAMPLES_LAYOUT = ("The sample copies' rendered pages FAILED the page-layout check (V7): the words do not sit where the "
+                  "method's plan says they will. Create is unavailable for this method (a copy that fails the check "
+                  "is never delivered):")
+SAMPLES_LAYOUT_UNVERIFIED = ("The sample copies' rendered pages FAILED the page-layout check (V7): the words do not sit "
+                             "where the method's plan says they will. Obliterate mode delivers a copy that fails it "
+                             "marked UNVERIFIED, with that check beside it:")
 
 
 def unverified_lines(g: Any) -> List[str]:
@@ -650,13 +659,16 @@ def kept_lines(g: Any) -> List[str]:
             for check, reason in (getattr(g, "accepted_failures", None) or {}).items() if check.upper() not in failed]
 
 
-def samples_verdict(g: Any) -> List[str]:
+def samples_verdict(g: Any, layout: Sequence[str] = ()) -> List[str]:
     """What the samples' independent verification said of ``g``, in the sentences the plan's details
     (``DocumentTask._groups``) and the notes the model hears (``gui.Session``) are built from: ``SAMPLES_PASSED`` after
-    a clean pass, else ``SAMPLES_UNVERIFIED`` and then ``unverified_lines``; then, only when there are any,
-    ``SAMPLES_KEPT`` and ``kept_lines``."""
+    a clean pass, else ``SAMPLES_UNVERIFIED`` and then ``unverified_lines``; then, only when there are any, the
+    samples whose rendered pages failed V7 in the preview (``layout``: ``preview.layout_failures``, never called
+    passed) after ``SAMPLES_LAYOUT``, and ``SAMPLES_KEPT`` and ``kept_lines``."""
     failed, kept = unverified_lines(g), kept_lines(g)
-    return ([SAMPLES_UNVERIFIED, *failed] if failed else [SAMPLES_PASSED]) + ([SAMPLES_KEPT, *kept] if kept else [])
+    pages = SAMPLES_LAYOUT_UNVERIFIED if getattr(g, "unguarded", False) else SAMPLES_LAYOUT
+    return (([SAMPLES_UNVERIFIED, *failed] if failed else [] if layout else [SAMPLES_PASSED])
+            + ([pages, *layout] if layout else []) + ([SAMPLES_KEPT, *kept] if kept else []))
 
 
 class ResumeMismatch(ValueError):
@@ -1437,11 +1449,13 @@ def save_generated(g: GeneratedOp, out_dir: Path) -> Path:
 
 
 def run_generated(g: GeneratedOp, inputs: Sequence[str], out_dir: Path, log=None, *,
-                  approved_inputs=None) -> List[FileTrial]:
+                  approved_inputs=None, renderer: str = "auto", do_render: bool = False) -> List[FileTrial]:
     """Apply a passing generated op to every input (sandbox per file, verifier per file). Verified outputs are copied
     to ``out_dir/outputs`` under names unique across the batch, and only when their bytes are the ones the suite
     verified; records to ``out_dir/records``. Never in place: an input inside the results folder is refused before
-    anything is written (the same rules as a batch run)."""
+    anything is written (the same rules as a batch run). With ``do_render`` every copy that passed is rendered beside
+    its original and compared (V6, V7) before any is delivered, as a built-in run's copies are
+    (``_check_layout``); without it V6 and V7 are N/A and say why."""
     from .batch import check_inputs_outside, clear_delivery_folders, expand_inputs, output_names
     g = copy.copy(g)
     for key in ("select", "params", "goal_contract", "goal_bindings", "approved_words"):
@@ -1464,7 +1478,8 @@ def run_generated(g: GeneratedOp, inputs: Sequence[str], out_dir: Path, log=None
     with diag.scope(out_dir / diag.LOGS / "events.jsonl", generated_run_id=diag.new_id()), \
             diag.span("codegen.run", file_count=len(files)) as record:
         clear_delivery_folders(out_dir)
-        result = _run_generated_files(g, files, out_dir, log, output_names, source_pins, acquisition_errors)
+        result = _run_generated_files(g, files, out_dir, log, output_names, source_pins, acquisition_errors,
+                                      renderer, do_render)
         record.update(passed=sum(t.passed for t in result), failed=sum(not t.passed for t in result))
         return result
 
@@ -1508,13 +1523,17 @@ def _generated_source_pins(files, approved_inputs):
     return pins, errors
 
 
-def _run_generated_files(g, files, out_dir, log, output_names, source_pins, acquisition_errors):
+def _run_generated_files(g, files, out_dir, log, output_names, source_pins, acquisition_errors, renderer, do_render):
     names = output_names(files)
     results = []
     _save_generated_run(g, files, results, out_dir)
+    options = trial_options(g)
     with tempfile.TemporaryDirectory() as tmp:
+        # every file is tried first, then the copies that passed are rendered and compared together (one renderer
+        # session for the run, as a built-in run renders), then each is delivered with its source checked again
+        tried = []
         for i, f in enumerate(files):
-            with diag.scope(source=str(f)), diag.span("codegen.file") as outcome:
+            with diag.scope(source=str(f)):
                 key = str(f.resolve())
                 identity = source_pins.get(key)
                 try:
@@ -1526,11 +1545,15 @@ def _run_generated_files(g, files, out_dir, log, output_names, source_pins, acqu
                 except (OSError, guard.GuardError) as error:
                     t = FileTrial(f.resolve(), False, [f"source acquisition refused: {error}"], identity=identity)
                 else:
-                    options = trial_options(g)
                     t = trial(g.source, f, g.select, g.params, Path(tmp) / f"{i:04d}",
                               goal_binding=g.goal_bindings.get(key), **options)
                 if t.goal_binding is not None:
                     g.goal_bindings[key] = t.goal_binding
+            tried.append((f, t, identity))
+        _check_layout([(t, names[str(f)]) for f, t, _ in tried], out_dir, renderer, do_render,
+                      bool(options.get("unguarded")), log)
+        for f, t, identity in tried:
+            with diag.scope(source=str(f)), diag.span("codegen.file") as outcome:
                 name = names[str(f)]
                 if t.passed:
                     try:
@@ -1569,6 +1592,47 @@ def _run_generated_files(g, files, out_dir, log, output_names, source_pins, acqu
                 outcome.update(passed=t.passed, problem_count=len(t.problems),
                                output=str(t.output) if t.output else None, output_md5=t.output_md5)
     return results
+
+
+def _check_layout(tried: Sequence[tuple], out_dir: Path, renderer: str, do_render: bool, unguarded: bool,
+                  log) -> None:
+    """V6 and V7 on the copies a custom method made, before any is delivered: each passing trial's copy, its original
+    and the plan the method predicted (``FileTrial.plan``) through the batch run's own rendering and comparison
+    (``batch._render_and_compare``), so a custom copy's record carries the page checks a built-in copy's does and the
+    preview's verdict on a sample is the one the run gives (the deep-dive stress test's D3: the copies were delivered
+    with V6/V7 "N/A — no renderer run yet" while the preview said the layout was checked when they were created). A
+    failed V6 or V7 holds the copy like any failed check; in Obliterate it is delivered marked UNVERIFIED with the
+    check listed. Rendering off, or no renderer, leaves both N/A with the reason. ``tried``: (trial, output name)."""
+    from .batch import BatchResult, FileResult, _render_and_compare
+    staged = []
+    for t, name in tried:
+        if not t.passed or t.output is None or t.record is None:
+            continue
+        output = Path(t.output)
+        if do_render:
+            # the sandbox names every copy out.docx: the renderer gets each under its own output name
+            output = out_dir / "render" / "output-in" / name
+            output.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(t.output, output)
+        staged.append((t, FileResult(source=Path(t.source), plan=t.plan or {}, output=output, record=t.record,
+                                     out_name=name)))
+    if not staged:
+        return
+    batch = BatchResult(out_dir=out_dir, job="generated", params={}, files=[fr for _, fr in staged])
+    run_log = diag.RunLog(out_dir / diag.LOGS / "run.log", progress=log)
+    try:
+        _render_and_compare(batch, renderer, do_render, 0, run_log)
+    finally:
+        run_log.close()
+    for t, fr in staged:
+        failed = [c for c in (fr.record.get("V6"), fr.record.get("V7")) if c is not None and c.status == "FAIL"]
+        if not failed:
+            continue
+        if unguarded:
+            t.unverified += [f"{c.id} ({c.name})" for c in failed]
+        else:
+            t.passed = False
+            t.problems += [f"{c.id} FAIL: {c.summary[:600]}" for c in failed]
 
 
 def _publish_generated(destination, data, identity):

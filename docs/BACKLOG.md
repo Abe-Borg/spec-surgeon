@@ -157,7 +157,23 @@ specifications, Windows and Word, and only the owner can do them. Record what a 
   copy held on V7 because its own section number or title rewraps the header (the record's V7 line reads "as this
   document's plan fills them, at its own text widths"); then specifications with other side margins than the
   template's, and one with a landscape section, the same; then one with its header distance not aligned
-  (`align_header_footer_distance` off, a header 1" from the edge): V7 still holds that copy.
+  (`align_header_footer_distance` off, a header 1" from the edge): the copy keeps its header 1" from the edge and
+  passes V7, its record's V7 line reading "and its own header/footer distances" (the deep-dive stress test's D4: the
+  report's Houston and Michigan copies, kept at their own distances as asked, were held on V7 and recovery spent 35–40
+  calls on them) — run the report's three-file template request again (VA, Houston, Michigan, distances kept) and
+  see all three copies created without recovery.
+- **Claude's visual check, read whole (the deep-dive stress test's D1, built 2026-10-28):** the report's
+  Obliterate footer request (widen both footer title boxes to 4" and add a sentence) five times over its real
+  specification with Word rendering and the visual check on: no preview shows a clean visual check while its saved
+  `visual_review.json` transcript holds findings; a check whose answer could not be read says "skipped: Claude's
+  answer could not be read (…)" beside the preview, and one nested under a key reads its findings (the transcript
+  line `"unwrapped"`).
+- **A custom method's pages checked by its own plan (the deep-dive stress test's D3, built 2026-10-28):** a Default
+  custom method over a real specification folder with Word rendering: each sample card gives the page-layout verdict
+  (V7) by the method's plan, not "checked when the copies are created"; the copies' records carry V6 and V7 from
+  Word, never "no renderer run yet"; a method whose words move where its plan says none do shows "Did not pass" on
+  the sample, the chat says the page-layout check failed before the button, and Create is unavailable. The same in
+  Obliterate: the copy is delivered marked UNVERIFIED with V7 beside it.
 - **Default mode:** a choice's drafted wording edited before it is picked, and the copy carrying the edit.
 - **Changing your mind in Default and Obliterate** (built 2026-10-28): over a real batch in the installed app, a
   preview **Discard preview**d (nothing created, the copies list as it was, the next message planned as a new

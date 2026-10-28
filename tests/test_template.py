@@ -554,9 +554,10 @@ def test_v7_template_pages_are_paired_not_searched(tmp_path):
 @pytest.mark.skipif(shutil.which("soffice") is None, reason="LibreOffice not installed")
 def test_v7_template_reference_rendered(tmp_path):
     """V7 against the template's headers/footers rendered alone. With the distances aligned the regions match
-    (the body footer included, though it is taller than the bottom margin); with alignment off, a header 1" from
-    the edge (template 0.5") is not found where the template has it, a header 1pt lower fails on its edge, a footer
-    0.25" higher fails — and in each case only V7 fails (the XML is exactly as planned)."""
+    (the body footer included, though it is taller than the bottom margin). With alignment off each document keeps
+    its own distances — a header 1" from the edge (template 0.5"), a header 1pt lower, a footer 0.25" higher — and
+    the reference takes them from the document, so each copy passes with its header and footer anchored where the
+    document has them (the deep-dive stress test's D4: these copies, exactly as asked, were each held on V7)."""
     spec = load_spec(SPEC)
     src = tmp_path / "in"
     src.mkdir()
@@ -571,12 +572,12 @@ def test_v7_template_reference_rendered(tmp_path):
     off = copy.deepcopy(spec)
     off["ops"][0]["params"]["align_header_footer_distance"] = False
     batch = run_batch([str(src)], "edit-spec", {}, tmp_path / "unaligned", workers=1, renderer="libreoffice", spec=off)
-    v7 = {Path(f.source).name[0]: f.record.get("V7").summary for f in batch.files}
+    assert len(batch.files) == 3
     for f in batch.files:
-        assert failed(f.record) == ["V7"], f.record.to_markdown()
-    assert "no words where the template's header is" in v7["a"]
-    assert "header: outer edge" in v7["b"] and "footer" not in v7["b"].split("tol 0.5pt")[1]
-    assert "footer:" in v7["c"] and "header:" not in v7["c"]
+        rec = f.record
+        assert rec.passed and rec.get("V7").status == "PASS", rec.to_markdown()
+        assert "at its own text widths and its own header/footer distances" in rec.get("V7").summary
+        assert all(p["anchors"] >= 4 for p in rec.get("V7").data["pages"]), rec.get("V7").summary
 
 
 @pytest.mark.skipif(shutil.which("soffice") is None, reason="LibreOffice not installed")
@@ -606,8 +607,9 @@ def _title_page_on_cover(root):
 @pytest.mark.skipif(shutil.which("soffice") is None, reason="LibreOffice not installed")
 def test_v7_blank_first_page_variant_does_not_hide_a_displaced_header(template, tmp_path):
     """The template's cover has titlePg and no first-page header/footer (its first page renders blank). Aligned,
-    the output's blank first page pairs with the template's and V7 passes; with the header distance not aligned
-    the displaced headers fail V7 on every page that shows one."""
+    the output's blank first page pairs with the template's and V7 passes; with the header distance set wrong by plan
+    and apply alike the displaced headers fail V7 on every page that shows one; with the distance not aligned the
+    document's own distance is the reference's and V7 passes, the blank first page still paired."""
     variant = _tpl_variant(template, tmp_path, "word/document.xml", _title_page_on_cover)
     spec = load_spec(SPEC)
     spec["ops"][0]["params"]["template"] = str(variant)
@@ -619,13 +621,21 @@ def test_v7_blank_first_page_variant_does_not_hide_a_displaced_header(template, 
     assert rec.passed, rec.to_markdown()
     pages = rec.get("V7").data["pages"]
     assert pages[0]["anchors"] == 0 and not pages[0]["problems"]                  # blank ↔ blank
-    off = copy.deepcopy(spec)
-    off["ops"][0]["params"]["align_header_footer_distance"] = False
-    batch = run_batch([str(src)], "edit-spec", {}, tmp_path / "unaligned", workers=1, renderer="libreoffice", spec=off)
+    with pytest.MonkeyPatch.context() as mp:
+        _distances_set_wrong(mp, "1440")
+        batch = run_batch([str(src)], "edit-spec", {}, tmp_path / "wrong", workers=1, renderer="libreoffice",
+                          spec=spec)
     rec = batch.files[0].record
     assert failed(rec) == ["V7"], rec.to_markdown()
     bad = [p["page"] for p in rec.get("V7").data["pages"] if p["problems"]]
     assert bad == [2, 3, 4, 5, 6]
+    off = copy.deepcopy(spec)
+    off["ops"][0]["params"]["align_header_footer_distance"] = False
+    batch = run_batch([str(src)], "edit-spec", {}, tmp_path / "unaligned", workers=1, renderer="libreoffice", spec=off)
+    rec = batch.files[0].record
+    assert rec.passed and rec.get("V7").status == "PASS", rec.to_markdown()
+    pages = rec.get("V7").data["pages"]
+    assert pages[0]["anchors"] == 0 and not pages[0]["problems"]
 
 
 def _wrapping_spec(tpl: Path, **params) -> dict:
@@ -676,38 +686,63 @@ def test_v7_template_reference_carries_each_documents_fills_and_text_width(tmp_p
                                                                            "c.docx": ["V7"]}
 
 
+def _distances_set_wrong(monkeypatch, header: str) -> None:
+    """A planted defect shared by plan and apply: the op sets every section's header distance to ``header`` twips —
+    where it aligns them, in place of the template's; where it was told to leave them, anyway — and asserts what it
+    did, so V10 passes and only V7, from its own reading of the template and the source, can see it."""
+    real = ApplyHeaderFooterTemplate.plan
+
+    def wrong_distance(self, pkg, select, params):
+        frag = real(self, pkg, select, params)
+        main = pkg.main_part()
+        for i in range(len(DocxPackage.sect_prs(pkg.xml(main)))):
+            frag.transform_data["dist_changes"].setdefault(str(i), {})["header"] = header
+            asserted = [a for a in frag.property_assertions if a["kind"] == "section_props" and a["sections"] == [i]
+                        and "pgMar" in a["elements"]]
+            if asserted:
+                asserted[0]["elements"]["pgMar"]["set"]["header"] = header
+            else:
+                frag.property_assertions.append({"kind": "section_props", "part": main, "sections": [i],
+                                                 "elements": {"pgMar": {"set": {"header": header}}},
+                                                 "expected_sections": 1})
+                frag.touches.append((main, f"sectPr:{i}", "pgMar"))
+        return frag
+    monkeypatch.setattr(ApplyHeaderFooterTemplate, "plan", wrong_distance)
+
+
 @pytest.mark.skipif(shutil.which("soffice") is None, reason="LibreOffice not installed")
-def test_v7_template_reference_still_holds_the_templates_vertical_layout(tmp_path, monkeypatch):
-    """The reference takes the document's fills and text width, never its vertical layout: a header distance set
-    wrong by plan and apply alike (1000 twips, not the template's 720: only V7 fails, the XML is exactly as planned)
-    and a header left 1" from the edge with alignment off are not where the template's header is, on every page."""
+def test_v7_template_reference_holds_the_vertical_layout_the_plan_asks_for(tmp_path, monkeypatch):
+    """The reference takes the document's fills and text width, and its vertical layout only where the plan keeps the
+    document's distances (the deep-dive stress test's D4). Aligned, a header distance set wrong by plan and apply
+    alike (1000 twips, not the template's 720: only V7 fails, the XML is exactly as planned) is not where the
+    template's header is, on every page. Not aligned, a header left 1" from the edge passes, at the document's own
+    distance; and one that plan and apply move to 720 anyway (V10 passes: the plan asserts it) is not where the
+    document's header was, and only V7 fails — the reference reads the distance from the source, never from the
+    plan or the copy."""
     tpl = tmp_path / "wrapping template.docx"
     tpl.write_bytes(build_wrapping_template())
     src = tmp_path / "in"
     src.mkdir()
     (src / "a.docx").write_bytes(build("21 13 13", "SPRINKLERS", header_distance_twips=1440))
-    real = ApplyHeaderFooterTemplate.plan
-
-    def wrong_distance(self, pkg, select, params):
-        frag = real(self, pkg, select, params)
-        for a in frag.property_assertions:
-            if a["kind"] == "section_props" and "header" in a["elements"]["pgMar"]["set"]:
-                a["elements"]["pgMar"]["set"]["header"] = "1000"
-        for d in frag.transform_data["dist_changes"].values():
-            d["header"] = "1000"
-        return frag
-    monkeypatch.setattr(ApplyHeaderFooterTemplate, "plan", wrong_distance)
+    _distances_set_wrong(monkeypatch, "1000")
     batch = run_batch([str(src)], "edit-spec", {}, tmp_path / "wrong", workers=1, renderer="libreoffice",
                       spec=_wrapping_spec(tpl))
     rec = batch.files[0].record
     assert failed(rec) == ["V7"], rec.to_markdown()
     assert [p["page"] for p in rec.get("V7").data["pages"] if p["problems"]] == [1, 2, 3, 4, 5, 6]
     monkeypatch.undo()
+    keep = _wrapping_spec(tpl, align_header_footer_distance=False)
     batch = run_batch([str(src)], "edit-spec", {}, tmp_path / "unaligned", workers=1, renderer="libreoffice",
-                      spec=_wrapping_spec(tpl, align_header_footer_distance=False))
+                      spec=keep)
+    rec = batch.files[0].record
+    assert rec.passed and rec.get("V7").status == "PASS", rec.to_markdown()
+    assert "its own header/footer distances" in rec.get("V7").summary
+    _distances_set_wrong(monkeypatch, "720")
+    batch = run_batch([str(src)], "edit-spec", {}, tmp_path / "moved anyway", workers=1, renderer="libreoffice",
+                      spec=keep)
     rec = batch.files[0].record
     assert failed(rec) == ["V7"], rec.to_markdown()
-    assert "no words where the template's header is" in rec.get("V7").summary
+    assert [p["page"] for p in rec.get("V7").data["pages"] if p["problems"]] == [1, 2, 3, 4, 5, 6]
 
 
 EXAMPLES = Path(__file__).resolve().parent.parent / "examples" / "specs"

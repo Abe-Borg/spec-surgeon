@@ -56,7 +56,7 @@ from .ops import JobException
 from .package import DocxPackage
 from .verify import run_suite, VerificationRecord, CheckResult, GEOM_TOL_PT
 from .verify import geometry as geom
-from .verify.template_layout import template_reference
+from .verify.template_layout import keeps_distances, template_reference
 from .report import words_missing_sentence
 from . import render as render_mod
 
@@ -665,7 +665,8 @@ def geometry_check(plan: Dict[str, Any], g: "geom.GeometryResult",
     * ``none`` — the op changes layout by design (a font or page-setup change reflows everything); N/A with the
       plan's reason, and a FAIL when the plan gives no reason;
     * ``template`` — the output's headers/footers rendered alone vs the template's as the plan makes this document
-      show them (its fills in the slots, laid at its own text widths: verify/template_layout.py), page for page
+      show them (its fills in the slots, laid at its own text widths, at its own header/footer distances when the
+      plan keeps them: verify/template_layout.py), page for page
       (output section k ↔ the reference section of template section map[k] at k's width, first/even/odd variant ↔
       the same variant; verify/geometry.hf_only_copy): a region the template leaves blank must be blank, any other
       must be found at the template's position, its outer edge and every shared word within tolerance; FAIL when
@@ -696,7 +697,8 @@ def geometry_check(plan: Dict[str, Any], g: "geom.GeometryResult",
         return CheckResult(
             "V7", "Geometry assertion", "FAIL" if bad else "PASS",
             f"reference = the template's headers/footers as this document's plan fills them, at its own text "
-            f"widths, rendered alone ({Path(plan.get('geometry_template', '')).name}), "
+            f"widths{' and its own header/footer distances' if keeps_distances(plan) else ''}, rendered alone "
+            f"({Path(plan.get('geometry_template', '')).name}), "
             f"page for page against the output's ({'/'.join(tg.kinds)}): max |Δy| {tg.worst_dy:.2f}pt over "
             f"{sum(p.anchors for p in tg.pages)} anchor word(s) and every region edge on {len(tg.pages)} page(s) "
             f"(tol {GEOM_TOL_PT}pt)"
@@ -1061,7 +1063,7 @@ def geometry_references(pairs: Sequence[RenderPair], out_dir: Path, backend: str
                     raise ValueError("the plan's templating op states no template_sections")
                 data, smap = template_reference(p.plan, p.output.read_bytes(),
                                                 geom.template_section_map(top["template_sections"], n),
-                                                top.get("kinds", ["header", "footer"]))
+                                                top.get("kinds", ["header", "footer"]), source=p.source.read_bytes())
                 references[geom.hf_only_copy(data, tpl_dir / f"{k:03d} headers-footers.docx")[0]] = (p.output, smap)
             except Exception as e:  # noqa: BLE001 — its V7 fails for want of the reference, and says so
                 rlog(f"{p.output.name}: its template reference could not be made ({type(e).__name__}: {e})")

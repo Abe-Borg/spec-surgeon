@@ -13,7 +13,12 @@ reference is therefore the template package with:
   template section shows every header/footer an earlier one shows, so the reference's sections inherit nothing the
   template's do not), each a copy of that template section's own ``w:sectPr``: header/footer distances, titlePg, page
   height and top/bottom margins as the template has them (V7 still holds the copy to the template's vertical layout),
-  the page width and side margins of the output section;
+  the page width and side margins of the output section. A plan that leaves the distances as the document has them
+  (the approved ``align_header_footer_distance: false``) is held to the document's instead: each reference section
+  takes its header and footer distances from the SOURCE's section (read here, never from the plan or the copy), one
+  reference section per distinct pair (the deep-dive stress test's D4: a request to keep each document's distances
+  could never pass V7, and recovery spent its calls repairing correct copies) — a copy whose distances moved anyway
+  is not where the reference's header is;
 * for each of them, references to every header/footer of the templated kinds that template section shows
   (``template._refs_shown``), each to a copy of the template's part made here for that width:
 
@@ -29,9 +34,10 @@ reference is therefore the template package with:
 
 Every other member is the template's, byte for byte. A template whose mapped sections show none of the templated kinds
 gives no part to copy (the plan has no ``template_parts``): the reference is then that template's blank regions. A
-plan that names no template, a template file that changed since planning (the md5 a copied part records) or a slot
-this reading cannot place raises ``ValueError``: V7 then fails for want of its reference and says so
-(``batch.geometry_check``)."""
+plan that names no template, a template file that changed since planning (the md5 a copied part records), a slot
+this reading cannot place, or a plan that keeps the document's distances without the source to read them from (or
+whose source has another number of sections than the copy) raises ``ValueError``: V7 then fails for want of its
+reference and says so (``batch.geometry_check``)."""
 from __future__ import annotations
 
 import copy
@@ -196,11 +202,28 @@ def _part_copy(tpl: VPackage, eff: Eff, part: str, a: Optional[Dict[str, Any]], 
     return etree.tostring(root, xml_declaration=True, encoding="UTF-8", standalone=True)
 
 
+def keeps_distances(plan: Dict[str, Any]) -> bool:
+    """Whether the approved templating op leaves each section's header and footer distances as the document has them
+    (its params' ``align_header_footer_distance`` is false): the user's approved spec, as the plan carries it."""
+    for o in plan.get("ops", []) or []:
+        if o.get("op") == "apply_header_footer_template" and isinstance(o.get("params"), dict):
+            return o["params"].get("align_header_footer_distance", True) is False
+    return False
+
+
+def _distances(sp) -> Tuple[Optional[str], Optional[str]]:
+    """A section's header and footer distances as written (None where it states none: Word's default)."""
+    mar = sp.find(W + "pgMar")
+    return (None, None) if mar is None else (mar.get(W + "header"), mar.get(W + "footer"))
+
+
 def template_reference(plan: Dict[str, Any], output: bytes, section_map: Sequence[int],
-                       kinds: Sequence[str]) -> Tuple[bytes, List[int]]:
+                       kinds: Sequence[str], source: Optional[bytes] = None) -> Tuple[bytes, List[int]]:
     """The reference document (see the module docstring) for an output whose sections ``section_map`` maps to the
     template's (``geometry.template_section_map`` of the op's ``template_sections``), with the templated ``kinds``,
-    and the map of the output's sections to the reference's: ``(bytes, [reference section of output section k])``."""
+    and the map of the output's sections to the reference's: ``(bytes, [reference section of output section k])``.
+    ``source``: the document the plan was made from, whose header/footer distances the reference takes when the plan
+    keeps them (``keeps_distances``)."""
     parts = [a for a in plan.get("property_assertions", []) or [] if a.get("kind") == "template_parts"]
     # a template whose mapped sections show none of the templated kinds has no part to copy: the reference is then
     # the template's blank regions, from the template the plan names
@@ -221,12 +244,23 @@ def template_reference(plan: Dict[str, Any], output: bytes, section_map: Sequenc
                          f"({len(t_secs)} section(s))")
     shown = _refs_shown(tpl)
     widths = [_width(sp) for sp in o_secs]
-    groups: List[Tuple[int, Optional[int]]] = []       # (template section, output text width)
+    distances: List[Optional[Tuple[Optional[str], Optional[str]]]] = [None] * len(o_secs)
+    if keeps_distances(plan):
+        if source is None:
+            raise ValueError("the plan keeps the document's header/footer distances, and no source was given to read "
+                             "them from")
+        src = VPackage(source)
+        s_secs = sect_prs(src.xml(src.main_part()))
+        if len(s_secs) != len(o_secs):
+            raise ValueError(f"the source has {len(s_secs)} section(s), the output {len(o_secs)}")
+        distances = [_distances(sp) for sp in s_secs]
+    # (template section, output text width, the source's distances when the plan keeps them)
+    groups: List[Tuple[int, Optional[int], Optional[Tuple[Optional[str], Optional[str]]]]] = []
     for k, j in enumerate(section_map):
-        if (j, widths[k]) not in groups:
-            groups.append((j, widths[k]))
+        if (j, widths[k], distances[k]) not in groups:
+            groups.append((j, widths[k], distances[k]))
     groups.sort(key=lambda g: g[0])                    # template order (stable: first use within a section)
-    smap = [groups.index((j, widths[k])) for k, j in enumerate(section_map)]
+    smap = [groups.index((j, widths[k], distances[k])) for k, j in enumerate(section_map)]
 
     eff = Eff(tpl)
     defaults, overrides = tpl.content_types()
@@ -267,7 +301,7 @@ def template_reference(plan: Dict[str, Any], output: bytes, section_map: Sequenc
     body = root.find(W + "body")
     for ch in list(body):
         body.remove(ch)
-    for g, (j, w_to) in enumerate(groups):
+    for g, (j, w_to, dist) in enumerate(groups):
         sp = copy.deepcopy(t_secs[j])
         for el in sp.findall(W + "headerReference") + sp.findall(W + "footerReference"):
             sp.remove(el)
@@ -279,6 +313,18 @@ def template_reference(plan: Dict[str, Any], output: bytes, section_map: Sequenc
             sz.set(W + "w", o_sz.get(W + "w"))
             for side in ("left", "right", "gutter"):
                 mar.set(W + side, o_mar.get(W + side) or "0")
+        if dist is not None:
+            # the document's own distances, where the plan keeps them (a distance it does not state: Word's default)
+            mar = sp.find(W + "pgMar")
+            if mar is None:
+                mar = etree.Element(W + "pgMar")
+                _insert_after(sp, mar, ("headerReference", "footerReference", "footnotePr", "endnotePr", "type",
+                                        "pgSz"))
+            for attr, value in zip(("header", "footer"), dist):
+                if value is None:
+                    mar.attrib.pop(W + attr, None)
+                else:
+                    mar.set(W + attr, value)
         refs = []
         # headers before footers, each in the template's own order: LibreOffice shows a titlePg section's default
         # footer on its first page when the footer's reference comes first
