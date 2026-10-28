@@ -66,6 +66,7 @@ const RECIPES = JSON.parse(readFileSync(resolve(HERE, "recipes.json"), "utf8"));
 const TEMPLATE_INFO = {
   kind: "prepared",
   typed_slots: ["ISSUED FOR PERMIT"],
+  slot_roles: { "XX XX XX": "number", SECTION_NUMBER: "number", SECTION_TITLE: "title" },
   reason: "",
   // what "Match body formatting to template" reads from it (template_roles.detect)
   body: {

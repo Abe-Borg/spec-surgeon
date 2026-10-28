@@ -24,9 +24,16 @@ from .inputs import KINDS as INPUT_KINDS
 GROUPS = ("Headers & footers", "Fonts & formatting", "Text", "Clean up", "Files & properties")
 
 # Template slots that stand for the section number or title (decision 2 of the plan): filled from each document by the
-# reference rules. A slot whose name is not here is a value the user types in the button's form.
-NUMBER_SLOTS = {"SECTION_NUMBER", "SECTION NUMBER", "XX XX XX", "XXXXXX", "XX-XX-XX", "XX.XX.XX", "NUMBER"}
-TITLE_SLOTS = {"SECTION_TITLE", "SECTION TITLE", "TITLE"}
+# reference rules. A slot is one by its name (compared by _slot_key, so case, underscores, spacing and enclosing
+# brackets do not matter) or, for the number, by its shape: six placeholder digits in CSI's three pairs ("XX XX XX",
+# "00 00 00", "000000", "## ## ##"), with an optional ".00" level. Any other slot is a value the user types in the
+# button's form, the same in every copy.
+NUMBER_SLOTS = {"SECTION_NUMBER", "SECTION NUMBER", "SECTION NO", "SECTION NO.", "SECTION #", "SPEC NUMBER", "SPEC NO",
+                "SPEC NO.", "SPEC SECTION NUMBER", "SPECIFICATION NUMBER", "SPECIFICATION SECTION NUMBER", "NUMBER"}
+NUMBER_SHAPE = re.compile(r"[0X#]{2}[ .-]?[0X#]{2}[ .-]?[0X#]{2}(?:\.[0X#]{2})?")
+TITLE_SLOTS = {"SECTION_TITLE", "SECTION TITLE", "SECTION NAME", "SPEC TITLE", "SPEC NAME", "SPEC SECTION TITLE",
+               "SPEC SECTION NAME", "SPECIFICATION TITLE", "SPECIFICATION NAME", "SPECIFICATION SECTION TITLE",
+               "SPECIFICATION SECTION NAME", "TITLE"}
 SWAP_PICTURES = {".png", ".jpg", ".jpeg", ".gif"}      # what swap_image places (a BMP or SVG is refused there)
 MIN_FONT_SHARE = 0.5                                   # below it, the template's most used font is not its body text
 NAME_PATTERNS = ("{number} - {title}", "{number} {title}", "{number}")
@@ -173,13 +180,13 @@ def _quote(words: str) -> str:
 
 # ---- headers and footers ----
 def _slot_key(name: str) -> str:
-    return re.sub(r"\s+", " ", name.replace("_", " ").strip()).upper()
+    return re.sub(r"\s+", " ", name.replace("_", " ").strip().strip("[](){}<>«»").strip()).upper()
 
 
 def slot_role(name: str) -> str:
     """"number", "title" or "" (a value the user types) for a prepared template's slot."""
     key = _slot_key(name)
-    if key in {_slot_key(n) for n in NUMBER_SLOTS}:
+    if key in {_slot_key(n) for n in NUMBER_SLOTS} or NUMBER_SHAPE.fullmatch(key):
         return "number"
     if key in {_slot_key(n) for n in TITLE_SLOTS}:
         return "title"
@@ -226,7 +233,8 @@ def template_kind(template: Optional[Path]) -> Dict[str, Any]:
         if prepared:
             names = list(dict.fromkeys(prepared))
             return {"kind": "prepared", "typed_slots": [n for n in names if not slot_role(n)],
-                    "filled_slots": [n for n in names if slot_role(n)], "reference_slots": [],
+                    "filled_slots": [n for n in names if slot_role(n)],
+                    "slot_roles": {n: slot_role(n) for n in names if slot_role(n)}, "reference_slots": [],
                     "sections": len(secs), "reason": ""}
         values: Dict[str, str] = {}
         for slot, rule in REFERENCE_FILLS.items():

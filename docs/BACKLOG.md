@@ -139,6 +139,13 @@ specifications, Windows and Word, and only the owner can do them. Record what a 
   change your mind on that batch in the installed app: Discard a preview, go back to a button and find its form as
   you left it, run two buttons and Undo twice (the next button builds on the right copies each time, and every copy
   is still in its session folder under the scratch folder), and Undo after a crash's restore.
+- **A prepared template's "00 00 00" and "Specification Name" (the owner's Safe-mode run of 2026-10-28; built
+  2026-10-28):** the owner's `00_00_00_SPECIFICATION HEADER AND FOOTER TEMPLATE.docx` over the same Division 21
+  batch in Safe mode, with Word: **Match headers and footers to template** asks for nothing (the form says each
+  document fills in its own section number at "00 00 00" and its own title at "Specification Name"), and every
+  copy's footer shows the document's own title and "21 05 17 - 1" where the placeholders were, typed as the
+  document types them (capitals stay capitals). A template naming its placeholders otherwise ("SECTION NAME",
+  "[SECTION NUMBER]", "000000") the same; one with a project stamp asks for the stamp alone.
 - **Match font to template, per body size (the stress-test finding; built 2026-10-28):** the finding's two documents
   attached together with the 11 pt template: the preview shows two groups, one per body size, each sentence naming
   its size; in the copies the 11 pt-body document's 9 pt table text is still 9 pt (82 runs went to 11 pt before)
