@@ -991,6 +991,29 @@ class Usage:
         return {**self.as_dict(), "by_model": self.by_model, "calls": self.calls, "served_models": sorted(set(self.served)),
                 "fallbacks": self.fallbacks, "cost_usd": self.cost_usd()}
 
+    @classmethod
+    def from_dict(cls, data: Any) -> "Usage":
+        """A ledger read back from ``to_dict`` (a paused custom-method writer continuing where it stopped,
+        ``codegen.generate_op(resume_from=)``): the rows, the call count and the fallbacks as recorded; the serving
+        models as the set the record kept. Anything malformed counts as nothing."""
+        usage = cls()
+        if not isinstance(data, dict):
+            return usage
+        rows = data.get("by_model")
+        for model, row in (rows.items() if isinstance(rows, dict) else ()):
+            if not isinstance(model, str) or not isinstance(row, dict):
+                continue
+            mine = usage.by_model.setdefault(model, {k: 0 for k in TOKEN_KEYS})
+            for k in (*TOKEN_KEYS, CACHE_1H_KEY):
+                value = row.get(k, 0)
+                mine[k] = mine.get(k, 0) + (int(value) if type(value) is int and value >= 0 else 0)
+        calls, fallbacks = data.get("calls", 0), data.get("fallbacks", 0)
+        usage.calls = calls if type(calls) is int and calls >= 0 else 0
+        usage.fallbacks = fallbacks if type(fallbacks) is int and fallbacks >= 0 else 0
+        served = data.get("served_models", [])
+        usage.served = [m for m in served if isinstance(m, str)] if isinstance(served, list) else []
+        return usage
+
 
 # ---- recovery's task-local spending and request limits -------------------------------------------------------------
 

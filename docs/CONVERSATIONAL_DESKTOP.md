@@ -494,7 +494,8 @@ what it does. Its label says what it does:
 - **Save N ready copies**: during recovery, save the copies that are already verified while a question about
   other files is still open.
 - **Continue** after a pause: the request reached your spending check, the price table cannot estimate the model
-  that answered, or the app closed while work was running (see below).
+  that answered, or the app closed while work was running (see below). A custom method that was being written goes
+  on from where it stopped, with everything it had looked at.
 - **Stop now**, while work runs: the kill switch, in the composer and as **Stop** beside the spending in the top bar
   (see below).
 
@@ -608,7 +609,12 @@ recovery critic) are not cached at all beyond the instructions. Three things kee
   the dearest cache-write rate, and the longest answer it may write) to what the request has spent, and a step that
   could pass the amount is not started: the work pauses with its progress saved and the card says what the request
   spent; **Continue (up to $N more)** allows the amount again on top of it and the request goes on where it
-  stopped, with everything it had found. While a request runs the top bar shows its spending beside the check
+  stopped, with everything it had found. That holds for a custom method being written: the writer's exchange is
+  checkpointed after every answered call (`contexts.checkpoint_history`, the record recovery resumes from too), the
+  pause marks it (`GeneratedOp.budget_stop`), and Continue takes the writer up in its own folder with the same brief,
+  pins and approved words, its calls and attempts counting on (`codegen.generate_op(resume_from=)`), so it does not
+  read the documents again from the brief; the chat says so. A writer that failed outright is a spent attempt, and
+  the next one starts afresh. While a request runs the top bar shows its spending beside the check
   ("this request ≈ $0.40 of $20.00"). A model the price table cannot estimate pauses the request too, since the
   check cannot be kept; Continue then goes on without a check for that request. The check counts estimates, not
   Anthropic's bill; a refusal re-run on another model inside one call can go past a step's reservation.

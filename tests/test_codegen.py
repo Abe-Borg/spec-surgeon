@@ -418,3 +418,112 @@ def test_the_transform_writer_lists_same_named_samples_by_their_labels(tmp_path)
     g = generate_op("header distance", "set_header_distance", [a, b], tmp_path / "cg", client=fake)
     first = fake.requests[0]["messages"][0]["content"]
     assert "'A/spec.docx'" in first and "'B/spec.docx'" in first and g.passed
+
+
+# ---- the spending check pauses the writer; Continue goes on from its checkpoint (live QA finding F09) ----------------
+
+def _paused_writer(folder, tmp_path, calls=2):
+    """A writer that inspects the sample twice and is stopped by the budget before its third call: the pause on disk
+    in ``tmp_path / "cg"``, the scripted client and the sample."""
+    from spec_surgeon import llm
+    f = sorted(folder.glob("*.docx"))[0]
+    fake = FakeClient(resp(tool("show_xml", {"file": f.name, "start": 0, "count": 2}, "x1")),
+                      resp(tool("find_paragraphs", {"file": f.name, "regex": "SPEC"}, "x2")))
+    with llm.budget_scope(llm.CallBudget(max_calls=calls)):
+        g = generate_op("header 0.625 in", "set the header distance", [f], tmp_path / "cg", client=fake,
+                        brief="REQUEST: header 0.625 in\nUSER: only the header")
+    return g, fake, f
+
+
+def test_the_spending_check_pauses_the_writer_with_its_whole_state_on_disk(folder, tmp_path):
+    g, fake, f = _paused_writer(folder, tmp_path)
+    assert g.budget_stop and not g.passed and g.calls == 2 and g.attempts == []
+    assert g.errors == ["the call to the model failed: BudgetExceeded: call limit reached (2 calls)"]
+    h = json.loads((tmp_path / "cg" / "history.json").read_text(encoding="utf-8"))
+    assert h["budget_stop"] is True and h["calls"] == 2 and h["passed"] is False and h["usage"]["calls"] == 2
+    # the exchange after the last answered turn, in the same checkpoint recovery resumes from
+    from spec_surgeon.contexts import load_context_manifest
+    manifest = load_context_manifest(tmp_path / "cg" / "context" / f"active-{h['context']['epoch']}.json")
+    assert [m["role"] for m in manifest["messages"]] == ["user", "assistant", "user", "assistant", "user"]
+    assert [b["tool_use_id"] for m in manifest["messages"][2::2] for b in m["content"]] == ["x1", "x2"]
+
+
+def test_continue_takes_the_paused_writer_up_where_it_stopped(folder, tmp_path):
+    from spec_surgeon import llm
+    g, fake, f = _paused_writer(folder, tmp_path)
+    before = fake.requests[-1]["messages"]
+    again = FakeClient(resp(tool("submit_op", {"source": UNASSERTED_OP, "params": {"twips": 900}}, "a1")),
+                       resp(tool("submit_op", {"source": GOOD_OP, "params": {"twips": 900}}, "a2")))
+    logged = []
+    with llm.budget_scope(llm.CallBudget(max_calls=10)):
+        g2 = generate_op("header 0.625 in", "set the header distance", [f], tmp_path / "cg", client=again,
+                         brief="REQUEST: header 0.625 in\nUSER: only the header", log=logged.append,
+                         resume_from=tmp_path / "cg")
+    assert g2.passed and not g2.budget_stop and g2.name == "set_header_distance"
+    # the first request after the pause carries the whole earlier exchange: the inspections and their answers
+    first = again.requests[0]["messages"]
+    assert len(first) == 5 and [m["role"] for m in first] == ["user", "assistant", "user", "assistant", "user"]
+    assert first[0]["content"] == before[0]["content"]
+    assert first[1]["content"][0]["name"] == "show_xml" and "<w:p" in first[2]["content"][0]["content"]
+    assert first[3]["content"][0]["name"] == "find_paragraphs" and first[4]["content"][0]["tool_use_id"] == "x2"
+    assert "only the header" in first[0]["content"] and again.requests[0]["system"] == fake.requests[0]["system"]
+    # the counts go on: two calls before the pause, two after; one failed and one passing attempt, both recorded
+    assert g2.calls == 4 and g2.usage.calls == 4 and len(g2.attempts) == 2 and g2.errors == []
+    assert [a["attempt"] for a in g2.attempts] == [1, 2] and g2.path.is_file()
+    assert (tmp_path / "cg" / "sandbox" / "attempt1").is_dir() and (tmp_path / "cg" / "sandbox" / "attempt2").is_dir()
+    assert any("continuing the method where it stopped" in line for line in logged)
+    h = json.loads((tmp_path / "cg" / "history.json").read_text(encoding="utf-8"))
+    assert h["passed"] is True and h["budget_stop"] is False and h["calls"] == 4
+    assert [e.get("turn") for e in h["transcript"] if e.get("role") == "assistant"] == [1, 2, 3, 4]
+    assert h["transcript"][0]["content"].startswith("THE CONVERSATION WITH THE USER")
+    assert any(e.get("resumed") for e in h["transcript"]) and not any("error" in e for e in h["transcript"])
+    assert [e["paused"] for e in h["transcript"] if "paused" in e] == ["call limit reached (2 calls)"]
+    # a second resume of a writer that finished is refused: a passing method is not a pause
+    third = FakeClient(resp(tool("submit_op", {"source": GOOD_OP, "params": {"twips": 900}}, "b1")))
+    logged.clear()
+    g3 = generate_op("header 0.625 in", "set the header distance", [f], tmp_path / "cg", client=third,
+                     brief="REQUEST: header 0.625 in\nUSER: only the header", log=logged.append,
+                     resume_from=tmp_path / "cg")
+    assert g3.passed and len(third.requests[0]["messages"]) == 1 and g3.calls == 1
+    assert any("cannot be continued" in line and "did not stop at the spending check" in line for line in logged)
+
+
+@pytest.mark.parametrize("change", ["brief", "samples", "folder", "mode", "missing"])
+def test_a_checkpoint_of_another_job_is_not_continued(folder, tmp_path, change):
+    from spec_surgeon import llm
+    g, fake, f = _paused_writer(folder, tmp_path)
+    other = sorted(folder.glob("*.docx"))[1]
+    again = FakeClient(resp(tool("submit_op", {"source": GOOD_OP, "params": {"twips": 900}}, "a1")))
+    logged = []
+    options = dict(brief="REQUEST: header 0.625 in\nUSER: only the header", log=logged.append,
+                   resume_from=tmp_path / "cg", client=again)
+    out, samples = tmp_path / "cg", [f]
+    if change == "brief":
+        options["brief"] = "REQUEST: header 0.625 in\nUSER: the footer too"
+    elif change == "samples":
+        samples = [other]
+    elif change == "folder":
+        out = tmp_path / "cg-02"
+    elif change == "mode":
+        options["unguarded"] = True
+    elif change == "missing":
+        (tmp_path / "cg" / "history.json").unlink()
+    with llm.budget_scope(llm.CallBudget(max_calls=10)):
+        g2 = generate_op("header 0.625 in", "set the header distance", samples, out, **options)
+    assert g2.passed and len(again.requests[0]["messages"]) == 1 and g2.calls == 1   # a fresh start, said so
+    assert any("cannot be continued" in line for line in logged), logged
+
+
+def test_the_stall_guard_of_a_resumed_writer_counts_what_it_submitted_before(folder, tmp_path):
+    from spec_surgeon import llm
+    f = sorted(folder.glob("*.docx"))[0]
+    bad = lambda tid: resp(tool("submit_op", {"source": "import os\n"}, tid))
+    with llm.budget_scope(llm.CallBudget(max_calls=2)):
+        g = generate_op("x", "y", [f], tmp_path / "cg", client=FakeClient(bad("a"), bad("b")))
+    assert g.budget_stop and len(g.attempts) == 2
+    again = FakeClient(bad("c"), bad("d"))
+    with llm.budget_scope(llm.CallBudget(max_calls=10)):
+        g2 = generate_op("x", "y", [f], tmp_path / "cg", client=again, resume_from=tmp_path / "cg")
+    # the third equivalent rejection in a row stalls the writer: the two before the pause count
+    assert not g2.passed and "stalled" in g2.errors[0] and len(g2.attempts) == 3 and len(again.requests) == 1
+    assert len(again.requests[0]["messages"]) == 5
