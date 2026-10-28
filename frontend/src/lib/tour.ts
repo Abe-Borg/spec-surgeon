@@ -265,7 +265,7 @@ export const TOUR: readonly TourChapter[] = [
         placement: "top",
         title: "One button, tied to what is on screen",
         body:
-          "Create edited copies approves exactly the plan and pages shown: if a document or the plan changed since the preview, the click is refused until you have looked again, and a failed check blocks it with its reason. Discard preview withdraws a Safe-mode preview and creates nothing. The button's own sentence is your line in the chat above, and the changes it made join the history the next request hears. The tour leaves this preview as it is; the next chapter shows the copies it would make.",
+          "Create edited copies approves exactly the plan and pages shown: if a document or the plan changed since the preview, the click is refused until you have looked again, and a failed check blocks it with its reason. Discard preview withdraws a preview and creates nothing, in every mode; in Default and Obliterate the request ends with it, and Drop this request ends one still open at a question. The button's own sentence is your line in the chat above, and the changes it made join the history the next request hears. The tour leaves this preview as it is; the next chapter shows the copies it would make.",
       },
     ],
   },
@@ -305,7 +305,7 @@ export const TOUR: readonly TourChapter[] = [
         placement: "left",
         title: "The next change builds on these copies",
         body:
-          "After a run the copies are the working set: the next button or request is made on them, and your originals stay as they are. Start over from the originals goes back to your files; in Safe mode Undo the last button goes back one button at a time, so the next button builds on the copies from before it. Neither writes or deletes a file: the copies an undone button made stay where they were saved.",
+          "After a run the copies are the working set: the next button or request is made on them, and your originals stay as they are. Start over from the originals goes back to your files; Undo the last button (Undo the last change in Default and Obliterate) goes back one run at a time, so the next button or request builds on the copies from before it. Neither writes or deletes a file: the copies an undone run made stay where they were saved.",
       },
       {
         id: "hand-off",

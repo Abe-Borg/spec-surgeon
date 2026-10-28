@@ -276,6 +276,7 @@ function emptyView() {
     focus: [],
     working: { generation: 0, from_originals: true, can_start_over: false },
     budget: { paused: false, reason: "" },
+    discard: "",
     update: { state: "none", version: "", notes: "", progress: 0, error: "" },
     mode: "default",
     modes: ["safe", "default"],
@@ -520,7 +521,16 @@ function resetGoingBack() {
 }
 function undoFields() {
   const top = undoStack[undoStack.length - 1];
-  return { undo: top ? top.request : "", undo_blocked: top && view.stage === "preview" ? "Discard the preview first." : "" };
+  const blocked = !top ? "" : view.stage === "preview" ? "Discard the preview first."
+    : ["question", "budget"].includes(view.stage) ? "Drop the request that is open first, or finish it." : "";
+  return { undo: top ? top.request : "", undo_blocked: blocked };
+}
+/** What Discard withdraws now, as the app says it (docs/WEB_API.md, `discard`). */
+function discardOf(v) {
+  if (v.busy) return "";
+  if (v.stage === "preview") return "preview";
+  if (v.mode !== "safe" && ["question", "resume", "budget"].includes(v.stage)) return "request";
+  return "";
 }
 let settings = { key_present: true, origin: "saved", can_remember: true, export_folder: "", logs_dir: "C:/Users/abe/AppData/Roaming/Spec Surgeon/logs", theme: "clay", fast_mode: false, show_obliterate: false, tutorial_version: 0, spending_limit_usd: 20, spending_default_usd: 20, fast: { model: "claude-opus-5-5", available: true, speedup: 2.5, price_factor: 2, standard_usd_per_mtok: [4, 20], fast_usd_per_mtok: [8, 40], refused: null } };
 const THEMES = ["clay", "blueprint", "graphite", "carbon", "linen"];
@@ -532,6 +542,7 @@ let updateFound = true; // what the next check for updates finds; the up-to-date
 // --- Helpers --------------------------------------------------------------
 
 function json(res, status, body) {
+  if (body === view) view.discard = discardOf(view);
   const data = JSON.stringify(body);
   res.writeHead(status, {
     "Content-Type": "application/json; charset=utf-8",
@@ -683,6 +694,7 @@ function startStream(res) {
   const end = () => {
     view.busy = false;
     running = null;
+    view.discard = discardOf(view);
     res.write(`data: ${JSON.stringify({ type: "done", state: view })}\n\n`);
     res.end();
   };
@@ -1015,6 +1027,14 @@ async function primaryJob(res, token, hold = []) {
     view.working = { ...view.working, ...undoFields() };
     return s.end();
   }
+  // A conversation's run: what it replaces is kept for Undo, as a button's is.
+  undoStack.push({
+    request: lastRequest || "the last change",
+    generation: view.working.generation,
+    results: view.results,
+    left_untouched: view.left_untouched,
+    currents: view.attachments.map((a) => [a.path, a.current]),
+  });
   view.results = [...view.results.filter((r) => !fresh.some((f) => f.source === r.source)), ...fresh];
   await s.emit({ type: "results", results: view.results });
   const note = msg("app", `${fresh.length} edited ${fresh.length === 1 ? "copy" : "copies"} created and verified`);
@@ -1040,6 +1060,7 @@ async function primaryJob(res, token, hold = []) {
   view.attachments = view.attachments.map((a) =>
     running.some((r) => r.path === a.path) ? { ...a, current: `${RUN_DIR}/${a.name}` } : a,
   );
+  view.working = { ...view.working, ...undoFields() };
   await s.emit({ type: "cost", cost: spend(0.12, 2) });
   void token;
   s.end();
@@ -1263,6 +1284,7 @@ async function handle(req, res) {
         return job.fail("Safe mode has no conversation: press a button to make a change, or switch to Default mode to type a request.");
       }
       const key = text.toLowerCase();
+      if (!["question", "resume", "budget"].includes(view.stage)) lastRequest = text;   // a new request (Undo names it)
       if (key === WORK_TODO.toLowerCase() && view.todo.length) return todoJob(res, text);
       if (key.includes("question")) return questionJob(res, text);
       if (key.includes("fail")) return failJob(res, text);
@@ -1312,8 +1334,27 @@ async function handle(req, res) {
     }
     case "POST /api/discard": {
       if (view.busy) return busyRefusal();
-      if (view.mode !== "safe") return json(res, 400, { error: "Discard is for Safe mode's previews; in this mode, say what should be different instead." });
-      if (view.stage !== "preview") return json(res, 400, { error: "There is no preview to discard." });
+      const withdrawn = discardOf(view);
+      if (!withdrawn) {
+        return json(res, 400, { error: view.mode === "safe" ? "There is no preview to discard." : "There is nothing to discard: no preview or request is waiting." });
+      }
+      if (view.mode !== "safe") {
+        // Default and Obliterate: the request ends with nothing created; the next message is a new request
+        view.plan = null;
+        view.samples = [];
+        view.warnings = [];
+        view.questions = [];
+        view.choices = [];
+        view.chips = [];
+        view.budget = { paused: false, reason: "" };
+        view.action = { label: "", token: "", kind: "none", can_hold: false };
+        view.stage = view.results.length && view.working.generation ? "done" : "empty";
+        view.working = { ...view.working, ...undoFields() };
+        view.messages.push(msg("app", (withdrawn === "preview" ? "Preview discarded" : "Request dropped") +
+          "; nothing was created. Your next message starts a new request" +
+          (view.working.generation ? "; the copies you have stay as they are." : ".")));
+        return json(res, 200, view);
+      }
       if (beforeButton) {
         view.results = beforeButton.results;
         view.left_untouched = beforeButton.left_untouched;
@@ -1334,7 +1375,7 @@ async function handle(req, res) {
       if (view.busy) return busyRefusal();
       const top = undoStack[undoStack.length - 1];
       if (!top) return json(res, 400, { error: "There is nothing to undo." });
-      if (view.stage === "preview") return json(res, 400, { error: "Discard the preview first." });
+      if (undoFields().undo_blocked) return json(res, 400, { error: undoFields().undo_blocked });
       undoStack.pop();
       const currents = new Map(top.currents);
       view.attachments = view.attachments.map((a) => (currents.has(a.path) ? { ...a, current: currents.get(a.path) } : a));
@@ -1347,8 +1388,9 @@ async function handle(req, res) {
         can_start_over: top.generation > 0 || view.todo.length > 0,
       };
       view.working = { ...view.working, ...undoFields() };
+      const upcoming = view.mode === "safe" ? "The next button" : "Your next request";
       view.messages.push(msg("app", `Undid “${top.request}”. ` +
-        (top.generation ? "The next button builds on the copies from before it." : "The next button works on your originals again.") +
+        (top.generation ? `${upcoming} builds on the copies from before it.` : `${upcoming} works on your originals again.`) +
         " The copies it made stay where they were saved; nothing was deleted."));
       return json(res, 200, view);
     }

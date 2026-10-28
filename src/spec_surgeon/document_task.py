@@ -64,6 +64,10 @@ WHY_HELD, WHY_ASKED, WHY_REFUSED, WHY_FAILED = "held", "asked", "refused", "fail
 HELD_REASON = "You marked its preview as needing more work."
 ASKED_REASON = "You asked to set it aside for later."
 EARLIER_COPY = "in an earlier copy: "   # an UNVERIFIED mark a later copy builds on (``_mark_unverified``)
+# Discard in Default and Obliterate (``discard_preview``): what the chat says once the preview, or the request still
+# open, is withdrawn
+DISCARDED = {"preview": "Preview discarded; nothing was created.",
+             "request": "Request dropped; nothing was created."}
 # said when the app takes a custom method on its own (``_collect_conversation``), Claude's proposal after it
 CUSTOM_METHOD_WRITTEN = ("Claude is writing a one-off custom method for this and trying it on copies of your documents; "
                          "nothing is created until you have seen its preview and approved it.")
@@ -71,9 +75,10 @@ NO_PDF = "Its PDF could not be made"   # Save clean PDFs: a clean copy passed, i
 CONVERSATION_EFFORT = "medium"   # the model's own default: fewer tool rounds per turn than high, measured by the owner
 RECOVERY_EFFORT = "high"         # the hard path keeps the depth
 RECOVERY_ATTEMPTS = 8            # candidate attempts per problem group (docs/RECOVERY.md), on every recovery path
-# A request Claude answers without a plan is finished with the answer (``_answered``): the exchange is kept as
-# context for the next request — the last EXCHANGES_KEPT of them, each with the first sentence of the answer, cut at
-# ANSWER_LINE characters (``answer_line``)
+# A request Claude answers without a plan is finished with the answer (``_answered``), and one the user withdraws with
+# Discard is finished with that (``_discard_request``, ``"discarded"``): the exchange is kept as context for the next
+# request — the last EXCHANGES_KEPT of them, each with the first sentence of the answer, cut at ANSWER_LINE characters
+# (``answer_line``)
 EXCHANGES_KEPT = 5
 ANSWER_LINE = 240
 
@@ -306,8 +311,9 @@ class DocumentTask:
         self.journal = Path(journal) if journal else None
         self.messages: List[Dict[str, str]] = []
         self.decisions: List[str] = []
-        # the requests Claude answered without a plan, finished with the answer (``_end_exchange``): the user's words
-        # and the first sentence of the answer, the last EXCHANGES_KEPT, told to the model with the next request
+        # the requests Claude answered without a plan, finished with the answer (``_end_exchange``), and those the user
+        # withdrew with Discard (``_discard_request``: ``"discarded"`` is "preview" or "request"): the user's words and
+        # the first sentence of the answer, the last EXCHANGES_KEPT, told to the model with the next request
         self.exchanges: List[Dict[str, Any]] = []
         self.word_sources: List[str] = []
         self.results: Dict[str, str] = {}
@@ -759,6 +765,13 @@ class DocumentTask:
             if not asked:
                 continue
             said = "; then: ".join(f"“{a}”" for a in asked)
+            withdrawn = entry.get("discarded")
+            if withdrawn:
+                lines.append(f"The user asked {said} — " + ("a plan was previewed and the user discarded it"
+                                                           if withdrawn == "preview" else
+                                                           "the user dropped the request") +
+                             " before anything was created")
+                continue
             lines.append(f"The user asked {said} — the assistant answered: “{entry.get('answered') or '(no words)'}”")
         return lines
 
@@ -869,11 +882,11 @@ class DocumentTask:
         """Why the last change cannot be undone now; '' when it can."""
         if not self.undo_points:
             return "There is nothing to undo."
-        if self.stage == "preview":
-            return ("Discard the preview first." if self.mode == "safe" else
-                    "A plan is waiting for your approval; create the copies or change the request first.")
+        if self.stage == "preview" and self.session.recovery is None:
+            return "Discard the preview first."
         if self.stage not in ("done", "empty", "resume") or self.session.recovery is not None:
-            return "Finish the request that is open first."
+            return ("Drop the request that is open first, or finish it."
+                    if self.discard_kind() == "request" else "Finish the request that is open first.")
         if self.focus:
             return "Finish the pass over your to-do list first."
         return ""
@@ -890,14 +903,39 @@ class DocumentTask:
         self.left_untouched = [dict(e) for e in shown["left_untouched"]
                                if _same_file_key(e["path"]) in keys and e["path"] not in self.todo]
 
+    def discard_kind(self) -> str:
+        """What Discard withdraws now: ``preview`` (a preview waiting for approval, in every mode), ``request`` (in
+        Default and Obliterate, a request still open with nothing to approve: Claude's question, a reply to continue,
+        a custom method being written, a pause at the spending check), or ``""``. Never while recovery checks files
+        after a run: its copies are saved with their own button and the rest set aside (``SET_ASIDE_REST``)."""
+        s = self.session
+        if s.recovery is not None or getattr(s.conversation, "recovery_active", False):
+            return ""
+        if self.stage == "preview":
+            return "preview"
+        if (self.mode != "safe" and self.stage in ("question", "resume", "budget")
+                and (self.decisions or s.pending_custom_transform is not None)):
+            return "request"
+        return ""
+
     def discard_preview(self) -> None:
-        """Safe mode's Discard: the preview waiting for approval is withdrawn and nothing is created. The window shows
-        again what it showed before the button was pressed (the last copies, what that button left untouched); the
-        working set never changed. No file is written or deleted."""
+        """Discard: the preview waiting for approval — or, in Default and Obliterate, the request still open — is
+        withdrawn and nothing is created. In Safe mode the window shows again what it showed before the button was
+        pressed (the last copies, what that button left untouched). In Default and Obliterate the request ends: the
+        plan, its preview, Claude's open question or the method being written are void, the decisions are cleared and
+        the next message is a new request, told that this one was withdrawn (``exchanges``); a pass over the to-do
+        list ends with it, its documents back on the list as they were. The working set never changed. No file is
+        written or deleted."""
+        kind = self.discard_kind()
+        if not kind:
+            if self.session.recovery is not None:
+                raise ValueError("The documents are being checked again: save the ready copies, or set the rest "
+                                 "aside for later.")
+            raise ValueError("There is no preview to discard." if self.mode == "safe" else
+                             "There is nothing to discard: no preview or request is waiting.")
         if self.mode != "safe":
-            raise ValueError("Discard is for Safe mode's previews; in this mode, say what should be different instead.")
-        if self.stage != "preview":
-            raise ValueError("There is no preview to discard.")
+            self._discard_request(kind)
+            return
         before, self._before_button = self._before_button, None
         self._invalidate()
         if before is not None:
@@ -905,6 +943,32 @@ class DocumentTask:
         self.stage = "done" if self.results and self.generation else "empty"
         self.say("Preview discarded; nothing was created. Change the form and preview again, or choose another "
                  "button.")
+        self.save()
+
+    def _discard_request(self, kind: str) -> None:
+        """Default and Obliterate's Discard (``discard_preview``): the request ends with nothing created."""
+        asked, focus = list(self.decisions), self.focus
+        if focus:
+            # the pass is withdrawn with its request: its documents wait on the to-do list again, as they did
+            for key in focus["documents"]:
+                why = focus.get("why", {}).get(key, {})
+                self.todo[key] = {"name": Path(key).name, "decisions": list(focus.get("decisions") or asked),
+                                  "seen": list(focus.get("seen", [])), "why": why.get("why", WHY_HELD),
+                                  "reason": why.get("reason") or HELD_REASON}
+            self.focus = None
+        self._invalidate()
+        if asked:
+            self.exchanges.append({"asked": asked, "answered": "", "discarded": kind})
+            del self.exchanges[:-EXCHANGES_KEPT]
+        self.decisions = []
+        self._request_budget = self._new_request()           # a pause at the spending check ends with the request
+        self._budget.exhausted_reason = None
+        self._sync()
+        self.stage = "done" if self.results and self.generation else "empty"
+        self._revision += 1
+        self.say(DISCARDED[kind] + " Your next message starts a new request" +
+                 ("; the copies you have stay as they are." if self.working else ".") +
+                 (" The documents you were working on are back on your to-do list." if focus else ""))
         self.save()
 
     def undo(self) -> None:
@@ -1601,7 +1665,8 @@ class DocumentTask:
         self.focus = {"documents": list(group),
                       "seen": list(dict.fromkeys(s for e in entries for s in e.get("seen", []))),
                       "why": {k: {"why": v.get("why", WHY_HELD), "reason": v.get("reason") or HELD_REASON}
-                              for k, v in group.items()}}
+                              for k, v in group.items()},
+                      "decisions": list(decisions)}       # what Discard puts back on the list with them
         self.decisions = decisions
         self.todo = rest
         self._sync()
@@ -2238,6 +2303,7 @@ class DocumentTask:
                 "action": labels.get(self.stage, ""), "token": self.action_token(),
                 "blocked_reason": s.run_blocked_reason() if self.stage == "preview" else "",
                 "budget_paused": self.stage == "budget", "pause_reason": self.pause_reason(),
+                "discard": self.discard_kind(),
                 "cost": self._budget.spent_usd,
                 "blocking": blocking}
 
@@ -2422,7 +2488,7 @@ class DocumentTask:
                         for k, v in todo.items())):
             raise ValueError("The saved conversation could not be read.")
         if focus is not None and not (isinstance(focus, dict) and strings(focus.get("documents"))
-                                      and strings(focus.get("seen", []))
+                                      and strings(focus.get("seen", [])) and strings(focus.get("decisions", []))
                                       and isinstance(focus.get("why", {}), dict)
                                       and all(isinstance(k, str) and isinstance(v, dict) and why_ok(v)
                                               for k, v in focus.get("why", {}).items())):
@@ -2434,7 +2500,8 @@ class DocumentTask:
         documents = [d for d in (focus or {}).get("documents", []) if d in known]
         self.focus = ({"documents": documents, "seen": list(focus.get("seen", [])),
                        "why": {k: {"why": v.get("why", WHY_HELD), "reason": v.get("reason") or HELD_REASON}
-                               for k, v in focus.get("why", {}).items() if k in documents}}
+                               for k, v in focus.get("why", {}).items() if k in documents},
+                       "decisions": list(focus.get("decisions", []))}
                       if focus and documents else None)
 
     @staticmethod
@@ -2544,9 +2611,11 @@ class DocumentTask:
         if not (isinstance(exchanges, list)
                 and all(isinstance(e, dict) and isinstance(e.get("asked"), list)
                         and all(isinstance(a, str) for a in e["asked"]) and isinstance(e.get("answered", ""), str)
+                        and e.get("discarded", "") in ("", *DISCARDED)
                         for e in exchanges)):
             raise ValueError("The saved conversation could not be read.")
-        self.exchanges = [{"asked": list(e["asked"]), "answered": str(e.get("answered", ""))}
+        self.exchanges = [{"asked": list(e["asked"]), "answered": str(e.get("answered", "")),
+                           **({"discarded": e["discarded"]} if e.get("discarded") else {})}
                           for e in exchanges][-EXCHANGES_KEPT:]
         self.results = data.get("results", {})
         pdfs = data.get("pdfs", {})

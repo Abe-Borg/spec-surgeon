@@ -295,12 +295,12 @@ export const RUNTIME_CARDS: RuntimeCard[] = [
   },
   {
     covers: ["A23", "A24", "A25", "A29", "A30", "A32"],
-    title: "Safe mode: choosing a mode, pressing a button, saving clean PDFs, changing your mind, handing documents over",
+    title: "Safe mode: choosing a mode, pressing a button, saving clean PDFs, changing your mind (in every mode), handing documents over",
     you:
       "Choose Safe or Default in the top bar; in Safe mode, pick a button, fill in its form and press Preview; " +
       "Save clean PDFs, then Save clean PDFs beside its preview; " +
       "Discard preview, All buttons or Clear form; Undo the last button; Try these in Default mode beside what a " +
-      "button left untouched.",
+      "button left untouched. In Default and Obliterate: Discard preview, Drop this request and Undo the last change.",
     runs:
       "Choosing a mode keeps it in settings.json for the next start. Switching modes keeps your unsent message and " +
       "Safe-mode form in this window; an unsent message holds Create only in a conversation mode. A button builds its plan in code from your form " +
@@ -314,7 +314,11 @@ export const RUNTIME_CARDS: RuntimeCard[] = [
       "while a preview waits) withdraws it: nothing is created, and the window shows the copies it showed before. " +
       "Each button's form keeps what you typed until Clear form, New conversation or Start over. Undo the last " +
       "button makes the copies from before that button the ones the next button builds on again (your originals, " +
-      "when it was the first), and takes off the to-do list the documents its ✗ put there. Handing over puts " +
+      "when it was the first), and takes off the to-do list the documents its ✗ put there. In Default and " +
+      "Obliterate the same two work on a conversation: Discard preview, or Drop this request while a question, a " +
+      "pause or a reply to continue is open, ends the request with nothing created (no AI call; the next request is " +
+      "told it was withdrawn, and a pass over the to-do list puts its documents back on the list), and Undo the " +
+      "last change goes back before the last run that delivered copies. Handing over puts " +
       "documents on your to-do list and switches to Default mode.",
     sent: "Nothing. A button never reaches the network.",
     ai: NONE,
@@ -324,8 +328,10 @@ export const RUNTIME_CARDS: RuntimeCard[] = [
       "cannot be cleaned exactly, or whose PDF does not pass that check, gets no PDF and is listed with why; a PDF " +
       "that failed is kept apart in pdf-failed. Save clean PDFs needs Word or LibreOffice on this computer, " +
       "and says so when there is neither. Discard and Undo " +
-      "write and delete no file: the copies an undone button made stay where they were saved. Undo goes back one " +
-      "button at a time, never while a preview waits, and refuses when a copy it would go back to is gone.",
+      "write and delete no file: the copies an undone run made stay where they were saved. Undo goes back one " +
+      "run at a time, never while a preview waits or a request is open, and refuses when a copy it would go back to " +
+      "is gone. Discard is not offered while the documents are being checked again after a run: save the ready " +
+      "copies, or set the rest aside for later.",
   },
   {
     covers: ["A35"],

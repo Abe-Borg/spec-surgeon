@@ -35,7 +35,7 @@ interface Props {
   onRemove: (attachment: Attachment) => void;
   onOpen: (path: string) => void;
   onStartOver: () => void;
-  /** Safe mode's Undo the last button: the working set back to the copies from before it. */
+  /** Undo the last button (Safe) or change (Default, Obliterate): the working set back to the copies from before it. */
   onUndo: () => void;
   /** Takes a document off the to-do list, back among the documents the next request works on. */
   onPutBack: (path: string) => void;
@@ -531,7 +531,7 @@ function Workbench({
                     data-capability="results.undo"
                     className="text-accent underline decoration-accent/40 underline-offset-2 transition-colors hover:decoration-accent disabled:pointer-events-none disabled:opacity-50"
                   >
-                    Undo the last button
+                    {undo.label}
                   </button>
                 </Tip>
               </>

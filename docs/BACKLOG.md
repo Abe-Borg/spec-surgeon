@@ -153,6 +153,16 @@ specifications, Windows and Word, and only the owner can do them. Record what a 
   changes) with no such warning, the header and footer words recorded under the record's
   `header_footer_words_not_compared`; a header/footer template over the same folder with none either.
 - **Default mode:** a choice's drafted wording edited before it is picked, and the copy carrying the edit.
+- **Changing your mind in Default and Obliterate** (built 2026-10-28): over a real batch in the installed app, a
+  preview **Discard preview**d (nothing created, the copies list as it was, the next message planned as a new
+  request that "the same, but italic" still reads); a question the assistant asks answered with **Drop this
+  request**; a request paused at a low spending check dropped from beside the pause card; two runs undone with
+  **Undo the last change**, the next request building on the right copies each time and every copy still in the
+  scratch folder; a pass over the to-do list discarded and its documents back on the list; the same in Obliterate
+  with a copy marked UNVERIFIED undone and its mark gone with it.
+- **Spending with no connection** (built 2026-10-28): the network unplugged (or a proxy that refuses the API) and a
+  request sent: the pill and the request's spending stay at what they were, the request does not pause at the
+  spending check, and the chat says the connection failed.
 - **A question answered without a plan (the stress test's F7, built 2026-10-28):** in Default mode over a real
   batch, park one document on the to-do list, edit the other two, ask a status question ending "Do not prepare or
   make an edit" (the assistant answers in words), put the parked document back, then ask for a Subject property

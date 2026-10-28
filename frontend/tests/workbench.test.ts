@@ -138,18 +138,24 @@ test("each section lists its own kind, and the pictures title counts the accepte
   assert.equal(referencesTitle({ attachments: [] }), "Pictures and tables");
 });
 
-test("Undo the last button shows in Safe mode when there is something to undo, with why it waits", () => {
+test("Undo shows in every mode when there is something to undo, with why it waits", () => {
   const working = { generation: 2, from_originals: false, can_start_over: true, undo: "Remove highlighting", undo_blocked: "" };
   const link = undoLink({ mode: "safe", working }, false);
   assert.equal(link?.disabled, false);
+  assert.equal(link?.label, "Undo the last button");
   assert.ok(link?.tip.includes("“Remove highlighting”") && link.tip.includes("Nothing is deleted"));
   assert.deepEqual(undoLink({ mode: "safe", working: { ...working, undo_blocked: "Discard the preview first." } }, false), {
+    label: "Undo the last button",
     disabled: true,
     tip: "Discard the preview first.",
   });
   assert.equal(undoLink({ mode: "safe", working }, true)?.disabled, true);
   assert.equal(undoLink({ mode: "safe", working: { ...working, undo: "" } }, false), null);
-  assert.equal(undoLink({ mode: "default", working }, false), null);
+  for (const mode of ["default", "obliterate"] as const) {
+    assert.equal(undoLink({ mode, working }, false)?.label, "Undo the last change");
+    assert.equal(undoLink({ mode, working }, false)?.disabled, false);
+    assert.equal(undoLink({ mode, working: { ...working, undo_blocked: "Drop the request that is open first, or finish it." } }, false)?.disabled, true);
+  }
   // an older server sends no undo: no link
   assert.equal(undoLink({ mode: "safe", working: { generation: 1, from_originals: false, can_start_over: true } }, false), null);
 });

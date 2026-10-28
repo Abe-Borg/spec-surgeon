@@ -361,6 +361,7 @@ class WindowState:
                 "todo": [dict(item) for item in raw.get("todo", [])], "focus": list(raw.get("focus", [])),
                 "working": raw["working"], "budget": {"paused": bool(raw["budget_paused"]),
                                                       "reason": raw.get("pause_reason", "")},
+                "discard": "" if busy else raw.get("discard", ""),
                 "tutorial": self.tutorial_block(),
                 "update": self.updates.state() if self.updates else _no_update()}
 

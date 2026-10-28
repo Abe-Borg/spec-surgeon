@@ -1,7 +1,9 @@
-"""Changing your mind in Safe mode: Discard withdraws a button's preview and shows again what the window showed before
-it, and Undo takes the working set back one run at a time — the copies each document builds on, the history, what
-was left untouched and the documents the ✗ set aside. Neither writes or deletes a file: the copies a run made stay
-where they were saved, and the originals are never touched."""
+"""Changing your mind: Discard withdraws a preview and Undo takes the working set back one run at a time — the copies
+each document builds on, the history, what was left untouched and the documents the ✗ set aside. In Safe mode Discard
+shows again what the window showed before the button; in Default and Obliterate it ends the request (the preview, or
+Claude's open question, a reply to continue, a method being written, a pause), and the next message is a new request
+that is told this one was withdrawn. Neither writes or deletes a file: the copies a run made stay where they were
+saved, and the originals are never touched."""
 from __future__ import annotations
 
 import json
@@ -98,11 +100,170 @@ def test_discard_restores_what_the_last_button_left_untouched(tmp_path, files):
     assert task.view()["left_untouched"] == left
 
 
-def test_discard_is_safe_modes(tmp_path, files):
+def test_discard_needs_something_to_withdraw(tmp_path, files):
     task = DocumentTask(Session(out_root=tmp_path / "out", visual_check=False), render=False)
     task.attach(files)
-    with pytest.raises(ValueError, match="Safe mode"):
+    assert task.view()["discard"] == ""
+    with pytest.raises(ValueError, match="nothing to discard"):
         task.discard_preview()
+    task = safe_task(tmp_path)
+    task.attach(files)
+    with pytest.raises(ValueError, match="no preview to discard"):
+        task.discard_preview()
+
+
+# ---- Default and Obliterate: the conversation's ways back -----------------------------------------------------------
+
+from fake_claude import FakeClient, resp, tool                                    # noqa: E402
+from test_document_task import REQUEST, SPEC, document                           # noqa: E402
+
+AGAIN = "Make the FIRE SUPPRESSION title italic instead."
+ITALIC = {**SPEC, "request": AGAIN, "summary": "Make the title italic",
+          "ops": [{**SPEC["ops"][0], "params": {"run": {"i": True}, "tracked": False}}]}
+
+
+def chat_task(tmp_path, *replies, mode="default"):
+    task = DocumentTask(Session(client=FakeClient(*replies), out_root=tmp_path / "out", visual_check=False),
+                        render=False, obliterate_allowed=True)
+    if mode == "obliterate":
+        task.set_mode("obliterate", acknowledged=True)
+    return task
+
+
+def plan(spec=SPEC, tid="t1"):
+    return resp(tool("submit_editspec", {"spec": spec}, tid))
+
+
+@pytest.mark.parametrize("mode", ["default", "obliterate"])
+def test_discard_withdraws_a_conversations_preview_and_the_next_message_is_a_new_request(tmp_path, mode):
+    source = document(tmp_path / "Spec.docx")
+    task = chat_task(tmp_path, plan(), plan(ITALIC, "t2"), plan(ITALIC, "t3"), mode=mode)
+    task.attach([source])
+    view = task.perform("send", text=REQUEST)
+    task.perform("primary", token=view["token"])
+    copies, working, history = dict(task.results), dict(task.working), list(task.history)
+    view = task.perform("send", text="Make it italic instead.")
+    assert view["stage"] == "preview" and view["discard"] == "preview"
+    assert view["working"]["undo_blocked"] == "Discard the preview first."
+    before = on_disk(tmp_path)
+    task.discard_preview()
+    view = task.view()
+    assert view["stage"] == "done" and view["discard"] == "" and view["action"] == "" and view["samples"] == []
+    assert task.results == copies and task.working == working and task.history == history and task.generation == 1
+    assert task.session.spec is None and task.session.conversation is None and task.decisions == []
+    assert on_disk(tmp_path) == before                                 # nothing created, nothing deleted
+    assert task.messages[-1]["text"] == ("Preview discarded; nothing was created. Your next message starts a new "
+                                         "request; the copies you have stay as they are.")
+    assert task.exchanges[-1] == {"asked": ["Make it italic instead."], "answered": "", "discarded": "preview"}
+    # the next message is a REQUEST of its own, told that the last one was withdrawn — not a revision of it
+    view = task.perform("send", text=AGAIN)
+    assert view["stage"] == "preview" and task.decisions == [AGAIN]
+    sent = task.session.client.requests[-1]["messages"][0]["content"]
+    assert sent.startswith(f"REQUEST:\n{AGAIN}\n\n")
+    earlier = sent.split("EARLIER IN THIS CONVERSATION")[1].split("\n\n")[0]
+    assert ("“Make it italic instead.” — a plan was previewed and the user discarded it before anything was created"
+            in earlier)
+
+
+@pytest.mark.parametrize("mode", ["default", "obliterate"])
+def test_discard_drops_a_request_still_open_at_a_question(tmp_path, mode):
+    task = chat_task(tmp_path, resp(tool("ask_user", {"questions": ["Which title should change?"]})),
+                     plan(ITALIC, "t2"), mode=mode)
+    task.attach([document(tmp_path / "Spec.docx")])
+    view = task.perform("send", text=REQUEST)
+    assert view["stage"] == "question" and view["discard"] == "request"
+    task.discard_preview()
+    view = task.view()
+    assert view["stage"] == "empty" and view["discard"] == "" and view["questions"] == []
+    assert task.decisions == [] and task.session.conversation is None
+    assert task.messages[-1]["text"] == "Request dropped; nothing was created. Your next message starts a new request."
+    view = task.perform("send", text=AGAIN)
+    sent = task.session.client.requests[-1]["messages"][0]["content"]
+    assert view["stage"] == "preview" and sent.startswith(f"REQUEST:\n{AGAIN}\n\n")
+    assert "“" + REQUEST + "” — the user dropped the request before anything was created" in sent
+
+
+def test_discard_drops_a_request_paused_at_the_spending_check(tmp_path, monkeypatch):
+    from test_document_task import check_after
+    task = chat_task(tmp_path, plan(ITALIC, "t2"))        # the paused request never reached Claude
+    task.attach([document(tmp_path / "Spec.docx")])
+    check_after(task, monkeypatch, 0)
+    view = task.perform("send", text=REQUEST)
+    assert view["stage"] == "budget" and view["discard"] == "request"
+    task.discard_preview()
+    assert task.stage == "empty" and task.pause_reason() == "" and task.decisions == []
+    task.set_spending_limit(None)
+    assert task.perform("send", text=AGAIN)["stage"] == "preview"
+
+
+@pytest.mark.parametrize("mode", ["default", "obliterate"])
+def test_undo_goes_back_before_a_conversations_run(tmp_path, mode):
+    source = document(tmp_path / "Spec.docx")
+    task = chat_task(tmp_path, plan(), plan(ITALIC, "t2"), mode=mode)
+    task.attach([source])
+    view = task.perform("send", text=REQUEST)
+    task.perform("primary", token=view["token"])
+    first = {"working": dict(task.working), "history": list(task.history)}
+    view = task.perform("send", text=AGAIN)
+    task.perform("primary", token=view["token"])
+    assert task.generation == 2 and task.view()["working"]["undo"] == AGAIN
+    task.undo()
+    assert task.working == first["working"] and task.history == first["history"] and task.generation == 1
+    assert task.messages[-1]["text"].startswith(f"Undid “{AGAIN.rstrip('.')}”. Your next request builds on the "
+                                                "copies from before it.")
+    task.undo()
+    assert task.working == {} and task.generation == 0 and task.view()["working"]["undo"] == ""
+
+
+def test_undo_waits_for_an_open_question_to_be_dropped(tmp_path):
+    task = chat_task(tmp_path, plan(), resp(tool("ask_user", {"questions": ["Which title?"]}, "q2")))
+    task.attach([document(tmp_path / "Spec.docx")])
+    view = task.perform("send", text=REQUEST)
+    task.perform("primary", token=view["token"])
+    assert task.perform("send", text=AGAIN)["stage"] == "question"
+    assert task.view()["working"]["undo_blocked"] == "Drop the request that is open first, or finish it."
+    with pytest.raises(ValueError, match="Drop the request"):
+        task.undo()
+    task.discard_preview()
+    task.undo()
+    assert task.working == {}
+
+
+def test_discard_during_a_pass_puts_its_documents_back_on_the_to_do_list(tmp_path):
+    docs = [document(tmp_path / f"{n}.docx") for n in ("21 05 00", "21 13 13")]
+    task = chat_task(tmp_path, plan(), plan(ITALIC, "t2"))
+    task.attach(docs)
+    view = task.perform("send", text=REQUEST)
+    task.perform("primary", token=view["token"], hold=[str(docs[1])])
+    entry = dict(task.todo[str(docs[1])])
+    task.perform("send", text="Work on the documents I set aside")
+    assert task.focus and task.view()["discard"] == "request"
+    task.discard_preview()
+    assert task.focus is None and task.todo == {str(docs[1]): entry} and task.decisions == []
+    assert task.messages[-1]["text"].endswith("The documents you were working on are back on your to-do list.")
+
+
+def test_a_withdrawn_request_and_a_pass_s_own_request_survive_a_restart(tmp_path):
+    docs = [document(tmp_path / f"{n}.docx") for n in ("21 05 00", "21 13 13")]
+    journal = tmp_path / "conversation.json"
+    task = DocumentTask(Session(client=FakeClient(plan(), plan(ITALIC, "t2")), out_root=tmp_path / "out",
+                                visual_check=False), render=False, journal=journal)
+    task.attach(docs)
+    view = task.perform("send", text=REQUEST)
+    task.perform("primary", token=view["token"], hold=[str(docs[1])])
+    task.perform("send", text=AGAIN)
+    task.discard_preview()
+    task.perform("send", text="Work on the documents I set aside")
+    restored = DocumentTask(Session(out_root=tmp_path / "out", visual_check=False), render=False, journal=journal)
+    assert restored.restore()
+    assert restored.exchanges == task.exchanges and restored.exchanges[-1]["discarded"] == "preview"
+    assert restored.focus == task.focus and restored.focus["decisions"] == [REQUEST]
+    data = json.loads(journal.read_text(encoding="utf-8"))
+    data["exchanges"][-1]["discarded"] = "maybe"
+    journal.write_text(json.dumps(data), encoding="utf-8")
+    broken = DocumentTask(Session(out_root=tmp_path / "out", visual_check=False), render=False, journal=journal)
+    with pytest.raises(ValueError, match="could not be read"):
+        broken.restore()
 
 
 # ---- Undo -----------------------------------------------------------------------------------------------------------

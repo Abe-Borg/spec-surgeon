@@ -81,7 +81,7 @@ button lives in the chat pane;
 each preview carries a checkmark and an X: X'd documents are `hold` on the primary action (`Session.run(only=)` keeps
 every approved pin), wait on `DocumentTask.todo`, and the reply `WORK_TODO` begins a pass over them alone (`focus`, one
 request at a time); `applied` keeps the changes each copy carries, so the history the model hears is per document.
-A request ends with copies, with a discarded preview, or with a reply that is an answer and nothing pending (words
+A request ends with copies, with a discarded preview or dropped request, or with a reply that is an answer and nothing pending (words
 alone: no question, choice, suggested reply, plan, refused plan or custom method — `DocumentTask._answered`): the
 decisions are cleared, the conversation ends, and the exchange (the user's words, the answer's first sentence) is kept
 in `DocumentTask.exchanges` (journalled, the last `EXCHANGES_KEPT`) and told to the model with the next request
@@ -106,10 +106,13 @@ sits where Export put it, its destination recorded with the md5 of the bytes wri
 crashed window's taken over and restored), and writes a copy or a
 clean PDF where the user chose only through **Export → Save the copies…** (`DocumentTask.export` →
 `guard.write_new`, never over an input, never into the scratch tree; the engine and the verifier are untouched).
-In Safe mode, **Discard preview**
-(`DocumentTask.discard_preview`) withdraws a button's preview and shows again what `_recipe` set aside
-(`_before_button`); **Undo the last button** (`DocumentTask.undo`) pops `undo_points` (one per run that delivered
-copies, taken at approval, kept in the journal) to put the working set back one run. Neither writes or deletes a file.
+**Discard preview**
+(`DocumentTask.discard_preview`; what it withdraws is `discard_kind`, the view's `discard`) withdraws a preview: in Safe
+mode it shows again what `_recipe` set aside (`_before_button`); in Default and Obliterate it — or **Drop this
+request**, at a question, a pause or a reply to continue — ends the request (`_discard_request`: decisions cleared, the
+request kept in `exchanges` as withdrawn, a pass's documents back on the to-do list). **Undo the last button** (Safe)
+or **Undo the last change** (`DocumentTask.undo`) pops `undo_points` (one per run that delivered copies, taken at
+approval, kept in the journal) to put the working set back one run, in every mode. Neither writes or deletes a file.
 There is no command line (removed 2026-10-21 with the
 library, workspaces, workflows, office profiles, spec QA audits, project evidence, evaluations and the named v0.1.0
 jobs). Details: `docs/CONVERSATIONAL_DESKTOP.md`.
