@@ -49,7 +49,8 @@ What happens then is what happens to a plan in Default mode, with no model anywh
 - The button's sentence (what you pressed and what you typed) is your line in the chat, and the change sentences of
   its plan join the history the next request in either mode hears.
 
-Changing your mind (`DocumentTask.discard_preview`, `DocumentTask.undo`):
+Changing your mind (`DocumentTask.discard_preview`, `DocumentTask.undo`; the same two buttons in Default and
+Obliterate, below under "The conversation"):
 
 - **Discard preview**, beside Create while a button's preview waits, withdraws it: nothing is created, and the window
   shows again the copies and the Left untouched list it showed before the button was pressed (`_before_button`).
@@ -176,7 +177,8 @@ What it lifts (`Session.unguarded`; CLAUDE.md, "Modes"):
   `GeneratedOp.accepted_failures`, in the approval too; V1, V4, V5a, V5c and V9 can never be kept, since their
   failure is a member, revision or XML the method got wrong, or a source that moved: `codegen.NEVER_KEPT_CHECKS`).
   After those rounds the latest method is used with its failures listed, never called passed: the notes the model
-  hears, the transcript lines beside them, the window's message and the plan group's details name the checks each
+  hears, the transcript lines beside them, the chat before the button (the app's own note, ahead of the words below:
+  `DocumentTask._say_text_changes`), the window's message and the plan group's details name the checks each
   sample failed, as the preview and the delivered copies list them (`codegen.samples_verdict`,
   `codegen.unverified_lines`; a check the writer kept with a reason that no sample failed is named apart, never as a
   failure: `codegen.kept_lines`); a writer that stops otherwise (an API error, a stall, its attempts) leaves the best such
@@ -368,7 +370,7 @@ offered wording passes; `conversation.edited_wording`). Claude is told the exact
 that asks nothing (an answer, an apology, a list of findings) stays in the chat alone; the card never repeats it.
 
 **When a request ends.** A request is finished when the conversation about it created copies, when its preview was
-discarded, or when the assistant's reply ends the exchange with an answer and nothing pending: no plan, no question, no
+discarded or the request dropped (below), or when the assistant's reply ends the exchange with an answer and nothing pending: no plan, no question, no
 suggested reply, no custom method being prepared ("Which of these carry a Subject property? Do not make an edit."
 answered in words). The answer stays in the chat as it is, no button follows it, and your next message is a new
 request, whatever happened in between — a document put back from the to-do list, one attached, a mode change — never
@@ -377,6 +379,24 @@ you asked, and the first sentence of its answer), so it can refer back without a
 (`DocumentTask.exchanges`, kept in the saved conversation). While a question or a preview is pending, a follow-up is
 a revision of the open request in the same conversation, as before; so are the assistant's words after the gate
 refused its plan, which is still to be made.
+
+**Changing your mind**, in Default and Obliterate as in Safe mode (`DocumentTask.discard_preview`, `discard_kind`,
+`_discard_request`, `undo`):
+
+- **Discard preview**, beside Create while a preview waits, withdraws the plan and its preview; **Drop this request**,
+  in the same place while a request is open with nothing to approve (the assistant's question, a reply to continue, a
+  custom method being written, a pause at the spending check), withdraws that. Nothing is created and no model is
+  called. The request ends: the decisions are cleared, the window rests on the copies it had, and your next message
+  is a new request. The assistant is told with it that the last one was withdrawn ("a plan was previewed and the user
+  discarded it", "the user dropped the request", among the exchanges above), so "the same, but italic" still reads.
+  A pass over the to-do list ends with its request, and its documents wait on the list again as they did. Discard is
+  not offered while recovery checks the documents again after a run: there the ready copies are saved and
+  **Set the rest aside for later** ends it.
+- **Undo the last change**, beside Start over, takes the working set back before the last run that delivered copies,
+  exactly as Undo the last button does in Safe mode (the copies each document builds on, the history the assistant
+  hears, the copies and Left untouched list shown, the ✗ entries that run added); it waits while a preview is open
+  ("Discard the preview first") or a request is ("Drop the request that is open first, or finish it"). In
+  Obliterate mode a copy's UNVERIFIED mark goes back with the copy it belongs to. No file is written or deleted.
 
 The assistant goes ahead on sensible defaults and says what it assumed; it asks at most three questions per
 turn, each with the answer it recommends, and offers short replies you can tap. A tapped reply is your decision
@@ -601,7 +621,10 @@ covered has no specification to recover against; it stays as it was and is named
 
 When no built-in operation fits a request, Spec Surgeon may prepare a custom method internally, prove it on
 the sample documents, and show its result as a preview like any other. You never choose a method; you see what
-will change and decide once: before the button the chat says, as the app, the words the method's sample copies add
+will change and decide once. Nobody picks the method (`Session.outcome` takes it on its own), so before it is
+written the chat says Claude's reason and, as the app, what the method is to do in Claude's words — its proposal,
+which otherwise lived only in the plan's data the window does not show (`DocumentTask._collect_conversation`,
+`CUSTOM_METHOD_WRITTEN`; the stress test's F1). Then before the button the chat says, as the app, the words the method's sample copies add
 and remove — derived from the independent checker's V2 record of each copy, never from the method or the model
 (`preview.text_changes_of`, `DocumentTask._say_text_changes`) — or that no words change, and each sample's card lists
 the same words. Custom methods write edited copies only and run under the same verification.
@@ -678,7 +701,9 @@ recovery critic) are not cached at all beyond the instructions. Three things kee
   the next one starts afresh. While a request runs the top bar shows its spending beside the check
   ("this request ≈ $0.40 of $20.00"). A model the price table cannot estimate pauses the request too, since the
   check cannot be kept; Continue then goes on without a check for that request. The check counts estimates, not
-  Anthropic's bill; a refusal re-run on another model inside one call can go past a step's reservation.
+  Anthropic's bill; a refusal re-run on another model inside one call can go past a step's reservation. A failed
+  step keeps its reservation as spent (it may have been billed), unless it never connected — no network, a name that
+  does not resolve, a proxy that refused the tunnel (`llm.never_sent`) — which reached nobody and counts nothing.
 
 **Fast responses** (Settings) is the one way to trade money for time, and it is yours to choose: off until you turn
 it on, with both sides on screen first. On, every call to a model Anthropic serves fast (`llm.FAST_PRICES`) asks for

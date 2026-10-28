@@ -250,6 +250,10 @@ Changed your mind in Safe mode? While a button's preview waits, **Discard previe
 and nothing is created; each button's form keeps what you typed until **Clear form**. After the copies are created,
 **Undo the last button** goes back one button at a time: the next button builds on the copies from before it (your
 originals, after the first one), and the copies the undone button made stay where they were saved. Nothing is deleted.
+Default and Obliterate mode have the same ways back: **Discard preview** withdraws a plan and its preview, and **Drop
+this request** ends a request still open at a question, a pause or a reply to continue; nothing is created, and your
+next message starts a new request (the assistant is told the last one was withdrawn). **Undo the last change** goes
+back before the last run that made copies, one run at a time.
 
 Besides Word documents you can attach pictures and tables for the edit to use, such as a new logo to swap in or
 insert, a schedule to place as a table, or a spreadsheet of project values to fill in; Claude is told about them and can read the tables, and nothing
@@ -270,7 +274,9 @@ estimates it: $20 until you type another amount, or **Turn off** for none. Befor
 that step could cost to what the request has spent, and a step that could pass the amount is not started: the work
 pauses with its progress saved, and **Continue** allows the amount again and picks the request up where it stopped.
 The amounts are estimates from the app's price table, never a bill. A call that fails for a
-passing reason (an overloaded service, a dropped connection) is sent again automatically. Every request needs
+passing reason (an overloaded service, a dropped connection) is sent again automatically. A failed call keeps its
+estimate, since it may have been billed, unless it never connected (no network, a proxy or firewall that refused it):
+that one reached nobody and counts nothing. Every request needs
 the key: without one the window keeps your draft and asks you to connect one in Settings.
 
 **Settings → Fast responses** trades money for time. It is off until you turn it on, and Settings shows both sides

@@ -61,6 +61,7 @@ from .fingerprint import fingerprint
 from .ops import JobException
 from .ooxml import paragraphs
 from .ops.effective import PropResolver
+from .ops.patterns import compile_pattern
 from .ops.selectors import StyleSheet
 from .ops.slots import display_text, nearest_p
 from .package import W, DocxPackage
@@ -1070,7 +1071,7 @@ class _Batch:
         pars = paragraphs(pkg.xml(part))
         sheet = StyleSheet(pkg)
         props = PropResolver(sheet)
-        rx = re.compile(regex) if regex else None
+        rx = compile_pattern(regex, where="a paragraph's text", label="regex") if regex else None
         rows, remaining, cursor = [], chars, None
         for index in range(start, len(pars)):
             p = pars[index]
@@ -1151,7 +1152,7 @@ class _Batch:
         pkg = self.pkg(file)
         sheet = StyleSheet(pkg)
         props = PropResolver(sheet)
-        rx = re.compile(regex) if regex else None
+        rx = compile_pattern(regex, where="a paragraph's text", label="regex") if regex else None
         out = []
         for i, p in enumerate(paragraphs(pkg.xml(pkg.main_part()))):
             if nearest_p(p) is not None:
@@ -1197,7 +1198,7 @@ class _Batch:
         if not pkg.has(part):
             raise KeyError(f"{file} has no part {part!r}; text parts: {pkg.text_parts()}")
         sheet = StyleSheet(pkg)
-        rx = re.compile(regex)
+        rx = compile_pattern(regex, where="a paragraph's text", label="regex")
         out = []
         for i, p in enumerate(paragraphs(pkg.xml(part))):
             t = display_text(p)
@@ -1740,8 +1741,9 @@ def build_messages(request: str, batch: _Batch, answers: Sequence[str],
                       "say so to the user (they can start over from the originals to give it every change).")
         parts.append(block)
     if earlier:
-        parts.append("EARLIER IN THIS CONVERSATION (requests you answered without a plan, oldest first; finished — do not "
-                     "answer them again. The REQUEST above is what the user wants now, and may refer to them):\n"
+        parts.append("EARLIER IN THIS CONVERSATION (requests that ended without copies, oldest first: answered without "
+                     "a plan, or withdrawn by the user before anything was created; finished — do not answer or carry "
+                     "them out again. The REQUEST above is what the user wants now, and may refer to them):\n"
                      + "\n".join(f"- {e}" for e in earlier))
     if prior_failures:
         parts.append("PRIOR PASS SET-ASIDE DIAGNOSTICS (these files failed the previous pass for the reasons below; "

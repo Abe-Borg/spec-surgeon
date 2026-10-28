@@ -65,6 +65,7 @@ that ends a job is authoritative.
   "focus": [],
   "working": {"generation": 0, "from_originals": true, "can_start_over": false, "undo": "", "undo_blocked": ""},
   "budget": {"paused": false, "reason": "limit | unpriced | interrupted | "},
+  "discard": "preview | request | ",
   "mode": "safe | default | obliterate",
   "modes": ["safe", "default"],
   "template": {"kind": "none | prepared | reference | unusable", "typed_slots": ["ISSUED FOR PERMIT"], "reason": "",
@@ -209,11 +210,18 @@ Rules the page relies on:
   The Export button is disabled at `copies` 0 and says the `unsaved` count.
 - `working.undo` is the request of the last run that delivered copies (the button's sentence in Safe mode), which
   `POST /api/undo` goes back before; "" when nothing can be undone. `working.undo_blocked` says why it cannot be
-  undone now ("Discard the preview first." while a preview waits, a request still open); "" when it can. In Safe mode
-  the page shows **Undo the last button** beside Start over while `undo` is set, disabled with `undo_blocked` as its
-  reason. While a Safe-mode preview waits (`mode` `safe`, stage `preview`), the page shows **Discard preview** beside
-  the one button (`POST /api/discard`), alone when `action.kind` is `none`; **All buttons** discards it too. The page
-  keeps each button's form when the user goes back to all the buttons (page memory only; **Clear form** empties it).
+  undone now ("Discard the preview first." while a preview waits; "Drop the request that is open first, or finish
+  it." while a conversation's request is open); "" when it can. The page shows **Undo the last button** (Safe mode) or
+  **Undo the last change** (Default, Obliterate) beside Start over while `undo` is set, disabled with `undo_blocked`
+  as its reason.
+- `discard` is what `POST /api/discard` would withdraw now: `preview` (a preview waiting for approval, in every
+  mode), `request` (Default and Obliterate: a request still open with nothing to approve — Claude's question, a reply
+  to continue, a custom method being written, a pause at the spending check), or `""` (nothing, work runs, or recovery
+  is checking files after a run). The page shows **Discard preview** or **Drop this request** beside the one button,
+  alone when `action.kind` is `none`; in Safe mode **All buttons** discards a waiting preview too. In Default and
+  Obliterate a discard ends the request: the stage rests on the copies (`done`, else `empty`), the decisions are
+  cleared, and the next message is a new request told that this one was withdrawn. The page keeps each button's form
+  when the user goes back to all the buttons (page memory only; **Clear form** empties it).
 - The page keeps the unsent message and staged Safe form across mode switches. Only a conversation mode's draft
   holds its Create action. A successful New conversation or Start over clears both inputs; a failed reset keeps
   them. Start over retains the attached originals and clears the last button's untouched status; New conversation
@@ -255,7 +263,7 @@ explicitly injected clients are retained. Both key replacement and removal refus
 | POST | `/api/stop` | | `{"ok": true}` — the running model call is cut off; the stream then ends with `done` |
 | POST | `/api/put-back` | `{"path": "<a todo entry's path>"}` | the view (the document is off the to-do list and back among the documents the next request works on; during a pass it joins them when the pass ends; a plan on screen is void when the documents in scope change); 400 with `{"error"}` for a path not on the list, 409 while work runs |
 | POST | `/api/start-over` | | the view (the working set returns to the originals; the plan is void; the to-do list is cleared; nothing can be undone) |
-| POST | `/api/discard` | | Safe mode's Discard: the view (the waiting preview withdrawn, nothing created; `results` and `left_untouched` as they were before the button was pressed); 400 with `{"error"}` outside Safe mode or with no preview waiting, 409 while work runs |
+| POST | `/api/discard` | | Discard: the view (the waiting preview, or in Default and Obliterate the open request, withdrawn and nothing created; Safe mode: `results` and `left_untouched` as they were before the button was pressed; Default and Obliterate: the request ended, stage `done` or `empty`); 400 with `{"error"}` when `discard` is `""`, 409 while work runs |
 | POST | `/api/undo` | | the view (the working set back to the copies from before the last run that delivered copies; `results`, `left_untouched` and the to-do entries that run's ✗ added as they were; no file written or deleted); 400 with `{"error"}` when there is nothing to undo, a preview waits, a request is open or a copy it would go back to is gone, 409 while work runs |
 | POST | `/api/new-conversation` | | the view (starts empty over the same scratch folder; the journal is written over; the page asks first when a copy was never saved with Export); 409 with `{"error"}` while a tour runs (the page ends the tour first) |
 | GET | `/api/tutorial/status` | | the view's `tutorial` block |

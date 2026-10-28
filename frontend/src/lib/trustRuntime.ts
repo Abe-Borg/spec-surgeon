@@ -188,7 +188,8 @@ export const RUNTIME_CARDS: RuntimeCard[] = [
       `Word has ${F.wordTimeoutSeconds} s per file, LibreOffice ${F.libreOfficeTimeoutSeconds} s per batch. A render ` +
       `that fails is reported and the preview stands without that page. At most ${F.maxProcessWorkers} worker processes, ` +
       `one per core, ending with the work. A text pattern in the plan (a selector's text_regex, a fill's pattern …) ` +
-      `is at most ${grouped(F.maxPatternChars)} characters and has ${F.regexTimeoutSeconds} s on each text it is searched on; past that ` +
+      `is at most ${grouped(F.maxPatternChars)} characters (unless it names one exact text, as the app's own selection of whole ` +
+      `paragraphs does) and has ${F.regexTimeoutSeconds} s on each text it is searched on; past that ` +
       "the file is set aside with the reason (in the checker, a failed check), never searched on without a limit. " +
       "Nothing is written to your files.",
   },
@@ -220,7 +221,8 @@ export const RUNTIME_CARDS: RuntimeCard[] = [
       "Claude writes one small Python program (an operation) after reading sample files. The app checks the program's " +
       "text (only whitelisted modules, no file, process or network calls), runs it on copies of the samples in a " +
       "separate Python process, and checks every result with the independent checker. It may change formatting only: " +
-      "no words, no new parts, no tracked changes. A failure goes back to Claude with the reason. Before you approve, " +
+      "no words, no new parts, no tracked changes. A failure goes back to Claude with the reason. Before it is " +
+      "written, the chat says Claude's reason and what the method is to do, in Claude's words. Before you approve, " +
       "the chat and each sample's card list the words the method's sample copies add and remove, taken from the " +
       "independent checker's own comparison of each copy with its original (check V2), never from the method or the " +
       "model, or say that no words change. In Obliterate mode " +
@@ -229,7 +231,7 @@ export const RUNTIME_CARDS: RuntimeCard[] = [
       `back to Claude up to ${F.obliterateCheckRounds} times to fix them or keep each with a reason you read beside ` +
       "every copy (the package-integrity checks V1, V4, V5a, V5c and V9 cannot be kept with a reason: they go back " +
       "each round); after those rounds the latest method is used, and its copies are delivered marked UNVERIFIED " +
-      "with those failures listed.",
+      "with those failures listed, which the chat says before you approve.",
     sent: "To the Anthropic API: the request, the sample files' XML and text that its tools read, and each failure's " +
       "reason; in Obliterate mode also what its tools read of the files you attached.",
     ai: codegenModel,
@@ -293,12 +295,12 @@ export const RUNTIME_CARDS: RuntimeCard[] = [
   },
   {
     covers: ["A23", "A24", "A25", "A29", "A30", "A32"],
-    title: "Safe mode: choosing a mode, pressing a button, saving clean PDFs, changing your mind, handing documents over",
+    title: "Safe mode: choosing a mode, pressing a button, saving clean PDFs, changing your mind (in every mode), handing documents over",
     you:
       "Choose Safe or Default in the top bar; in Safe mode, pick a button, fill in its form and press Preview; " +
       "Save clean PDFs, then Save clean PDFs beside its preview; " +
       "Discard preview, All buttons or Clear form; Undo the last button; Try these in Default mode beside what a " +
-      "button left untouched.",
+      "button left untouched. In Default and Obliterate: Discard preview, Drop this request and Undo the last change.",
     runs:
       "Choosing a mode keeps it in settings.json for the next start. Switching modes keeps your unsent message and " +
       "Safe-mode form in this window; an unsent message holds Create only in a conversation mode. A button builds its plan in code from your form " +
@@ -312,7 +314,11 @@ export const RUNTIME_CARDS: RuntimeCard[] = [
       "while a preview waits) withdraws it: nothing is created, and the window shows the copies it showed before. " +
       "Each button's form keeps what you typed until Clear form, New conversation or Start over. Undo the last " +
       "button makes the copies from before that button the ones the next button builds on again (your originals, " +
-      "when it was the first), and takes off the to-do list the documents its ✗ put there. Handing over puts " +
+      "when it was the first), and takes off the to-do list the documents its ✗ put there. In Default and " +
+      "Obliterate the same two work on a conversation: Discard preview, or Drop this request while a question, a " +
+      "pause or a reply to continue is open, ends the request with nothing created (no AI call; the next request is " +
+      "told it was withdrawn, and a pass over the to-do list puts its documents back on the list), and Undo the " +
+      "last change goes back before the last run that delivered copies. Handing over puts " +
       "documents on your to-do list and switches to Default mode.",
     sent: "Nothing. A button never reaches the network.",
     ai: NONE,
@@ -322,8 +328,10 @@ export const RUNTIME_CARDS: RuntimeCard[] = [
       "cannot be cleaned exactly, or whose PDF does not pass that check, gets no PDF and is listed with why; a PDF " +
       "that failed is kept apart in pdf-failed. Save clean PDFs needs Word or LibreOffice on this computer, " +
       "and says so when there is neither. Discard and Undo " +
-      "write and delete no file: the copies an undone button made stay where they were saved. Undo goes back one " +
-      "button at a time, never while a preview waits, and refuses when a copy it would go back to is gone.",
+      "write and delete no file: the copies an undone run made stay where they were saved. Undo goes back one " +
+      "run at a time, never while a preview waits or a request is open, and refuses when a copy it would go back to " +
+      "is gone. Discard is not offered while the documents are being checked again after a run: save the ready " +
+      "copies, or set the rest aside for later.",
   },
   {
     covers: ["A35"],

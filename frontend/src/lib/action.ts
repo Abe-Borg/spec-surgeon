@@ -116,8 +116,37 @@ export function actionSentence(button: ActionButton, held: number): string {
 export const DISCARD_TIP = "Withdraws this preview. Nothing is created, and the form keeps what you typed.";
 /** The sentence when a button's preview has nothing to create: every document was left untouched. */
 export const DISCARD_ONLY = "No document can take this change as it is. Discard the preview to choose another button.";
+/** Default and Obliterate: Discard beside a conversation's preview. */
+export const DISCARD_PLAN_TIP =
+  "Withdraws this plan and its preview. Nothing is created; your next message starts a new request.";
+export const DISCARD_PLAN_ONLY = "Discard the preview to ask for something else.";
+/** Default and Obliterate: a request still open with nothing to approve (a question, a pause, work to continue). */
+export const DROP_TIP =
+  "Drops the request that is open: Claude’s question, or the work waiting to continue. Nothing is created; your next message starts a new request.";
+export const DROP_ONLY = "Answer in the chat, or drop this request to ask for something else.";
+export const DROP_PAUSED = "Continue above, or drop this request to ask for something else.";
 
-/** Safe mode's Discard, beside the one button while a button's preview waits (docs/WEB_API.md, `POST /api/discard`). */
-export function canDiscard(view: Pick<View, "mode" | "stage">, busy: boolean): boolean {
-  return !busy && view.mode === "safe" && view.stage === "preview";
+export interface DiscardButton {
+  label: string;
+  tip: string;
+  /** The sentence beside it when there is no other button. */
+  sentence: string;
+}
+
+/**
+ * Discard, beside the one button (docs/WEB_API.md, `discard` and `POST /api/discard`): the server says what it would
+ * withdraw now — a preview in every mode, or in Default and Obliterate a request still open with nothing to approve —
+ * and nothing shows while work runs.
+ */
+export function discardButton(view: Pick<View, "mode" | "stage" | "discard">, busy: boolean): DiscardButton | null {
+  if (busy) return null;
+  if (view.discard === "preview") {
+    return view.mode === "safe"
+      ? { label: "Discard preview", tip: DISCARD_TIP, sentence: DISCARD_ONLY }
+      : { label: "Discard preview", tip: DISCARD_PLAN_TIP, sentence: DISCARD_PLAN_ONLY };
+  }
+  if (view.discard === "request") {
+    return { label: "Drop this request", tip: DROP_TIP, sentence: view.stage === "budget" ? DROP_PAUSED : DROP_ONLY };
+  }
+  return null;
 }

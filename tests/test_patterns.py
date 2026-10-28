@@ -183,6 +183,83 @@ def test_a_timeout_in_the_verifier_is_a_failed_check_not_an_exception(doc, quick
     assert v10.status == "FAIL" and "does not compile" in v10.summary, v10.summary
 
 
+
+# ---- exact text has no length limit --------------------------------------------------------------------
+
+LONG = ("The Contractor shall submit product data for each type of sprinkler, valve, fitting and hanger, including "
+        "the manufacturer's installation instructions (refer to NFPA 13); [see 1.4.B] *each* item $5 + {tax}? | n/a. ")
+EXACT = [r"\A" + re.escape(LONG * 12) + r"\Z",                                             # one long paragraph
+         r"\A(?:" + "|".join(re.escape(f"{i}. {LONG * 3}") for i in range(4)) + r")\Z",   # a run of them
+         r"\A\Z", r"\A(?:)\Z", r"\A(?:a|)\Z", "\\A" + re.escape("tab\there") + "\\Z", r"\A\\\Z"]
+NOT_EXACT = [r"\A" + "a" * 1001 + r"+\Z", r"\A" + "a" * 1001 + r"[b]\Z", r"\A" + "a" * 1001 + r"\d\Z",
+             r"\A" + "a" * 1001 + r"\1\Z", r"\A" + "a" * 1001 + r".\Z", r"\Aab|cd\Z", r"\A(?:a)|(?:b)\Z",
+             r"\A(?:a\Z", r"\A(?:\)\Z", r"\A\\Z", "a" * 1001, r"\A" + "a" * 1001, "a" * 1001 + r"\Z",
+             r"^" + "a" * 1001 + r"$", r"\A(?i)" + "a" * 1001 + r"\Z", r"\A(?=a)" + "a" * 1001 + r"\Z", r"\A\b\Z"]
+
+
+@pytest.mark.parametrize("pattern", EXACT + NOT_EXACT)
+def test_the_twins_agree_on_which_patterns_say_one_exact_text(pattern):
+    """The rule both sides apply, each written on its own: \\A … \\Z around plain or escaped characters, or around one
+    (?:…) group of such alternatives — nothing that repeats, a class, a reference, a look-around or an assertion."""
+    assert patterns.exact_text_only(pattern) == v_patterns.v_is_exact_text(pattern) == (pattern in EXACT)
+
+
+def test_an_exact_text_pattern_of_any_length_compiles_and_matches_on_both_sides():
+    """The app selects paragraphs by their own whole words (goal_contracts._selection, _run_selection:
+    ``\\A`` + re.escape(text) + ``\\Z``), and a specification's paragraph can run past a thousand characters escaped.
+    The F8 bounds refused those (bad-params) on both sides; the deadline still holds them."""
+    one, run = EXACT[0], EXACT[1]
+    assert len(one) > MAX_PATTERN_CHARS and len(run) > MAX_PATTERN_CHARS
+    for compiled in (compile_pattern(one, where="t", label="text_regex"), v_compile(one)):
+        assert compiled.search(LONG * 12) is not None and compiled.search(LONG * 12 + "x") is None
+    for compiled in (compile_pattern(run, where="t"), v_compile(run)):
+        assert compiled.search(f"2. {LONG * 3}") is not None and compiled.search(f"9. {LONG * 3}") is None
+
+
+@pytest.mark.parametrize("pattern", [p for p in NOT_EXACT if len(p) > MAX_PATTERN_CHARS])
+def test_a_long_pattern_that_is_not_one_exact_text_is_still_refused_on_both_sides(pattern):
+    with pytest.raises(JobException) as e:
+        compile_pattern(pattern, where="t", label="text_regex")
+    assert e.value.code == "bad-params" and "characters long" in e.value.reason
+    with pytest.raises(ValueError, match="characters long"):
+        v_compile(pattern)
+
+
+def test_a_long_exact_text_selector_plans_and_verifies():
+    """End to end: a selector naming one long paragraph by its whole text plans, applies and passes the checker."""
+    d = Document()
+    d.add_paragraph("PART 1 - GENERAL")
+    d.add_paragraph(LONG * 12)
+    src = docx_bytes(d)
+    merged, out = run(src, {"paragraphs": {"text_regex": EXACT[0]}})
+    assert merged["rev_delta"]["pPrChange"] == 1
+    rec = run_suite(src, out, merged, "s.docx", "o.docx")
+    assert rec.passed, rec.to_markdown()
+
+
+# ---- the model's read tools ----------------------------------------------------------------------------
+
+def test_a_read_tool_s_pattern_is_bounded_too(tmp_path, quick):
+    """The model writes the ``regex`` of sample_paragraphs, read_paragraphs and find_paragraphs (the chat, recovery,
+    the outcome planner and the custom-method writer read the files through them): it is bounded like a plan's, and a
+    pattern past the deadline is an error the model is answered with, never a stalled thread."""
+    path = tmp_path / "s.docx"
+    d = Document()
+    d.add_paragraph(TEXT)
+    d.save(path)
+    batch = compiler._Batch([path], None)
+    for call in (lambda rx: batch.sample_paragraphs(path.name, regex=rx),
+                 lambda rx: batch.read_paragraphs(path.name, regex=rx),
+                 lambda rx: batch.find_paragraphs(path.name, rx)):
+        with pytest.raises(JobException) as e:
+            call(SLOW)
+        assert e.value.code == "regex-timeout"
+        with pytest.raises(JobException) as e:
+            call("x" * (MAX_PATTERN_CHARS + 1))
+        assert e.value.code == "bad-params" and e.value.reason.startswith("regex: ")
+    assert [r["text"] for r in batch.find_paragraphs(path.name, "^a+!$")] == [TEXT]
+
+
 # ---- V0 is re ------------------------------------------------------------------------------------------
 
 PARITY = [

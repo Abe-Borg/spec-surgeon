@@ -65,7 +65,8 @@ def test_the_pass_over_the_set_aside_documents_plans_them_alone_from_the_request
     first_copy = Path(task.results[str(first)])
     view = task.perform("send", text=WORK_TODO)
     assert task.focus == {"documents": [str(second)], "seen": task.history,
-                          "why": {str(second): {"why": "held", "reason": "You marked its preview as needing more work."}}}
+                          "why": {str(second): {"why": "held", "reason": "You marked its preview as needing more work."}},
+                          "decisions": [REQUEST]}                  # what a Discard puts back on the list with it
     assert task.todo == {} and task.documents() == [second]        # the set-aside document alone, as it is
     assert task.decisions == [REQUEST]                              # the request it was set aside from stands
     assert view["stage"] == "resume" and view["focus"] == [str(second)] and WORK_TODO not in view["chips"]
@@ -146,7 +147,8 @@ def test_the_journal_keeps_the_to_do_list_and_the_pass(tmp_path):
     once_more = task_for(tmp_path, FakeClient(), journal=journal)
     assert once_more.restore()
     assert once_more.focus == {"documents": [str(second)], "seen": task.history,
-                               "why": {str(second): {"why": "held", "reason": "You marked its preview as needing more work."}}}
+                               "why": {str(second): {"why": "held", "reason": "You marked its preview as needing more work."}},
+                               "decisions": [REQUEST]}
     assert once_more.documents() == [second] and once_more.decisions == [REQUEST] and once_more.stage == "resume"
     assert once_more.applied == {str(first): task.history}
     # a journal from before per-copy histories: every copy carried every change

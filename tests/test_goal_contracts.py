@@ -172,6 +172,49 @@ def test_consecutive_deletions_of_one_effect_are_one_stage(tmp_path, tracked):
                         "Field quality-control reports."]
 
 
+
+LONG_ITEM = ("The Contractor shall submit product data for each type of sprinkler, valve, fitting and hanger, including "
+             "the manufacturer's installation instructions, the listing and approval of each component, and the "
+             "pressure rating, finish and temperature rating of every sprinkler (refer to NFPA 13).")
+
+
+@pytest.mark.parametrize("count", [1, 5])
+def test_long_paragraphs_are_still_deleted_by_the_built_in_operation(tmp_path, count):
+    """The stress test's F8 bounds held every selector pattern to 1,000 characters, and the selection the app builds
+    from bound paragraphs — their exact escaped texts — runs past that on ordinary specification paragraphs: five
+    submittal items (1,702 characters) or one long paragraph came back GoalMethodRequired ("the pattern is … characters
+    long"), sending an approved deletion to a custom method. An exact-text pattern has no length limit now."""
+    items = [f"{i}. {LONG_ITEM * (4 if count == 1 else 1)}" for i in range(1, count + 1)]
+    lines = ["SECTION 21 13 13", "1.4 ACTION SUBMITTALS", *items, "1.5 CLOSEOUT SUBMITTALS"]
+    source = article(tmp_path / "spec.docx", lines)
+    goal = contract({"id": "items", "type": "delete_paragraphs", "tracked": False, "target": {"locators": [
+        {"exact_text": t} for t in items], "cardinality": count}})
+    binding = resolve_goal(source, goal)["binding"]
+    [spec] = stages_of(compile_goal_candidate(source, goal, binding))
+    assert len(spec["ops"][0]["select"]["paragraphs"]["text_regex"]) > 1000
+    data = execute(source, goal, binding)
+    left = [p.text for p in Document(__import__("io").BytesIO(data)).paragraphs]
+    assert left == ["SECTION 21 13 13", "1.4 ACTION SUBMITTALS", "1.5 CLOSEOUT SUBMITTALS"]
+
+
+def test_a_locator_s_pattern_is_bounded(tmp_path, monkeypatch):
+    """A locator's ``text_regex`` is the model's; it is searched with the deadline like a plan's, and one past it
+    leaves the contract unbound with the regex-timeout code instead of holding the thread (finding F8)."""
+    from spec_surgeon.ops import patterns
+    monkeypatch.setattr(patterns, "REGEX_TIMEOUT_S", 0.2)
+    source = article(tmp_path / "spec.docx", ["SECTION 21 13 13", "a" * 40 + "!"])
+    goal = contract({"id": "t", "type": "format", "target": {"locators": [{"text_regex": r"(a|aa)+$"}]},
+                     "run": {"b": True}})
+    with pytest.raises(GoalError) as e:
+        resolve_goal(source, goal)
+    assert e.value.code == "regex-timeout"
+    goal["effects"][0]["target"]["locators"][0]["text_regex"] = "x" * 1001
+    with pytest.raises(GoalError, match="characters long"):
+        validate_contract(goal)
+    goal["effects"][0]["target"]["locators"][0]["text_regex"] = r"^a+!$"
+    assert resolve_goal(source, goal)["status"] == "resolved"
+
+
 def test_deletions_with_a_kept_paragraph_between_stay_separate_stages(tmp_path):
     source = article(tmp_path / "spec.docx", SUBMITTALS)
     goal = contract({"id": "data", "type": "delete_paragraphs", "tracked": False, "target": {"locators": [

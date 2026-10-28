@@ -381,6 +381,11 @@ def test_a_method_kept_with_failed_checks_is_never_called_passed(folder, tmp_pat
     assert any(n.startswith("The one-off custom transform") and "FAILED checks on the sample files" in n and line in n
                and "marked UNVERIFIED" in n for n in c.notes)
     assert not any("passed" in n for n in c.notes), c.notes
+    # the chat says it before the button, ahead of the words, in the same sentences (the plan group is not shown)
+    shown = [m["text"] for m in task.messages if m["role"] == "app"]
+    assert f"{codegen.SAMPLES_UNVERIFIED}\n\n• {line}" in shown
+    assert shown.index(f"{codegen.SAMPLES_UNVERIFIED}\n\n• {line}") == len(shown) - 2
+    assert sum(codegen.SAMPLES_UNVERIFIED in t for t in shown) == 1 and not any("passed" in t for t in shown[-2:])
     # the transcript lines the user reads beside them
     app = [e.text for e in c.entries if e.role == "app"]
     assert any(t.startswith("Custom transform prepared, with failed checks") and line in t for t in app)
@@ -419,6 +424,8 @@ def test_a_method_kept_with_failed_checks_is_never_called_passed(folder, tmp_pat
                and kept_line in e.text for e in c.entries)
     assert task._plan_view()["groups"][0]["changes"][0]["details"][1:] == [codegen.SAMPLES_PASSED, codegen.SAMPLES_KEPT,
                                                                            kept_line]
+    assert (f"{codegen.SAMPLES_PASSED}\n\n{codegen.SAMPLES_KEPT}\n\n• {kept_line}"
+            in [m["text"] for m in task.messages if m["role"] == "app"])
     # a method that passes clean keeps today's sentences, in Obliterate too
     task, c = prepared("clean", resp(tool("submit_op", {"source": GOOD_OP, "params": {"twips": 900}}, "w1")))
     assert codegen.unverified_lines(task.session.generated) == []
@@ -426,6 +433,7 @@ def test_a_method_kept_with_failed_checks_is_never_called_passed(folder, tmp_pat
     assert any("passed verification on the sample files" in n for n in c.notes)
     assert not any("UNVERIFIED" in n or "FAILED" in n for n in c.notes), c.notes
     assert task._plan_view()["groups"][0]["changes"][0]["details"][1:] == [codegen.SAMPLES_PASSED]
+    assert not any(codegen.SAMPLES_PASSED in m["text"] or codegen.SAMPLES_KEPT in m["text"] for m in task.messages)
 
 
 def test_an_obliterate_method_has_the_text_and_revision_helpers_and_its_wording_change_passes_every_check(
@@ -850,6 +858,14 @@ def test_a_custom_methods_added_words_are_said_in_the_chat_and_under_the_sample_
     assert sample["passed"] is True and sample["name"] == source.name
     assert sample["text_changes"] == [{"part": "word/footer1.xml", "where": "footer", "paragraph": 0, "removed": [],
                                        "added": ["Coordination draft."]}]
+    # before the method is written, the chat says Claude's reason and, as the app, what the method is to do in
+    # Claude's words (the app takes the method on its own: no card ever showed the proposal)
+    from spec_surgeon.document_task import CUSTOM_METHOD_WRITTEN
+    order = [(m["role"], m["text"]) for m in task.messages]
+    told = order.index(("assistant", WIDEN["unsupported"]))
+    assert order[told + 1] == ("app", f"{CUSTOM_METHOD_WRITTEN} What it is to do, in Claude’s words: "
+                                      f"“{WIDEN['proposal']}”")
+    assert order[told - 1] == ("user", request)
     # the chat, as the app and before the button: the heading, then the line quoting exactly those words
     said = [m for m in task.messages if m["role"] == "app" and m["text"].startswith(WORDS_CHANGE_HEAD)]
     assert len(said) == 1, [m["text"] for m in task.messages]

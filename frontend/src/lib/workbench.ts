@@ -217,19 +217,23 @@ export function traySummary(section: TraySection, view: Pick<View, "attachments"
 }
 
 export interface UndoLink {
+  /** "Undo the last button" in Safe mode, "Undo the last change" in a conversation mode. */
+  label: string;
   disabled: boolean;
   tip: string;
 }
 
-/** Safe mode's "Undo the last button", beside Start over: null when there is nothing to undo; disabled, with the
- *  server's reason, while it cannot be undone (a preview waits, work runs). */
+/** Undo, beside Start over, in every mode: null when there is nothing to undo; disabled, with the server's reason,
+ *  while it cannot be undone (a preview waits, a request is open, work runs). */
 export function undoLink(view: Pick<View, "mode" | "working">, busy: boolean): UndoLink | null {
   const undo = view.working?.undo ?? "";
-  if (view.mode !== "safe" || !undo) return null;
-  if (busy) return { disabled: true, tip: "Finish or stop the current work first" };
+  if (!undo) return null;
+  const label = view.mode === "safe" ? "Undo the last button" : "Undo the last change";
+  if (busy) return { label, disabled: true, tip: "Finish or stop the current work first" };
   const blocked = view.working.undo_blocked ?? "";
-  if (blocked) return { disabled: true, tip: blocked };
+  if (blocked) return { label, disabled: true, tip: blocked };
   return {
+    label,
     disabled: false,
     tip: `Goes back to the copies from before “${undo}”. Nothing is deleted: the copies it made stay where they were saved.`,
   };

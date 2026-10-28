@@ -159,6 +159,16 @@ specifications, Windows and Word, and only the owner can do them. Record what a 
   template's, and one with a landscape section, the same; then one with its header distance not aligned
   (`align_header_footer_distance` off, a header 1" from the edge): V7 still holds that copy.
 - **Default mode:** a choice's drafted wording edited before it is picked, and the copy carrying the edit.
+- **Changing your mind in Default and Obliterate** (built 2026-10-28): over a real batch in the installed app, a
+  preview **Discard preview**d (nothing created, the copies list as it was, the next message planned as a new
+  request that "the same, but italic" still reads); a question the assistant asks answered with **Drop this
+  request**; a request paused at a low spending check dropped from beside the pause card; two runs undone with
+  **Undo the last change**, the next request building on the right copies each time and every copy still in the
+  scratch folder; a pass over the to-do list discarded and its documents back on the list; the same in Obliterate
+  with a copy marked UNVERIFIED undone and its mark gone with it.
+- **Spending with no connection** (built 2026-10-28): the network unplugged (or a proxy that refuses the API) and a
+  request sent: the pill and the request's spending stay at what they were, the request does not pause at the
+  spending check, and the chat says the connection failed.
 - **A question answered without a plan (the stress test's F7, built 2026-10-28):** in Default mode over a real
   batch, park one document on the to-do list, edit the other two, ask a status question ending "Do not prepare or
   make an edit" (the assistant answers in words), put the parked document back, then ask for a Subject property
@@ -175,11 +185,14 @@ specifications, Windows and Word, and only the owner can do them. Record what a 
   documents and let a failed preview send the request to the outcome planner. The left-out documents stay under
   Left untouched, the plan is offered as **Use these outcomes and continue** with its words beneath it and runs
   only once picked, its trials cover the others alone, and the planner's message names the left-out documents as out
-  of scope instead of asking which to do.
+  of scope instead of asking which to do. An outcome that deletes several long paragraphs of a real specification
+  (a whole article's submittal items) runs as the built-in deletion in one step, not a custom method.
 - **Obliterate:** a request Default refuses (a text box, Claude's own wording), with Word; a copy marked UNVERIFIED
   opened in Word. The stress-test finding's request again (widen the footer text boxes and add a sentence, with the
-  wording to be shown before approval; built 2026-10-28): before Create the chat lists the exact sentence as words
-  added to the footer and each preview card lists the same, with rendering on and off; a request that says to keep the
+  wording to be shown before approval; built 2026-10-28): before the method is written the chat says Claude's reason
+  and what the method is to do in Claude's words; before Create the chat lists the exact sentence as words
+  added to the footer and each preview card lists the same, with rendering on and off; a method kept with failed
+  checks has them said in the chat before Create, ahead of the words; a request that says to keep the
   words as they are, whose method changes a title anyway, lists the words removed and added before Create; a
   formatting-only method reads "No words change". A request that needs a custom method using an attached file (a logo from an attached picture, a
   template's text box): its failed checks going back to the writer, any it keeps shown with its reason beside the

@@ -174,7 +174,10 @@ function HowToUse({ onStartTourAt }: { onStartTourAt: (chapter: string) => void 
               <>
                 The conversation says in plain words what it will change. Beside it are rendered before-and-after pages
                 for sample documents with their page counts — click a page to enlarge it — and{" "}
-                <Tag>Left untouched</Tag> names any file the plan cannot cover, and why.
+                <Tag>Left untouched</Tag> names any file the plan cannot cover, and why. Not what you wanted? Say what
+                should be different, or <Tag>Discard preview</Tag> withdraws it: nothing is created, and your next
+                message starts a new request. While the assistant is asking a question, <Tag>Drop this request</Tag>{" "}
+                does the same.
               </>
             ),
           },
@@ -192,8 +195,10 @@ function HowToUse({ onStartTourAt }: { onStartTourAt: (chapter: string) => void 
             t: "Keep going",
             d: (
               <>
-                Ask for the next change and it is made on those copies. <Tag>Start over from the originals</Tag> is one
-                tap away, and <Tag>New conversation</Tag> in the top bar starts an empty one. The copies live in the
+                Ask for the next change and it is made on those copies. <Tag>Undo the last change</Tag> goes back to
+                the copies from before it, one run at a time, and nothing is deleted;{" "}
+                <Tag>Start over from the originals</Tag> is one tap away, and <Tag>New conversation</Tag> in the top bar
+                starts an empty one. The copies live in the
                 window’s scratch folder until you save them: <Tag>Export</Tag> in the top bar writes them to a folder
                 you choose, and closing the window deletes what was never saved, after asking once.
               </>
@@ -397,7 +402,8 @@ function Workflows() {
           "After the copies are created, ask for the next change. It is made on those copies, and the assistant is told what was already done, so it plans only what is new.",
           "The copies live in the window’s scratch folder until you save them: Export, in the top bar, writes them to a folder you choose.",
           "Start over from the originals — a reply you can tap, or the link under the copies — goes back to your files.",
-          "In Safe mode, Undo the last button goes back one button at a time: the next button builds on the copies from before it, and the copies the undone button made stay in the scratch folder until the window closes.",
+          "Undo the last button (Safe mode) or Undo the last change (Default and Obliterate) goes back one run at a time: the next button or request builds on the copies from before it, and the copies the undone run made stay in the scratch folder until the window closes.",
+          "Changed your mind before the copies exist? Discard preview withdraws a waiting preview in every mode, and in Default and Obliterate Drop this request ends a request that is still open (the assistant's question, a pause at the spending check, a reply waiting to continue). Nothing is created, and your next message starts a new request; the assistant is told the last one was withdrawn.",
           "A document attached after a run is an original beside the copies, and gets only the next change.",
         ]}
       />

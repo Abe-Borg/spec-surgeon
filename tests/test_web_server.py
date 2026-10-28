@@ -695,6 +695,44 @@ def test_safe_mode_routes_discard_and_undo(tmp_path, monkeypatch):
     assert view["results"] == [] and view["attachments"][0]["current"] == str(spec)
 
 
+
+def test_default_mode_routes_discard_and_undo(tmp_path, monkeypatch):
+    """Default mode's ways back go through the same routes: the view says what Discard withdraws (``discard``:
+    "preview", "request" or ""), and Undo goes back before a conversation's run."""
+    monkeypatch.setenv("SPEC_SURGEON_CONFIG_DIR", str(tmp_path / "config"))
+    fake = FakeClient(resp(tool("submit_editspec", {"spec": SPEC})),
+                      resp(tool("ask_user", {"questions": ["Which title?"]}, "q2")),
+                      resp(tool("submit_editspec", {"spec": SPEC}, "s3")))
+    state, client = window(tmp_path, fake)
+    spec = document(tmp_path / "Spec.docx")
+    view = client.post("/api/attach", json={"paths": [str(spec)]}).json()
+    assert view["discard"] == ""
+    assert client.post("/api/discard").json() == {"error": "There is nothing to discard: no preview or request is "
+                                                           "waiting."}
+
+    def send(words):
+        with client.stream("POST", "/api/send", json={"text": words}) as r:
+            return frames(r)[-1]["state"]
+    view = send(REQUEST)
+    assert view["stage"] == "preview" and view["discard"] == "preview"
+    view = client.post("/api/discard").json()
+    assert view["stage"] == "empty" and view["discard"] == "" and view["action"]["kind"] == "none"
+    assert view["messages"][-1]["text"].startswith("Preview discarded; nothing was created.")
+    view = send("Which title is it?")
+    assert view["stage"] == "question" and view["discard"] == "request"
+    assert view["working"]["undo"] == ""
+    view = client.post("/api/discard").json()
+    assert view["stage"] == "empty" and view["questions"] == []
+    view = send(REQUEST)
+    with client.stream("POST", "/api/primary", json={"token": view["action"]["token"]}) as r:
+        view = frames(r)[-1]["state"]
+    assert view["working"]["generation"] == 1 and view["working"]["undo"] == REQUEST
+    assert view["working"]["undo_blocked"] == ""
+    view = client.post("/api/undo").json()
+    assert view["working"]["generation"] == 0 and view["working"]["undo"] == "" and view["results"] == []
+    assert view["attachments"][0]["current"] == str(spec)
+
+
 # ---- every error is JSON (docs/WEB_API.md): the four 500s the QA pass of 2026-10-28 found -------------------------
 
 def _health(client):

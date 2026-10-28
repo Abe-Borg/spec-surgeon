@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import type { Attachment, Choice, JobEvent, Mode, Recipe, RecipeInputs, Update, View } from "./types";
 import * as api from "./lib/api";
-import { actionButton, canDiscard } from "./lib/action";
+import { actionButton, discardButton } from "./lib/action";
 import { composerState, transcript } from "./lib/chat";
 import { canReview, heldSources, keptAcrossTour, reviewKey, setMark, type KeptReviews, type Mark, type Reviews } from "./lib/review";
 import { canUntick, occurrencesKey, previewedUnticks, toggleUntick, untickedKeys, unticksPending, type Unticks } from "./lib/occurrences";
@@ -333,15 +333,17 @@ export default function App() {
   }, [applyView]);
 
   const onStartOver = useCallback(() => applyView(api.startOver(), resetInputs), [applyView, resetInputs]);
-  // Safe mode's ways back: Discard withdraws a button's preview (the form keeps what was typed); Undo takes the
-  // working set back to the copies from before the last button.
+  // The ways back, in every mode: Discard withdraws a preview (Safe: the form keeps what was typed; Default and
+  // Obliterate: the request ends) or a conversation's open request; Undo takes the working set back to the copies
+  // from before the last run.
   const onDiscard = useCallback(() => {
     if (!busyRef.current) applyView(api.discard());
   }, [applyView]);
   const onUndo = useCallback(() => {
     if (!busyRef.current) applyView(api.undo());
   }, [applyView]);
-  const discard = canDiscard(view, busy) ? onDiscard : undefined;
+  const discardWhat = discardButton(view, busy);
+  const discard = discardWhat ? onDiscard : undefined;
   // Obliterate opens its warning first, every time; the other modes switch at once.
   const [warning, setWarning] = useState(false);
   const onMode = useCallback((mode: Mode) => {
@@ -604,6 +606,7 @@ export default function App() {
           mode={view.mode}
           panel={panel}
           onMode={onMode}
+          discard={discardWhat}
           onDiscard={discard}
           tourActive={tourActive}
           tourFinished={tourFinished}

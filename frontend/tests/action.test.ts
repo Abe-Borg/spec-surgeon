@@ -6,7 +6,25 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import type { View } from "../src/types.ts";
-import { APPROVE_TIP, BLOCKING_TIP, DRAFT_TIP, PDF_TIP, STOP_TIP, actionButton, actionSentence, canDiscard, defaultLabel, heldTip } from "../src/lib/action.ts";
+import {
+  APPROVE_TIP,
+  BLOCKING_TIP,
+  DISCARD_ONLY,
+  DISCARD_PLAN_ONLY,
+  DISCARD_PLAN_TIP,
+  DISCARD_TIP,
+  DRAFT_TIP,
+  DROP_ONLY,
+  DROP_PAUSED,
+  DROP_TIP,
+  PDF_TIP,
+  STOP_TIP,
+  actionButton,
+  actionSentence,
+  defaultLabel,
+  discardButton,
+  heldTip,
+} from "../src/lib/action.ts";
 import { EMPTY_VIEW } from "../src/lib/view.ts";
 
 function view(overrides: Partial<View> = {}): View {
@@ -103,11 +121,25 @@ test("the sentence beside the button says what it does, and counts the set-aside
   assert.equal(actionSentence({ kind: "stop", label: "Stop now", tip: STOP_TIP }, 0), "");
 });
 
-test("Discard shows only while a Safe-mode preview waits and no work runs", () => {
-  assert.equal(canDiscard(view({ mode: "safe", stage: "preview" }), false), true);
-  assert.equal(canDiscard(view({ mode: "safe", stage: "preview" }), true), false);
-  assert.equal(canDiscard(view({ mode: "safe", stage: "done" }), false), false);
-  assert.equal(canDiscard(view({ mode: "default", stage: "preview" }), false), false);
+test("Discard shows what the server says it would withdraw, in every mode, never while work runs", () => {
+  const safe = discardButton(view({ mode: "safe", stage: "preview", discard: "preview" }), false);
+  assert.deepEqual(safe, { label: "Discard preview", tip: DISCARD_TIP, sentence: DISCARD_ONLY });
+  assert.equal(discardButton(view({ mode: "safe", stage: "preview", discard: "preview" }), true), null);
+  assert.equal(discardButton(view({ mode: "safe", stage: "done", discard: "" }), false), null);
+  for (const mode of ["default", "obliterate"] as const) {
+    assert.deepEqual(discardButton(view({ mode, stage: "preview", discard: "preview" }), false), {
+      label: "Discard preview",
+      tip: DISCARD_PLAN_TIP,
+      sentence: DISCARD_PLAN_ONLY,
+    });
+    assert.deepEqual(discardButton(view({ mode, stage: "question", discard: "request" }), false), {
+      label: "Drop this request",
+      tip: DROP_TIP,
+      sentence: DROP_ONLY,
+    });
+    assert.equal(discardButton(view({ mode, stage: "budget", discard: "request" }), false)?.sentence, DROP_PAUSED);
+    assert.equal(discardButton(view({ mode, stage: "done", discard: "" }), false), null);
+  }
 });
 
 test("a Save clean PDFs preview says PDFs on its button, its tip and the sentence beside it", () => {

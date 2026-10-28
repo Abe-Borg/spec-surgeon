@@ -9,7 +9,9 @@ the two is not expected — ``regex`` only accepts a little more, such as a vari
 and the verifier's twin accepts the same), and whose ``search``, ``match``, ``fullmatch``, ``finditer``, ``findall``, ``sub``,
 ``subn`` and ``split`` take ``timeout=`` seconds. A search past ``REGEX_TIMEOUT_S`` is a refusal with the code
 ``regex-timeout`` that sets the file aside; a pattern that is not a string, is longer than ``MAX_PATTERN_CHARS`` or
-does not compile is ``bad-params``.
+does not compile is ``bad-params``. An exact-text pattern (``exact_text_only``: ``\\A``, literal text or alternatives of
+literal text, ``\\Z``) has no length limit, only the deadline: it is how the app selects paragraphs by their own whole
+text (an approved outcome's bound paragraphs, ``goal_contracts._selection``), and a long paragraph's text is long.
 
 ``compile_pattern`` is the one way a user- or model-supplied pattern is compiled under ``ops/`` (a selector's
 ``text_regex``, ``after_heading_regex`` and ``between_paragraphs``, a table's ``first_row_regex``, ``text_regex`` and
@@ -130,18 +132,47 @@ class BoundedPattern:
         return self._run("split", string, maxsplit)
 
 
+_SPECIAL = frozenset(".^$*+?{}[]|()\\")
+
+
+def exact_text_only(pattern: str) -> bool:
+    """``pattern`` is ``\\A``, then literal text — or alternatives of literal text in one ``(?:…)`` group — then
+    ``\\Z``: every character either not special or escaped (a backslash before a character that is not an ASCII
+    letter or digit, as ``re.escape`` writes it), so it holds no repetition, class, group, reference or escape
+    sequence and matching it is linear in its length. The app builds these from a paragraph's own words
+    (``r"\\A" + re.escape(text) + r"\\Z"``); a model may write one too, and it costs no more."""
+    tokens, i = [], 0
+    while i < len(pattern):
+        step = 2 if pattern[i] == "\\" and i + 1 < len(pattern) else 1
+        tokens.append(pattern[i:i + step])
+        i += step
+    if len(tokens) < 2 or tokens[0] != "\\A" or tokens[-1] != "\\Z":
+        return False
+    tokens = tokens[1:-1]
+    if tokens[:3] == ["(", "?", ":"] and tokens[-1:] == [")"]:
+        tokens = [t if t != "|" else "" for t in tokens[3:-1]]        # the group's alternatives
+    for t in tokens:
+        if len(t) == 2 and not (t[1].isascii() and t[1].isalnum()):
+            continue                                                  # an escaped character
+        if t == "" or (len(t) == 1 and t not in _SPECIAL):
+            continue                                                  # a plain character, or a "|" of the group
+        return False
+    return True
+
+
 def compile_pattern(pattern: Any, flags: int = 0, *, where: str, label: Optional[str] = None,
                     max_chars: Optional[int] = MAX_PATTERN_CHARS) -> BoundedPattern:
     """``pattern`` as a ``BoundedPattern``, every search on ``where`` (words: "a paragraph's text") bounded by
     ``REGEX_TIMEOUT_S``. Not a string, over ``max_chars`` characters (``None``: a pattern the app built from an
-    escaped literal, whose length is the user's words') or not compiling: ``JobException`` with ``bad-params``,
+    escaped literal, whose length is the user's words; never for an exact-text pattern, ``exact_text_only``) or not
+    compiling: ``JobException`` with ``bad-params``,
     its reason opening with ``label`` (the parameter's name: "rows.text_regex") when one is given — so no caller
     re-raises with a code of its own (``tests/test_diagnostics.py`` reads every code as a literal)."""
     head = f"{label}: " if label else ""
     if not isinstance(pattern, str):
         raise JobException(f"{head}a pattern must be text (a Python regular expression), got "
                            f"{type(pattern).__name__}", "bad-params")
-    if max_chars is not None and len(pattern) > max_chars:
+    if max_chars is not None and len(pattern) > max_chars and not exact_text_only(pattern):
         raise JobException(f"{head}the pattern is {len(pattern)} characters long; at most {max_chars} are accepted",
                            "bad-params", {"length": len(pattern), "max": max_chars})
     try:

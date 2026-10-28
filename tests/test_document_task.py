@@ -228,6 +228,22 @@ def test_an_older_bubble_with_the_same_words_does_not_hide_a_reply_the_chat_did_
     assert view["questions"] == [words]                                    # the card answers the second
 
 
+
+def test_a_request_whose_calls_never_connected_costs_nothing_in_the_window(tmp_path):
+    """The stress test's network-blocked runs showed about $12.57 spent though no request reached Anthropic. A call
+    whose connection was never made keeps no reservation, so the pill, the request's spending and the spending check
+    see none; a call that did reach the API is counted as before."""
+    from test_call_budget import sdk_error, transport
+    fake = FakeClient(raise_on_enter(sdk_error(transport("ConnectError"))), resp(tool("submit_editspec", {"spec": SPEC})))
+    task = task_for(tmp_path, fake)
+    task.attach([document(tmp_path / "Spec.docx")])
+    task.perform("send", text=REQUEST)
+    cost = task._cost()
+    assert cost["usd"] == 0 and cost["request"] == 0 and task._budget.failed_calls == 1
+    view = task.perform("send", text=REQUEST)
+    assert view["stage"] == "preview" and task._cost()["usd"] > 0
+
+
 def test_readable_review_preserves_exact_wording_and_every_effect(tmp_path):
     contract = copy.deepcopy(CONTRACT)
     contract["effects"].append({"id": "words", "type": "replace_text", "target": {"all": True},
@@ -579,6 +595,16 @@ def test_custom_method_is_prepared_internally_but_only_delivered_after_review(tm
     assert view["stage"] == "preview"
     assert task.session.generated.passed and not task.results
     assert task.session.conversation.batch.inputs == []   # nothing beside the attachments is ever read
+    # nobody picks the method, so the chat says Claude's reason and what the method is to do before it is written,
+    # then (as the app, from the checker's record) that no words change; a clean pass says no verdict of its own
+    from spec_surgeon.codegen import SAMPLES_PASSED
+    from spec_surgeon.document_task import CUSTOM_METHOD_WRITTEN
+    said = [(m["role"], m["text"]) for m in view["messages"]]
+    told = said.index(("assistant", "Use a custom method"))
+    assert said[told + 1] == ("app", CUSTOM_METHOD_WRITTEN + " What it is to do, in Claude’s words: “Set the header "
+                                     "distance to 900 twips”")
+    assert said[-1][0] == "app" and said[-1][1].startswith("No words change") and len(said) == told + 3
+    assert not any(SAMPLES_PASSED in text for _, text in said)
     task.perform("primary", token=view["token"])
     assert task.stage == "done" and Path(task.results[str(source)]).is_file()
     assert Document(task.results[str(source)]).sections[0].header_distance.twips == 900

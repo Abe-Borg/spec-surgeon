@@ -1,7 +1,7 @@
 // Adapted from Build-a-Spec's frontend/src/components/Chat.tsx (copy-based reuse).
 import { useCallback, useEffect, useRef, useState, type ReactNode, type WheelEvent } from "react";
 import type { Choice, Mode } from "../types";
-import type { ActionButton } from "../lib/action";
+import type { ActionButton, DiscardButton } from "../lib/action";
 import { STARTERS, endedLive, withLeaving, type ChatItem } from "../lib/chat";
 import { TOUR_HOLD } from "../lib/tour";
 import type { LiveReply } from "../lib/view";
@@ -35,7 +35,8 @@ interface Props {
   mode: Mode;
   panel?: ReactNode;
   onMode: (mode: Mode) => void;
-  /** Safe mode's Discard, while a button's preview waits (beside the one button). */
+  /** Discard, beside the one button: a waiting preview, or a conversation's open request (``lib/action.discardButton``). */
+  discard?: DiscardButton | null;
   onDiscard?: () => void;
   /** The guided tour runs: the conversation's controls are held still (its conversation is a recording). */
   tourActive: boolean;
@@ -63,6 +64,7 @@ export default function Chat({
   mode,
   panel,
   onMode,
+  discard,
   onDiscard,
   tourActive,
   tourFinished,
@@ -300,6 +302,7 @@ export default function Chat({
         button={paused || (safe && button?.kind === "stop") ? null : button}
         held={held}
         onAct={onAct}
+        discard={discard}
         onDiscard={onDiscard}
       />
       {safe ? (

@@ -316,6 +316,8 @@ export interface Working {
   undo_blocked?: string;
 }
 
+export type Discard = "" | "preview" | "request";
+
 /** Why the work is paused: the request reached the spending check; the price table cannot estimate the model that
  *  answered, so the check cannot be kept; or the app closed while work ran. */
 export type PauseReason = "limit" | "unpriced" | "interrupted" | "";
@@ -385,6 +387,9 @@ export interface View {
   focus: string[];
   working: Working;
   budget: Budget;
+  /** What Discard withdraws now: "preview" (a preview waiting for approval, in every mode), "request" (Default and
+   *  Obliterate: a request still open with nothing to approve), or "" (nothing; work runs). */
+  discard: Discard;
   update: Update;
   /** The window's mode and the modes it offers. */
   mode: Mode;
