@@ -39,6 +39,16 @@ the same way (sandbox per file, verifier per file); outputs go to the output fol
 ``codegen/history.json`` is the diagnosis of every attempt, passing or not: the submitted source, its problems and
 trials, and the whole exchange with the model (``GeneratedOp.transcript``), re-written after every turn and on every
 way out. An API error (``llm.is_api_error``) ends the generation as a recorded failure; anything else propagates.
+
+**The spending check** (``llm.BudgetExceeded`` from a call the user's check refuses, ``DocumentTask._new_request``)
+is a pause, not a failure: the writer stops with ``GeneratedOp.budget_stop`` set and its whole state on disk — the
+exchange after its last answered turn in the history checkpoint (``contexts.checkpoint_history``, one per model call,
+the same record recovery resumes from) and the rest in ``history.json`` (``calls``, ``attempts``, ``usage``,
+``errors``, ``check_rounds``, the samples). ``generate_op(resume_from=)`` names that folder: ``load_writer_checkpoint``
+reads it back, and the loop goes on from there — the same brief, pins, contract and approved words, the same folder,
+the call and attempt counts continuing, so the model keeps everything it had looked at (live QA finding F09: a second
+writer started from the brief alone and repeated nine inspections). A checkpoint that cannot be continued (missing,
+written for another brief, sample set, pins or instructions, or not a pause) is logged and the writer starts afresh.
 """
 from __future__ import annotations
 
@@ -601,6 +611,127 @@ class GeneratedOp:
     # sandbox refuses one that changed), and the failed checks the writer kept on purpose (check id → its reason)
     attachments: List[Dict[str, str]] = field(default_factory=list)
     accepted_failures: Dict[str, str] = field(default_factory=dict)
+    # The spending check paused the writer (``llm.BudgetExceeded``): its state is on disk and ``generate_op(resume_from=)``
+    # continues it; ``calls`` is the number of calls made so far (a resumed writer counts on from it) and
+    # ``check_rounds`` how many of Obliterate's ``UNGUARDED_CHECK_ROUNDS`` it has used
+    budget_stop: bool = False
+    calls: int = 0
+    check_rounds: int = 0
+
+
+class ResumeMismatch(ValueError):
+    """A paused writer's folder that cannot be continued from (``generate_op(resume_from=)`` then starts afresh and
+    says why)."""
+
+
+def _executable_source(src: str) -> str:
+    """The submitted module as the stall guard compares it: its syntax tree (comments and explanations change nothing),
+    or the text itself when it does not parse."""
+    try:
+        return ast.dump(ast.parse(src), include_attributes=False)
+    except (SyntaxError, ValueError, TypeError):
+        return src
+
+
+def load_writer_checkpoint(folder: Path, *, out_dir: Path, first_message: str, samples: Sequence[Path], system,
+                           tools, source_pins) -> Dict[str, Any]:
+    """The state of a writer the spending check paused in ``folder`` (``GeneratedOp.budget_stop``), read back for
+    ``generate_op(resume_from=)``: the exchange after its last answered turn from the history checkpoint
+    (``contexts.load_context_manifest``; a trailing assistant message, a tool call the paused call never answered, is
+    dropped), and from ``history.json`` the attempts, the transcript, the usage, the errors (less the pause's own), the
+    call count and Obliterate's check rounds. Raises ``ResumeMismatch`` when the folder is not a pause of THIS job:
+    another brief, proposal, sample set, pins, instructions or tools, a folder that is not ``out_dir``, or a record that
+    cannot be read."""
+    from .contexts import load_context_manifest, plain
+    from .conversation import ProtocolError, check_pairing
+    folder = Path(folder)
+    if folder.resolve() != Path(out_dir).resolve():
+        raise ResumeMismatch("a paused method continues in its own folder")
+    history_path = folder / "history.json"
+    if not history_path.is_file():
+        raise ResumeMismatch("the paused writer's folder has no history.json")
+    try:
+        history = json.loads(history_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as e:
+        raise ResumeMismatch(f"history.json cannot be read: {e}") from e
+    if not isinstance(history, dict) or history.get("budget_stop") is not True or history.get("passed"):
+        raise ResumeMismatch("the writer did not stop at the spending check")
+    transcript = history.get("transcript")
+    if (not isinstance(transcript, list) or not transcript or not isinstance(transcript[0], dict)
+            or transcript[0].get("content") != first_message):
+        raise ResumeMismatch("the writer was briefed for another request, proposal or sample set")
+    if transcript[0].get("samples") != [str(f) for f in samples]:
+        raise ResumeMismatch("the writer was tried on other sample files")
+    context = history.get("context")
+    epoch = context.get("epoch") if isinstance(context, dict) else None
+    manifest_path = folder / "context" / f"active-{epoch}.json"
+    if type(epoch) is not int or not manifest_path.is_file():
+        raise ResumeMismatch("the writer's history checkpoint is missing")
+    try:
+        manifest = load_context_manifest(manifest_path)
+    except (OSError, ValueError, KeyError, TypeError) as e:
+        raise ResumeMismatch(f"the writer's history checkpoint cannot be read: {e}") from e
+    if manifest.get("system") != plain(system) or manifest.get("tools") != plain(tools):
+        raise ResumeMismatch("the writer had other instructions or tools (another contract or mode)")
+    if manifest.get("source_pins") != plain(source_pins):
+        raise ResumeMismatch("the sample files, the template or the attachments are not the ones pinned")
+    messages = list(manifest.get("messages") or [])
+    trimmed = False
+    while messages and messages[-1].get("role") != "user":
+        messages.pop()                      # the paused call never got its answer: a dangling tool call goes with it
+        trimmed = True
+    try:
+        check_pairing(messages)
+    except ProtocolError as e:
+        raise ResumeMismatch(f"the saved exchange is not one the model accepts: {e}") from e
+    attempts = history.get("attempts")
+    if not isinstance(attempts, list) or not all(isinstance(a, dict) and isinstance(a.get("source"), str)
+                                                  and isinstance(a.get("problems"), list) for a in attempts):
+        raise ResumeMismatch("the recorded attempts cannot be read")
+    calls = history.get("calls")
+    if type(calls) is not int or calls < 0:
+        calls = max((e.get("turn") for e in transcript if isinstance(e, dict) and type(e.get("turn")) is int),
+                    default=0)
+    errors = [e for e in (history.get("errors") or []) if isinstance(e, str)]
+    if errors:
+        errors = errors[:-1]                # the pause's own entry: the writer is going on, that call was never made
+    check_rounds = history.get("check_rounds")
+    seconds = history.get("seconds")
+    if trimmed:
+        manifest_path.unlink()          # the next checkpoint writes the trimmed exchange (contexts keeps a prefix rule)
+    return {"messages": messages, "attempts": attempts, "transcript": [e for e in transcript if isinstance(e, dict)],
+            "usage": Usage.from_dict(history.get("usage")), "errors": errors, "context": dict(context),
+            "calls": calls, "check_rounds": check_rounds if type(check_rounds) is int and check_rounds >= 0 else 0,
+            "seconds": float(seconds) if isinstance(seconds, (int, float)) and not isinstance(seconds, bool) else 0.0}
+
+
+def _replay_progress(progress: InvestigationProgress, attempts: Sequence[Dict[str, Any]],
+                     transcript: Sequence[Dict[str, Any]]) -> None:
+    """The stall guard of a resumed writer, rebuilt from its record in the order things happened: every rejected
+    submission counts against its candidate again, and every inspection the tools answered before the pause counts as
+    evidence (each one once — the guard cannot tell a re-read from a new read in a capped transcript, so a resumed
+    writer is judged on what it submits after the pause)."""
+    submissions = iter(attempts)
+    names: Dict[Any, str] = {}
+    for entry in transcript:
+        if entry.get("role") == "assistant":
+            for block in entry.get("content") or []:
+                if isinstance(block, dict) and block.get("type") == "tool_use":
+                    names[block.get("id")] = str(block.get("name") or "")
+        elif entry.get("role") == "user":
+            for result in entry.get("tool_results") or []:
+                if not isinstance(result, dict):
+                    continue
+                name = names.get(result.get("tool_use_id"))
+                if name == "submit_op":
+                    untried = str(result.get("content") or "").startswith("one submission per turn")
+                    if result.get("is_error") and not untried:
+                        a = next(submissions, None)
+                        if a is not None:
+                            progress.rejected([_executable_source(a["source"]), a.get("select") or {},
+                                               a.get("params") or {}], a["problems"])
+                elif name and not result.get("is_error"):
+                    progress.observe({"replayed": result.get("tool_use_id")})
 
 
 def trial_options(g: GeneratedOp) -> Dict[str, Any]:
@@ -868,13 +999,16 @@ def generate_op(request: str, proposal: str, samples: Sequence[Path], out_dir: P
                 max_context_tokens: int = DEFAULT_CONTEXT_TOKENS, analysis_limits=None,
                 goal_contract=None, goal_bindings=None, approved_words: Sequence[str] = (),
                 unguarded: bool = False, template: Optional[Path] = None,
-                input_files: Sequence[Path] = ()) -> GeneratedOp:
+                input_files: Sequence[Path] = (), resume_from: Optional[Path] = None) -> GeneratedOp:
     """Look → generate → sandbox + verify on the samples → feed failures back: at most ``max_iter`` submissions and
     ``max_calls`` calls. Every tool call is answered in the next message. Existing
     outer budget scopes still apply to every call; local settings cannot bypass them — but the writer thinks at
     ``effort`` (``resources.CODEGEN_EFFORT``) inside them (``llm.effort_scope``), and the calls after it at theirs.
     ``template`` and ``input_files`` (Obliterate only: the files the user attached) are pinned and reach the method
-    as ``pkg.inputs``."""
+    as ``pkg.inputs``. ``resume_from`` names the folder of a writer the spending check paused (``out_dir`` itself,
+    ``GeneratedOp.budget_stop``): the loop goes on from its checkpoint with the same brief, pins, contract and
+    approved words, its calls and attempts counting on; a checkpoint that cannot be continued is logged and the
+    writer starts afresh (``load_writer_checkpoint``)."""
     from . import llm
     with diag.scope(Path(out_dir) / diag.LOGS / "events.jsonl", codegen_id=diag.new_id()), \
             diag.span("codegen.generate", sample_count=len(samples), max_attempts=max_iter) as record, \
@@ -883,15 +1017,16 @@ def generate_op(request: str, proposal: str, samples: Sequence[Path], out_dir: P
         result = _generate_op(request, proposal, samples, out_dir, client, model, max_iter, log, brief,
                               max_calls, max_output_tokens, effort, stall_repetitions, max_context_tokens,
                               analysis_limits, goal_contract, goal_bindings, approved_words, loose,
-                              template if loose else None, list(input_files) if loose else [])
-        record.update(passed=result.passed, attempts=len(result.attempts), errors=len(result.errors))
+                              template if loose else None, list(input_files) if loose else [], resume_from)
+        record.update(passed=result.passed, attempts=len(result.attempts), errors=len(result.errors),
+                      budget_stop=result.budget_stop)
         return result
 
 
 def _generate_op(request, proposal, samples, out_dir, client, model, max_iter, log, brief,
                  max_calls, max_output_tokens, effort, stall_repetitions, max_context_tokens,
                  analysis_limits, goal_contract, goal_bindings, approved_words, unguarded=False, template=None,
-                 input_files=()):
+                 input_files=(), resume_from=None):
     from . import compiler, llm
     from .profile import profile
     from .package import DocxPackage
@@ -958,14 +1093,46 @@ def _generate_op(request, proposal, samples, out_dir, client, model, max_iter, l
                     goal_contract=goal_contract, goal_bindings=retained_bindings, approved_words=list(approved_words),
                     unguarded=unguarded, attachments=attachments)
     batch.context_state = g.context_state
-    g.transcript.append({"turn": 0, "role": "user", "content": messages[0]["content"],
-                         "samples": [str(f) for f in samples]})
     t_all = time.perf_counter()
+    calls = 0
+    check_rounds = 0                          # Obliterate: the rounds of failed checks sent back so far
+    resumed = None
+    if resume_from is not None:
+        try:
+            resumed = load_writer_checkpoint(Path(resume_from), out_dir=out_dir, first_message=messages[0]["content"],
+                                             samples=samples, system=system, tools=tools, source_pins=batch.source_pins)
+        except ResumeMismatch as why:
+            log(f"codegen: the paused method cannot be continued ({why}); starting it afresh")
+            diag.event("codegen.resume_refused", reason=str(why), folder=str(resume_from))
+    if resumed is not None:
+        # the writer goes on where the spending check stopped it: its exchange, attempts, usage and counts; the
+        # shared context state is updated in place (the batch's tools read the same dict)
+        messages = resumed["messages"]
+        g.attempts, g.transcript, g.errors, g.usage = (resumed["attempts"], resumed["transcript"], resumed["errors"],
+                                                       resumed["usage"])
+        g.context_state.clear()
+        g.context_state.update(resumed["context"])
+        calls, check_rounds = resumed["calls"], resumed["check_rounds"]
+        g.calls, g.check_rounds = calls, check_rounds   # (Obliterate's best method so far is not: it is submitted again)
+        t_all -= resumed["seconds"]
+        _replay_progress(progress, g.attempts, g.transcript)
+        g.transcript.append({"turn": calls, "resumed": True, "messages": len(messages)})
+        log(f"codegen: continuing the method where it stopped ({calls} call(s) and {len(g.attempts)} attempt(s) "
+            "so far; the model keeps what it has looked at)")
+        diag.event("codegen.resumed", calls=calls, attempts=len(g.attempts), message_count=len(messages))
+    else:
+        # a fresh writer in a folder that holds another's checkpoint (a pause that could not be continued) opens a
+        # new epoch: the checkpoint keeps an epoch's history as an exact prefix and the old one is left as it was
+        used = [int(path.stem[len("active-"):]) for path in (out_dir / "context").glob("active-*.json")
+                if path.stem[len("active-"):].isdigit()]
+        if used:
+            g.context_state["epoch"] = max(used) + 1
+        g.transcript.append({"turn": 0, "role": "user", "content": messages[0]["content"],
+                             "samples": [str(f) for f in samples]})
 
     # Obliterate: the best method that ran with only failed checks against it (fewest failures not kept on purpose,
     # then the latest), used when the writer stops without one that passes or keeps every failure with a reason
     candidate: Dict[str, Any] = {}
-    check_rounds = 0
 
     def adopt(c) -> None:
         g.source, g.select, g.params, g.passed, g.trials = c["source"], c["select"], c["params"], True, c["trials"]
@@ -980,6 +1147,7 @@ def _generate_op(request, proposal, samples, out_dir, client, model, max_iter, l
             log(f"codegen: using attempt {candidate['attempt']}, which ran with failed checks the user will see")
             adopt(candidate)
         checkpoint_history(messages, **context_arguments())
+        g.budget_stop, g.calls, g.check_rounds = budget_stop, calls, check_rounds
         g.seconds = time.perf_counter() - t_all
         _save_history(g, out_dir)
         return g
@@ -995,7 +1163,6 @@ def _generate_op(request, proposal, samples, out_dir, client, model, max_iter, l
         if client is None:
             client = compiler._client()
         return client
-    calls = 0
     while len(g.attempts) < max_iter and calls < max_calls:
         from .contexts import ContextLimit, manage_context
         try:
@@ -1004,6 +1171,7 @@ def _generate_op(request, proposal, samples, out_dir, client, model, max_iter, l
             g.errors.append(str(error))
             return done()
         calls += 1
+        g.calls = calls
         t_call = time.perf_counter()
         try:
             resp = llm.call(client_now(), model=model, system=system, tools=tools, messages=messages,
@@ -1012,9 +1180,17 @@ def _generate_op(request, proposal, samples, out_dir, client, model, max_iter, l
             if not llm.is_api_error(e) and not isinstance(e, llm.BudgetExceeded):
                 raise                          # a defect (a wrong argument, a test's script running out) propagates
             g.errors.append(llm.failure_text(e, "the call to the model failed"))
+            if isinstance(e, llm.BudgetExceeded):
+                # a pause for the user's go-ahead is theirs to answer, never a reason to use a method on its own; the
+                # transcript records a pause, not a failed call (none was made: a writer continued from here makes
+                # this call as its next, so it is not counted)
+                g.transcript.append({"turn": calls, "paused": str(e),
+                                     "seconds": round(time.perf_counter() - t_call, 2)})
+                calls -= 1
+                g.calls = calls
+                return done(budget_stop=True)
             g.transcript.append(llm.error_entry(calls, e, time.perf_counter() - t_call))
-            # a pause for the user's go-ahead is theirs to answer, never a reason to use a method on its own
-            return done(budget_stop=isinstance(e, llm.BudgetExceeded))
+            return done()
         g.usage.add(resp, model)
         g.transcript.append(llm.response_entry(calls, resp, time.perf_counter() - t_call))
         problem = llm.stop_problem(resp)
@@ -1073,6 +1249,7 @@ def _generate_op(request, proposal, samples, out_dir, client, model, max_iter, l
                     # Obliterate: it ran, but checks failed that the writer did not keep with a reason — they go
                     # back to it once more, and the best such method so far is kept in case it stops here
                     check_rounds += 1
+                    g.check_rounds = check_rounds
                     if not candidate or len(checks) <= candidate["failures"]:
                         candidate.clear()
                         candidate.update(source=src, select=select, params=params, trials=trials, accepted=accepted,
@@ -1086,8 +1263,7 @@ def _generate_op(request, proposal, samples, out_dir, client, model, max_iter, l
                            "revision or XML the method got wrong, or a source that moved — fix the method."
                            if refused_keeps else "")
                         + "\n- " + "\n- ".join(checks))[:12000]})
-                    stalled = progress.rejected([ast.dump(ast.parse(src), include_attributes=False), select, params],
-                                                checks)
+                    stalled = progress.rejected([_executable_source(src), select, params], checks)
                     continue
                 if not problems:
                     g.source, g.select, g.params, g.passed, g.trials = src, select, params, True, trials
@@ -1097,11 +1273,7 @@ def _generate_op(request, proposal, samples, out_dir, client, model, max_iter, l
                     return done()                  # after the result is set: the history says it passed
                 results.append({"type": "tool_result", "tool_use_id": b.id, "is_error": True,
                                 "content": ("FAILED — fix and submit again:\n- " + "\n- ".join(problems))[:12000]})
-                try:
-                    executable_source = ast.dump(ast.parse(src), include_attributes=False)
-                except (SyntaxError, ValueError, TypeError):
-                    executable_source = src
-                stalled = progress.rejected([executable_source, select, params], problems)
+                stalled = progress.rejected([_executable_source(src), select, params], problems)
                 continue
             try:
                 if b.name not in CODEGEN_READ_TOOLS:
@@ -1170,7 +1342,10 @@ def _save_history(g: GeneratedOp, out_dir: Path) -> None:
                                                 "model": g.model, "usage": g.usage.to_dict(),
                                                 "seconds": round(g.seconds, 2), "attempts": g.attempts,
                                                 "transcript": g.transcript, "context": g.context_state,
-                                                "goal_contract": g.goal_contract, "goal_bindings": g.goal_bindings})
+                                                "goal_contract": g.goal_contract, "goal_bindings": g.goal_bindings,
+                                                # the pause at the spending check, and what a resumed writer counts on from
+                                                "budget_stop": g.budget_stop, "calls": g.calls,
+                                                "check_rounds": g.check_rounds})
 
 
 def pick_samples(files: Sequence[Path], count: Optional[int] = None) -> List[Path]:

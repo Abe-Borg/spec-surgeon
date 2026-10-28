@@ -1546,6 +1546,10 @@ class DocumentTask:
                          "asks again.")
             else:
                 self.say("Continuing where the work stopped.")
+            pending = s.pending_custom_transform
+            if pending is not None and pending.get("paused"):
+                # the writer goes on from its checkpoint (codegen.generate_op(resume_from=)), not from the brief again
+                self.say("The custom method continues where it stopped, with everything it had looked at.")
             self._request_budget.exhausted_reason = self._budget.exhausted_reason = None
             self.stage = "resume"
             self._primary(self.action_token(), log, hold=hold)

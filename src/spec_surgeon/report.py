@@ -23,8 +23,9 @@ FAILURE_EXPLANATIONS: Dict[str, Tuple[str, str]] = {
     "unfilled-slot": (
         "Template Slot Could Not Be Extracted",
         "A template placeholder could not be extracted from this file using the batch rule (e.g., the section "
-        "number or title is formatted on a single line, in a table, or missing). Re-running on set-aside files "
-        "lets the compiler use a fallback extraction rule for this layout.",
+        "number or title is formatted on a single line, in a table, or missing), or a placeholder the file holds "
+        "was given no value and no rule to leave it as it is. Re-running on set-aside files lets the compiler use a "
+        "fallback extraction rule for this layout, or a value for the placeholder.",
     ),
     "binding-source": (
         "Per-File Value Bound to Other Bytes",

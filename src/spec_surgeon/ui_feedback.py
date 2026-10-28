@@ -44,6 +44,11 @@ def refusal_message(exception):
         return "This file has no header to hold a watermark. Add a header in Word or use a header template first."
     if operation == "name_output" and code in {"not-found", "unfilled-slot", "ambiguous"}:
         return "The section number or title needed for the filename could not be read clearly. Check this file's SECTION heading and title."
+    details = exception.get("details") or {}
+    if code == "unfilled-slot" and (operation == "fill_variables" or "slot" in details):
+        slot = details.get("placeholder") or details.get("slot")
+        named = f" for \"{slot}\"" if slot else ""
+        return f"No value was given{named}. Add it to the values or the attached table, or ask to leave it as it is."
     common = {
         "not-found": "This file does not contain the text or location needed for this change.",
         "unfilled-slot": "A value needed by the template could not be read from this file. Check its section number and title.",
