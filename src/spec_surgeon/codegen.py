@@ -618,6 +618,38 @@ class GeneratedOp:
     check_rounds: int = 0
 
 
+# What the samples' independent verification said of a method, in the words the plan's details and the notes the model
+# hears are built from (``samples_verdict``): a clean pass, or, in Obliterate mode, that checks failed and that the
+# copies are delivered marked UNVERIFIED with them. A method adopted with failed checks is never called passed.
+SAMPLES_PASSED = "The sample copies passed independent verification."
+SAMPLES_UNVERIFIED = ("The sample copies were checked independently and FAILED checks. Obliterate mode keeps the method, "
+                      "and every copy it makes is delivered marked UNVERIFIED with its failed checks beside it:")
+
+
+def unverified_lines(g: Any) -> List[str]:
+    """Obliterate: what the independent verification of ``g``'s samples holds against it — one line per sample that
+    failed checks and was kept (``FileTrial.unverified``: the checks as the preview and the delivered copies list them,
+    the writer's reason after one it kept on purpose), then a check the writer kept with a reason that no sample failed
+    (``GeneratedOp.accepted_failures``: a copy that fails it carries that reason). Empty when every sample passed
+    clean — always, in Safe and Default."""
+    trials = list(getattr(g, "trials", None) or [])
+    lines = [f"{Path(t.source).name}: {'; '.join(t.unverified)}" for t in trials if getattr(t, "unverified", None)]
+    failed = {u.split(" ", 1)[0].upper() for t in trials for u in (getattr(t, "unverified", None) or [])}
+    for check, reason in (getattr(g, "accepted_failures", None) or {}).items():
+        if check.upper() not in failed:
+            lines.append(f"{check} kept by the writer as part of the change, which no sample failed — a copy that fails "
+                         f"it is delivered marked UNVERIFIED with this reason: {reason}")
+    return lines
+
+
+def samples_verdict(g: Any) -> List[str]:
+    """What the samples' independent verification said of ``g``, in the sentences the plan's details
+    (``DocumentTask._groups``) and the notes the model hears (``gui.Session``) are built from: ``SAMPLES_PASSED`` alone
+    after a clean pass, else ``SAMPLES_UNVERIFIED`` and then ``unverified_lines``."""
+    lines = unverified_lines(g)
+    return [SAMPLES_PASSED] if not lines else [SAMPLES_UNVERIFIED, *lines]
+
+
 class ResumeMismatch(ValueError):
     """A paused writer's folder that cannot be continued from (``generate_op(resume_from=)`` then starts afresh and
     says why)."""

@@ -416,10 +416,19 @@ class Session:
             try:
                 msg = self._codegen(c.request, proposal, [f for f in self.files() if f not in left_out], log,
                                     brief=c.brief(), render=render, left_out=left_out)
+                from .codegen import unverified_lines
                 gp = self.generated_preview
-                c.note(f"The one-off custom transform {self.generated.name!r} passed verification on the sample "
-                   f"files; the user reviews its preview.\n" + (gp.to_text()[:4000] if gp is not None else ""),
-                   display=f"Custom transform {self.generated.name!r} passed verification on the sample files.")
+                name, failed = self.generated.name, unverified_lines(self.generated)
+                shown = gp.to_text()[:4000] if gp is not None else ""
+                if not failed:
+                    c.note(f"The one-off custom transform {name!r} passed verification on the sample files; the user "
+                           f"reviews its preview.\n" + shown,
+                           display=f"Custom transform {name!r} passed verification on the sample files.")
+                else:                             # Obliterate: kept with failed checks, never called passed
+                    c.note(f"The one-off custom transform {name!r} FAILED checks on the sample files — "
+                           + "; ".join(failed) + " — and is kept (Obliterate mode: every copy it makes is delivered "
+                           f"marked UNVERIFIED with those checks beside it); the user reviews its preview.\n" + shown,
+                           display=f"Custom transform {name!r} failed checks on the sample files: " + "; ".join(failed) + ".")
             except TransformFailed as e:          # the recorded outcome (no attempt passed, or the call failed)
                 c.note(str(e))
                 if c.continuous_recovery and e.recoverable:
@@ -567,8 +576,17 @@ class Session:
             raise ValueError("The original files changed; press Preview to prepare the transform again.")
         message = self._generate_custom(pending, log, render)
         if self.conversation is not None:
-            self.conversation.note("The custom transform passed its independent sample verification.",
-                                   display="Custom transform prepared; review the resulting preview before Run.")
+            from .codegen import samples_verdict, unverified_lines
+            failed = unverified_lines(self.generated)
+            if not failed:
+                self.conversation.note("The custom transform passed its independent sample verification.",
+                                       display="Custom transform prepared; review the resulting preview before Run.")
+            else:
+                # Obliterate: a method kept with failed checks is never called passed — this note is what the model
+                # plans on next turn, and its transcript line is what the user reads
+                self.conversation.note("\n".join(samples_verdict(self.generated)),
+                                       display="Custom transform prepared, with failed checks — " + "; ".join(failed)
+                                       + ". Review the preview before Run: its copies are delivered marked UNVERIFIED.")
             self._save_chat()
         return message
 
@@ -578,7 +596,7 @@ class Session:
         return [f for f in self.files() if f not in out]
 
     def _generate_custom(self, pending, log: Log, render: bool) -> str:
-        from .codegen import generate_op, pick_samples
+        from .codegen import generate_op, pick_samples, unverified_lines
         from .preview import approval_inputs, _approval_token_from_inputs, explain_approval_change
         request, proposal, files, brief, out = (pending[k] for k in ("request", "proposal", "files", "brief", "out"))
         # A writer the spending check paused (``GeneratedOp.budget_stop``) goes on in its own folder from its checkpoint
@@ -627,8 +645,13 @@ class Session:
             log("A file changed while the custom transform was being written and tried — it runs only once Preview has "
                 "tried it again on the files as they are now:" + "".join(f"\n  • {w}" for w in moved))
         self._show_generated(g, out, token, inputs, intent, render, log, left_out=pending.get("left_out") or [])
-        return (f"An AI-written transform ({g.name}) passed verification on {len(samples)} sample file(s). "
-                f"It is saved at {g.path} — Run writes edited copies only (never over your files)." +
+        failed = unverified_lines(g)              # Obliterate: a method kept with failed checks is never called passed
+        return ((f"An AI-written transform ({g.name}) passed verification on {len(samples)} sample file(s). "
+                 if not failed else
+                 f"An AI-written transform ({g.name}) ran on {len(samples)} sample file(s) but FAILED checks — "
+                 + "; ".join(failed) + " (Obliterate mode: it is kept, and its copies are delivered marked UNVERIFIED "
+                 "with those checks beside them). ")
+                + f"It is saved at {g.path} — Run writes edited copies only (never over your files)." +
                 ("\nA file changed while it was written: press Preview to try it again on the files as they are now."
                  if moved else ""))
 

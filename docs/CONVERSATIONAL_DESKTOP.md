@@ -165,9 +165,11 @@ What it lifts (`Session.unguarded`; CLAUDE.md, "Modes"):
   resubmits with `accept_failures` (a check and its reason, which the user reads beside every copy:
   `GeneratedOp.accepted_failures`, in the approval too; V1, V4, V5a, V5c and V9 can never be kept, since their
   failure is a member, revision or XML the method got wrong, or a source that moved: `codegen.NEVER_KEPT_CHECKS`).
-  After those rounds the latest method passes with its
-  failures listed; a writer that stops otherwise (an API error, a stall, its attempts) leaves the best such method,
-  but the pause for the user's go-ahead never does.
+  After those rounds the latest method is used with its failures listed, never called passed: the notes the model
+  hears, the transcript lines beside them, the window's message and the plan group's details name the checks each
+  sample failed, as the preview and the delivered copies list them (`codegen.samples_verdict`,
+  `codegen.unverified_lines`); a writer that stops otherwise (an API error, a stall, its attempts) leaves the best such
+  method, but the pause for the user's go-ahead never does.
 - **Holding back.** A copy that fails a check is delivered to the run's `outputs/` instead of `failed/`, its record
   kept with every failure and V9 saying *delivered UNVERIFIED*; a chain's step hands its copy on and the chain's copy
   carries everything that failed. The preview already says so: a sample whose copy fails a check shows **Did not

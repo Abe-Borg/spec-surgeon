@@ -3,8 +3,10 @@
  * know (Help → Workflows). Not every operation the app has — a list of the usual jobs, in the words a spec writer
  * uses. A Safe row names the buttons that do it, pinned to the catalog (`tests/typicalOperations.test.ts` reads
  * `mock/recipes.json`, which `tests/test_recipes.py` pins to `recipes.catalog()`), so a renamed button fails a test
- * here. Pure data, so `node --test` can pin it.
+ * here. Pure data, so `node --test` can pin it; the one number it quotes comes from `trustFacts.ts`.
  */
+
+import { TRUST_FACTS as F } from "./trustFacts.ts";
 
 export interface TypicalOperation {
   /** The job, as a spec writer says it. */
@@ -286,14 +288,16 @@ export const OBLITERATE_OPERATIONS: readonly TypicalOperation[] = [
   {
     task: "Custom methods beyond formatting: text changes, new parts, tracked revisions in your name",
     can: "Yes",
-    note: "Failed checks go back to the writer up to three times.",
+    note: `Failed checks go back to the writer up to ${F.obliterateCheckRounds} times.`,
   },
   {
     task: "Deliver a copy that fails a check anyway",
     can: "Yes, marked UNVERIFIED",
     note:
-      "The writer may keep a failed check with a reason you read beside the copy. Five package-integrity checks " +
-      "can never be kept.",
+      "The writer may keep a failed check with a reason you read beside the copy. The package-integrity checks V1, " +
+      "V4, V5a, V5c and V9 cannot be kept with a reason: they go back to the writer each round. After " +
+      `${F.obliterateCheckRounds} rounds the latest method is used, and its copy is delivered marked UNVERIFIED ` +
+      "with those failures listed.",
   },
 ];
 
