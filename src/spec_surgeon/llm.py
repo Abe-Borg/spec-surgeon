@@ -645,14 +645,21 @@ def _call(client, *, model, system, tools, messages, record, max_output_tokens, 
                                                    if isinstance(t, dict) and t.get("eager_input_streaming")))
     except BaseException as exc:
         stopped = cancel is not None and cancel.is_set()
+        # the connection, the proxy's tunnel or a pooled connection was never made: no byte of the request left this
+        # computer, so nothing reached Anthropic and nothing can have been charged
+        unsent = not stopped and record.get("phase") == "stream.open" and not seen and never_sent(exc)
         for budget, reservation in zip(budgets, reservations if budgets else ()):
             budget.failed_calls += 1
             if stopped:
                 budget._settle_stopped(model, reservation, seen.get("usage"), max_tokens, time.monotonic() - started,
                                        fast=fast)
+            elif unsent:
+                budget._release(reservation)
             else:
                 # Keep the reservation: a dropped stream may have consumed tokens without reporting its usage.
                 budget._abandon(reservation)
+        if unsent:
+            diag.event("model.call.unsent", level="warning", error_type=type(exc).__name__)
         if budgets:
             record["budgets"] = _budget_records()
         if stopped and isinstance(exc, Exception):
@@ -681,6 +688,29 @@ def _call(client, *, model, system, tools, messages, record, max_output_tokens, 
 API_ERROR_ROOTS = ("anthropic", "httpx", "httpcore", "httpx2", "httpcore2")
 _MISSING_CREDENTIALS = "Could not resolve authentication method"
 RESULT_CAP = 6000                                  # characters of a tool result or user message kept in a record
+
+
+# The transport's own errors for a request that never left this computer (``never_sent``): the connection — or the
+# proxy's tunnel, or a free connection from the pool — was not made. httpx/httpcore (and their 2.x forks) name them so;
+# a read, write or protocol error, or an HTTP status, comes after the request may have been sent.
+NEVER_SENT_ERRORS = frozenset({"ConnectError", "ConnectTimeout", "ProxyError", "PoolTimeout"})
+
+
+def never_sent(e: BaseException) -> bool:
+    """``e`` (or what it was raised from: the SDK wraps the transport's error as its ``__cause__``, and httpx wraps
+    httpcore's the same way) says the request never reached the API: the connection could not be made — a name that
+    does not resolve, a refused or timed-out connection, a proxy that refused the tunnel, no free connection in the
+    pool. Only the explicit chain (``raise … from``) is read: an error merely raised while another was being handled
+    says nothing about this one. A failed call keeps its reservation as spent unless this is so
+    (``CallBudget._release``)."""
+    seen = set()
+    while e is not None and id(e) not in seen:
+        seen.add(id(e))
+        root = (type(e).__module__ or "").split(".")[0]
+        if root in API_ERROR_ROOTS and root != "anthropic" and type(e).__name__ in NEVER_SENT_ERRORS:
+            return True
+        e = e.__cause__
+    return False
 
 
 def is_api_error(e: BaseException) -> bool:
@@ -1065,7 +1095,9 @@ class CallBudget:
     ceilings, NOT hard provider-billing caps: tokenization, unreported usage and server-side fallbacks may exceed a
     reservation. Such overruns stop subsequent calls, never discard the response or its usage diagnostics.
 
-    Failed calls count and retain their reservations because a dropped stream can still have incurred a charge. A call
+    Failed calls count and retain their reservations because a dropped stream can still have incurred a charge — except
+    a call that never left this computer (``never_sent``: the connection, the proxy's tunnel or a pooled connection was
+    never made), which keeps none (``_release``). A call
     the user stopped (the kill switch) is settled from the usage its stream reported plus at most what it could have
     written in the time it ran. ``spent_usd`` is what the window shows: finished and failed calls, never the
     reservation of a call still running.
@@ -1184,6 +1216,16 @@ class CallBudget:
         if reservation[1] is not None:
             self._inflight_cost_usd = max(0.0, self._inflight_cost_usd - reservation[1])
 
+    def _release(self, reservation: Tuple[int, Optional[float]]) -> None:
+        """A call that never left this computer (``never_sent``: no connection was made): nothing reached Anthropic, so
+        nothing of its reservation is kept. It still counts as a failed call and an attempt."""
+        self._abandon(reservation)
+        self._reserved_tokens -= reservation[0]
+        if reservation[1] is None:
+            self._unpriced_reservations -= 1
+        else:
+            self._reserved_cost_usd = max(0.0, self._reserved_cost_usd - reservation[1])
+
     def _settle_stopped(self, model: str, reservation: Tuple[int, Optional[float]], seen: Optional[Dict[str, int]],
                         max_output: int, seconds: float, fast: bool = False) -> None:
         """A call the user stopped: the input its stream reported when it opened (else the preflight estimate), and the
@@ -1238,7 +1280,8 @@ class CallBudget:
                 "unreported_reserved_cost_usd": None if self._unpriced_reservations else self._reserved_cost_usd,
                 "exhausted_reason": self.exhausted_reason,
                 "cost_basis": "Listed-price estimate, not a provider bill or guaranteed billing cap. Input preflight "
-                              "uses a conservative token estimate; failed/unreported calls retain reservations. "
+                              "uses a conservative token estimate; failed/unreported calls retain reservations, "
+                              "except a call that never connected. "
                               "Server fallback attempts count within one call and may exceed its reservation."}
 
 

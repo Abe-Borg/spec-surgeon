@@ -145,6 +145,88 @@ def test_failed_api_calls_count_and_keep_unreported_reservations(failure):
     assert budget.estimated_cost_usd > 0
 
 
+
+def sdk_error(cause, kind="APIConnectionError"):
+    """The SDK's own wrapper as it raises one (``anthropic._base_client``: ``raise APIConnectionError(...) from err``)
+    around the transport's error."""
+    import anthropic
+    import httpx2
+    request = httpx2.Request("POST", "https://api.anthropic.com/v1/messages")
+    err = getattr(anthropic, kind)(request=request)
+    err.__cause__ = cause
+    return err
+
+
+def transport(name):
+    import httpx2
+    return getattr(httpx2, name)("[Errno -3] Temporary failure in name resolution")
+
+
+@pytest.mark.parametrize("name,kind", [("ConnectError", "APIConnectionError"), ("ProxyError", "APIConnectionError"),
+                                       ("ConnectTimeout", "APITimeoutError"), ("PoolTimeout", "APITimeoutError")])
+def test_a_call_that_never_connected_keeps_no_reservation(name, kind):
+    """The stress test's network-blocked attempts: the app reserved about $12.57 though no request reached Anthropic.
+    A call whose connection — or proxy tunnel, or pooled connection — was never made sent nothing, so its reservation
+    goes; it is still a failed call and an attempt against the call limit."""
+    fake = FakeClient(raise_on_enter(sdk_error(transport(name), kind)), resp())
+    budget = llm.CallBudget(max_calls=2)
+    with llm.budget_scope(budget):
+        with pytest.raises(Exception) as caught:
+            ask(fake)
+        assert llm.is_api_error(caught.value) and llm.never_sent(caught.value)
+        assert budget.spent_usd == budget.estimated_cost_usd == 0 and budget.accounted_tokens == 0
+        assert budget.calls == budget.failed_calls == 1 and budget.usage.calls == 0
+        ask(fake)                                         # the next call is counted as usual
+    assert budget.calls == 2 and budget.spent_usd > 0 and budget.accounted_tokens == budget.usage.tokens()
+
+
+
+def test_the_sdk_s_own_refused_connection_keeps_no_reservation():
+    """End to end with the real SDK and its HTTP stack: a connection refused on this computer (nothing listens on port
+    1) comes back as the SDK's APIConnectionError over httpx2's and httpcore2's ConnectError, and costs nothing."""
+    anthropic = pytest.importorskip("anthropic")
+    client = anthropic.Anthropic(api_key="sk-ant-test-not-a-key", base_url="http://127.0.0.1:1", max_retries=0)
+    budget = llm.CallBudget(max_calls=1)
+    with llm.budget_scope(budget):
+        with pytest.raises(Exception) as caught:
+            ask(client)
+    assert llm.is_api_error(caught.value) and llm.never_sent(caught.value)
+    assert budget.failed_calls == 1 and budget.spent_usd == 0 and budget.accounted_tokens == 0
+
+@pytest.mark.parametrize("failure", [
+    raise_on_enter(sdk_error(transport("ReadTimeout"), "APITimeoutError")),   # the request may have been sent
+    raise_on_enter(sdk_error(transport("RemoteProtocolError"))),
+    raise_on_enter(sdk_error(transport("ReadError"))),
+    raise_on_enter(api_error("Overloaded", status=529)),                       # an answer came back
+    raise_on_enter(api_error("offline")),                                      # nothing says it was never sent
+    raise_on_final(sdk_error(transport("ConnectError"))),                      # mid-stream: it was sent
+])
+def test_a_call_that_may_have_reached_the_api_keeps_its_reservation(failure):
+    fake = FakeClient(failure)
+    budget = llm.CallBudget(max_calls=1)
+    with llm.budget_scope(budget):
+        with pytest.raises(Exception):
+            ask(fake)
+    assert budget.failed_calls == 1 and budget.estimated_cost_usd > 0 and budget.spent_usd > 0
+
+
+def test_never_sent_reads_the_transport_not_the_sdk_s_own_names():
+    """Only the HTTP stack's names count, through the cause chain; an SDK class or an unrelated one of the same name
+    does not, and a cycle in the chain ends."""
+    assert llm.never_sent(transport("ConnectError")) and llm.never_sent(sdk_error(transport("ProxyError")))
+    assert not llm.never_sent(api_error("ConnectError", module="anthropic._exceptions"))
+    lookalike = type("ConnectError", (Exception,), {"__module__": "mypackage.net"})("x")
+    assert not llm.never_sent(lookalike) and not llm.never_sent(sdk_error(lookalike))
+    looped = RuntimeError("a")
+    looped.__cause__ = RuntimeError("b")
+    looped.__cause__.__cause__ = looped
+    assert not llm.never_sent(looped)
+    # an error merely raised while a connect error was being handled is not one
+    during = sdk_error(transport("ReadError"))
+    during.__context__ = transport("ConnectError")
+    assert not llm.never_sent(during)
+
+
 def test_retry_after_dropped_stream_must_fit_remaining_money():
     fake = FakeClient(raise_on_final(api_error("dropped")))
     budget = llm.CallBudget(max_calls=5, max_output_tokens=1000, max_cost_usd=0.04)
