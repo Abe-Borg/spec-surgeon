@@ -108,7 +108,10 @@ jobs). Details: `docs/CONVERSATIONAL_DESKTOP.md`.
     (`textedit.py`, `slots.py`, `effective.py`, `lists.py`, `style_import.py`, `images.py`, `hf_common.py`),
     `elsewhere.py` (flags naming where a change kept to one place leaves the same words, and a fill in another case than the template; `plan_spec` runs it).
   - `verify/` — the INDEPENDENT verifier: `suite.py` (V1–V10 as a `VerificationRecord`), `props.py` (V10 dispatch, the
-    residual identity check; each op family's kinds live in their own module, imported at its end), `reader.py`,
+    residual identity check; each op family's kinds live in their own module, imported at its end; `KIND_CONTRACTS`
+    and `KIND_EXAMPLES`, the plain-English contract and worked assertion of each kind, filled by the kind's module
+    at import — the verifier's own words, which the custom-method writer reads through `describe_assertion_kind`;
+    a kind whose module writes none gets that module's docstring, so every kind has one), `reader.py`,
     `textcheck.py`, `edits.py`, `xsd.py`, `geometry.py`, `explain.py`.
   - `editspec.py` — load, validate, plan, merge, apply; composition (`stage_cuts`, `compose_chain`, `plan_chain`).
   - `batch.py` (per-file pipeline, guarded delivery, records; `worker_plan`/`map_files`: three or more files go to
@@ -130,9 +133,12 @@ jobs). Details: `docs/CONVERSATIONAL_DESKTOP.md`.
     Fast mode (`speed="fast"`, Settings → Fast responses, `llm.set_fast_mode`) is the user's choice, off by default:
     it changes speed and price (`FAST_PRICES`), never the model, effort or prompt; a fast call the fast capacity
     cannot take is re-sent at standard speed. `compiler.compose_submission` is the one gate a submission passes.
-  - `preview.py`, `codegen.py` + `sandbox_runner.py` (custom transforms; a writer the spending check pauses stops with
-    `GeneratedOp.budget_stop` and its state on disk, and `generate_op(resume_from=)` continues it from its checkpoint
-    in the same folder — `Session._generate_custom` keeps the folder in `pending["paused"]`), `goals.py`, `goal_contracts.py`,
+  - `preview.py`, `codegen.py` + `sandbox_runner.py` (custom transforms; the writer's read tools are
+    `CODEGEN_READ_TOOLS` — the sample files' XML, paragraphs, styles and part texts, and `describe_assertion_kind`,
+    a V10 kind's contract from `verify.props.KIND_CONTRACTS`; the prompt and tools are cached, so an addition to
+    them is a deliberate change; a writer the spending check pauses stops with `GeneratedOp.budget_stop` and its
+    state on disk, and `generate_op(resume_from=)` continues it from its checkpoint in the same folder —
+    `Session._generate_custom` keeps the folder in `pending["paused"]`), `goals.py`, `goal_contracts.py`,
     `goal_operations.py` (reviewed outcome contracts; a target with `all: true` is bound once, by count), `recovery*.py` (one checkpoint per model call, at the turn's end), `continuous_recovery.py`, `campaign_planner.py`
     (bounded investigation of set-aside files: the outcome plan is a choice the user picks, its words beneath it —
     `Session.outcome` auto-takes a custom transform only — and the documents the user left out of the request stay

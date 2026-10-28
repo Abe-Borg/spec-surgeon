@@ -513,3 +513,43 @@ def _table_props(ctx: Ctx, a: Dict[str, Any], errs: List[str]) -> str:
 
 
 TABLE_PROP_KINDS = {"table_props": _table_props}
+
+
+# the contract a custom method's writer reads (``props.KIND_CONTRACTS``; the verifier owns the text)
+from .props import KIND_CONTRACTS, KIND_EXAMPLES  # noqa: E402
+
+KIND_CONTRACTS["table_props"] = (
+    'Borders, cell margins, width, repeated header rows and row splitting of tables (set_table_props). Keys: '
+    '"select": {"scope": a part kind or a list (document | headers | footers | footnotes | endnotes | comments; '
+    'default ["document"]), "tables": "all" or an object with any of index_range ([first, last], both inclusive, '
+    'over the part\'s tables in document order, nested tables counted where they occur), style_in ([table style '
+    'ids]), '
+    'first_row_regex, text_regex (Python regexes over the first row\'s / the table\'s text), nested (boolean)}; '
+    '"parts": what the scope resolves to; "params": the user\'s own words, read with the verifier\'s defaults — '
+    '"borders": "none" or {side: {"style" (default single), "size": eighths of a point 2–96 (default 4), "space": '
+    '0–31 (default 0), "color": hex or "auto"}} for ' + ", ".join(_V_SIDES) + '; "cell_margins": {top | left | '
+    'bottom | right: twips 0–31680}; "width": "auto" | {"pct": 1–100} | {"twips": 1–31680}; "repeat_header_rows": '
+    'a count; "cant_split": boolean; "clear_cell_overrides": boolean (needs borders or cell_margins: the cells\' '
+    'own competing sides are removed); at least one asked; never tracked; "expected_tables", "expected_rows", '
+    '"expected_cells": how many tables change, rows get a row element, cells lose an override; "changed": {part '
+    'name: {"tables": [[table index, [element names written: tblBorders, tblCellMar, tblW, ...]]], "rows": [[table '
+    'index, row index, [tblHeader and/or cantSplit]]], "cells": [[table index, row index, cell index, [elements '
+    'removed]]]}} — the verifier derives its own and they must agree (a table already as asked is left alone and '
+    'not listed). Compared: each changed table\'s w:tblPr, row\'s w:trPr and cell\'s w:tcPr is the source\'s with '
+    'exactly the expected elements, written in the schema\'s order (w:tblBorders: the asked sides exactly and '
+    'w:val="nil" for a side any level of the table style chain shows; w:tblCellMar merged; w:tblW; a row element '
+    'on for an asked row, an explicit off only where the chain turns it on); and — on the OUTPUT, for every selected '
+    'table — it shows the asked borders (under both readings of border inheritance), margins and width, header rows '
+    'and splitting, and no cell keeps an override clear_cell_overrides removes. Refused: a table without w:tblPr, '
+    'a right-to-left table (w:bidiVisual) or start/end sides with borders or margins asked, rows or cells inside a '
+    'container, a text box under a selection naming tables (left alone under an every-table selection); a table '
+    'with fewer own rows than the header rows asked is left alone. Only the checked elements leave the residual.')
+KIND_EXAMPLES["table_props"] = {
+    "kind": "table_props", "parts": ["word/document.xml"], "select": {"scope": "document", "tables": "all"},
+    "params": {"borders": {"top": {"style": "single", "size": 4, "space": 0, "color": "auto"},
+                           "bottom": {"style": "single", "size": 4, "space": 0, "color": "auto"},
+                           "insideH": {"style": "single", "size": 4, "space": 0, "color": "auto"}},
+               "repeat_header_rows": 1},
+    "expected_tables": 2, "expected_rows": 2, "expected_cells": 0,
+    "changed": {"word/document.xml": {"tables": [[0, ["tblBorders"]], [1, ["tblBorders"]]],
+                                      "rows": [[0, 0, ["tblHeader"]], [1, 0, ["tblHeader"]]], "cells": []}}}

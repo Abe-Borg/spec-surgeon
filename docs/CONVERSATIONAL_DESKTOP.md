@@ -554,6 +554,13 @@ covered has no specification to recover against; it stays as it was and is named
 When no built-in operation fits a request, Spec Surgeon may prepare a custom method internally, prove it on
 the sample documents, and show its result as a preview like any other. You never choose a method; you see what
 will change and decide once. Custom methods write edited copies only and run under the same verification.
+The writer that prepares one reads before it writes, through tools that change nothing: the sample files'
+XML, paragraphs, styles and part texts (`show_xml`, `find_paragraphs`, `list_styles`, `show_part_text`, the
+inspection tools) and the verifier's own contract of each independent check it must satisfy
+(`describe_assertion_kind`: a V10 assertion kind's keys, their allowed values, what the kind compares and what
+makes a method refuse, with a worked assertion — `verify.props.KIND_CONTRACTS`, filled by the verifier's own
+modules, never by an operation). Its submissions are tried in the sandbox and judged by the verifier; the
+contract is what tells it, before the first try, what a passing assertion looks like.
 
 When no ordinary plan fits (no operation for the request, a plan that covers no file, a sample that fails its
 check, or a preview whose every sample is refused), the outcome planner proposes the outcomes it would check

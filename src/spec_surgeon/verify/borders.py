@@ -331,3 +331,39 @@ def _borders_shading(ctx: Ctx, a: Dict[str, Any], errs: List[str]) -> str:
 
 
 BORDER_KINDS = {"borders_shading": _borders_shading}
+
+
+# the contract a custom method's writer reads (``props.KIND_CONTRACTS``; the verifier owns the text)
+from .props import KIND_CONTRACTS, KIND_EXAMPLES, PARA_KEYS  # noqa: E402
+
+KIND_CONTRACTS["borders_shading"] = (
+    'Paragraph borders and shading of paragraphs or of paragraph styles (set_borders_shading). "params": the '
+    'user\'s own words, read with the verifier\'s defaults — "borders": "none" (no box shows) or {side: {"style": '
+    'a w:val border style (default single; ' + ", ".join(sorted(V_STYLES)) + '), "size": eighths of a point 2–96 '
+    '(default 4), "space": points 0–31 (default 1), "color": six hex digits or "auto" (default)}} for the sides '
+    + ", ".join(V_SIDES) + '; "shading": "none" or {"fill": six hex digits or "auto", "pattern": clear (default) | '
+    'solid | horzStripe | vertStripe | diagStripe | reverseDiagStripe | horzCross | diagCross | pct5 … pct95, '
+    '"color": hex or "auto"}; at least one of the two; "tracked": boolean (default: tracked when "paragraphs" '
+    'narrows the selection, plain otherwise; never in a style). Direct target ("target": "direct"): "select": '
+    '{"scope": a part kind or a list (default ["document"]), "paragraphs": a paragraph predicate (absent or "all", '
+    'else an object with any of ' + ", ".join(sorted(PARA_KEYS)) + ')}; "parts": what the scope resolves to; '
+    '"author"; "expected_paragraphs": how many selected paragraphs change; "changed": {part name: [[paragraph '
+    'index, ["pBdr" and/or "shd", sorted]], ...]} — a paragraph whose own element already equals the expected one '
+    'gets nothing and is not listed; the verifier derives its own list and they must agree. Styles target '
+    '("target": "styles"): "styles_part"; "select": {"ids": [paragraph style ids]}; "expected_ids": the styles '
+    'that change; "changed": {style id: ["pBdr" and/or "shd"]}. Compared: each changed target\'s w:pBdr / w:shd is '
+    'exactly the expected element (a box: each asked side with w:val, w:sz, w:space, w:color, and w:val="nil" for a '
+    'side a lower level — docDefaults, the table style chain, the paragraph style chain or basedOn ancestors — '
+    'would show; shading: w:val, w:color, w:fill; "none": the element that hides what a lower level shows, or gone); '
+    'every other pPr child identical; the pPrChange rules for paragraphs; and — on the OUTPUT, for every selected '
+    'target — the box and shading it shows are the asked ones under both readings of border inheritance (the '
+    'nearest level holding a w:pBdr decides every side, or each side by the nearest level naming it). Refused: a '
+    'side, style, pattern, size, space or colour outside those values, neither borders nor shading asked, a tracked '
+    'style, a selected paragraph that also has predicted text changes. Only the changed elements (and pPrChange) '
+    'leave the residual.')
+KIND_EXAMPLES["borders_shading"] = {
+    "kind": "borders_shading", "target": "direct", "parts": ["word/document.xml"],
+    "select": {"scope": "document", "paragraphs": {"text_regex": "^END OF SECTION"}},
+    "params": {"borders": {"top": {"style": "single", "size": 8, "space": 1, "color": "auto"}},
+               "shading": {"fill": "D9D9D9"}, "tracked": False},
+    "author": None, "expected_paragraphs": 2, "changed": {"word/document.xml": [[44, ["pBdr", "shd"]], [91, ["pBdr", "shd"]]]}}
