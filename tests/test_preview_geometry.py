@@ -3,7 +3,12 @@ renders, with the run's own geometry code, so a sample's PASS is what the run wi
 check the layout (no render; a chain's step whose reference is its own input; a custom method's trial, whose plan the
 preview does not hold; a layout reference it could not render or compare) the sample says so, in the text Claude
 reads and in what the window shows, and the layout check waits for the run. The note says what did happen: a sample
-whose pages were rendered (its before/after pictures and page counts are real) never says no pages were rendered."""
+whose pages were rendered (its before/after pictures and page counts are real) never says no pages were rendered.
+
+V6's warning (the stress-test finding F4): the words the original's rendered pages show that the copy's do not, counted
+over the whole document (``verify.geometry.shown_words``) less what the plan removes — a copy that hides text without
+moving a word the page-for-page comparison sees. A warning beside the sample, in the chat and in the visual check's
+brief, never a failed sample: a layout change moves words between pages, and header and footer words repeat per page."""
 from __future__ import annotations
 
 import copy
@@ -39,10 +44,12 @@ def folder(tmp_path) -> Path:
     return d
 
 
-def fake_renderer(monkeypatch, *, shift_outputs: float = 0.0):
+def fake_renderer(monkeypatch, *, shift_outputs: float = 0.0, hide=(), split_outputs: bool = False):
     """A renderer that draws each body paragraph of a .docx on one page, a line per paragraph — the same words at the
     same places for a source and the copy made from it, unless ``shift_outputs`` moves the copy's lines (a planted
-    layout defect the preview must catch, as the run would)."""
+    layout defect the preview must catch, as the run would), ``hide`` names words the copy's render leaves out (text
+    hidden without moving a line: what V6's whole-document word count must name), or ``split_outputs`` draws the copy
+    over two pages (words that moved to another page: not missing)."""
     import pymupdf
     rendered = []
 
@@ -51,12 +58,22 @@ def fake_renderer(monkeypatch, *, shift_outputs: float = 0.0):
         for f in files:
             f = Path(f)
             texts = [block_full_text(p) for p in paragraphs(DocxPackage(f.read_bytes()).xml("word/document.xml"))]
-            dy = shift_outputs if "samples" in f.parts or "outputs" in f.parts else 0.0
+            is_output = "samples" in f.parts or "outputs" in f.parts or "output" in f.parts
+            dy = shift_outputs if is_output else 0.0
             doc = pymupdf.open()
             page = doc.new_page(width=612, height=792)
             for i, t in enumerate(texts[:40]):
                 if t.strip():
-                    page.insert_text((72, 72 + 14 * i + dy), t[:60], fontsize=9)
+                    line = t[:60]
+                    if is_output:
+                        for word in hide:              # blanked in place: the other words keep their positions
+                            line = line.replace(word, " " * len(word))
+                    row = i
+                    if is_output and split_outputs and i >= 20:
+                        if page.number == 0:
+                            page = doc.new_page(width=612, height=792)
+                        row = i - 20
+                    page.insert_text((72, 72 + 14 * row + dy), line, fontsize=9, fontname="cour")
             pdf = Path(out_dir) / (f.stem + ".pdf")
             pdf.parent.mkdir(parents=True, exist_ok=True)
             doc.save(str(pdf))
@@ -210,3 +227,196 @@ def test_with_a_real_renderer_the_previews_layout_verdict_is_the_runs(folder, tm
     [fr] = batch.files
     assert sv.checks["V7"] == fr.record.get("V7").status == "PASS", (sv.geometry, fr.record.get("V7").summary)
     assert sv.checks["V6"] == fr.record.get("V6").status == "PASS"
+
+
+# ---- V6's warning: the words the original's pages show that the copy's do not (the stress-test finding F4) ----------
+
+MISSING_SPRINKLER = "1 word(s) shown in the original's pages are not shown in the copy's: SPRINKLER"
+# a plan that reflows the pages by design (no layout reference: V7 is N/A): where a copy that hides text was a PASS
+# before this signal — a plan whose reference is the source already fails V7 on a word missing from an asserted page
+FONT = SPECS / "change-all-font-arial.json"
+
+
+def test_a_copy_whose_render_lacks_words_the_plan_did_not_remove_passes_with_the_words_named(folder, tmp_path, monkeypatch):
+    # the title's SPRINKLER is drawn once in the source render and never in the copy's: V6 stays PASS, names it
+    fake_renderer(monkeypatch, hide=("SPRINKLER",))
+    pv = make_preview(load_spec(FONT), [str(folder)], tmp_path / "pv", renderer="fake", do_render=True)
+    [sv] = pv.samples
+    assert sv.passed is True and sv.checks["V6"] == "PASS" and sv.checks["V7"] == "NA"
+    assert sv.render_warnings == [MISSING_SPRINKLER]
+    assert [w for w in pv.warnings if "not shown in the copy's" in w] == [f"21 13 13 – WET-PIPE.docx: {MISSING_SPRINKLER}"]
+    assert f"WARNING: 21 13 13 – WET-PIPE.docx: {MISSING_SPRINKLER}" in pv.to_text()
+    assert failed_preview_checks(sv) == []                       # a warning, never a failed check
+    assert sv.to_dict()["render_warnings"] == [MISSING_SPRINKLER]  # kept in preview.json for the chat and the visual check
+
+
+def test_a_copy_whose_render_lacks_exactly_the_words_a_text_change_removed_gets_no_warning(folder, tmp_path, monkeypatch):
+    fake_renderer(monkeypatch)
+    spec = {"request": "drop SPRINKLER from the title", "summary": "WET-PIPE SPRINKLER SYSTEMS becomes WET-PIPE SYSTEMS.",
+            "mode": "untracked", "ops": [{"op": "replace_text", "params": {"find": "WET-PIPE SPRINKLER SYSTEMS",
+                                                                           "replace": "WET-PIPE SYSTEMS", "tracked": False}}]}
+    pv = make_preview(spec, [str(folder)], tmp_path / "pv", renderer="fake", do_render=True)
+    [sv] = pv.samples
+    assert sv.passed is True and sv.checks["V6"] == "PASS"
+    assert sv.plan["diffs"] and sv.render_warnings == []        # the diff's before words beyond its after words: SPRINKLER
+    assert not [w for w in pv.warnings if "not shown in the copy's" in w]
+
+
+def test_words_that_moved_to_another_page_are_not_missing(folder, tmp_path, monkeypatch):
+    fake_renderer(monkeypatch, split_outputs=True)
+    pv = make_preview(load_spec(FONT), [str(folder)], tmp_path / "pv", renderer="fake", do_render=True)
+    [sv] = pv.samples
+    assert (sv.pages_before, sv.pages_after) == (1, 2) and sv.checks["V6"] == "PASS"
+    assert sv.render_warnings == [] and not [w for w in pv.warnings if "not shown in the copy's" in w]
+    assert any("pages 1 → 2" in w for w in pv.warnings)         # the page count's own warning stands
+
+
+def test_the_window_says_the_warning_in_the_apps_words_and_the_visual_check_is_told_the_words(folder, tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    from spec_surgeon import vision
+    from spec_surgeon.document_task import DocumentTask
+    from spec_surgeon.gui import Session
+    fake_renderer(monkeypatch, hide=("SPRINKLER",))
+    # Safe mode: no conversation, so the app says it in the chat itself, before the button that creates the copies
+    task = DocumentTask(Session(out_root=tmp_path / "out", visual_check=False), render=True, mode="safe")
+    task.attach(sorted(folder.glob("*.docx")))
+    task.perform("recipe", recipe="accept_changes", inputs={})
+    said = [m["text"] for m in task.messages if m["role"] == "app"]
+    assert f"21 13 13 – WET-PIPE.docx: {MISSING_SPRINKLER}." in said
+    view = task._samples_view()
+    assert f"21 13 13 – WET-PIPE.docx: {MISSING_SPRINKLER}" in view["warnings"]
+    assert [s["passed"] for s in view["samples"]] == [True]            # a warning beside a sample that passed
+    # Default mode: the visual check's brief names the words to look for, and the preview's note says them in the chat
+    intents = []
+    monkeypatch.setattr(vision, "review_samples",
+                        lambda intent, *a, **k: intents.append(intent) or vision.VisualReview(summary="looked"))
+    s = Session(documents=sorted(folder.glob("*.docx")), out_root=tmp_path / "out2", visual_check=True)
+    s._set_outcome(spec=load_spec(FONT), source="test")
+    s.make_preview(render=True, log=lambda m: None)
+    [intent] = intents
+    assert "WORDS THE ORIGINAL'S PAGES SHOW THAT THE COPY'S PAGES DO NOT" in intent
+    assert f"21 13 13 – WET-PIPE.docx: {MISSING_SPRINKLER}" in intent
+    notes = []
+    s.conversation = SimpleNamespace(note=lambda text, display=None: notes.append((text, display)))
+    s._note_preview()
+    [(text, display)] = notes
+    assert f"WORDS NOT SHOWN IN THE COPY'S PAGES (the render comparison's warning; say it to the user) — " \
+           f"21 13 13 – WET-PIPE.docx: {MISSING_SPRINKLER}" in text
+    assert display == f"Preview made: 1 of 1 file(s) plan cleanly. 21 13 13 – WET-PIPE.docx: {MISSING_SPRINKLER}."
+
+
+def test_the_run_records_the_words_in_v6_and_the_reports_carry_the_line(folder, tmp_path, monkeypatch):
+    fake_renderer(monkeypatch, hide=("SPRINKLER",))
+    batch = run_batch([str(folder)], "edit-spec", {}, tmp_path / "run", workers=1, renderer="fake", spec=load_spec(FONT))
+    [fr] = batch.files
+    v6 = fr.record.get("V6")
+    assert fr.record.passed and v6.status == "PASS"
+    assert v6.data["words_missing_from_render"] == {"count": 1, "words": ["SPRINKLER"]}
+    assert v6.summary.endswith("(XML checks are character truth); " + MISSING_SPRINKLER)
+    assert "header_footer_words_not_compared" not in v6.data      # equal page counts: every word compared
+    [record] = (tmp_path / "run" / "records").glob("*.record.md")
+    assert MISSING_SPRINKLER in record.read_text(encoding="utf-8")
+    report = (tmp_path / "run" / "BATCH_REPORT.md").read_text(encoding="utf-8")
+    assert "## Rendered pages worth a look" in report and f"- **21 13 13 – WET-PIPE.docx**: {MISSING_SPRINKLER}." in report
+
+
+def _page(doc, header=None, body=(), footer=None):
+    page = doc.new_page(width=612, height=792)
+    if header:
+        page.insert_text((72, 30), header)             # wholly above the fixture's 72 pt top margin
+    for i, line in enumerate(body):
+        page.insert_text((72, 200 + 14 * i), line)
+    if footer:
+        page.insert_text((72, 770), footer)            # wholly below the 72 pt bottom margin
+    return page
+
+
+def _pdf(path: Path, pages):
+    import pymupdf
+    doc = pymupdf.open()
+    for header, body, footer in pages:
+        _page(doc, header, body, footer)
+    doc.save(str(path))
+    doc.close()
+    return path
+
+
+@pytest.fixture
+def source_docx(folder) -> Path:
+    [f] = sorted(folder.glob("*.docx"))               # 1 in margins: the bands the rule reads
+    return f
+
+
+def test_header_and_footer_words_are_attributed_to_the_band_only_when_the_page_counts_differ(tmp_path, source_docx):
+    from spec_surgeon.verify.geometry import compare_pdfs
+    three = _pdf(tmp_path / "three.pdf", [("Spec header", ["alpha beta"], "Page footer"),
+                                          ("Spec header", ["gamma delta"], "Page footer"),
+                                          ("Spec header", ["epsilon"], "Page footer")])
+    two = _pdf(tmp_path / "two.pdf", [("Spec header", ["alpha beta gamma"], "Page footer"),
+                                      ("Spec header", ["delta epsilon"], "Page footer")])
+    # a shorter document: every body word moved, its count stays; the per-page header and footer words are one short
+    # each — attributed to the band, recorded, never a warning
+    g = compare_pdfs(three, two, plan={"diffs": []}, source_docx=source_docx)
+    assert g.words_missing.count == 0 and g.words_new.count == 0
+    assert g.hf_words_not_compared.to_dict() == {"count": 4, "words": ["Spec", "header", "Page", "footer"]}
+    data = g.to_dict()
+    assert data["words_missing_from_render"] == {"count": 0, "words": []}
+    assert data["header_footer_words_not_compared"]["count"] == 4
+    # the same, and a body word gone: that one is named
+    two_short = _pdf(tmp_path / "two-short.pdf", [("Spec header", ["alpha beta"], "Page footer"),
+                                                  ("Spec header", ["delta epsilon"], "Page footer")])
+    g = compare_pdfs(three, two_short, plan={"diffs": []}, source_docx=source_docx)
+    assert g.words_missing.to_dict() == {"count": 1, "words": ["gamma"]}
+    # equal page counts: a header word that vanished from one page is reported like any other
+    lost_header = _pdf(tmp_path / "lost.pdf", [("Spec header", ["alpha beta"], "Page footer"),
+                                               (None, ["gamma delta"], "Page footer"),
+                                               ("Spec header", ["epsilon"], "Page footer")])
+    g = compare_pdfs(three, lost_header, plan={"diffs": []}, source_docx=source_docx)
+    assert g.words_missing.to_dict() == {"count": 2, "words": ["Spec", "header"]} and g.hf_words_not_compared.count == 0
+    # without the source file there is no band: the rule grants nothing, the words are reported
+    g = compare_pdfs(three, two, plan={"diffs": []})
+    assert g.words_missing.count == 4 and g.hf_words_not_compared.count == 0
+    # no plan: no whole-document count at all (the preview's look-pages comparison)
+    g = compare_pdfs(three, two)
+    assert g.words_missing is None and "words_missing_from_render" not in g.to_dict()
+
+
+def test_a_template_plan_replaces_the_bands_and_the_plan_s_own_removals_are_subtracted(tmp_path, source_docx):
+    from spec_surgeon.verify.geometry import compare_pdfs, plan_removed_words
+    source = _pdf(tmp_path / "s.pdf", [("Old header", ["alpha beta"], None), ("Old header", ["gamma"], None)])
+    templated = _pdf(tmp_path / "t.pdf", [("New header", ["alpha beta"], None), ("New header", ["gamma"], None)])
+    # equal page counts, but the plan's layout reference is the template: the old header's words are the band's
+    g = compare_pdfs(source, templated, plan={"diffs": [], "geometry_reference": "template"}, source_docx=source_docx)
+    assert g.words_missing.count == 0 and g.hf_words_not_compared.to_dict() == {"count": 2, "words": ["Old", "Old"]}
+    assert g.words_new.to_dict() == {"count": 2, "words": ["New", "New"]}
+    # a wording change: the diff's before words beyond its after words are removed on purpose, by count
+    replaced = _pdf(tmp_path / "r.pdf", [("Old header", ["beta"], None), ("Old header", ["gamma"], None)])
+    plan = {"diffs": [{"part": "word/document.xml", "block_index": 0, "before": "alpha beta", "after": "beta"}]}
+    g = compare_pdfs(source, replaced, plan=plan, source_docx=source_docx)
+    assert g.words_missing.count == 0 and g.words_new.count == 0
+    assert dict(plan_removed_words(plan)[0]) == {"alpha": 1}
+    # the same output without the diff: alpha is missing
+    assert compare_pdfs(source, replaced, plan={"diffs": []}, source_docx=source_docx).words_missing.words == ["alpha"]
+    # a removed watermark was drawn on every page: its words go in any count
+    stamped = _pdf(tmp_path / "w.pdf", [(None, ["DRAFT", "alpha beta"], None), (None, ["DRAFT", "gamma"], None)])
+    clean = _pdf(tmp_path / "c.pdf", [(None, ["alpha beta"], None), (None, ["gamma"], None)])
+    watermark = {"diffs": [], "property_assertions": [{"kind": "removed_watermark", "text": "DRAFT", "expected": {}}]}
+    assert compare_pdfs(stamped, clean, plan=watermark).words_missing.count == 0
+    assert compare_pdfs(stamped, clean, plan={"diffs": []}).words_missing.to_dict() == {"count": 2, "words": ["DRAFT", "DRAFT"]}
+    # the record lists the first 50 of a long count, in the render's order; the count is complete
+    from spec_surgeon.verify.geometry import WORDS_LISTED
+    many = _pdf(tmp_path / "many.pdf", [(None, [" ".join(f"w{i}" for i in range(k * 10, k * 10 + 10)) for k in range(6)], None)])
+    blank = _pdf(tmp_path / "blank.pdf", [(None, [], None)])
+    g = compare_pdfs(many, blank, plan={"diffs": []})
+    assert g.words_missing.count == 60 and g.words_missing.words == [f"w{i}" for i in range(WORDS_LISTED)]
+
+
+@pytest.mark.skipif(shutil.which("soffice") is None, reason="LibreOffice not installed")
+def test_with_a_real_renderer_smaller_margins_reflow_the_words_without_a_warning(folder, tmp_path):
+    spec = {"request": "half-inch margins", "summary": "Every section's margins become half an inch.", "mode": "formatting",
+            "ops": [{"op": "set_page_setup", "select": {"sections": "all"},
+                     "params": {"margins": {"top": 720, "bottom": 720, "left": 720, "right": 720}}}]}
+    pv = make_preview(spec, [str(folder)], tmp_path / "pv", renderer="libreoffice", do_render=True)
+    [sv] = pv.samples
+    assert sv.passed is True and sv.checks["V6"] == "PASS", pv.to_text()
+    assert sv.render_warnings == [] and not [w for w in pv.warnings if "not shown in the copy's" in w], pv.warnings

@@ -1153,9 +1153,19 @@ class DocumentTask:
         s._set_outcome(spec=outcome, source="recipe", left_out=list(built.left_out),
                        left_out_reasons=built.left_out, export=built.export)
         self._settle(log)
+        self._say_render_warnings()
         if nothing:
             self.say("None of the documents can take this change as they are; each one's reason is under Left "
                      "untouched.")
+
+    def _say_render_warnings(self) -> None:
+        """Safe mode has no conversation to say what the preview found: the render comparison's warning (words the
+        original's pages show that the copy's do not, `preview.render_word_warnings`) is said here in the app's words,
+        once per sample, before the button that creates the copies. Default mode says it with the preview's note
+        (``Session._note_preview``)."""
+        from .preview import render_word_warnings
+        for line in render_word_warnings(self.session.outcome().preview):
+            self.say(line + ".")
 
     def _occurrences_view(self, preview) -> List[Dict[str, Any]]:
         """The find-and-replace occurrences the waiting plan lists (backlog F1), per document of the plan — every
@@ -1245,6 +1255,8 @@ class DocumentTask:
         self.say(f"{n} occurrence{'s' if n != 1 else ''} will be left as {'they are' if n != 1 else 'it is'}; the "
                  f"preview is being made again." if n else "Every occurrence is back in; the preview is being made again.")
         self._settle(log)
+        if self.mode == "safe":
+            self._say_render_warnings()
 
     def hand_off(self, paths) -> None:
         """Safe mode's "Try these in Default mode": documents a button left untouched go on the to-do list with the

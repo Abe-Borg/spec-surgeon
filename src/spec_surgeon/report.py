@@ -13,6 +13,26 @@ if TYPE_CHECKING:  # pragma: no cover
     from .batch import BatchResult, FileResult
 
 LOGS = "logs"
+WORDS_IN_SENTENCE = 12      # the words V6's sentence names before "…" (its data lists up to geometry.WORDS_LISTED)
+
+
+def words_missing_sentence(v6: Any) -> str:
+    """V6's warning in plain words, from the record (a ``CheckResult`` or its data): the words the original's rendered
+    pages show that the copy's do not, over every page, less what the plan removes (``verify.geometry.shown_words``).
+    "" when none, or when no plan was compared against. The preview, the chat, the visual check's brief and the
+    reports all say it from here — a warning, never a failure: a layout change moves words between pages."""
+    data = v6 if isinstance(v6, dict) else (getattr(v6, "data", None) or {})
+    found = data.get("words_missing_from_render") or {}
+    try:
+        n = int(found.get("count") or 0)
+    except (TypeError, ValueError):
+        return ""
+    if n <= 0:
+        return ""
+    words = [str(w) for w in (found.get("words") or [])][:WORDS_IN_SENTENCE]
+    shown = ", ".join(words) + (" …" if n > len(words) else "")
+    return f"{n} word(s) shown in the original's pages are not shown in the copy's: {shown}"
+
 
 FAILURE_EXPLANATIONS: Dict[str, Tuple[str, str]] = {
     "not-found": (
@@ -922,6 +942,18 @@ def write_batch_report(batch: "BatchResult") -> Path:
         for finding in grouped_findings(f"{f.source.name}: {fl}" for f, fl in flagged):
             lines.append(f"- {finding}")
         lines.append("")
+    # V6's warning per file (``words_missing_sentence``): words the original's pages show that the copy's do not
+    shown = [(f, words_missing_sentence(f.record.get("V6"))) for f in batch.files if f.record]
+    shown = [(f, sentence) for f, sentence in shown if sentence]
+    if shown:
+        lines.append("## Rendered pages worth a look")
+        lines.append("The render comparison (V6) counted the words shown on every page of the original and of the copy, "
+                     "less what the plan removes. These copies' pages show fewer. A layout change may have moved the "
+                     "words to a page the comparison did not pair, or a shape, a colour, a size or the spacing may hide "
+                     "them: a warning, not a failed check — open the copy and look for the words named.")
+        for f, sentence in shown:
+            lines.append(f"- **{f.source.name}**: {sentence}.")
+        lines.append("")
     lines.append("## Where to look")
     lines.append("- **Why a file failed, where and how: `DIAGNOSTICS.md`** (every file that did not pass, with its stage, "
                  "the specifics, its trace and what to do next)")
@@ -1041,10 +1073,14 @@ def file_diagnosis(f: "FileResult", heading: str = "##", number: Optional[int] =
                               ["", "**How far it got** (the file's trace):", "", *_code("\n".join(f.trace))]
                               if f.trace else [])])
     failures = rec.failures()
+    # V6's warning (the words the original's pages show that the copy's do not) stands beside a PASS: the copy was
+    # delivered, and the line says what to look at in it
+    shown = words_missing_sentence(rec.get("V6"))
     if not failures:
         where = f.delivered_to or (str(f.output) if f.output else "")
         return "\n".join([f"{heading} {f'{number}. ' if number else ''}{name} — PASS", "",
                           "- Every check passed" + (f"; delivered to `{where}`." if where else "."),
+                          *([f"- **Rendered pages:** {shown}."] if shown else []),
                           f"- Record: `records/{stem}.record.md`" + (f" · trace: `logs/{Path(f.trace_path).name}`"
                                                                     if f.trace_path else "")])
     ids = [c for c, *_ in failures]
@@ -1072,6 +1108,7 @@ def file_diagnosis(f: "FileResult", heading: str = "##", number: Optional[int] =
     out_rel = (f"`{Path(f.output).parent.name}/{Path(f.output).name}`" if f.output else "")
     lines = [f"{heading} {f'{number}. ' if number else ''}{name} — {title}", "",
              f"- **What happened:** {happened}.",
+             *([f"- **Rendered pages:** {shown}."] if shown else []),
              "- **Where it stopped:** " + "; ".join(f"{STAGE_TEXT[s]} (`{s}`)" for s in stages),
              "- **Why:**"]
     for cid, cname, summary, details in failures:

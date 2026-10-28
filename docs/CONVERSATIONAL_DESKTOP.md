@@ -425,6 +425,16 @@ the line says the pages were rendered); or the plan is done in steps and only it
 provide usable page evidence, a card
 says that page appearance was not checked and asks you to check the edited copies in Word.
 
+The same comparison counts the words shown on every page of the original and of the copy, less what the plan
+removes (a replaced or deleted wording, a removed header's text, a removed watermark), so a word that moved to another
+page cancels out. A word the original's pages show that the copy's pages do not is a warning beside the sample ("N
+word(s) shown in the original's pages are not shown in the copy's: …"), said in the chat in the app's words before
+you approve, given to Claude's visual check so it looks for those words on the pages, and carried in each copy's
+record and in `BATCH_REPORT.md`. It is never a failed check: a layout change (a font, the margins) reflows words
+across pages, and when the page counts differ the header and footer words — which repeat once per page — are
+recorded, not compared. What it catches is text a copy hides without moving a line: a shape drawn over it, white on
+white, a size of nothing, spacing that pushes a line off the page.
+
 **Find and replace, occurrence by occurrence.** A plan with a find-and-replace (`replace_table`: Safe mode's button,
 or a conversation's) lists every occurrence it found under the previews, in every document of the plan — not the
 sampled ones only — with the part it sits in, its paragraph, the article it sits under where the structure analysis

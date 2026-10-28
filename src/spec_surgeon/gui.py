@@ -831,8 +831,16 @@ class Session:
     @_session_action
     def _visual_check(self, pv, intent: str, folder: Path, log: Log) -> None:
         from . import compiler, vision
-        from .preview import write_preview_files
+        from .preview import render_word_warnings, write_preview_files
         client = self.client
+        # the render comparison's warning goes into the brief, so Claude's look at the pages seeks those words
+        missing = render_word_warnings(pv)
+        if missing:
+            intent = (intent + "\nWORDS THE ORIGINAL'S PAGES SHOW THAT THE COPY'S PAGES DO NOT (the render comparison "
+                      "counted every page's words, less what the plan removes; a layout change can move them to a "
+                      "page not shown here, a shape, a colour, a size or the spacing can hide them — look for each on "
+                      "the AFTER pages and say whether it is there, moved, or gone):\n"
+                      + "\n".join(f"  {line}" for line in missing))
         if not self.claude_ready():               # keyless: said on the Preview step, nothing prepared or sent
             log(f"Claude's visual check skipped: {NO_KEY_REVIEW}")
             pv.review = vision.VisualReview(skipped=NO_KEY_REVIEW)
@@ -969,9 +977,16 @@ class Session:
         for finding in (pv.review.blocking() if pv.review is not None else [])[:10]:
             lead.append(f"BLOCKING VISUAL FINDING — {finding.get('file')}, page {finding.get('page')}: "
                         f"{finding.get('text', '')}"[:400])
+        # the render comparison's warning (words the original's pages show that the copy's do not): in the lead, so
+        # Claude says it to the user, and in the chat line in the app's words
+        from .preview import render_word_warnings
+        missing = render_word_warnings(pv)
+        lead += [f"WORDS NOT SHOWN IN THE COPY'S PAGES (the render comparison's warning; say it to the user) — {line}"[:600]
+                 for line in missing[:10]]
         self.conversation.note("THE PREVIEW OF YOUR SPEC:\n" + "\n".join(lead) + "\n\n" + pv.to_text()[:6000],
                                display=f"Preview made: {planned} of {total} file(s) plan cleanly." +
-                                       (f" Claude's visual check flagged {flagged} problem(s)." if flagged else ""))
+                                       (f" Claude's visual check flagged {flagged} problem(s)." if flagged else "")
+                                       + "".join(f" {line}." for line in missing))
         self._save_chat()
 
     def runnable_files(self) -> List[Path]:
