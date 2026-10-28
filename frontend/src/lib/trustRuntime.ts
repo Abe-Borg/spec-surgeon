@@ -186,7 +186,10 @@ export const RUNTIME_CARDS: RuntimeCard[] = [
     bounds:
       `Word has ${F.wordTimeoutSeconds} s per file, LibreOffice ${F.libreOfficeTimeoutSeconds} s per batch. A render ` +
       `that fails is reported and the preview stands without that page. At most ${F.maxProcessWorkers} worker processes, ` +
-      "one per core, ending with the work. Nothing is written to your files.",
+      `one per core, ending with the work. A text pattern in the plan (a selector's text_regex, a fill's pattern …) ` +
+      `is at most ${grouped(F.maxPatternChars)} characters and has ${F.regexTimeoutSeconds} s on each text it is searched on; past that ` +
+      "the file is set aside with the reason (in the checker, a failed check), never searched on without a limit. " +
+      "Nothing is written to your files.",
   },
   {
     covers: ["B6"],

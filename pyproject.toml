@@ -13,9 +13,11 @@ license-files = ["LICENSE"]
 authors = [{ name = "Abraham Borg", email = "abrahamborg@gmail.com" }]
 # PyMuPDF 2.0 requires onnxruntime, numpy and networkx and loads a layout-analysis model whenever pymupdf is imported:
 # 75 MB more memory, 13 more threads and about 160 MB more installer for a feature Spec Surgeon never calls.
+# regex: every pattern a request or the model writes is searched with a deadline (ops/patterns.py, verify/patterns.py).
 dependencies = [
     "lxml>=5.0",
     "pymupdf>=1.24,<2",
+    "regex>=2024.4",
 ]
 
 [project.urls]

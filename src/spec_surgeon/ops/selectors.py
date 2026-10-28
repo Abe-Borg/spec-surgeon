@@ -40,6 +40,7 @@ from lxml import etree
 from ..ooxml import block_full_text
 from ..package import NS, W, DocxPackage, REL_TYPE_BASE
 from .base import JobException, Touch
+from .patterns import BoundedPattern, compile_pattern
 
 STYLES_REL = REL_TYPE_BASE + "styles"
 SCOPE_KINDS = ("document", "headers", "footers", "footnotes", "endnotes", "comments")
@@ -110,10 +111,7 @@ def check_paragraph_selector(pred) -> None:
         if rx_key in pred:
             if not isinstance(pred[rx_key], str):
                 raise JobException(f"{rx_key} must be a regex string", "bad-params")
-            try:
-                _selector_regex(pred[rx_key], pred)
-            except re.error as e:
-                raise JobException(f"bad {rx_key}: {e}", "bad-params")
+            _selector_regex(pred[rx_key], pred, label=rx_key)
     if "style_in" in pred and (not isinstance(pred["style_in"], (list, tuple))
                                or not all(isinstance(x, str) for x in pred["style_in"])):
         # a bare string was read as a set of characters on one side and a substring test on the other (batch 5 review)
@@ -139,14 +137,11 @@ def check_paragraph_selector(pred) -> None:
         if "every" in bp and not isinstance(bp["every"], bool):
             raise JobException("between_paragraphs.every must be true (every stretch, from each start match to the "
                                "next start or end match) or false (the first stretch only)", "bad-params")
-        try:
-            _selector_regex(bp["start_regex"], pred)
-            if bp.get("end_regex") is not None:
-                if not isinstance(bp["end_regex"], str):
-                    raise JobException("between_paragraphs.end_regex must be a string", "bad-params")
-                _selector_regex(bp["end_regex"], pred)
-        except re.error as e:
-            raise JobException(f"bad between_paragraphs regex: {e}", "bad-params")
+        if bp.get("end_regex") is not None and not isinstance(bp["end_regex"], str):
+            raise JobException("between_paragraphs.end_regex must be a string", "bad-params")
+        _selector_regex(bp["start_regex"], pred, label="between_paragraphs.start_regex")
+        if bp.get("end_regex") is not None:
+            _selector_regex(bp["end_regex"], pred, label="between_paragraphs.end_regex")
 
 
 def check_run_selector(pred) -> None:
@@ -419,42 +414,47 @@ def _block_text_with_tabs(p: etree._Element) -> str:
     return "".join(parts).replace("\u00a0", " ")
 
 
-def _selector_regex(pattern: str, pred) -> Any:
-    original = re.compile(pattern, re.IGNORECASE if pred.get("case_insensitive") else 0)
+def _selector_regex(pattern: str, pred, where: str = "a paragraph's text", label: Optional[str] = None) -> BoundedPattern:
+    """The selector's pattern, bounded (``ops/patterns.py``: a search past the deadline sets the file aside); with
+    flexible_whitespace, its whitespace outside character classes rewritten to match any run of whitespace."""
+    flags = re.IGNORECASE if pred.get("case_insensitive") else 0
+    original = compile_pattern(pattern, flags, where=where, label=label)
+    # the app's own inspection of the pattern's text (not a search of the document) stays on re
     verbose = bool(original.flags & re.VERBOSE) or re.search(r"\(\?[aiLmsux-]*x[aiLmsux-]*[:)]", pattern)
-    if pred.get("flexible_whitespace") and not verbose:
-        pieces, in_class, class_position, escaped, i = [], False, 0, False, 0
-        while i < len(pattern):
-            char = pattern[i]
-            if escaped:
-                pieces.append(char)
-                escaped = False
-                if in_class:
-                    class_position = 2
-            elif char == "\\":
-                pieces.append(char)
-                escaped = True
-            elif in_class:
-                pieces.append(char)
-                if char == "]" and class_position == 2:
-                    in_class = False
-                elif char == "^" and class_position == 0:
-                    class_position = 1
-                else:
-                    class_position = 2
-            elif char == "[":
-                in_class = True
-                class_position = 0
-                pieces.append(char)
-            elif char.isspace():
-                pieces.append(r"(?:\s+)")
-                while i + 1 < len(pattern) and pattern[i + 1].isspace():
-                    i += 1
+    if not pred.get("flexible_whitespace") or verbose:
+        return original
+    pieces, in_class, class_position, escaped, i = [], False, 0, False, 0
+    while i < len(pattern):
+        char = pattern[i]
+        if escaped:
+            pieces.append(char)
+            escaped = False
+            if in_class:
+                class_position = 2
+        elif char == "\\":
+            pieces.append(char)
+            escaped = True
+        elif in_class:
+            pieces.append(char)
+            if char == "]" and class_position == 2:
+                in_class = False
+            elif char == "^" and class_position == 0:
+                class_position = 1
             else:
-                pieces.append(char)
-            i += 1
-        pattern = "".join(pieces)
-    return re.compile(pattern, re.IGNORECASE if pred.get("case_insensitive") else 0)
+                class_position = 2
+        elif char == "[":
+            in_class = True
+            class_position = 0
+            pieces.append(char)
+        elif char.isspace():
+            pieces.append(r"(?:\s+)")
+            while i + 1 < len(pattern) and pattern[i + 1].isspace():
+                i += 1
+        else:
+            pieces.append(char)
+        i += 1
+    # the rewrite grew the pattern the user wrote (already within the length limit)
+    return compile_pattern("".join(pieces), flags, where=where, label=label, max_chars=None)
 
 
 def _rx_matches(pattern: str, raw_text: str, p: etree._Element, pred=None) -> bool:

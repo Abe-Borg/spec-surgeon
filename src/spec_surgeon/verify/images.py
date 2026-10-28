@@ -15,6 +15,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from lxml import etree
 
 from .reader import REL, W, VPackage
+from .patterns import v_compile
 from .props import Ctx, mask_picture_sizes, sig
 
 _R = "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}"
@@ -359,7 +360,7 @@ def _scan(pkg: VPackage, part: str, how: Dict[str, Any], new_md5: str):
     rels = _rels_of(pkg, part)
     drawings = list(root.iter(W + "drawing"))
     index = {id(d): k for k, d in enumerate(drawings)}
-    rx = re.compile(how["name_regex"]) if how.get("how") == "name" else None
+    rx = v_compile(how["name_regex"], where="a picture's name or description") if how.get("how") == "name" else None
     digest: Dict[str, Optional[str]] = {}
 
     def md5_of(rid):

@@ -14,10 +14,10 @@ of ops/remove_footnotes.py (rule 1): this module's own reading of the notes, the
 """
 from __future__ import annotations
 
-import re
 from typing import Any, Dict, List, Tuple
 
 from .reader import W
+from .patterns import v_compile
 from .props import Ctx
 from .edits import V_REVISION_TAGS
 from .deletion import (VRefuse, VRemoval, check_tracked_paragraph, v_field_cut, v_old_ids, v_par, v_tracked_runs,
@@ -51,7 +51,7 @@ def _v_chosen(ctx: Ctx, a: Dict[str, Any], root_of) -> List[Tuple[str, str, Any,
     if which not in _V_WHICH:
         raise ValueError(f"unknown 'which' {which!r}")
     pattern = a.get("asked_text_regex")
-    rx = re.compile(pattern) if pattern is not None else None
+    rx = v_compile(pattern, where="a note's text") if pattern is not None else None
     scope = a.get("scope") or ["document"]
     parts = ctx.scope_parts([scope] if isinstance(scope, str) else scope)
     notes_parts = [ctx.src.part_of_kind(k)[0] for k in _V_KINDS if ctx.src.part_of_kind(k)]
@@ -110,7 +110,7 @@ def _removed_footnotes(ctx: Ctx, a: Dict[str, Any], errs: List[str]) -> str:
     except VRefuse as e:
         errs.append(f"removed_footnotes: {e} — the op must refuse")
         return "removed_footnotes: the op must refuse"
-    except re.error as e:
+    except ValueError as e:
         errs.append(f"removed_footnotes: bad pattern ({e})")
         return "removed_footnotes: bad pattern"
     which = a.get("asked_which") or "both"
