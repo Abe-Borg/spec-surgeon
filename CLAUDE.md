@@ -114,7 +114,9 @@ jobs). Details: `docs/CONVERSATIONAL_DESKTOP.md`.
     and `KIND_EXAMPLES`, the plain-English contract and worked assertion of each kind, filled by the kind's module
     at import — the verifier's own words, which the custom-method writer reads through `describe_assertion_kind`;
     a kind whose module writes none gets that module's docstring, so every kind has one), `reader.py`,
-    `textcheck.py`, `edits.py`, `xsd.py`, `geometry.py`, `explain.py`.
+    `textcheck.py`, `edits.py`, `xsd.py`, `geometry.py` (V6/V7's page evidence, and `shown_words`: the words the
+    original's pages show that the copy's do not, less what the plan removes — V6's warning, never a FAIL;
+    `report.words_missing_sentence` is its one wording), `explain.py`.
   - `editspec.py` — load, validate, plan, merge, apply; composition (`stage_cuts`, `compose_chain`, `plan_chain`).
   - `batch.py` (per-file pipeline, guarded delivery, records; `worker_plan`/`map_files`: three or more files go to
     spawned worker processes, each file whole in one, in the packaged app too — a test's patches never reach one,

@@ -145,6 +145,13 @@ specifications, Windows and Word, and only the owner can do them. Record what a 
   and the 9 pt-body document's body is 11 pt with its headings and notes as they were; the same document attached
   alone gives the same copy. Then two specifications built alike (one structure pattern) with different body sizes:
   the odd one waits under Left untouched with the reason, and pressed alone it is matched at its own size.
+- **Words hidden on the rendered pages (the stress-test finding F4, second half; built 2026-10-28):** the finding's
+  copies again, with Word: a copy whose pages came out blank, or without the inserted text, while its XML held it —
+  the preview's sample says "N word(s) shown in the original's pages are not shown in the copy's: …" beside it, the
+  chat says it before Create, Claude's visual check names the pages, and `BATCH_REPORT.md` and the copy's record carry
+  the line; then a font change and a margin change over a real specification folder (the pages reflow, the page count
+  changes) with no such warning, the header and footer words recorded under the record's
+  `header_footer_words_not_compared`; a header/footer template over the same folder with none either.
 - **Default mode:** a choice's drafted wording edited before it is picked, and the copy carrying the edit.
 - **A request kept to one document** (built 2026-10-27): over a real batch, "only 23" (and "just the Michigan one",
   "in 21 and 22, …") plans, previews and runs those documents alone, every other one under Left untouched and

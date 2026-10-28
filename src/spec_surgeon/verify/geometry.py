@@ -2,14 +2,18 @@
 
 * word boxes per page → geometry assertion: every word must correspond and retain its position;
   pages the plan declares as expected-to-change are reported but not asserted.
+* the words shown over the whole document (``shown_words``): the source render's words less the output render's,
+  less what the plan removes — V6's warning for text a copy hides without moving a word the page-for-page
+  comparison sees (a shape drawn over it, white on white, a size of nothing, spacing that pushes a line off the page).
 * page rasters and a contact sheet for the human "actually look" step.
 """
 from __future__ import annotations
 
 import difflib
+from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 
 try:
     import pymupdf as fitz
@@ -29,6 +33,20 @@ class PageGeom:
     expected_removed_words: int = 0
 
 
+WORDS_LISTED = 50       # the words a record lists of a whole-document count (the count itself is complete)
+
+
+@dataclass
+class WordCount:
+    """A multiset of rendered words as a record carries it: how many, and the first ``WORDS_LISTED`` of them in the
+    order the render shows them (a word missing twice is listed twice)."""
+    count: int = 0
+    words: List[str] = field(default_factory=list)
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {"count": self.count, "words": list(self.words)}
+
+
 @dataclass
 class GeometryResult:
     ref_pages: int
@@ -37,19 +55,161 @@ class GeometryResult:
     worst_dy_asserted: float = 0.0
     worst_dx_asserted: float = 0.0
     evidence_problems: List[str] = field(default_factory=list)
+    # the whole-document word counts (``shown_words``; None when no plan was given to compare against): the words the
+    # source render shows that the output render does not and the plan does not remove; the words the output render
+    # shows beyond the source's and the plan's additions; the header/footer-band words left out of the count
+    words_missing: Optional[WordCount] = None
+    words_new: Optional[WordCount] = None
+    hf_words_not_compared: Optional[WordCount] = None
 
     def to_dict(self):
-        return {
+        out = {
             "ref_pages": self.ref_pages, "out_pages": self.out_pages,
             "worst_dy_asserted_pt": round(self.worst_dy_asserted, 2),
             "worst_dx_asserted_pt": round(self.worst_dx_asserted, 2),
             "pages": [vars(p) for p in self.pages],
             "evidence_problems": self.evidence_problems,
         }
+        out.update(self.shown_words_data())
+        return out
+
+    def shown_words_data(self) -> Dict[str, Any]:
+        """The whole-document word counts for a check's data (``words_missing_from_render`` is V6's warning)."""
+        out: Dict[str, Any] = {}
+        if self.words_missing is not None:
+            out["words_missing_from_render"] = self.words_missing.to_dict()
+        if self.words_new is not None:
+            out["words_new_in_render"] = self.words_new.to_dict()
+        if self.hf_words_not_compared is not None and self.hf_words_not_compared.count:
+            out["header_footer_words_not_compared"] = self.hf_words_not_compared.to_dict()
+        return out
 
 
 def _words(page) -> List[Tuple[str, float, float]]:
     return [(w[4], float(w[0]), float(w[1])) for w in page.get_text("words")]
+
+
+# ---- V6: the words shown, over the whole document -------------------------------------------------------------
+#
+# A copy can hide text without moving a word the page-for-page comparison above sees: a shape drawn over it, white
+# on white, a size of nothing, spacing that pushes a line off the page (the stress-test finding F4: PASS copies
+# whose rendered pages were blank while the XML still held every character). The signal is the multiset of the words
+# of every page of the source render minus the multiset of the output render's — a word that moved to another page
+# cancels out — less what the plan says it removes (each diff's before words beyond its after words; a removed
+# watermark's words, drawn on every page, in any count). Words are the renderer's tokens, split on whitespace as it
+# splits them, never casefolded. It is a warning, never a FAIL: a layout operation reflows words across pages by
+# design, and a renderer's own line breaking can split or join a token.
+#
+# Header and footer words repeat once per page, so they are counted per page and summed like every other word, and
+# a word that moved to another page cancels out: a font change that shortens the document moves its body words,
+# their counts stay. Only the per-page repeats themselves change with the page count (a document one page shorter
+# shows its header one time fewer; a page number or NUMPAGES field reads another number). So, when the two renders
+# have different page counts, a missing word the source render shows in its header/footer bands — wholly outside
+# every section's body region, by the source's own margins as ``_removal_margins`` reads them; missing margins grant
+# no band — is attributed to the band, recorded under ``header_footer_words_not_compared`` and left out of the
+# warning. With equal page counts the band words count like any other: a header word a shape covers is reported. A
+# plan whose layout reference is the template replaces the headers and footers wholesale (V7 compares the new bands
+# with the template's render, page for page); its band words are recorded the same way, whatever the page counts.
+
+def _tokens(text: Optional[str]) -> List[str]:
+    """The words of a plan's text as the renderer would show them: split on whitespace, nothing else."""
+    return (text or "").split()
+
+
+def _watermark_words(source_docx: Path, text: Optional[str]) -> Set[str]:
+    """The words of the source's text watermarks (of those reading ``text``, when given), with the verifier's own
+    reading of the header parts; a source whose watermarks the verifier cannot read gives none."""
+    from .reader import VPackage
+    from .watermark import _v_same, _v_watermarks
+    out: Set[str] = set()
+    try:
+        pkg = VPackage(Path(source_docx).read_bytes())
+        for part in pkg.part_of_kind("headers"):
+            for found in _v_watermarks(pkg.xml(part)):
+                shown = found.get("text")
+                if isinstance(shown, str) and (text is None or _v_same(shown, text)):
+                    out.update(_tokens(shown))
+    except Exception:  # noqa: BLE001 — no words to subtract, the warning may then name the watermark's; never a crash
+        return set()
+    return out
+
+
+def plan_removed_words(plan: Dict[str, Any], source_docx: Optional[Path] = None) -> Tuple[Counter, Set[str]]:
+    """What the plan says disappears from the pages, in the renderer's terms: (bounded — per diff, the words of its
+    before text beyond its after text: a replacement, a deletion, a removed header part's blocks; unbounded — the
+    words of a removed watermark, drawn on every page)."""
+    bounded: Counter = Counter()
+    unbounded: Set[str] = set()
+    for d in plan.get("diffs") or []:
+        before, after = d.get("before"), d.get("after")
+        if isinstance(before, str):
+            bounded.update(Counter(_tokens(before)) - Counter(_tokens(after if isinstance(after, str) else "")))
+    for a in plan.get("property_assertions") or []:
+        if a.get("kind") == "removed_watermark":
+            text = a.get("text") if isinstance(a.get("text"), str) else None
+            words = _watermark_words(source_docx, text) if source_docx is not None else set()
+            unbounded.update(words or _tokens(text))
+    return bounded, unbounded
+
+
+def plan_added_words(plan: Dict[str, Any]) -> Counter:
+    """The words the plan's diffs add (each after text beyond its before text), subtracted from the output render's
+    surplus so the record counts only what the plan does not account for."""
+    added: Counter = Counter()
+    for d in plan.get("diffs") or []:
+        before, after = d.get("before"), d.get("after")
+        if isinstance(after, str):
+            added.update(Counter(_tokens(after)) - Counter(_tokens(before if isinstance(before, str) else "")))
+    return added
+
+
+def _band_words(doc, margins: Tuple[float, float]) -> Counter:
+    """The words of ``doc``'s pages wholly inside the header band (above the smallest top margin) or the footer band
+    (below the smallest bottom margin), in PDF points; a band of 0 holds no word."""
+    top, bottom = margins
+    out: Counter = Counter()
+    for page in doc:
+        height = page.rect.height
+        for w in page.get_text("words"):
+            if (top > 0 and float(w[3]) <= top) or (bottom > 0 and float(w[1]) >= height - bottom):
+                out[w[4]] += 1
+    return out
+
+
+def _listed(counts: Counter, order: Sequence[str]) -> WordCount:
+    """``counts`` as a record carries it: the total, and the first WORDS_LISTED words in the order of ``order``."""
+    left = Counter({k: v for k, v in counts.items() if v > 0})
+    total = sum(left.values())
+    words: List[str] = []
+    for w in order:
+        if len(words) >= WORDS_LISTED:
+            break
+        if left.get(w, 0) > 0:
+            left[w] -= 1
+            words.append(w)
+    return WordCount(total, words)
+
+
+def shown_words(ref_doc, out_doc, plan: Dict[str, Any], *, margins: Optional[Tuple[float, float]] = None,
+                source_docx: Optional[Path] = None) -> Tuple[WordCount, WordCount, WordCount]:
+    """(the source render's words missing from the output render that the plan does not remove; the output render's
+    words beyond the source's that the plan does not add; the band words left out of the first count). ``ref_doc`` is
+    the layout reference's render — the source's, or the independent header/footer-removal reference's — and
+    ``out_doc`` the copy's; ``margins`` the source's body bounds (``_removal_margins``) for the band rule above."""
+    ref_words = [w[0] for page in ref_doc for w in _words(page)]       # per page, summed over the document
+    out_words = [w[0] for page in out_doc for w in _words(page)]
+    removed, any_count = plan_removed_words(plan, source_docx)
+    missing = Counter(ref_words) - Counter(out_words) - removed
+    for w in any_count:
+        missing.pop(w, None)
+    new = Counter(out_words) - Counter(ref_words) - plan_added_words(plan)
+    not_compared: Counter = Counter()
+    if margins is not None and (ref_doc.page_count != out_doc.page_count
+                                or plan.get("geometry_reference") == "template"):
+        band = _band_words(ref_doc, margins)
+        not_compared = missing & band
+        missing = missing - band
+    return _listed(missing, ref_words), _listed(new, out_words), _listed(not_compared, ref_words)
 
 
 def _removal_margins(source: Path) -> Tuple[float, float]:
@@ -100,7 +260,11 @@ def _removed_margin_words(original, baseline, margins: Tuple[float, float], tol:
 
 
 def compare_pdfs(ref_pdf: Path, out_pdf: Path, expected_change_pages: Sequence[int] = (), *,
-                 removed_hf_pdf: Optional[Path] = None, removed_hf_source: Optional[Path] = None) -> GeometryResult:
+                 removed_hf_pdf: Optional[Path] = None, removed_hf_source: Optional[Path] = None,
+                 plan: Optional[Dict[str, Any]] = None, source_docx: Optional[Path] = None) -> GeometryResult:
+    """The page-for-page comparison (V7's evidence) and, with ``plan``, the whole-document word counts
+    (``shown_words``, V6's warning); ``source_docx`` is the source file, read for its body bounds (the band rule)
+    and for what a removed watermark showed."""
     ref = fitz.open(str(ref_pdf))
     out = fitz.open(str(out_pdf))
     res = GeometryResult(ref_pages=ref.page_count, out_pages=out.page_count)
@@ -108,6 +272,14 @@ def compare_pdfs(ref_pdf: Path, out_pdf: Path, expected_change_pages: Sequence[i
     margins = _removal_margins(removed_hf_source) if baseline is not None and removed_hf_source is not None else None
     if baseline is not None and (margins is None or baseline.page_count != ref.page_count):
         res.evidence_problems.append("independent header/footer-removal reference lacks source bounds or has a different page count")
+    if plan is not None:
+        # the words of the reference the plan removes headers/footers from are the reference's (the words it keeps),
+        # when that reference is sound; the band rule needs the source's own bounds
+        whole_ref = baseline if (baseline is not None and margins is not None
+                                 and baseline.page_count == ref.page_count) else ref
+        bounds = margins if margins is not None else (_removal_margins(source_docx) if source_docx is not None else None)
+        res.words_missing, res.words_new, res.hf_words_not_compared = shown_words(
+            whole_ref, out, plan, margins=bounds, source_docx=source_docx)
     n = min(ref.page_count, out.page_count)
     for i in range(n):
         removed = 0

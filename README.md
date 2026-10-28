@@ -344,7 +344,7 @@ when someone asks "how do I know nothing else changed?"
 | **V5a** Schema vs baseline | changed parts validated against the vendored ECMA-376 schemas; zero errors the source did not already have |
 | **V5b** Untracked-edit check | tracked edits: the reject-all view of the output equals the source character for character; formatting edits: no insertions or deletions added |
 | **V5c** Revision grammar | deleted text only inside deletions, id and author on every wrapper, `xml:space` on edge whitespace |
-| **V6** Render comparison | source and output rendered with the same renderer, changed pages rasterized; automated evidence, not human acceptance |
+| **V6** Render comparison | source and output rendered with the same renderer, changed pages rasterized; the words shown on every page of the original counted against the copy's, less what the plan removes — a word the original's pages show that the copy's do not is named in the record and the report as a warning (text a shape, a colour, a size or the spacing hides), never a failure, since a layout change moves words between pages; automated evidence, not human acceptance |
 | **V7** Geometry | word positions on every page the plan did not expect to change move by at most 0.5 pt; N/A with the op's reason where layout changes by design |
 | **V8** Accept / reject | the accept-all view equals the predicted view and the reject-all view equals the original |
 | **V9** Overwrite guard | at delivery the source's size, time and digest are unchanged since it was read; no lock file; atomic replace |
