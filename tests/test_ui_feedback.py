@@ -5,7 +5,7 @@ from types import SimpleNamespace
 from make_fixtures import build_dirty
 from spec_surgeon import verify
 from spec_surgeon.settings import Settings
-from spec_surgeon.ui_feedback import failed_preview_checks
+from spec_surgeon.ui_feedback import failed_preview_checks, refusal_message
 from spec_surgeon.web.server import WindowState
 from test_ui_preview_regressions import fail_checks, task_for
 
@@ -58,3 +58,18 @@ def test_a_later_passing_stage_does_not_hide_an_earlier_failed_check():
 
 def test_a_missing_renderer_is_not_a_failed_verification():
     assert failed_preview_checks(SimpleNamespace(passed=True, checks={"V6": "NA"}, stages=[])) == []
+
+
+def test_a_missing_fill_value_is_named_and_a_template_slot_keeps_its_own_sentence():
+    fill = {"code": "unfilled-slot", "reason": "op #1 (fill_variables): body paragraph 3: no value for '{{SITE_ADDRESS}}' "
+                                               "(SITE_ADDRESS) — add it to the values",
+            "details": {"where": "body paragraph 3", "slot": "SITE_ADDRESS", "op": "fill_variables", "op_number": 1}}
+    reason = refusal_message(fill)
+    assert reason == ('No value was given for "SITE_ADDRESS". Add it to the values or the attached table, or ask to '
+                      'leave it as it is.')
+    assert "section number" not in reason and "op #" not in reason and "fill_variables" not in reason
+    template = {"code": "unfilled-slot",
+                "reason": "op #1 (apply_header_footer_template): template slot(s) ['SECTION_TITLE'] have no fill rule",
+                "details": {"slots": ["SECTION_TITLE"], "op": "apply_header_footer_template", "op_number": 1}}
+    assert refusal_message(template) == ("A value needed by the template could not be read from this file. Check its "
+                                         "section number and title.")
