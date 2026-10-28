@@ -61,7 +61,7 @@ export const SAFE_OPERATIONS: readonly TypicalOperation[] = [
     can: "Yes",
     note:
       "Body, headers and footers. Whole words and exact case by default. A file with none of the words is left as " +
-      "it is. Tracked or clean.",
+      "it is. An occurrence inside a text box sets the file aside unless you untick it. Tracked or clean.",
   },
   {
     task: "Standardize on the office font",
@@ -120,8 +120,8 @@ export const DEFAULT_OPERATIONS: readonly TypicalOperation[] = [
     task: "Replace terms across the set, tracked or clean: code editions, Engineer to Architect, owner names",
     can: "Yes",
     note:
-      "Whole words, exact case. Text inside fields is never edited. A phrase split by a tab or line break sets the " +
-      "file aside rather than being skipped.",
+      "Whole words, exact case. Text inside fields is never edited; words inside a text box are changed too. A " +
+      "phrase split by a tab or line break sets the file aside rather than being skipped.",
   },
   { task: "Change the issue stamp wherever it sits", can: "Yes", note: "Cover, header or footer, found by its current wording." },
   {
@@ -181,9 +181,11 @@ export const DEFAULT_OPERATIONS: readonly TypicalOperation[] = [
     note: "Caps is a display property; letters are never retyped.",
   },
   {
-    task: "Paragraph spacing, indents, alignment, borders, shading, tab stops, on paragraphs or in styles",
+    task:
+      "Paragraph spacing, indents, alignment, borders and shading, on paragraphs or in styles; tab stops on " +
+      "paragraphs",
     can: "Yes",
-    note: "Style changes are never tracked.",
+    note: "Style changes are never tracked. Tab stops are set on the paragraphs themselves, never in a style.",
   },
   { task: "Clear direct formatting", can: "Yes", note: "Hidden text, list numbers and styles are never touched." },
   {
@@ -223,7 +225,10 @@ export const DEFAULT_OPERATIONS: readonly TypicalOperation[] = [
   {
     task: "Watermarks and pictures: swap the logo, insert, remove, resize",
     can: "Yes",
-    note: "Linked, SVG, cropped, rotated or VML pictures and pictures in shapes set aside.",
+    note:
+      "A VML picture, or one in a shape, sets the file aside. The logo swap also sets it aside for a linked, SVG, " +
+      "cropped or rotated picture; the resize for a rotated one only (a cropped picture is resized, its crop kept). " +
+      "An SVG file cannot be inserted.",
   },
   {
     task: "Schedules: table style, borders, repeating header rows, widths, cell shading",
@@ -250,9 +255,11 @@ export const DEFAULT_OPERATIONS: readonly TypicalOperation[] = [
 ];
 
 export const DEFAULT_LIMITS =
-  "Out of reach by decision in Default: text boxes, shapes, SmartArt, charts, equations, embedded objects, " +
-  "data-bound content controls and the theme. Each refuses with a code and “change this one in Word”. A custom " +
-  "method in Default is formatting only: no text, no new parts, no tracked changes.";
+  "Out of reach by decision in Default: text boxes as objects (adding, moving or sizing one, or its formatting), " +
+  "shapes, SmartArt, charts, equations, embedded objects, data-bound content controls and the theme. Each refuses " +
+  "with a code and “change this one in Word”. The words inside a text box are another matter: replacing a term in " +
+  "Default changes them too, where Safe mode's Find and replace button (and a table of pairs in Default) sets " +
+  "such a file aside. A custom method in Default is formatting only: no text, no new parts, no tracked changes.";
 
 /** Said above the Obliterate table: it does everything the other two modes do, and more. */
 export const OBLITERATE_INTRO =
