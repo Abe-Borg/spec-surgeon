@@ -7,6 +7,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 
+import { TRUST_FACTS } from "../src/lib/trustFacts.ts";
 import {
   DEFAULT_LIMITS,
   DEFAULT_OPERATIONS,
@@ -47,6 +48,20 @@ test("the verdict's colour follows its first word", () => {
   assert.equal(verdictTone("Yes, narrowly"), "ok");
   assert.equal(verdictTone("Partly"), "warn");
   assert.equal(verdictTone("No, by design"), "err");
+});
+
+test("the Obliterate rows quote the check rounds from the trust facts and say what follows them exactly", () => {
+  const rounds = String(TRUST_FACTS.obliterateCheckRounds);
+  assert.equal(OBLITERATE_OPERATIONS.filter((row) => row.note.includes(rounds)).length, 2);
+  for (const row of OBLITERATE_OPERATIONS) assert.doesNotMatch(row.note, /\b(two|three|four|five)\b/i, row.task);
+  const delivered = OBLITERATE_OPERATIONS.find((row) => row.can === "Yes, marked UNVERIFIED");
+  assert.ok(delivered);
+  // not a delivery gate: the five checks cannot be kept with a reason, go back each round, and after the rounds the
+  // latest method's copy is delivered marked UNVERIFIED with them listed
+  assert.match(delivered.note, /V1, V4, V5a, V5c and V9 cannot be kept with a reason: they go back to the writer each round/);
+  assert.match(delivered.note, new RegExp(`After ${rounds} rounds the latest method is used`));
+  assert.match(delivered.note, /delivered marked UNVERIFIED with those failures listed/);
+  assert.doesNotMatch(delivered.note, /never be kept/);
 });
 
 test("the words around the tables say what the lists are not, and what Obliterate also does", () => {

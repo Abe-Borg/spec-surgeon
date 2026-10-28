@@ -286,6 +286,7 @@ def test_a_failed_check_the_writer_keeps_on_purpose_carries_its_reason_to_every_
     assert g.passed and g.accepted_failures == {"V10": why} and len(g.attempts) == 2   # V2 without a reason: dropped
     assert any(f"Claude says this is part of the change: {why}" in u for u in g.trials[0].unverified)
     assert preview.generated_key(g)["accepted_failures"] == {"V10": why}     # what the user approves, reasons included
+    assert codegen.unverified_lines(g) == [f"{f[0].name}: {g.trials[0].unverified[0]}"] and why in codegen.unverified_lines(g)[0]
     results = codegen.run_generated(g, [str(p) for p in f], tmp_path / "run")
     assert all(r.passed and any(why in u for u in r.unverified) for r in results)
 
@@ -346,6 +347,85 @@ def test_a_writer_that_stops_leaves_its_best_method_but_a_pause_leaves_it_to_the
     with llm.budget_scope(llm.CallBudget(max_calls=1, max_cost_usd=None, max_total_tokens=None, effort="medium")):
         paused = codegen.generate_op("x", "y", f, tmp_path / "paused", client=fake, unguarded=True)
     assert not paused.passed and len(fake.requests) == 1
+
+
+def test_a_method_kept_with_failed_checks_is_never_called_passed(folder, tmp_path):
+    """Finding F5 (P2): after its rounds the latest method is used with its failed checks (above). The notes the model
+    hears next turn and the transcript lines the user reads beside them, the window's message and the plan group's
+    details then name the failed checks and never say the samples passed; a method that passes clean keeps today's
+    sentences."""
+    from types import SimpleNamespace
+    files = sorted(folder.glob("*.docx"))[:1]
+    rounds = codegen.UNGUARDED_CHECK_ROUNDS
+    offer = resp(tool("submit_editspec", {"spec": UNSUPPORTED, "custom_transform": "outside_limits",
+                                          "custom_transform_reason": "text boxes are not formatting"}))
+    stubborn = [resp(tool("submit_op", {"source": UNASSERTED_OP, "params": {"twips": 900 + i}}, f"t{i}"))
+                for i in range(rounds + 1)]
+
+    def prepared(name, *writer):
+        """The window in Obliterate mode: the request, the custom method offered and taken at once, its preview."""
+        task = task_for(tmp_path / name, FakeClient(offer, *writer), obliterate_allowed=True)
+        task.set_mode("obliterate", acknowledged=True)
+        task.attach(files)
+        view = task.perform("send", text=UNSUPPORTED["request"])
+        assert view["stage"] == "preview" and task.session.generated is not None, view
+        return task, task.session.conversation
+
+    task, c = prepared("kept", *stubborn)
+    g = task.session.generated
+    [line] = codegen.unverified_lines(g)
+    assert line == f"{files[0].name}: {g.trials[0].unverified[0]}" and "V10 (Property assertions)" in line
+    assert codegen.samples_verdict(g) == [codegen.SAMPLES_UNVERIFIED, line]
+    # what the model hears next turn: the failed check by name, "UNVERIFIED", and never "passed"
+    assert sum(n.startswith(codegen.SAMPLES_UNVERIFIED) and n.endswith(line) for n in c.notes) == 1
+    assert any(n.startswith("The one-off custom transform") and "FAILED checks on the sample files" in n and line in n
+               and "marked UNVERIFIED" in n for n in c.notes)
+    assert not any("passed" in n for n in c.notes), c.notes
+    # the transcript lines the user reads beside them
+    app = [e.text for e in c.entries if e.role == "app"]
+    assert any(t.startswith("Custom transform prepared, with failed checks") and line in t for t in app)
+    assert any(t.endswith(f"failed checks on the sample files: {line}.") for t in app)
+    assert not any("passed" in t for t in app), app
+    # the plan group's details
+    [group] = task._plan_view()["groups"]
+    [change] = group["changes"]
+    assert change["details"][1:] == [codegen.SAMPLES_UNVERIFIED, line] and codegen.SAMPLES_PASSED not in change["details"]
+    # the window's message
+    s = Session(documents=files, out_root=tmp_path / "msg", client=FakeClient(offer, *stubborn), unguarded=True,
+                visual_check=False)
+    s.compile(UNSUPPORTED["request"], lambda m: None)
+    said = s.reply(choice_id=s.turn.choices[0].id, log=lambda m: None, render=False)
+    assert "FAILED checks" in said and line in said and "marked UNVERIFIED" in said and "passed" not in said
+    # a check the writer kept with a reason that no sample failed is not a failure: the samples passed, and the kept
+    # check is named apart, with its reason (a copy that fails it carries it)
+    clean = trial(GOOD_OP, files[0], {}, {"twips": 900}, tmp_path / "ct", unguarded=True)
+    assert clean.passed and not clean.unverified
+    kept = SimpleNamespace(trials=[clean], accepted_failures={"V10": "the footer moves too"})
+    assert codegen.unverified_lines(kept) == []
+    assert codegen.kept_lines(kept) == ["V10 — Claude says this is part of the change: the footer moves too"]
+    assert codegen.samples_verdict(kept) == [codegen.SAMPLES_PASSED, codegen.SAMPLES_KEPT, *codegen.kept_lines(kept)]
+    assert codegen.kept_lines(g) == [] and codegen.samples_verdict(SimpleNamespace(trials=[clean])) == [codegen.SAMPLES_PASSED]
+    why = "the footer moves with the header"
+    task, c = prepared("kept-clean", resp(tool("submit_op", {"source": UNASSERTED_OP, "params": {"twips": 900}}, "t0")),
+                       resp(tool("submit_op", {"source": GOOD_OP, "params": {"twips": 900},
+                                               "accept_failures": [{"check": "V10", "reason": why}]}, "t1")))
+    g = task.session.generated
+    assert g.accepted_failures == {"V10": why} and codegen.unverified_lines(g) == []
+    [kept_line] = codegen.kept_lines(g)
+    assert kept_line.endswith(why)
+    assert any(n.startswith(codegen.SAMPLES_PASSED) and codegen.SAMPLES_KEPT in n and n.endswith(kept_line) for n in c.notes)
+    assert not any("FAILED" in n for n in c.notes), c.notes
+    assert any(e.role == "app" and e.text.startswith("Custom transform prepared; the samples passed, and the writer kept")
+               and kept_line in e.text for e in c.entries)
+    assert task._plan_view()["groups"][0]["changes"][0]["details"][1:] == [codegen.SAMPLES_PASSED, codegen.SAMPLES_KEPT,
+                                                                           kept_line]
+    # a method that passes clean keeps today's sentences, in Obliterate too
+    task, c = prepared("clean", resp(tool("submit_op", {"source": GOOD_OP, "params": {"twips": 900}}, "w1")))
+    assert codegen.unverified_lines(task.session.generated) == []
+    assert any("passed its independent sample verification" in n for n in c.notes)
+    assert any("passed verification on the sample files" in n for n in c.notes)
+    assert not any("UNVERIFIED" in n or "FAILED" in n for n in c.notes), c.notes
+    assert task._plan_view()["groups"][0]["changes"][0]["details"][1:] == [codegen.SAMPLES_PASSED]
 
 
 def test_an_obliterate_method_has_the_text_and_revision_helpers_and_its_wording_change_passes_every_check(
