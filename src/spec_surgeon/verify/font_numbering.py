@@ -166,3 +166,19 @@ def check_effective_labels(ctx, a, slots, preserve, bad_examples):
 
 
 FONT_NUMBERING_KINDS = {"numbering_fonts": _numbering_fonts}
+
+
+# the contract a custom method's writer reads (``props.KIND_CONTRACTS``; the verifier owns the text)
+from .props import KIND_CONTRACTS  # noqa: E402
+
+KIND_CONTRACTS["numbering_fonts"] = (
+    'The companion of set_font and set_style_font for the labels of the list levels the selected text uses: the '
+    'label fonts re-selected here from the font op\'s own selection and the whole numbering part proven. Keys: '
+    '"font_op": "set_font" or "set_style_font" (anything else is refused: the kind needs the source operation\'s '
+    'identity); "font_params" and "font_select": that op\'s own params and select (a selection that did not ask a '
+    'label-font change is refused); "numbering_part": the part the main part\'s numbering relationship names; '
+    '"preserve_fonts": the symbol fonts excluded (must equal the request\'s); "set": {slot: font name}; '
+    '"clear_theme" (default true); "expected_levels": the used levels selected, each as its identity list, in order '
+    '— the verifier\'s own selection must yield the same. Compared: each selected level\'s label rFonts as set, the '
+    'rest of the numbering part identical, the member proven. A custom method that formats list labels asserts '
+    'numbering_labels instead: it names the levels itself, without a font op\'s identity.')

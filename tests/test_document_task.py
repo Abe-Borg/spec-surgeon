@@ -1072,6 +1072,49 @@ def test_two_attached_documents_of_one_name_are_named_with_their_folders(tmp_pat
     assert sum("are named" in m["text"] for m in task.messages) == 1
 
 
+def test_an_attach_that_raises_on_one_file_attaches_none_of_them(tmp_path, monkeypatch):
+    """The stress test's F6: a valid document attached together with a malformed one in one request was added while
+    the request failed, leaving the session's documents out of step with the task's attachments. Every file is
+    triaged before any is attached, so a triage that raises leaves the task exactly as it was: the attachments, the
+    documents, the fresh list (here, over a working set), the pass and the view. A refusal is not an exception: that
+    file is attached, refused, with its reason."""
+    from spec_surgeon import document_task
+    from spec_surgeon.document_task import Attachment
+    task = task_for(tmp_path)
+    task.attach([document(tmp_path / "First.docx")])
+    view = task.perform("send", text=REQUEST)
+    task.perform("primary", token=view["token"])
+    assert task.working and task.fresh == []
+    good, bad = document(tmp_path / "Good.docx"), document(tmp_path / "Bad.docx")
+    real = document_task.triage
+
+    def triage(path, **kwargs):
+        if Path(path).name == "Bad.docx":
+            raise RuntimeError("the stress test's malformed zip")
+        if Path(path).name == "Refused.docx":
+            return Attachment(Path(path), state="refused", reason="Refused.docx is not a Word document.")
+        return real(path, **kwargs)
+
+    monkeypatch.setattr(document_task, "triage", triage)
+
+    def state():
+        return ([a.to_dict() for a in task.attachments], task.documents(), list(task.fresh), task.focus,
+                task.session.documents, task.session.inputs, task.view())
+
+    before, before_attachments = state(), list(task.attachments)
+    with pytest.raises(RuntimeError, match="malformed zip"):
+        task.attach([good, bad])
+    assert state() == before
+    assert good not in task.documents() and str(good) not in task.fresh and str(good) not in task.working
+    refused = document(tmp_path / "Refused.docx")
+    task.attach([good, refused])
+    assert task.documents() == [*before[1], good] and task.session.documents == task.documents()
+    assert [a.path for a in task.attachments] == [*(a.path for a in before_attachments), good, refused]
+    assert task.fresh == [str(good), str(refused)]
+    [found] = [a for a in task.attachments if a.path == refused]
+    assert found.refused and found.reason == "Refused.docx is not a Word document."
+
+
 def test_continue_after_the_spending_check_takes_the_custom_method_up_where_it_stopped(tmp_path, monkeypatch):
     """Live QA finding F09: a writer paused at the spending check went on from its brief alone in a new folder and
     repeated its inspections. Now it continues from its checkpoint, in its own folder, with what it has read."""

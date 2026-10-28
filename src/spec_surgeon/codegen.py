@@ -53,6 +53,7 @@ written for another brief, sample set, pins or instructions, or not a pause) is 
 from __future__ import annotations
 
 import ast
+import copy
 import hashlib
 import json
 import os
@@ -786,7 +787,6 @@ def trial_options(g: GeneratedOp) -> Dict[str, Any]:
 
 def _canonical_bindings(bindings):
     """Path spelling must not discard a source-bound choice from an approved review."""
-    import copy
     result = {}
     for path, binding in (bindings or {}).items():
         name = str(Path(path).resolve())
@@ -802,7 +802,10 @@ sandbox on copies of sample files, and judged by an independent verification sui
 code; you see its record when a check fails.
 
 Before you write, look: show_xml shows the real XML of paragraphs of a sample file, find_paragraphs finds paragraphs \
-by a regex over their text, list_styles and show_part_text show styles and part texts. The user's own words in the \
+by a regex over their text, list_styles and show_part_text show styles and part texts; describe_assertion_kind gives \
+a V10 assertion kind's contract — its keys, each key's allowed values, what it compares and what makes the op \
+refuse — with a worked assertion. Read a kind's contract with describe_assertion_kind before you write its \
+assertion. The user's own words in the \
 brief say what they want; Claude's earlier understanding is context, not instructions.
 
 Rules:
@@ -825,7 +828,8 @@ put in frag.transform_data (JSON-serialisable values only).
 revision (no rPrChange/pPrChange — the reference ops' tracked branches use helpers you do not have: drop those \
 branches, plan untracked, rev_delta stays empty); never touch settings.xml; change only the document's text parts \
 (body, headers, footers, footnotes, endnotes, comments) and its styles part.
-- Only these property families can be verified (anything else fails V10 — say so instead): {limits}
+- Only these property families can be verified (anything else fails V10 — say so instead); read each kind's \
+contract with describe_assertion_kind before you write its assertion: {limits}
 - If the request cannot be done safely on a file, raise JobException(reason, code) instead of guessing.
 
 Reference ops from the library (relative imports there become the absolute whitelist imports here):
@@ -834,7 +838,7 @@ Reference ops from the library (relative imports there become the absolute white
 Finish by calling submit_op with the complete module source, the selector and the params to run it with."""
 
 CODEGEN_READ_TOOLS = ("show_xml", "find_paragraphs", "list_styles", "show_part_text", "read_template",
-                      "read_input_file") + tuple(t["name"] for t in INSPECTION_TOOLS)
+                      "read_input_file", "describe_assertion_kind") + tuple(t["name"] for t in INSPECTION_TOOLS)
 CODEGEN_TOOLS = INSPECTION_TOOLS + [
     {"name": "show_xml", "description": "The XML of paragraphs of one part of a sample file (pretty-printed), by "
      "paragraph index (0-based, every w:p of the part in document order).",
@@ -852,12 +856,38 @@ CODEGEN_TOOLS = INSPECTION_TOOLS + [
     {"name": "show_part_text", "description": "The paragraph texts of one part of a sample file.",
      "input_schema": {"type": "object", "properties": {"file": {"type": "string"}, "part": {"type": "string"}},
                       "required": ["file", "part"]}},
+    {"name": "describe_assertion_kind", "description": "The contract of one independent V10 assertion kind, in the "
+     "verifier's own words: the assertion's keys, each key's allowed values, what the kind compares and proves "
+     "whole, and what makes the op refuse — with a worked assertion where one is kept. Read it before you write "
+     "property_assertions of that kind.",
+     "input_schema": {"type": "object", "properties": {
+         "name": {"type": "string", "description": "the kind name, e.g. numbering_labels"}}, "required": ["name"]}},
     {"name": "submit_op", "description": "Submit the op module source with the select/params to run it with (one "
      "submission per turn; it is tried on every sample file).",
      "input_schema": {"type": "object", "properties": {
          "source": {"type": "string"}, "select": {"type": "object"}, "params": {"type": "object"},
          "notes": {"type": "string"}}, "required": ["source"]}},
 ]
+
+
+def describe_assertion_kind(name: Any) -> Dict[str, Any]:
+    """The writer's ``describe_assertion_kind``: the verifier's own contract of one V10 kind (``verify.props.KIND_CONTRACTS``)
+    and its worked assertion where one is kept (``KIND_EXAMPLES``). An unknown name is answered with a readable error
+    and the names that exist, never raised: the writer reads it and asks again."""
+    from .verify.props import KIND_CONTRACTS, KIND_EXAMPLES, KINDS
+    key = str(name or "").strip()
+    if key not in KINDS:
+        return {"error": f"unknown assertion kind {key!r}: the verifier evaluates none of that name (an assertion "
+                         "with it fails V10)", "kinds": sorted(KINDS)}
+    out: Dict[str, Any] = {"kind": key, "contract": KIND_CONTRACTS.get(key) or ""}
+    example = KIND_EXAMPLES.get(key)
+    if example is not None:
+        out["example"] = copy.deepcopy(example)
+        out["example_note"] = ("a worked property_assertions entry: the counts, indices and part names are a sample's, "
+                               "yours come from plan()'s own reading of the source")
+    else:
+        out["example_note"] = "no worked example is kept for this kind; the contract above is the whole of it"
+    return out
 
 
 UNGUARDED_CHECK_ROUNDS = 3   # Obliterate: times a method's failed checks go back to the writer before it is used anyway
@@ -872,7 +902,6 @@ NEVER_KEPT_CHECKS = ("V1", "V4", "V5A", "V5C", "V9")
 def _unguarded_tools() -> List[Dict[str, Any]]:
     """The Obliterate writer's tools: the same, plus the user's attachments (``read_template``, ``read_input_file``)
     and ``submit_op``'s ``accept_failures`` — built once, so the tools stay byte-stable."""
-    import copy
     from .compiler import TOOLS
     tools = copy.deepcopy(CODEGEN_TOOLS)
     submit = next(t for t in tools if t["name"] == "submit_op")
@@ -917,7 +946,8 @@ UNGUARDED_LIMITS = (
     "- Files the user attached (a template, a picture, a table) are pkg.inputs in plan and apply: an immutable "
     "mapping from each attached file's absolute path to its bytes (the first message lists them; DocxPackage(bytes) "
     "opens a .docx). Never open a path.\n"
-    "- Assert every change with the independent V10 assertion kinds: {kinds}. An unasserted change fails V10.\n"
+    "- Assert every change with the independent V10 assertion kinds: {kinds}. An unasserted change fails V10. Read a "
+    "kind's contract with describe_assertion_kind before you write its assertion.\n"
     "- The independent checks run on every sample. In this mode a failed check does not stop the method, but it "
     "comes back to you: fix what you did not intend and submit again. When a failure IS the change the request "
     "asks for (a check that cannot describe it), submit again with accept_failures [{{check, reason}}]: the user "
@@ -966,7 +996,8 @@ def system_prompt(goal_contract=None, unguarded: bool = False) -> str:
         from .verify.props import KINDS
         prompt = prompt[:start] + (
             "- Use existing independent V10 assertion kinds for every change. Available kind names: "
-            + json.dumps(sorted(KINDS)) + ". Header/footer templates use template_parts, styles_added and "
+            + json.dumps(sorted(KINDS)) + ". Read a kind's contract with describe_assertion_kind before you "
+            "write its assertion. Header/footer templates use template_parts, styles_added and "
             "hf_template_refs; their source/template/output checks cover copied text, fields, styles and the "
             "package graph. Those changes are permitted when the approved contract includes them. If an "
             "assertion cannot describe the intended change, report that specific verification gap.\n"
@@ -1062,7 +1093,6 @@ def _generate_op(request, proposal, samples, out_dir, client, model, max_iter, l
         for sample in samples:
             checked_bindings[str(Path(sample).resolve())] = validate_binding(sample, goal_contract,
                                                                            supplied_bindings.get(str(Path(sample).resolve())))
-    import copy
     goal_contract = copy.deepcopy(goal_contract)
     system = system_prompt(goal_contract, unguarded)
     profiles = [profile(DocxPackage.from_path(f)) for f in samples]
@@ -1288,7 +1318,8 @@ def _generate_op(request, proposal, samples, out_dir, client, model, max_iter, l
             try:
                 if b.name not in CODEGEN_READ_TOOLS:
                     raise KeyError(f"unknown tool {b.name}")
-                out = getattr(batch, b.name)(**inp)
+                out = (describe_assertion_kind(**inp) if b.name == "describe_assertion_kind"
+                       else getattr(batch, b.name)(**inp))
                 results.append({"type": "tool_result", "tool_use_id": b.id,
                                 "content": json.dumps(out, ensure_ascii=False)})
                 if progress.observe({"tool": b.name, "content": out}):
@@ -1411,7 +1442,6 @@ def run_generated(g: GeneratedOp, inputs: Sequence[str], out_dir: Path, log=None
     to ``out_dir/outputs`` under names unique across the batch, and only when their bytes are the ones the suite
     verified; records to ``out_dir/records``. Never in place: an input inside the results folder is refused before
     anything is written (the same rules as a batch run)."""
-    import copy
     from .batch import check_inputs_outside, clear_delivery_folders, expand_inputs, output_names
     g = copy.copy(g)
     for key in ("select", "params", "goal_contract", "goal_bindings", "approved_words"):
@@ -1559,7 +1589,6 @@ def _publish_generated(destination, data, identity):
 
 def _save_generated_run(g, files, results, out_dir):
     """Durable retry scope and approved authority, including source-specific choices."""
-    import copy
     from .recovery_state import atomic_json
     completed = {str(result.source.resolve()): result for result in results}
     pending = []

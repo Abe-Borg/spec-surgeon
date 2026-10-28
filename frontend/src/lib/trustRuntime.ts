@@ -433,14 +433,16 @@ export const RUNTIME_CARDS: RuntimeCard[] = [
     title: "Opening a copy or enlarging a page",
     you: "Click a copy or a clean PDF, the folder button, or a page in a preview.",
     runs:
-      "A copy opens in its own application (usually Word) and a clean PDF in your PDF viewer, both from the window's " +
-      "scratch folder; the folder button opens that run's folder in Explorer. A page opens larger in the window, from " +
-      "the picture already rendered on your computer.",
+      "A copy opens in its own application (usually Word) and a clean PDF in your PDF viewer: the file Export saved, " +
+      "while it still holds the copy's current bytes, else the working copy in the window's scratch folder (the one " +
+      "with the newer content; the link's hover text says which). The folder button opens that run's folder in " +
+      "Explorer. A page opens larger in the window, from the picture already rendered on your computer.",
     sent: "Nothing.",
     ai: NONE,
     bounds:
-      "The window's server only serves PNG pictures from the scratch folder or the app's own folder. A copy opened " +
-      "there goes with the scratch folder when the window closes; save it with Export to keep it.",
+      "The window's server only serves PNG pictures from the scratch folder or the app's own folder. A working copy " +
+      "opened from the scratch folder goes with it when the window closes, and one edited there after it was saved " +
+      "counts as unsaved again (CHANGED beside it); save it with Export to keep it.",
   },
   {
     covers: ["A34"],
@@ -450,8 +452,13 @@ export const RUNTIME_CARDS: RuntimeCard[] = [
       "Every copy the next request builds on (one per attached document), and every clean PDF of the last Save " +
       "clean PDFs run, is written into that folder under its planned name, byte for byte the file the checker " +
       "passed. A file already there with the same bytes is that " +
-      "copy, saved; a different file under the name is left alone and the copy is numbered beside it. The copies " +
-      "list then says SAVED, and the folder is kept in settings.json for the next dialog.",
+      "copy, saved; a different file under the name is left alone and the copy is numbered beside it. Each copy's " +
+      "destination is recorded with a fingerprint of the bytes written, in the conversation's journal: a copy " +
+      "is saved while a file with its current bytes sits where Export put it: the copy and the saved file are both " +
+      "compared with the fingerprint. The copies list says SAVED while they agree, CHANGED once the copy's bytes " +
+      "moved (a copy opened from the window and edited in Word; the next Export writes it again, beside the file " +
+      "saved before), NOT SAVED once the saved file no longer holds them (written over, truncated or edited since), " +
+      "and nothing once the saved file is gone. The folder is kept in settings.json for the next dialog.",
     sent: "Nothing.",
     ai: NONE,
     bounds:
@@ -466,8 +473,10 @@ export const RUNTIME_CARDS: RuntimeCard[] = [
     automatic: true,
     you: "Close the window.",
     runs:
-      "If any edited copy was never saved with Export, one native question first: OK closes and gives the copies " +
-      "up, Cancel keeps the window open. Then a running AI step is cut off, the settings are saved, and the " +
+      "If any edited copy or clean PDF is not saved as it is now (never saved with Export, changed since, its " +
+      "saved file changed since, or gone; every copy and every saved file is read again here), one native " +
+      "question first: OK closes and gives the " +
+      "copies up, Cancel keeps the window open. Then a running AI step is cut off, the settings are saved, and the " +
       "window's scratch folder — every session folder, dropped file and the conversation's journal — is deleted.",
     sent: "Nothing.",
     ai: NONE,
@@ -485,8 +494,8 @@ export const RUNTIME_CARDS: RuntimeCard[] = [
       "are saved).",
     runs:
       "Start over makes your originals the working set again; the plan is void and the to-do list is cleared. New " +
-      "conversation starts an empty one over the same scratch folder, after one question when a copy was never " +
-      "saved with Export (the old conversation's copies stay in the scratch folder until the window closes). Both clear " +
+      "conversation starts an empty one over the same scratch folder, after one question when a copy is not saved " +
+      "as it is now (the old conversation's copies stay in the scratch folder until the window closes). Both clear " +
       "unsent messages and staged forms after the reset succeeds. Start over keeps the attached originals; " +
       "New conversation clears the attachments. The to-do list " +
       "holds the documents set aside, each with why: the ✗ on its preview, your word to the assistant, a plan or a " +

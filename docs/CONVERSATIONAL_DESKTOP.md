@@ -132,6 +132,16 @@ the overlapping operations in ordered steps. A document left out is listed besid
 (`Session.left_out_reasons`) and, after the run, under **Left untouched by the last button**, ready for Default mode.
 Every change is plain and no word is placed.
 
+**Match font to template** (`recipes._font_template`) sets the template's body font and size (the font most of its
+body text is in, `profile.body_text_fonts`) on the runs that name a font, every style and the document defaults —
+the size only on text in each document's OWN body size, the size most of that document's body text is in, so its
+headings, notes, tables and other sizes keep theirs. Documents of one body size share one spec; a batch of two or
+more body sizes is a layout plan with one layout per size (`recipes._font_layouts`), each passed through
+`compiler.compose_submission` on its own documents, all previewed and approved together. A layout covers structure
+patterns, so documents built alike (one pattern) whose body sizes differ take the size most of them have (the
+first attached decides a tie); the others are left out with the reason, to be pressed alone. A document with no
+measurable body size takes the font alone; one that cannot be read is set aside by the preview with its reason.
+
 Typing is not possible in Safe mode, and the server refuses a message there; the conversation and its question cards
 belong to Default mode.
 
@@ -557,6 +567,13 @@ covered has no specification to recover against; it stays as it was and is named
 When no built-in operation fits a request, Spec Surgeon may prepare a custom method internally, prove it on
 the sample documents, and show its result as a preview like any other. You never choose a method; you see what
 will change and decide once. Custom methods write edited copies only and run under the same verification.
+The writer that prepares one reads before it writes, through tools that change nothing: the sample files'
+XML, paragraphs, styles and part texts (`show_xml`, `find_paragraphs`, `list_styles`, `show_part_text`, the
+inspection tools) and the verifier's own contract of each independent check it must satisfy
+(`describe_assertion_kind`: a V10 assertion kind's keys, their allowed values, what the kind compares and what
+makes a method refuse, with a worked assertion — `verify.props.KIND_CONTRACTS`, filled by the verifier's own
+modules, never by an operation). Its submissions are tried in the sandbox and judged by the verifier; the
+contract is what tells it, before the first try, what a passing assertion looks like.
 
 When no ordinary plan fits (no operation for the request, a plan that covers no file, a sample that fails its
 check, or a preview whose every sample is refused), the outcome planner proposes the outcomes it would check
@@ -657,10 +674,20 @@ nothing: every copy is read and every destination settled before the first write
 same content is that copy, saved, and nothing is written over it; a different file under a copy's name is left alone
 and the copy is numbered beside it (`name (2).docx`); a folder where a copy would land on one of the files this
 conversation works on — an attached document, a working copy — refuses the whole export, and so does a folder inside
-the app's scratch tree, where a saved copy would go with the window. The copies list then marks
-each copy **SAVED** (its hover says where), the chat says how many were saved, and the journal keeps what was saved
-where, so a later run's new copies read as unsaved again and Undo's older copies as saved. Saving the records beside
-the copies, saving beside the originals and writing back over the originals are not offered (backlog H4).
+the app's scratch tree, where a saved copy would go with the window. Each copy's destination is recorded with the
+md5 of the bytes written (`DocumentTask.exported`, kept in the journal): a copy is saved while a file with its
+current bytes sits where Export put it — the copy's bytes and the saved file's both agree with the fingerprint
+(`DocumentTask.export_states`). The copies list marks such a copy **SAVED** (its hover says where, and its link
+opens the saved file); a copy whose bytes moved since — opened through the window's link, which opens the working
+copy in the scratch folder, and edited and saved in Word — is marked **CHANGED** and counts as unsaved again: its
+link opens the working copy, the one with the newer content (the hover says so), and the next Export writes it
+beside the file saved before, which is never written over. A copy whose saved file no longer holds its bytes
+(written over, truncated or edited after Export) is marked **NOT SAVED** and counts as unsaved again the same way,
+its link opening the working copy; one whose saved file is gone is unsaved again, plainly. The chat says how many
+were saved, and the journal keeps what was saved
+where (an entry from before the fingerprint reads as saved, its hash taken from the saved file while it is there),
+so a later run's new copies read as unsaved again and Undo's older copies as saved. Saving the records beside the
+copies, saving beside the originals and writing back over the originals are not offered (backlog H4).
 
 ## Conversations and a clean start
 
@@ -675,8 +702,11 @@ checkpoint. It can contain document text. It never contains the API key, an appr
 acknowledgement of a visual finding; those belong to one displayed preview only.
 
 Every start of the app is a clean one: an empty conversation, nothing attached, in a new scratch folder. A clean
-close deletes the scratch folder whole — after one native question when an edited copy was never saved with Export
-(OK closes and gives the copies up, Cancel keeps the window open; the only time a close is refused); what Export
+close deletes the scratch folder whole — after one native question when an edited copy or clean PDF is not saved as
+it is now: never saved with Export, changed since it was, its saved file changed since, or gone (every copy's and
+every saved file's bytes are read again at the close, not the last fingerprint; OK closes and gives the copies up,
+Cancel keeps the window open; the only
+time a close is refused); what Export
 saved stays where you put it, and so do the render cache, the logs and `settings.json`. **New conversation** starts
 an empty one over the same scratch folder, its journal written over (the page asks the same question first; the old
 conversation's copies stay in the scratch folder until the window closes). A window that never closed — a crash, a

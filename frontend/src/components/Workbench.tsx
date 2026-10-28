@@ -2,7 +2,7 @@ import { memo, useEffect, useRef } from "react";
 import type { Attachment, View } from "../types";
 import type { Mark, Reviews } from "../lib/review";
 import type { Unticks } from "../lib/occurrences";
-import { copiesNote, pdfFolder, planHasContent, runFolder, undoLink } from "../lib/workbench";
+import { changedTip, copiesNote, copyTip, isSaved, notSavedTip, openTarget, pdfFolder, planHasContent, runFolder, undoLink } from "../lib/workbench";
 import { unverifiedLine } from "../lib/modes";
 import DocumentsTray from "./DocumentsTray";
 import Markdown from "./Markdown";
@@ -321,8 +321,8 @@ function Workbench({
                 <li key={result.output}>
                   <button
                     type="button"
-                    onClick={() => onOpen(result.output)}
-                    title={result.output}
+                    onClick={() => onOpen(openTarget(result))}
+                    title={copyTip(result)}
                     data-capability="results.copies"
                     className="flex w-full items-center gap-2 py-2 text-left text-sm text-paper-ink transition-colors hover:text-accent"
                   >
@@ -331,12 +331,28 @@ function Workbench({
                       <path d="M14 3v5h5" />
                     </svg>
                     <span className="truncate">{result.name || result.output.split(/[\\/]/).pop()}</span>
-                    {result.saved_to && (
+                    {isSaved(result) && (
                       <span
                         className="ml-auto flex-none rounded-full border border-ok/50 bg-ok/10 px-2 py-0.5 text-[10px] font-semibold tracking-wide text-ok"
                         title={`Saved to ${result.saved_to}`}
                       >
                         SAVED
+                      </span>
+                    )}
+                    {result.saved_to && result.changed_since_saved && (
+                      <span
+                        className="ml-auto flex-none rounded-full border border-warn/50 bg-warn/10 px-2 py-0.5 text-[10px] font-semibold tracking-wide text-warn"
+                        title={changedTip(result)}
+                      >
+                        CHANGED
+                      </span>
+                    )}
+                    {result.saved_to && !result.changed_since_saved && result.saved_file_changed && (
+                      <span
+                        className="ml-auto flex-none rounded-full border border-warn/50 bg-warn/10 px-2 py-0.5 text-[10px] font-semibold tracking-wide text-warn"
+                        title={notSavedTip(result)}
+                      >
+                        NOT SAVED
                       </span>
                     )}
                     {(result.unverified ?? []).length > 0 && (
@@ -391,8 +407,8 @@ function Workbench({
                   <li key={pdf.output}>
                     <button
                       type="button"
-                      onClick={() => onOpen(pdf.output)}
-                      title={pdf.output}
+                      onClick={() => onOpen(openTarget(pdf))}
+                      title={copyTip(pdf)}
                       data-capability="results.copies"
                       className="flex w-full items-center gap-2 py-2 text-left text-sm text-paper-ink transition-colors hover:text-accent"
                     >
@@ -401,12 +417,28 @@ function Workbench({
                         <path d="M14 3v5h5" />
                       </svg>
                       <span className="truncate">{pdf.name || pdf.output.split(/[\\/]/).pop()}</span>
-                      {pdf.saved_to && (
+                      {isSaved(pdf) && (
                         <span
                           className="ml-auto flex-none rounded-full border border-ok/50 bg-ok/10 px-2 py-0.5 text-[10px] font-semibold tracking-wide text-ok"
                           title={`Saved to ${pdf.saved_to}`}
                         >
                           SAVED
+                        </span>
+                      )}
+                      {pdf.saved_to && pdf.changed_since_saved && (
+                        <span
+                          className="ml-auto flex-none rounded-full border border-warn/50 bg-warn/10 px-2 py-0.5 text-[10px] font-semibold tracking-wide text-warn"
+                          title={changedTip(pdf)}
+                        >
+                          CHANGED
+                        </span>
+                      )}
+                      {pdf.saved_to && !pdf.changed_since_saved && pdf.saved_file_changed && (
+                        <span
+                          className="ml-auto flex-none rounded-full border border-warn/50 bg-warn/10 px-2 py-0.5 text-[10px] font-semibold tracking-wide text-warn"
+                          title={notSavedTip(pdf)}
+                        >
+                          NOT SAVED
                         </span>
                       )}
                       {(pdf.unverified ?? []).length > 0 ? (

@@ -366,7 +366,51 @@ def _swap_logo(inputs: Dict[str, Any], ctx: Context) -> Built:
 
 
 # ---- fonts ----
+FONT_SCOPE = ("document", "headers", "footers", "footnotes", "endnotes")
+
+
+def _pt(size: Optional[float]) -> str:
+    return f"{size:g} pt" if size else "no one size"
+
+
+def _font_request(template_name: str, font: str, size: Optional[float]) -> str:
+    return f"Match the font to the template {template_name} ({font}" + (f" {size:g} pt" if size else "") + ")"
+
+
+def _font_spec(font: str, size: Optional[float], size_from: List[float], template_name: str
+               ) -> Tuple[Dict[str, Any], str]:
+    """The font button's spec for the documents whose body text is in ``size_from`` (one size; empty when none could
+    be measured, or the template has no size: then the font alone), and its one sentence: ``font`` on the runs that
+    name a font, every style and the document defaults, and ``size`` only on the text in ``size_from``, so headings,
+    notes and the other sizes keep theirs."""
+    scope = list(FONT_SCOPE)
+    sized = {"size": size, "size_from": size_from} if size and size_from else {}
+    ops = [{"op": "set_font", "select": {"scope": scope, "runs": "all"},
+            "params": {"font": font, **sized, "only_where_defined": True}},
+           {"op": "set_style_font", "select": {"styles": "all"}, "params": {"font": font, **sized}},
+           {"op": "set_doc_defaults_font", "params": {"font": font, **sized}}]
+    assertion = {"kind": "effective_font", "value": font, "slots": ["ascii", "hAnsi", "cs"], **sized,
+                 "scope": scope, "include_paragraph_marks": True}
+    sizes_text = ", ".join(f"{s:g}" for s in size_from)
+    request = _font_request(template_name, font, size if sized else None)
+    assumptions = [f"the template's body text is {font}" + (f" {size:g} pt" if sized else ""),
+                   "Symbol and Wingdings text (bullets, special characters) keeps its font",
+                   "the East Asian font slot is left as it is"]
+    if sized:
+        assumptions.insert(1, f"only text in the documents' body size ({sizes_text} pt) changes size; headings, notes "
+                              f"and other sizes keep theirs")
+    return _spec(request, f"Set the text in {font}" + (f" {size:g} pt" if sized else "") +
+                 ": runs that name a font, every style and the document defaults.", "formatting", ops, assumptions,
+                 assertions=[assertion]), request
+
+
 def _font_template(inputs: Dict[str, Any], ctx: Context) -> Built:
+    """The template's body font and size on every document, each document's size changing only where it is that
+    document's OWN body size (the size most of its body text is in, ``profile.body_text_fonts``). The documents are
+    grouped by it: one body size in the batch, one spec, as always; two or more, a layout plan with one spec per size
+    (``_font_layouts``), so a size that is the body in one document is never "the body" in another. A document with no
+    measurable body size takes the font alone; one that cannot be read is left to the preview's refusal, with its
+    reason."""
     if ctx.template is None:
         raise RecipeError("Attach your template first.")
     from .package import DocxPackage
@@ -379,35 +423,99 @@ def _font_template(inputs: Dict[str, Any], ctx: Context) -> Built:
         raise RecipeError(f"{Path(ctx.template).name} has no one body font (its text is too short or too mixed to "
                           f"tell). Try it in Default mode, or use a template with more body text.")
     font, size = top[0]["font"], top[0]["size_pt"]
-    sizes: List[float] = []
+    name = Path(ctx.template).name
+    own: Dict[str, Optional[float]] = {}           # str(resolved path) → its body size; None where none is measurable
+    unread: Dict[str, str] = {}
     for path in ctx.documents:
+        key = str(Path(path).resolve())
         try:
             found = body_text_fonts(DocxPackage.from_path(path))
-        except Exception:  # noqa: BLE001 — an unreadable document is set aside by the preview, with its reason
+        except Exception as e:  # noqa: BLE001 — an unreadable document is set aside by the preview, with its reason
+            unread[key] = type(e).__name__
             continue
-        if found and found[0]["size_pt"]:
-            sizes.append(found[0]["size_pt"])
-    size_from = sorted(set(sizes))
-    scope = ["document", "headers", "footers", "footnotes", "endnotes"]
-    sized = {"size": size, "size_from": size_from} if size and size_from else {}
-    ops = [{"op": "set_font", "select": {"scope": scope, "runs": "all"},
-            "params": {"font": font, **sized, "only_where_defined": True}},
-           {"op": "set_style_font", "select": {"styles": "all"}, "params": {"font": font, **sized}},
-           {"op": "set_doc_defaults_font", "params": {"font": font, **sized}}]
-    assertion = {"kind": "effective_font", "value": font, "slots": ["ascii", "hAnsi", "cs"], **sized,
-                 "scope": scope, "include_paragraph_marks": True}
-    sizes_text = ", ".join(f"{s:g}" for s in size_from)
-    request = f"Match the font to the template {Path(ctx.template).name} ({font}" + \
-              (f" {size:g} pt" if sized else "") + ")"
-    assumptions = [f"the template's body text is {font}" + (f" {size:g} pt" if sized else ""),
-                   "Symbol and Wingdings text (bullets, special characters) keeps its font",
-                   "the East Asian font slot is left as it is"]
-    if sized:
-        assumptions.insert(1, f"only text in the documents' body size ({sizes_text} pt) changes size; headings, notes "
-                              f"and other sizes keep theirs")
-    return Built(_spec(request, f"Set the text in {font}" + (f" {size:g} pt" if sized else "") +
-                       ": runs that name a font, every style and the document defaults.", "formatting", ops,
-                       assumptions, assertions=[assertion]), [], request)
+        own[key] = found[0]["size_pt"] if found and found[0]["size_pt"] and size else None
+    groups: Dict[Optional[float], List[str]] = {}
+    for key, body in own.items():
+        groups.setdefault(body, []).append(key)
+    if len(groups) <= 1:
+        body = next(iter(groups), None)
+        spec, request = _font_spec(font, size, [body] if body else [], name)
+        return Built(spec, [], request)
+    return _font_layouts(font, size, name, groups, own, unread, ctx)
+
+
+def _font_layouts(font: str, size: float, name: str, groups: Dict[Optional[float], List[str]],
+                  own: Dict[str, Optional[float]], unread: Dict[str, str], ctx: Context) -> Built:
+    """Two or more body sizes in the batch: a layout plan with one spec per body size, each on the documents whose
+    body text is that size. A layout covers structure patterns (``layouts.route``), so documents built alike that
+    differ in body size take the size most of them have (the first attached decides a tie) and the others are left
+    out with the reason, to be pressed alone. Each layout passes the one gate on its own documents
+    (``compiler.compose_submission``, as ``body_match``'s do); a layout the gate refuses leaves its documents out with
+    the gate's reason. One body size left once the rest are left out is the ordinary single spec."""
+    from collections import Counter
+    from . import compiler
+    from .body_match import gate_reason
+    from .layouts import layout_spec, plan_from_submission, validate_layout_plan
+    batch = ctx.batch()
+    order = {str(Path(p).resolve()): i for i, p in enumerate(ctx.documents)}
+    left: Dict[str, str] = {}
+    patterns: Dict[Optional[float], List[str]] = {}           # body size → the patterns whose documents take it
+    for pat in batch.prof["patterns"]:
+        paths = [str(Path(p).resolve()) for p in batch.pattern_paths(pat)]
+        for p in paths:
+            if p in unread:   # the profiler read it, the size reading could not: never planned under another's size
+                left[p] = f"Not matched: it could not be read ({unread[p]})."
+        sized = [p for p in paths if p in own]
+        if not sized:
+            continue
+        tally = Counter(own[p] for p in sized)
+        winner = max(tally, key=lambda b: (tally[b], -min(order[p] for p in sized if own[p] == b)))
+        first = min((p for p in sized if own[p] == winner), key=order.__getitem__)
+        for p in sized:
+            if own[p] != winner:
+                left[p] = (f"Not matched with the others: it is built like {Path(first).name}, whose body text is "
+                           f"{_pt(winner)} where its own is {_pt(own[p])}, and documents built alike take one plan. "
+                           f"Press the button with it alone, or try it in Default mode.")
+        patterns.setdefault(winner, []).append(pat["pattern_id"])
+    live = {body: [p for p in docs if p not in left] for body, docs in groups.items()}
+    live = {body: docs for body, docs in live.items() if docs}
+    if len(live) <= 1:
+        body = next(iter(live), None)
+        spec, request = _font_spec(font, size, [body] if body else [], name)
+        return Built(spec, [], request, left_out=left)
+    request = _font_request(name, font, size)
+    layouts: List[Dict[str, Any]] = []
+    for body in sorted(live, key=lambda b: min(order[p] for p in live[b])):
+        docs, pids = live[body], patterns.get(body) or []
+        if not pids:
+            continue           # the profiler lists no pattern for these: the preview sets them aside, with why
+        spec, _ = _font_spec(font, size, [body] if body else [], name)
+        layout = {"id": f"L{len(layouts) + 1}",
+                  "label": ("body text " + _pt(body) if body else "no one body size") + ": "
+                           + ", ".join(Path(p).name for p in docs[:3]) + (" …" if len(docs) > 3 else ""),
+                  "pattern_ids": pids, "spec": spec}
+        stub = {"kind": "layouts", "request": request, "layouts": [layout]}
+        outcome, errors = compiler.compose_submission(layout_spec(stub, layout), batch, [request], patterns=pids,
+                                                      leave_out=list(left))
+        if errors:
+            why = gate_reason(errors)
+            for p in docs:
+                left[p] = f"Not matched: {why}"
+            continue
+        layout["spec"] = outcome
+        layouts.append(layout)
+    if not layouts:
+        return Built(None, [], request, left_out=left, gated=True)
+    plan = plan_from_submission(
+        {"summary": f"Set the text in {font} {size:g} pt: runs that name a font, every style and the document "
+                    f"defaults; each document's size changes only where it is that document's own body size.",
+         "assumptions": [f"the template's body text is {font} {size:g} pt",
+                         "each document's body size is its own: the size most of its body text is in",
+                         "Symbol and Wingdings text (bullets, special characters) keeps its font",
+                         "the East Asian font slot is left as it is"],
+         "layouts": layouts}, request)
+    validate_layout_plan(plan)
+    return Built(None, [], request, outcome=plan, left_out=left, gated=True)
 
 
 def _body_formatting(inputs: Dict[str, Any], ctx: Context) -> Built:

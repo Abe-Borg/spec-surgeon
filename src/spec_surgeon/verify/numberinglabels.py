@@ -192,3 +192,33 @@ def v_label_fonts_effect(source, output, styles, fonts: Dict[str, str],
 
 
 NUMBERING_LABEL_KINDS: Dict[str, Any] = {"numbering_labels": _numbering_labels}
+
+
+# the contract a custom method's writer reads (``props.KIND_CONTRACTS``; the verifier owns the text)
+from .props import KIND_CONTRACTS, KIND_EXAMPLES  # noqa: E402
+
+KIND_CONTRACTS["numbering_labels"] = (
+    'The fonts, size, bold, italic and colour of list labels (the numbers and bullets) at named list levels. Keys: '
+    '"numbering_part": the numbering part the main part\'s numbering relationship names (the assertion\'s, the '
+    'source\'s and the output\'s must be the same part; it must be in intended_parts); "levels": a non-empty list '
+    'of {"abstractNum": a w:abstractNumId (integer), "ilvl": 0–8, "set": {...}} or {"num": a w:numId (integer) '
+    'whose w:num holds one w:lvlOverride with a w:lvl at that ilvl, "ilvl": 0–8, "set": {...}} — no level named '
+    'twice; "expected_levels": the number of levels listed. "set" (non-empty, no other key): "fonts": {slot: font '
+    'name} for the slots ' + ", ".join(_V_SLOTS) + ' — w:rFonts/@w:<slot> is the name and the slot\'s theme '
+    'attribute (' + ", ".join(_V_SLOTS.values()) + ') is gone, since a theme font overrides the name beside it; '
+    '"size": points, a whole or half point, 1–1638 (w:sz and w:szCs its half-points); "bold" / "italic": true or '
+    'false (w:b and w:bCs / w:i and w:iCs, on without w:val or with w:val="0"); "color": six hex digits or "auto" '
+    '(w:color with that w:val alone, its theme attributes gone). Compared: the SOURCE numbering part with each '
+    'listed level\'s w:rPr holding its other children as they were and exactly the written elements, once each '
+    '(the order inside w:rPr is not compared; a level without a w:rPr gains one where CT_Lvl puts it), must equal '
+    'the output part whole — w:start, w:numFmt, w:lvlText, w:lvlRestart, w:isLgl, w:suff, w:lvlJc, each level\'s '
+    'w:pPr and w:pStyle, the w:num / w:abstractNum graph and every override included — so every number Word shows '
+    'is the source\'s; the whole member is then proven. Refused: a level not uniquely defined or named twice, an '
+    'unknown key or value, a picture label (w:lvlPicBulletId), a font slot written over a symbol font (the glyph '
+    'would change), no numbering part.')
+KIND_EXAMPLES["numbering_labels"] = {
+    "kind": "numbering_labels", "numbering_part": "word/numbering.xml",
+    "levels": [{"abstractNum": 0, "ilvl": 0, "set": {"fonts": {"ascii": "Arial", "hAnsi": "Arial"}, "size": 10,
+                                                    "bold": True}},
+               {"num": 3, "ilvl": 1, "set": {"color": "auto", "italic": False}}],
+    "expected_levels": 2}

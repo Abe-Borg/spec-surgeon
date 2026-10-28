@@ -15,6 +15,7 @@ them was built; `git log --all -- 'docs/PLAN-*'` finds them, with their findings
 | Item | What the run showed | What to build |
 | --- | --- | --- |
 | S4 — what a run left open | Over test-set-2 (13 specifications, eight owners): the reference rules find no section number in seven of them (VA, Wisconsin, Port of Portland, Michigan layouts); a chain preview repeats the spec's summary and assumptions for each step; after an outcome-planner question the next reply still goes to that planner, not the assistant (seen again over test-set-3) | Reference rules for those layouts; a chain preview that says its summary once; the reply after an outcome-planner question goes back to the assistant |
+| Font button: documents built alike at two body sizes | **Match font to template** plans per body size (one layout per size, `recipes._font_layouts`), and a layout routes by structure pattern (`layouts.route`): two documents of one pattern whose body sizes differ cannot take two sizes in one press, so the size most of them have wins and the rest wait under Left untouched with the reason, to be pressed alone | A layout that names its documents beside its patterns (`validate_layout_plan`, `route`, the `applies_to` pin and the approval token), so one press covers them — only if the owner's runs meet the case |
 
 ### Word as the judge of tracked changes (W1–W4)
 
@@ -124,8 +125,10 @@ specifications, Windows and Word, and only the owner can do them. Record what a 
 - **The scratch folder and Export (H1, built 2026-10-27):** a real batch attached, previewed, run, undone and
   saved with Export from the installed app (the dialog opening where the last export went; a second export of the
   same copies writing nothing; a different file under a copy's name left alone and the copy numbered; the originals'
-  folder refused); the saved copies open in Word; closing with an unsaved copy asks once in a native dialog, Cancel
-  keeps the window open and OK closes; after the window closes nothing of the session is under
+  folder refused); the saved copies open in Word (a copy's link opens the saved file; after a change to the working
+  copy in Word, through the folder button, the list says CHANGED beside it, the link opens the working copy, the
+  close asks again, and the next Export writes it beside the file saved before); closing with an unsaved copy asks
+  once in a native dialog, Cancel keeps the window open and OK closes; after the window closes nothing of the session is under
   `%LOCALAPPDATA%\Spec Surgeon\scratch` but `.render-cache`, and `%APPDATA%\Spec Surgeon` holds only
   `settings.json`; the process killed mid-session and the next start restoring the conversation and its copies from
   the scratch folder, then sweeping it at that window's clean close; a copy left open in Word at the close and the
@@ -136,6 +139,12 @@ specifications, Windows and Word, and only the owner can do them. Record what a 
   change your mind on that batch in the installed app: Discard a preview, go back to a button and find its form as
   you left it, run two buttons and Undo twice (the next button builds on the right copies each time, and every copy
   is still in its session folder under the scratch folder), and Undo after a crash's restore.
+- **Match font to template, per body size (the stress-test finding; built 2026-10-28):** the finding's two documents
+  attached together with the 11 pt template: the preview shows two groups, one per body size, each sentence naming
+  its size; in the copies the 11 pt-body document's 9 pt table text is still 9 pt (82 runs went to 11 pt before)
+  and the 9 pt-body document's body is 11 pt with its headings and notes as they were; the same document attached
+  alone gives the same copy. Then two specifications built alike (one structure pattern) with different body sizes:
+  the odd one waits under Left untouched with the reason, and pressed alone it is matched at its own size.
 - **Default mode:** a choice's drafted wording edited before it is picked, and the copy carrying the edit.
 - **A request kept to one document** (built 2026-10-27): over a real batch, "only 23" (and "just the Michigan one",
   "in 21 and 22, …") plans, previews and runs those documents alone, every other one under Left untouched and
