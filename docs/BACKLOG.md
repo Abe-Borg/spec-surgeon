@@ -157,7 +157,11 @@ specifications, Windows and Word, and only the owner can do them. Record what a 
   copy held on V7 because its own section number or title rewraps the header (the record's V7 line reads "as this
   document's plan fills them, at its own text widths"); then specifications with other side margins than the
   template's, and one with a landscape section, the same; then one with its header distance not aligned
-  (`align_header_footer_distance` off, a header 1" from the edge): V7 still holds that copy.
+  (`align_header_footer_distance` off, a header 1" from the edge): the copy keeps its header 1" from the edge and
+  passes V7, its record's V7 line reading "and its own header/footer distances" (the deep-dive stress test's D4: the
+  report's Houston and Michigan copies, kept at their own distances as asked, were held on V7 and recovery spent 35–40
+  calls on them) — run the report's three-file template request again (VA, Houston, Michigan, distances kept) and
+  see all three copies created without recovery.
 - **Default mode:** a choice's drafted wording edited before it is picked, and the copy carrying the edit.
 - **Changing your mind in Default and Obliterate** (built 2026-10-28): over a real batch in the installed app, a
   preview **Discard preview**d (nothing created, the copies list as it was, the next message planned as a new

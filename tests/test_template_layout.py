@@ -2,7 +2,8 @@
 makes it show — its fills in the slots, in capitals where caps_fills asks, each template section the output uses at
 the output section's text width with tab stops rescaled as the plan declares, the template's vertical layout kept —
 checked here without a renderer against the copy the op makes: the same words per header/footer paragraph, the same
-effective tab stops, every other member the template's own. The rendered comparisons are in tests/test_template.py
+effective tab stops, every other member the template's own; and, where the plan keeps the document's header/footer
+distances, the source's distances (the deep-dive stress test's D4). The rendered comparisons are in tests/test_template.py
 (test_v7_template_reference_*)."""
 from __future__ import annotations
 
@@ -44,10 +45,12 @@ def params(tpl: Path, **kw) -> dict:
 
 
 def made(src: bytes, prm: dict):
-    """The plan, the copy (verified: V1–V10 pass) and its reference with the section map."""
+    """The plan, the copy (verified: V1–V10 pass) and its reference with the section map. The plan carries the
+    approved op and its params, as a spec's plan does (``editspec.plan_spec``)."""
     pkg = DocxPackage(src)
     frag = get_op(OP).plan(pkg, {"sections": "all"}, prm)
     plan = merge_fragments([frag]).to_dict()
+    plan["ops"] = [{"op": OP, "select": {"sections": "all"}, "params": prm}]
     work = pkg.copy()
     get_op(OP).apply(work, frag)
     out = work.output_bytes()
@@ -55,7 +58,7 @@ def made(src: bytes, prm: dict):
     assert rec.passed, rec.to_markdown()
     n = len(sect_prs(VPackage(out).xml("word/document.xml")))
     ref, smap = template_reference(plan, out, template_section_map(prm["template_sections"], n),
-                                   prm.get("kinds", KINDS))
+                                   prm.get("kinds", KINDS), source=src)
     return plan, out, ref, smap
 
 
@@ -101,6 +104,62 @@ def test_the_reference_shows_the_documents_fills_at_its_text_width(template):
     assert {n for n in tpl.names if rpkg.read(n) != tpl.read(n)} == \
            {"[Content_Types].xml", "word/_rels/document.xml.rels", "word/document.xml"}
     assert rpkg.integrity_problems() == tpl.integrity_problems()       # none of its own (the reader's .rels quirk)
+
+
+def margins(pkg: VPackage):
+    return [[sp.find(W + "pgMar").get(W + k) for k in ("top", "bottom", "header", "footer")]
+            for sp in sect_prs(pkg.xml("word/document.xml"))]
+
+
+def test_a_plan_that_keeps_the_distances_holds_the_copy_to_the_sources(template):
+    """align_header_footer_distance false: the copy keeps the document's header and footer distances, and so does its
+    reference — read from the source, section by section; the template's top and bottom margins, page height and
+    titlePg stay. Aligned, the reference keeps the template's distances (above)."""
+    tpl = VPackage(template.read_bytes())
+    src = build("21 22 00", "CLEAN-AGENT", header_distance_twips=1440, footer_distance_twips=1080)
+    plan, out, ref, smap = made(src, params(template, align_header_footer_distance=False))
+    assert smap == [0, 1]
+    t_m, s_m, o_m, r_m = (margins(p) for p in (tpl, VPackage(src), VPackage(out), VPackage(ref)))
+    assert [m[2:] for m in s_m] == [m[2:] for m in o_m] == [m[2:] for m in r_m] == [["1440", "1080"]] * 2
+    assert [m[:2] for m in r_m] == [m[:2] for m in t_m] and [m[2:] for m in t_m] != [m[2:] for m in r_m]
+    _, _, aligned, _ = made(src, params(template))
+    assert [m[2:] for m in margins(VPackage(aligned))] == [m[2:] for m in t_m]
+
+
+def test_sections_with_their_own_distances_get_reference_sections_of_their_own(template):
+    """Two body sections mapped to one template section at one width, their distances differing in the source: one
+    reference section each, so neither is held to the other's. A section that states no distance has none in its
+    reference section either (Word's default for both)."""
+    pkg = DocxPackage(build("21 22 00", "CLEAN-AGENT"))           # a cover section and a body section
+    root = pkg.xml(pkg.main_part())
+    body = root.find(W + "body")
+    final = body.find(W + "sectPr")
+    middle = copy.deepcopy(final)                                  # a body section before the last, header at 1000
+    for el in middle.findall(W + "headerReference") + middle.findall(W + "footerReference"):
+        middle.remove(el)
+    middle.find(W + "pgMar").set(W + "header", "1000")
+    p = etree.Element(W + "p")
+    etree.SubElement(p, W + "pPr").append(middle)
+    body.insert(list(body).index(final), p)
+    del final.find(W + "pgMar").attrib[W + "footer"]               # the last states no footer distance
+    pkg.write_xml(pkg.main_part(), root)
+    src = pkg.output_bytes()
+    _, out, ref, smap = made(src, params(template, align_header_footer_distance=False))
+    s_secs = sect_prs(VPackage(src).xml("word/document.xml"))
+    assert len(s_secs) == 3 and smap == [0, 1, 2]
+    r_secs = sect_prs(VPackage(ref).xml("word/document.xml"))
+    assert [(sp.find(W + "pgMar").get(W + "header"), sp.find(W + "pgMar").get(W + "footer")) for sp in r_secs] == \
+           [(sp.find(W + "pgMar").get(W + "header"), sp.find(W + "pgMar").get(W + "footer")) for sp in s_secs]
+    assert r_secs[2].find(W + "pgMar").get(W + "footer") is None
+
+
+def test_a_plan_that_keeps_the_distances_needs_the_source_to_read_them_from(template):
+    src = build("21 22 00", "CLEAN-AGENT", header_distance_twips=1440)
+    plan, out, _, _ = made(src, params(template, align_header_footer_distance=False))
+    with pytest.raises(ValueError, match="no source was given"):
+        template_reference(plan, out, [0, 1], KINDS)
+    with pytest.raises(ValueError, match=r"the source has 1 section\(s\), the output 2"):
+        template_reference(plan, out, [0, 1], KINDS, source=build("21 22 00", "CLEAN-AGENT", single_section=True))
 
 
 def test_a_caps_fill_shows_in_capitals_by_formatting(template):

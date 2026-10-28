@@ -139,7 +139,8 @@ jobs). Details: `docs/CONVERSATIONAL_DESKTOP.md`.
     original's pages show that the copy's do not, less what the plan removes — V6's warning, never a FAIL;
     `report.words_missing_sentence` is its one wording), `template_layout.py` (V7's template reference: the template
     as each document's plan makes it show, its fills in the slots and each section at the document's own text
-    width, the template's vertical layout kept — live QA finding F08), `explain.py`, `patterns.py` (the verifier's
+    width, the template's vertical layout kept — live QA finding F08 — but the source's own header/footer distances
+    where the plan keeps them, `keeps_distances` — the deep-dive stress test's D4), `explain.py`, `patterns.py` (the verifier's
     own bounded patterns, `v_compile`/`v_search`, the same deadline and length limit written independently: a
     pattern past its deadline is a `ValueError`, a failed check with that reason, never an exception out of the
     suite).

@@ -45,7 +45,8 @@ in the chat and under each sample, from the independent checker's V2 record of e
 model (B7, T56, 1g; `samples[].text_changes` in `docs/WEB_API.md`). Updated 2026-10-28 after the deep-dive stress test:
 an answer from Claude's visual check without its summary or its findings is a skipped review, never a clean one (D1,
 B6, T20); a custom method's samples and copies get the page checks a plan's get, by the plan the method predicted,
-in the preview and before delivery (D3, B5).
+in the preview and before delivery (D3, B5); a header/footer template request that keeps each document's
+header/footer distances is held by V7 to the document's own distances, read from the original, not the template's (D4).
 Paths are relative to `src/spec_surgeon/` unless they start with `frontend/`, `tests/` or `docs/`.
 
 **Verification column:**
