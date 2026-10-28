@@ -400,7 +400,9 @@ How each is labelled:
   connection, the proxy's tunnel or a pooled connection was never made (`llm.never_sent`: the HTTP stack's
   `ConnectError`, `ConnectTimeout`, `ProxyError` or `PoolTimeout` before the stream opened), which keeps none
   (`CallBudget._release`) and still counts as a failed call and an attempt (`tests/test_call_budget.py`; the
-  stress test's network-blocked runs had shown about $12.57 spent with no request sent).
+  stress test's network-blocked runs had shown about $12.57 spent with no request sent); and one Anthropic refused for
+  its key or its permission before running it (`llm.refused_unrun`: the SDK's HTTP 401 or 403 before the stream
+  opened, no model run), released the same way (the deep-dive stress test's 401 answers had kept $4.16 to $24.27).
 - A stopped call is settled from the stream plus the 150 tokens/s bound.
 - Re-sent attempts are counted and billed (each one that reached Anthropic).
 

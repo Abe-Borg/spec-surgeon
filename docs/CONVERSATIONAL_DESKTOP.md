@@ -708,7 +708,9 @@ recovery critic) are not cached at all beyond the instructions. Three things kee
   check cannot be kept; Continue then goes on without a check for that request. The check counts estimates, not
   Anthropic's bill; a refusal re-run on another model inside one call can go past a step's reservation. A failed
   step keeps its reservation as spent (it may have been billed), unless it never connected — no network, a name that
-  does not resolve, a proxy that refused the tunnel (`llm.never_sent`) — which reached nobody and counts nothing.
+  does not resolve, a proxy that refused the tunnel (`llm.never_sent`) — which reached nobody and counts nothing, or
+  Anthropic refused it for its key or its permission before running it (HTTP 401 or 403, `llm.refused_unrun`), which
+  ran no model and counts nothing either.
 
 **Fast responses** (Settings) is the one way to trade money for time, and it is yours to choose: off until you turn
 it on, with both sides on screen first. On, every call to a model Anthropic serves fast (`llm.FAST_PRICES`) asks for
