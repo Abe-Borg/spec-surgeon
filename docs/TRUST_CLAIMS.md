@@ -48,7 +48,8 @@ B6, T20); a custom method's samples and copies get the page checks a plan's get,
 in the preview and before delivery (D3, B5); a header/footer template request that keeps each document's
 header/footer distances is held by V7 to the document's own distances, read from the original, not the template's (D4).
 Updated 2026-10-28 with the stress test's follow-ups: in Obliterate, a custom method's copy that changes a part no check
-reads fails UNREAD and is delivered UNVERIFIED (D2, T56).
+reads fails UNREAD and is delivered UNVERIFIED (D2, T56); Claude's visual check is told each sample's page counts
+and which pages it is shown, so it says a page it was not shown was not shown, never that it was not rendered (T20, B6).
 Paths are relative to `src/spec_surgeon/` unless they start with `frontend/`, `tests/` or `docs/`.
 
 **Verification column:**
@@ -487,7 +488,7 @@ Lv1 marks a claim in "Why trust it?"; D marks one in the dossier (section in bra
 | T17 | A declined request may be answered by another model the provider chooses; the record names it | D(engine, limits) | `llm.FALLBACK_BETA`, `fallbacks="default"`, `llm.served` | facts (presence) |
 | T18 | Re-sends: 2, after 5 s and 20 s, honouring a retry-after up to 60 s | D(runtime B10) | `llm.RETRIES`, `RETRY_DELAYS`, `RETRY_AFTER_CAP` | facts |
 | T19 | A stopped call is settled at most 150 output tokens per second it ran | D(money) | `llm.STOPPED_OUTPUT_RATE` | facts |
-| T20 | The visual check sees up to 2 pages per sample, before and after; it is advisory; a blocking finding asks you to confirm | D(runtime B6, terms) | `vision.review_samples` (`[:2]`), `vision.py` docstring, `DocumentTask.view` | facts (`visualPagesPerSample` pinned by source text) |
+| T20 | The visual check sees up to 2 pages per sample, before and after, and is told each sample's page counts and which pages it is shown (`vision._pages_note`); it is advisory; a blocking finding asks you to confirm | D(runtime B6, terms) | `vision.review_samples` (`[:2]`), `vision.py` docstring, `DocumentTask.view` | facts (`visualPagesPerSample` pinned by source text) |
 | T21 | Samples: 8 representative files (or every file in a smaller batch), at least one per layout, so more when there are more layouts | D(runtime B5, limits) | `sampling.representative_samples`, `DEFAULT_SAMPLE_FILES` | facts |
 | T22 | view_pages renders at most 3 pages per call, on your machine | D(blast radius) | `compiler._Batch.view_pages` (`[:3]`) | facts (source text) |
 | T23 | Read tools take a file's label, never a path; only attached documents, the template and attached pictures/tables can be read | D(blast radius) | `compiler._Batch.pkg`, `inputs.read_input_file` | manual |

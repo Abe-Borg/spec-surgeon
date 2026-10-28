@@ -80,6 +80,27 @@ def test_the_visual_check_sends_labelled_before_and_after_pages_and_validates_fi
     assert "advisory" in rv.to_text() and "PASS" not in rv.to_text()
 
 
+def test_the_visual_check_is_told_how_many_pages_were_rendered_and_which_it_is_shown(tmp_path):
+    """The deep-dive stress test: the check sees page 1 and the first page whose words moved, and said later pages
+    "were not rendered" when they were rendered and not sent. It is now told each sample's page counts, the pages it
+    is shown, and to call a page it cannot see not shown."""
+    s = sample(tmp_path, pages=(1, 3))
+    s.pages_before, s.pages_after = 17, 19
+    s.source_pdf = make_pdf(tmp_path / "pdf" / "before" / "x.pdf", pages=17, words="before")
+    s.output_pdf = make_pdf(tmp_path / "pdf" / "after" / "x.pdf", pages=19, words="after")
+    unknown = sample(tmp_path / "b", name="21 05 00 – OTHER.docx")
+    fake = FakeClient(resp(tool("submit_review", {"summary": "Looked.", "findings": []})))
+    rv = review_samples("REQUEST: widen the footer boxes", [s, unknown], tmp_path / "review", lambda: fake)
+    last = fake.requests[0]["messages"][0]["content"][-1]["text"]
+    assert not rv.skipped and rv.pages_sent == 6
+    assert "PAGES: every page of each sample was rendered, before and after" in last
+    assert "  21 00 00 – SPEC 0.docx: 17 page(s) BEFORE, 19 page(s) AFTER; shown here: page 1, 3" in last
+    assert "  21 05 00 – OTHER.docx: an unknown number of pages BEFORE, an unknown number of pages AFTER; " \
+           "shown here: page 1" in last
+    assert "never that it was not rendered" in last
+    assert last.index("PAGES:") < last.index("widen the footer boxes")
+
+
 def test_visual_review_preserves_the_selected_model_response_policy(tmp_path):
     fake = FakeClient(resp(tool("submit_review", {"summary": "Reviewed.", "findings": []})))
     review = review_samples("format", [sample(tmp_path)], tmp_path / "review", lambda: fake,

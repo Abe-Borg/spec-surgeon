@@ -315,6 +315,19 @@ def _read_answer(rv: VisualReview, resp: Any, model: str, sent: Dict[str, List[i
     rv.summary, rv.findings = summary.strip(), findings
 
 
+def _pages_note(sent: Dict[str, List[int]], counts: Dict[str, tuple]) -> str:
+    """How many pages each sample's renders have, and which of them are shown: the pages are rendered whole and only
+    a few are sent, so Claude said later pages "were not rendered" when they simply were not sent (the deep-dive
+    stress test's review sampling)."""
+    def count(n: Any) -> str:
+        return f"{n} page(s)" if isinstance(n, int) and not isinstance(n, bool) else "an unknown number of pages"
+    lines = [f"  {name}: {count(counts.get(name, (None, None))[0])} BEFORE, {count(counts.get(name, (None, None))[1])} "
+             f"AFTER; shown here: page {', '.join(str(n) for n in pages)}" for name, pages in sent.items()]
+    return ("PAGES: every page of each sample was rendered, before and after; only the pages labelled above are "
+            "shown to you.\n" + "\n".join(lines) + "\nA page not shown was rendered but not sent to you: say it was "
+            "not shown, never that it was not rendered.")
+
+
 def review_samples(intent: str, samples: Sequence[Any], work_dir: Path, client_factory: Callable[[], Any],
                    model: Optional[str] = None, log: Optional[Callable[[str], None]] = None, *,
                    max_output_tokens: Optional[int] = None, effort: Optional[str] = None) -> VisualReview:
@@ -328,6 +341,7 @@ def review_samples(intent: str, samples: Sequence[Any], work_dir: Path, client_f
     rv = VisualReview(model=model)
     labelled: List[tuple] = []
     sent: Dict[str, List[int]] = {}
+    counts: Dict[str, tuple] = {}                 # label → (pages before, pages after), as the renders had them
     content: List[Dict[str, Any]] = []
     try:
         # each sample by its label (compiler.file_labels over every sample, as the preview lists them): its name, or
@@ -346,6 +360,7 @@ def review_samples(intent: str, samples: Sequence[Any], work_dir: Path, client_f
                 if before and after:
                     labelled += [(f"{name} — page {n} — BEFORE", before[0]), (f"{name} — page {n} — AFTER", after[0])]
                     sent.setdefault(name, []).append(n)
+                    counts[name] = (getattr(s, "pages_before", None), getattr(s, "pages_after", None))
         for lab, png in labelled:
             content += [{"type": "text", "text": lab}, image_block(png)]
     except Exception as e:  # noqa: BLE001 — a page that cannot be rasterised or read: no review, never a broken preview
@@ -361,8 +376,8 @@ def review_samples(intent: str, samples: Sequence[Any], work_dir: Path, client_f
     except Exception as e:  # noqa: BLE001 — no anthropic package, no key, or a defect: the preview stands without a review
         _skip_for(rv, e, 0, "Claude could not be set up")
         return rv
-    content.append({"type": "text", "text": "WHAT THE USER ASKED AND WHAT THE ENGINE DID:\n" + str(intent or "") +
-                    "\n\nReview the pages above and call submit_review."})
+    content.append({"type": "text", "text": _pages_note(sent, counts) + "\n\nWHAT THE USER ASKED AND WHAT THE ENGINE DID:\n"
+                    + str(intent or "") + "\n\nReview the pages above and call submit_review."})
     rv.pages_sent = len(labelled)
     say(f"Claude's visual check: {len(labelled)} page image(s) of {len(sent)} sample file(s)…")
     _record(rv, lambda: {"turn": 0, "role": "user", "content": llm.transcript_content(content)})
