@@ -35,7 +35,6 @@ from __future__ import annotations
 
 import copy
 import posixpath
-import re
 from typing import Any, Dict, List, Optional, Set, Tuple
 
 from lxml import etree
@@ -45,6 +44,7 @@ from .edits import Item, part_revision_ids, v_items
 from .markup import check_content_types, check_paragraph, check_relationships, tree_difference
 from .props import Ctx, sig
 from .reader import REL, VPackage, W
+from .patterns import v_compile
 
 _V_EXTENDED = "http://schemas.microsoft.com/office/2011/relationships/commentsExtended"
 _V_IDS = "http://schemas.microsoft.com/office/2016/09/relationships/commentsIds"
@@ -109,7 +109,7 @@ def _v_threads(book: _VBook, params: Dict[str, Any]) -> List[str]:
     else:
         if not isinstance(pattern, str) or not pattern:
             raise ValueError("text_regex must be a pattern")
-        rx = re.compile(pattern)
+        rx = v_compile(pattern, where="a comment's text")
         chosen = [cid for cid in book.order if rx.search(book.text(cid))]
     tops = {book.root_of(cid) for cid in chosen}
     return [cid for cid in book.order if cid in tops]

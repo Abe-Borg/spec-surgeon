@@ -26,6 +26,7 @@ from ..ooxml import RevisionStamp, block_full_text, file_uses_date_utc, max_revi
 from ..package import DocxPackage
 from . import prose, register
 from .base import JobException, Op, PlanFragment
+from .patterns import compile_pattern
 from .replace_table import COMMON_PARAMS, SELECT_SCHEMA, default_author, resolve_scope, tracked_of
 from .selectors import StyleSheet, check_paragraph_selector, paragraph_selected, scope_parts
 from .slots import field_runs
@@ -53,9 +54,9 @@ def compile_rules(raw: Any) -> List[Tuple[Any, str, str]]:
         if "match_case" in r and not isinstance(r["match_case"], bool):
             raise JobException(f"rule {n}: match_case must be true or false", "bad-params")
         try:
-            rx = re.compile(r["match"], 0 if r.get("match_case") else re.IGNORECASE)
-        except re.error as e:
-            raise JobException(f"rule {n}: bad regex {r['match']!r} ({e})", "bad-params")
+            rx = compile_pattern(r["match"], 0 if r.get("match_case") else re.IGNORECASE, where="an option's text")
+        except JobException as e:
+            raise JobException(f"rule {n}: {e.reason}", e.code, e.details) from None
         out.append((rx, r["action"], f"{r['action']} {r['match']!r}"))
     return out
 

@@ -22,7 +22,6 @@ The verifier derives all of it again (verify/textops.py, kind ``end_of_section``
 """
 from __future__ import annotations
 
-import re
 from typing import Any, Dict, List, Optional, Tuple
 
 from lxml import etree
@@ -32,6 +31,7 @@ from ..ooxml import (PPR_ORDER, RPR_ORDER, RevisionStamp, file_uses_date_utc, in
 from ..package import DocxPackage, W
 from . import prose, register, tables
 from .base import BlockDiff, JobException, Op, PlanFragment
+from .patterns import compile_pattern
 from .apply_header_footer_template import fill_rule_words
 from .insert_paragraph import inherited_ppr, inherited_rpr
 from .replace_table import default_author, tracked_of
@@ -146,9 +146,9 @@ class EnsureEndOfSection(Op):
         if any(ord(c) < 32 for c in text):
             raise JobException("'text' holds a control character", "bad-params")
         try:
-            detect = re.compile(params.get("detect_regex", DEFAULT_DETECT))
-        except re.error as e:
-            raise JobException(f"bad detect_regex ({e})", "bad-params")
+            detect = compile_pattern(params.get("detect_regex", DEFAULT_DETECT), where="a body paragraph's text")
+        except JobException as e:
+            raise JobException(f"bad detect_regex ({e.reason})", e.code, e.details) from None
         formatting = params.get("formatting", "style")
         if formatting not in ("style", "copy"):
             raise JobException("formatting must be 'style' or 'copy'", "bad-params")
@@ -208,7 +208,7 @@ class EnsureEndOfSection(Op):
                 if style is not None:                       # the new line names it: removing it beside is a conflict
                     frag.touches.append((sheet.part, f"style:{style}", "verify"))
             else:
-                rx = re.compile(params["copy_from_regex"])
+                rx = compile_pattern(params["copy_from_regex"], where="a body paragraph's text")
                 hits = [i for i, p in enumerate(pars) if p.getparent() is body and rx.search(RunText(p).text)]
                 if len(hits) != 1:
                     raise JobException(f"copy_from_regex matches {len(hits)} body paragraph(s); exactly one needed",

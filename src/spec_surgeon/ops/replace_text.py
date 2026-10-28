@@ -53,6 +53,7 @@ from ..ooxml import (FULL_TEXT_TAGS, RevisionStamp, XML_SPACE, ancestor, block_s
                      split_run_at_text, to_del_text)
 from . import prose, register
 from .base import BlockDiff, JobException, Op, PlanFragment
+from .patterns import compile_pattern
 from .elsewhere import places_text
 from .selectors import StyleSheet, check_paragraph_selector, paragraph_selected
 from .textedit import TRANSPARENT, control_characters, place_text, placed_counts, shown_text, text_children
@@ -380,7 +381,7 @@ class ReplaceText(Op):
         plan.untracked_diffs_expected = (mode == "untracked")
         flags = 0 if match_case else re.IGNORECASE
         rx_str = flexible_regex_from_literal(find) if flex_ws else re.escape(find)
-        pattern = re.compile(rx_str, flags)
+        pattern = compile_pattern(rx_str, flags, where="a paragraph's text", max_chars=None)   # built from the literal
         sheet = StyleSheet(pkg) if para_pred is not None else None
 
         total = 0

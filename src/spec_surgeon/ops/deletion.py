@@ -78,7 +78,6 @@ Every revision in what goes is dropped (flagged).
 """
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass, field
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
@@ -89,6 +88,7 @@ from ..ooxml import (PROPERTY_REV_TAGS, RPR_ORDER, TRPR_ORDER, RevisionStamp, bl
                      to_del_text)
 from ..package import CT_PART, FOOTER_REL, HEADER_REL, MEDIA_REL_TYPES, NS, R, W, DocxPackage
 from .base import BlockDiff, JobException, PlanFragment
+from .patterns import compile_pattern
 from .comments import EXTENDED_REL, IDS_REL, MARK_TAGS, W14, W15, W16CID, CommentBook, side_removals
 from .fields import fields_of
 from .hf_common import HYPERLINK_REL, check_part_relationships, refs
@@ -917,10 +917,11 @@ def note_text(entry) -> str:
     return NOTE_TEXT_JOIN.join(block_full_text(p) for p in entry.iter(W + "p"))
 
 
-def regex(pattern: Any, name: str):
+def regex(pattern: Any, name: str, where: str = "a note's text"):
+    """A note filter's pattern, bounded (``ops/patterns.py``)."""
     if not isinstance(pattern, str):
         raise JobException(f"{name} must be a regular expression", "bad-params")
     try:
-        return re.compile(pattern)
-    except re.error as e:
-        raise JobException(f"bad {name}: {e}", "bad-params")
+        return compile_pattern(pattern, where=where)
+    except JobException as e:
+        raise JobException(f"bad {name}: {e.reason}", e.code, e.details) from None

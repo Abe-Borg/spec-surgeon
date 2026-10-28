@@ -33,15 +33,17 @@ table's own structure or properties (``pending_table_changes``) and Word's legac
 """
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 
 from ..ooxml import block_full_text
 from ..package import W
 from .base import JobException, Touch
+from .patterns import compile_pattern
 from .table_rows import cell_paragraphs, cell_span, vertical_merge
 from .table_select import cells_wrapped, own_cells, own_rows, rows_wrapped
+
+HEADER_TEXT = "a column header's text"   # what columns.header_regex is searched on
 
 COLUMN_KEYS = ("index", "header_regex")
 COLUMNS_SCHEMA = {"description": "'all', or {index: [grid column numbers, 0-based], header_regex (the text of the "
@@ -71,9 +73,9 @@ def check_column_selector(pred: Any, where: str = "select.columns") -> None:
         if not isinstance(pred["header_regex"], str):
             raise JobException("columns.header_regex must be a regular expression (text)", "bad-params")
         try:
-            re.compile(pred["header_regex"])
-        except re.error as e:
-            raise JobException(f"columns.header_regex is not a valid regular expression: {e}", "bad-params")
+            compile_pattern(pred["header_regex"], where=HEADER_TEXT)
+        except JobException as e:
+            raise JobException(f"columns.header_regex: {e.reason}", e.code, e.details) from None
 
 
 def selects_every_column(pred: Any) -> bool:
@@ -176,7 +178,8 @@ def selected_columns(tbl, pred: Any) -> List[int]:
     for g in range(n):
         if "index" in pred and g not in pred["index"]:
             continue
-        if "header_regex" in pred and (heads[g] is None or not re.search(pred["header_regex"], heads[g])):
+        if "header_regex" in pred and (heads[g] is None
+                                       or not compile_pattern(pred["header_regex"], where=HEADER_TEXT).search(heads[g])):
             continue
         out.append(g)
     return out

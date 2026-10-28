@@ -31,6 +31,9 @@ from lxml import etree
 
 from .reader import VPackage, W, M, R, STYLES_REL, THEME_REL, protected_members
 from .textcheck import blocks
+from .patterns import v_compile
+
+_V_PARAGRAPH_TEXT = "a paragraph's text"      # what a paragraph selector's pattern is searched on
 
 A_NS = "http://schemas.openxmlformats.org/drawingml/2006/main"
 A = "{%s}" % A_NS
@@ -389,8 +392,9 @@ def _v_block_text_with_tabs(p) -> str:
 
 def _v_selector_regex(pattern, options):
     flags = re.I if options.get("case_insensitive") else 0
-    parsed = re.compile(pattern, flags)
-    # Verbose expressions own their spaces and comments, including scoped (?x:...) groups.
+    parsed = v_compile(pattern, flags, where=_V_PARAGRAPH_TEXT)          # bounded: verify/patterns.py
+    # Verbose expressions own their spaces and comments, including scoped (?x:...) groups (the pattern's own text
+    # is inspected with re; no document text is searched here).
     has_verbose_group = re.search(r"\(\?[aiLmsux-]*x[aiLmsux-]*[:)]", pattern) is not None
     if options.get("flexible_whitespace") and not (parsed.flags & re.X or has_verbose_group):
         out, in_brackets, class_prefix, protected, space = [], False, "", False, False
@@ -418,8 +422,9 @@ def _v_selector_regex(pattern, options):
             elif character == "[":
                 in_brackets = True
                 class_prefix = ""
-        pattern = "".join(out)
-    return re.compile(pattern, flags)
+        # the rewrite grew a pattern already within the length limit
+        return v_compile("".join(out), flags, where=_V_PARAGRAPH_TEXT, max_chars=None)
+    return parsed
 
 
 def _v_rx_matches(pattern: str, raw_text: str, p, options=None) -> bool:
@@ -1495,7 +1500,7 @@ def _v_resolve_sections(pkg: VPackage, sections, styles: Styles) -> List[int]:
         view = PartView(root)
         try:
             hit = {of[bi] for bi, p in enumerate(view.pars) if para_matches(pred, p, bi, view, styles)}
-        except re.error as e:
+        except ValueError as e:
             raise ValueError(f"sections.containing: {e} — the op must refuse")
         chosen &= hit
     return sorted(chosen)

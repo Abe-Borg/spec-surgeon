@@ -16,10 +16,12 @@
 """
 from __future__ import annotations
 
-import re
 from typing import Any, Dict, List, Optional, Tuple
 
 from .reader import W
+from .patterns import v_compile, v_search
+
+_V_HEADER_TEXT = "a column header's text"
 from .tablerows import v_cell_paragraphs, v_span
 from .tableselect import v_cells, v_cells_wrapped, v_rows, v_rows_wrapped
 
@@ -41,10 +43,7 @@ def v_check_columns(pred: Any) -> None:
     if "header_regex" in pred:
         if not isinstance(pred["header_regex"], str):
             raise ValueError("bad columns.header_regex (the op must refuse)")
-        try:
-            re.compile(pred["header_regex"])
-        except re.error as e:
-            raise ValueError(f"bad columns.header_regex: {e} (the op must refuse)")
+        v_compile(pred["header_regex"], where=_V_HEADER_TEXT)      # a ValueError where the op must refuse
 
 
 def v_every_column(pred: Any) -> bool:
@@ -127,7 +126,8 @@ def v_columns_chosen(tbl, pred: Any, text_of: Dict[Any, str]) -> List[int]:
         return list(range(n))
     heads = v_headers(tbl, n, text_of)
     return [g for g in range(n) if ("index" not in pred or g in pred["index"])
-            and ("header_regex" not in pred or (heads[g] is not None and re.search(pred["header_regex"], heads[g])))]
+            and ("header_regex" not in pred or (heads[g] is not None
+                                                and v_search(pred["header_regex"], heads[g], where=_V_HEADER_TEXT)))]
 
 
 def _v_vm(tc) -> Optional[str]:

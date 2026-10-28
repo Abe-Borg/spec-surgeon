@@ -21,13 +21,13 @@ Both refuse a paragraph that carries a section break, holds a field, or holds a 
 """
 from __future__ import annotations
 
-import re
 from typing import Any, Dict, List, Optional, Tuple
 
 from ..ooxml import RevisionStamp, block_full_text, count_revisions, file_uses_date_utc, max_revision_id, paragraphs
 from ..package import DocxPackage, W
 from . import prose, register
 from .base import BlockDiff, JobException, Op, PlanFragment
+from .patterns import compile_pattern
 from .removal import deletable, delete_paragraph, kept_marks, range_marks  # noqa: F401 — deletable is re-exported
 from .replace_table import COMMON_PARAMS, default_author, resolve_scope, tracked_of
 from .selectors import SCOPE_KINDS, scope_parts
@@ -131,13 +131,13 @@ class FilterTaggedParagraphs(Op):
         select = dict(select or {})
         if set(select) - {"scope"}:
             raise JobException(f"filter_tagged_paragraphs selects by scope only", "bad-params")
-        try:
-            rx = re.compile(params.get("tag_regex") or "")
-            sep = re.compile(params.get("tag_separator", DEFAULT_SEPARATOR))
-        except re.error as e:
-            raise JobException(f"bad regex ({e})", "bad-params")
         if not params.get("tag_regex"):
             raise JobException("'tag_regex' is required", "bad-params")
+        try:
+            rx = compile_pattern(params["tag_regex"], where="a paragraph's text")
+            sep = compile_pattern(params.get("tag_separator", DEFAULT_SEPARATOR), where="a tag")
+        except JobException as e:
+            raise JobException(f"bad regex ({e.reason})", e.code, e.details) from None
         keep = [norm_system(s) for s in params.get("keep") or []]
         delete = [norm_system(s) for s in params.get("delete") or []]
         if bool(keep) == bool(delete):

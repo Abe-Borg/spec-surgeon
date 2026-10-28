@@ -41,6 +41,9 @@ from lxml import etree
 
 from .reader import VPackage, W, R, STYLES_REL, THEME_REL
 from .textcheck import blocks
+from .patterns import v_compile
+
+_V_SOURCE_TEXT = "a source paragraph's text"     # what a fill's pattern or anchor is searched on
 from .props import Styles, Theme, sig, sect_prs, first_difference
 from .template_styles import style_plan, mapped_tree, private_defaults
 
@@ -386,7 +389,7 @@ def fill_value(src: VPackage, name: str, rule: Dict[str, Any]) -> str:
         for r in sub:
             try:
                 return fill_value(src, name, r)
-            except (ValueError, KeyError, re.error) as e:
+            except (ValueError, KeyError) as e:
                 last_err = e
         raise ValueError(f"fill {name!r}: no rule in first_match succeeded ({last_err})")
 
@@ -418,7 +421,7 @@ def fill_value(src: VPackage, name: str, rule: Dict[str, Any]) -> str:
     if how == "literal":
         v = rule["value"]
     elif how == "regex":
-        rx = re.compile(rule["pattern"], re.I if rule.get("case_insensitive", False) else 0)
+        rx = v_compile(rule["pattern"], re.I if rule.get("case_insensitive", False) else 0, where=_V_SOURCE_TEXT)
         pars = _source_pars(src, rule.get("source", "document"), rule.get("section"))
         found = []
         for p in pars:
@@ -435,7 +438,7 @@ def fill_value(src: VPackage, name: str, rule: Dict[str, Any]) -> str:
                 raise ValueError(f"fill {name!r}: regex yields {sorted(set(found))}")
             v = found[0]
     elif how == "paragraph_after":
-        rx = re.compile(rule["anchor_regex"], re.I if rule.get("case_insensitive", False) else 0)
+        rx = v_compile(rule["anchor_regex"], re.I if rule.get("case_insensitive", False) else 0, where=_V_SOURCE_TEXT)
         texts = [display_of(p) for p in _source_pars(src, rule.get("source", "document"), rule.get("section"))]
         hits = [k for k, t in enumerate(texts) if _source_match(rx, t, flex_ws) is not None]
         if not hits:
@@ -810,7 +813,7 @@ def check_template_part(ctx, a: Dict[str, Any], errs: List[str]) -> str:
     for name, rule in (a.get("fills") or {}).items():
         try:
             fills[name] = fill_value(ctx.src, name, rule)
-        except (ValueError, KeyError, re.error) as e:
+        except (ValueError, KeyError) as e:
             errs.append(f"{tag}: {e}")
             return tag
     if fills != a.get("expected_fills"):

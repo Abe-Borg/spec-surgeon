@@ -14,6 +14,7 @@ import re
 from .edits import check_edited_paragraph, part_revision_ids, v_check_edits, v_items, v_run_text
 from .props import para_matches, sig
 from .reader import W
+from .patterns import v_compile
 from .template import _v_field_runs
 from .textops import _v_flexible, _v_word
 
@@ -132,8 +133,9 @@ def literal_replacement(ctx, assertion, errors):
     if not isinstance(find, str) or not find or not isinstance(replacement, str):
         raise ValueError("literal replacement needs exact find/replace strings")
     tracked = params.get("tracked", params.get("mode", "tracked") != "untracked")
-    regex = re.compile(_v_flexible(find) if params.get("flexible_whitespace", False) else re.escape(find),
-                       0 if params.get("match_case", True) else re.IGNORECASE)
+    regex = v_compile(_v_flexible(find) if params.get("flexible_whitespace", False) else re.escape(find),
+                      0 if params.get("match_case", True) else re.IGNORECASE, where="a paragraph's text",
+                      max_chars=None)                                   # built from the user's literal find
     scope = select.get("scope") or params.get("scope") or ["document"]
     parts = ctx.scope_parts([scope] if isinstance(scope, str) else scope)
     old_ids = set().union(*(part_revision_ids(ctx.src.xml(name)) for name in ctx.src_tp))
