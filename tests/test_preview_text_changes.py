@@ -153,3 +153,91 @@ def test_the_verifiers_record_of_the_delivered_copy_reproduces_the_preview_s_wor
     rec = run_suite(source.read_bytes(), first.output.read_bytes(), {"job": "x", "mode": "untracked", "diffs": []},
                     str(source), str(first.output))
     assert text_changes_of(rec.to_dict()) == text_changes_of(first.record.to_dict())
+
+
+# ---- tracked changes: the verifier's accept-all and reject-all views (Codex finding on the PR) ----------------------
+
+def views(parts, accepted=(), rejected=()):
+    return {"parts": list(parts), "accepted": list(accepted), "rejected": list(rejected)}
+
+
+def test_a_part_with_tracked_changes_is_read_in_the_checkers_accept_all_and_reject_all_views():
+    """V2's block text keeps tracked-deleted text, so a tracked deletion reads as no change there and a tracked
+    replacement as its deleted and inserted words run together: for a part with revisions the words come from the
+    union of the accept-all and reject-all view comparisons the verifier records, and the entry says the words sit in
+    the copy's tracked changes when the two views disagree."""
+    body = "word/document.xml"
+    raw = record(change(body, "FIRE SUPPRESSION", "FIREWATER SUPPRESSION", 1, 1))        # the raw text, run together
+    raw["checks"][1]["data"]["views"] = views(
+        [body], accepted=[change(body, "FIRE SUPPRESSION", "WATER SUPPRESSION", 1, 1)], rejected=[])
+    assert text_changes_of(raw) == [{"part": body, "where": "body paragraph 2", "paragraph": 1,
+                                     "removed": ["FIRE"], "added": ["WATER"], "tracked": True}]
+    assert text_change_phrase(text_changes_of(raw)[0]) == (
+        "words removed “FIRE”; words added “WATER” (in the copy's tracked changes)")
+    # a tracked deletion: V2's raw comparison sees nothing; the accept-all view sees the words go
+    gone = record()
+    gone["checks"][1]["data"]["views"] = views(
+        [body], accepted=[change(body, "Pipe shall be black steel Schedule 40.", "Pipe shall be Schedule 40.", 7, 7)])
+    assert text_changes_of(gone) == [{"part": body, "where": "body paragraph 8", "paragraph": 7,
+                                      "removed": ["black steel"], "added": [], "tracked": True}]
+    # someone's pending deletion accepted for good: the reject-all view sees the words go, the accept-all one nothing
+    settled = record(change(body, "Pipe shall be black steel Schedule 40.", "Pipe shall be Schedule 40.", 7, 7))
+    settled["checks"][1]["data"]["views"] = views(
+        [body], rejected=[change(body, "Pipe shall be black steel Schedule 40.", "Pipe shall be Schedule 40.", 7, 7)])
+    assert text_changes_of(settled)[0]["removed"] == ["black steel"] and text_changes_of(settled)[0]["tracked"] is True
+    # an untracked change in a part that carries someone's revisions elsewhere: both views agree, nothing is tracked
+    plain = record(change(body, "FIRE SUPPRESSION", "WATER SUPPRESSION", 1, 1))
+    plain["checks"][1]["data"]["views"] = views(
+        [body], accepted=[change(body, "FIRE SUPPRESSION", "WATER SUPPRESSION", 1, 1)],
+        rejected=[change(body, "FIRE SUPPRESSION", "WATER SUPPRESSION", 1, 1)])
+    assert text_changes_of(plain) == [{"part": body, "where": "body paragraph 2", "paragraph": 1,
+                                       "removed": ["FIRE"], "added": ["WATER"]}]
+    # a part without revisions keeps V2's own comparison; a tracked new paragraph is said to be one
+    mixed = record(change("word/footer1.xml", "Cover", "Cover Coordination draft.", 0, 0))
+    mixed["checks"][1]["data"]["views"] = views([body], accepted=[change(body, None, "See the portal.", None, 3)])
+    assert text_changes_of(mixed) == [
+        {"part": "word/footer1.xml", "where": "footer", "paragraph": 0, "removed": [], "added": ["Coordination draft."]},
+        {"part": body, "where": "body paragraph 4", "paragraph": 3, "removed": [], "added": ["See the portal."],
+         "block": "new", "tracked": True}]
+    assert text_change_phrase(text_changes_of(mixed)[1]).endswith("(in the copy's tracked changes)")
+    # an older record without the views: V2's comparison alone
+    assert text_changes_of(record(change(body, "FIRE SUPPRESSION", "WATER SUPPRESSION", 1, 1)))[0]["removed"] == ["FIRE"]
+
+
+@pytest.fixture
+def titled(tmp_path) -> Path:
+    f = tmp_path / "21 00 00 – FIRE.docx"
+    f.write_bytes(build("21 00 00", "FIRE SUPPRESSION"))
+    return f
+
+
+def test_a_tracked_edit_by_a_custom_method_is_listed_from_the_checkers_views(titled, tmp_path):
+    from test_governed_codegen import CONTENT_OP
+    op = CONTENT_OP.replace('author="Tester"', "author=pkg.author").replace('RevisionStamp.now("Tester"',
+                                                                            "RevisionStamp.now(pkg.author")
+    replaced = trial(op, titled, {}, {"replacement": "WATER", "tracked": True}, tmp_path / "r", unguarded=True)
+    assert replaced.passed and replaced.unverified == [], (replaced.problems, replaced.unverified)
+    data = replaced.record.get("V2").data
+    assert "word/document.xml" in data["views"]["parts"]                      # the body carries revisions now
+    assert data["views"]["rejected"] == []                                   # rejected, the copy reads as the source
+    assert [(v["before"], v["after"]) for v in data["views"]["accepted"]] == [("FIRE SUPPRESSION", "WATER SUPPRESSION")]
+    assert text_changes_of(replaced.record.to_dict()) == [
+        {"part": "word/document.xml", "where": "body paragraph 2", "paragraph": 1, "removed": ["FIRE"],
+         "added": ["WATER"], "tracked": True}]
+    # a pure tracked deletion: V2's own comparison reads the same words (the deleted ones stay in the copy, marked)
+    deleting = op.replace('Edit(0, 4, params["replacement"])', 'Edit(0, 5, "")')
+    deleted = trial(deleting, titled, {}, {"replacement": "", "tracked": True}, tmp_path / "d", unguarded=True)
+    assert deleted.passed and deleted.unverified == [], (deleted.problems, deleted.unverified)
+    assert deleted.record.get("V2").data["actual"] == []
+    assert text_changes_of(deleted.record.to_dict()) == [
+        {"part": "word/document.xml", "where": "body paragraph 2", "paragraph": 1, "removed": ["FIRE"], "added": [],
+         "tracked": True}]
+    gp = preview_generated(SimpleNamespace(name="op", trials=[deleted]), tmp_path / "pv", renderer="none",
+                           do_render=False)
+    assert gp.samples[0].text_changes[0]["removed"] == ["FIRE"]
+    assert "words removed “FIRE” (in the copy's tracked changes)" in gp.to_text()
+    # the same edit untracked: the two views agree, nothing is marked tracked
+    plain = trial(op, titled, {}, {"replacement": "WATER", "tracked": False}, tmp_path / "p", unguarded=True)
+    assert plain.passed
+    assert text_changes_of(plain.record.to_dict()) == [
+        {"part": "word/document.xml", "where": "body paragraph 2", "paragraph": 1, "removed": ["FIRE"], "added": ["WATER"]}]

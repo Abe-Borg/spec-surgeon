@@ -30,6 +30,13 @@ test("a whole paragraph that is new or gone, and a change of spacing alone, say 
   assert.equal(wordChangeLine({ ...title, where: "" }).where, "word/document.xml");
 });
 
+test("words in the copy's tracked changes say so, beside any other note", () => {
+  assert.equal(wordChangeLine({ ...title, tracked: true }).note, "in the copy's tracked changes");
+  assert.equal(wordChangeLine({ ...title, removed: ["black steel"], added: [], tracked: true }).removed, "\u201cblack steel\u201d");
+  assert.equal(wordChangeLine({ ...title, removed: [], added: ["See the portal."], block: "new", tracked: true }).note,
+    "a new paragraph, in the copy's tracked changes");
+});
+
 test("a sample without the comparison shows nothing; an empty list is 'no words change'", () => {
   assert.equal(wordChangeLines({}), null);
   assert.equal(wordChangeLines({ text_changes: null }), null);

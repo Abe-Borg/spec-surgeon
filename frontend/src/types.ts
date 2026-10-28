@@ -169,6 +169,8 @@ export interface TextChange {
   added: string[];
   /** Set when the whole paragraph is new or gone. */
   block?: "new" | "gone";
+  /** Set when the words sit in the copy's tracked changes (the checker's accept-all and reject-all views differ). */
+  tracked?: boolean;
 }
 
 /** One find-and-replace occurrence the waiting plan found (docs/WEB_API.md, `occurrences[].items[]`). */

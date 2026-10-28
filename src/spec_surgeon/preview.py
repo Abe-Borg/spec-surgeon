@@ -447,18 +447,50 @@ def word_changes(before: Optional[str], after: Optional[str]) -> Tuple[List[str]
     return removed, added
 
 
-def _v2_actual(record: Any) -> Optional[List[Dict[str, Any]]]:
-    """V2's ``actual`` entries from a verification record (``VerificationRecord.to_dict()``, or the object itself,
-    read through ``to_dict``); None when the record has no V2 check at all (nothing was compared)."""
+def _v2_data(record: Any) -> Optional[Dict[str, Any]]:
+    """V2's data from a verification record (``VerificationRecord.to_dict()``, or the object itself, read through
+    ``to_dict``); None when the record has no V2 check at all (nothing was compared)."""
     if record is None:
         return None
     if not isinstance(record, dict):
         record = record.to_dict()
     for check in record.get("checks") or []:
         if isinstance(check, dict) and check.get("id") == "V2":
-            actual = (check.get("data") or {}).get("actual")
-            return [a for a in actual if isinstance(a, dict)] if isinstance(actual, list) else []
+            data = check.get("data")
+            return data if isinstance(data, dict) else {}
     return None
+
+
+def _entries(value: Any) -> List[Dict[str, Any]]:
+    return [a for a in value if isinstance(a, dict)] if isinstance(value, list) else []
+
+
+def _v2_changes(data: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """The changed blocks a copy's words are listed from: V2's ``actual`` entries for every part without a content
+    revision, and for a part that carries one (``views["parts"]``) the union of the verifier's accept-all and
+    reject-all view comparisons instead — the block text V2 enumerates keeps tracked-deleted text, so a tracked
+    deletion reads as no change there and a tracked replacement as its deleted and inserted words run together.
+    A block the two views do not agree on is marked ``tracked``: the words sit in the copy's tracked changes. A record
+    without ``views`` (older) gives the ``actual`` entries alone."""
+    actual = _entries(data.get("actual"))
+    views = data.get("views")
+    if not isinstance(views, dict):
+        return actual
+    revised = {str(p) for p in (views.get("parts") or [])}
+    out = [a for a in actual if str(a.get("part") or "") not in revised]
+    merged: Dict[Tuple[str, Any, Any], Dict[str, Any]] = {}
+    for which in ("accepted", "rejected"):
+        for entry in _entries(views.get(which)):
+            if str(entry.get("part") or "") not in revised:
+                continue
+            key = (str(entry.get("part") or ""), entry.get("before_index"), entry.get("after_index"))
+            found = merged.setdefault(key, {"part": key[0], "before_index": key[1], "after_index": key[2],
+                                            "views": {}})
+            found["views"][which] = (entry.get("before"), entry.get("after"))
+    for found in merged.values():
+        found["tracked"] = found["views"].get("accepted") != found["views"].get("rejected")
+        out.append(found)
+    return out
 
 
 def text_changes_of(record: Any) -> Optional[List[Dict[str, Any]]]:
@@ -466,32 +498,45 @@ def text_changes_of(record: Any) -> Optional[List[Dict[str, Any]]]:
     text block, in the record's order — ``part`` (as the record names it), ``where`` (the part in plain words and,
     in the body, or past a part's first paragraph, the paragraph's ordinal from 1: ``footer``, ``body paragraph 12``),
     ``paragraph`` (the block's ordinal in its part from 0: the source's, or the copy's for a new block), ``removed``
-    and ``added`` (``word_changes``), and ``block`` ``new`` or ``gone`` when the whole paragraph is. [] when the
-    record compared the texts and found the same words; None when it holds no V2 check."""
-    actual = _v2_actual(record)
-    if actual is None:
+    and ``added`` (``word_changes``; for a part with tracked changes, the union of what the verifier's accept-all and
+    reject-all views remove and add, ``_v2_changes``), ``block`` ``new`` or ``gone`` when the whole paragraph is, and
+    ``tracked`` when the words sit in the copy's tracked changes (the two views disagree). [] when the record
+    compared the texts and found the same words; None when it holds no V2 check."""
+    data = _v2_data(record)
+    if data is None:
         return None
+    changes = _v2_changes(data)
     kinds: Dict[str, set] = {}
-    for a in actual:
+    for a in changes:
         part = str(a.get("part") or "")
         kinds.setdefault(part_words(part), set()).add(part)
     out: List[Dict[str, Any]] = []
-    for a in actual:
+    for a in changes:
         part = str(a.get("part") or "")
-        before, after = a.get("before"), a.get("after")
         before_index, after_index = a.get("before_index"), a.get("after_index")
         index = before_index if isinstance(before_index, int) else after_index
         label = part_words(part, several=len(kinds.get(part_words(part), ())) > 1)
         where = label
         if isinstance(index, int) and (label.startswith("body") or index > 0):
             where = f"{label} paragraph {index + 1}"
-        removed, added = word_changes(before, after)
+        # the words: the one comparison, or the union of what the accept-all and reject-all views each remove and add
+        pairs = list((a.get("views") or {}).values()) or [(a.get("before"), a.get("after"))]
+        removed: List[str] = []
+        added: List[str] = []
+        for before, after in pairs:
+            r, d = word_changes(before, after)
+            removed += [w for w in r if w not in removed]
+            added += [w for w in d if w not in added]
         entry: Dict[str, Any] = {"part": part, "where": where, "paragraph": index if isinstance(index, int) else None,
                                  "removed": removed, "added": added}
-        if before is None and after is not None:
+        befores = [b for b, _ in pairs]
+        afters = [x for _, x in pairs]
+        if all(b is None for b in befores) and any(x is not None for x in afters):
             entry["block"] = "new"
-        elif after is None and before is not None:
+        elif all(x is None for x in afters) and any(b is not None for b in befores):
             entry["block"] = "gone"
+        if a.get("tracked"):
+            entry["tracked"] = True
         out.append(entry)
     return out
 
@@ -504,17 +549,18 @@ def text_change_phrase(entry: Dict[str, Any]) -> str:
     """One entry of ``text_changes_of`` as the window says it: ``words removed “FIRE”; words added “WATER”``, a whole
     paragraph named as such, and a change of spacing alone said to be one."""
     removed, added, block = entry.get("removed") or [], entry.get("added") or [], entry.get("block")
+    tracked = " (in the copy's tracked changes)" if entry.get("tracked") else ""
     if block == "new":
-        return (f"a new paragraph, words added {_quoted(added)}" if added else "a new paragraph without words")
+        return (f"a new paragraph, words added {_quoted(added)}" if added else "a new paragraph without words") + tracked
     if block == "gone":
         return (f"the whole paragraph removed, words removed {_quoted(removed)}" if removed
-                else "an empty paragraph removed")
+                else "an empty paragraph removed") + tracked
     parts = []
     if removed:
         parts.append(f"words removed {_quoted(removed)}")
     if added:
         parts.append(f"words added {_quoted(added)}")
-    return "; ".join(parts) if parts else "only the spacing changes, no words"
+    return ("; ".join(parts) if parts else "only the spacing changes, no words") + tracked
 
 
 NO_WORDS_CHANGE = ("No words change: the independent checker read the same words in the sample copies as in the "

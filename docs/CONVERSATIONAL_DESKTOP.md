@@ -186,7 +186,9 @@ What it lifts (`Session.unguarded`; CLAUDE.md, "Modes"):
   independent checker's V2 record of each copy (`preview.text_changes_of` → `SampleView.text_changes`,
   `DocumentTask._say_text_changes`), never from the method's plan or the model: the exact words quoted, the part named
   ("footer", "body paragraph 12"), the same change in several documents said once; a method that changes no words is
-  said to change none. The same list shows for a Default custom method (which is formatting only, so it reads "No
+  said to change none. Where a part carries tracked changes, the checker reads the copy in its accept-all and
+  reject-all views too (V2's `views`), and the words are what either view removes or adds, said to sit in the copy's
+  tracked changes — a tracked deletion reads as the words it takes out, never as no change. The same list shows for a Default custom method (which is formatting only, so it reads "No
   words change").
 - **Holding back.** A copy that fails a check is delivered to the run's `outputs/` instead of `failed/`, its record
   kept with every failure and V9 saying *delivered UNVERIFIED*; a chain's step hands its copy on and the chain's copy

@@ -139,8 +139,11 @@ Rules the page relies on:
   entry per changed paragraph, `{part, where, paragraph, removed, added, block?}` — `part` as the record names it,
   `where` the place in plain words ("footer", "body paragraph 12"), `paragraph` the paragraph's ordinal in its part
   from 0 (the page shows it from 1; the source's, or the copy's for a new paragraph), `removed` and `added` the
-  stretches of words, in order, and `block` `new` or `gone` when the whole paragraph is. `[]` when the method
-  changes no words; `null` for an ordinary plan's sample (the chat's sentences say what the plan changes) and for a
+  stretches of words, in order, `block` `new` or `gone` when the whole paragraph is, and `tracked` when the words
+  sit in the copy's tracked changes: for a part that carries a revision the checker reads the copy in its accept-all
+  and reject-all views (V2's `views`), and the words are what either view removes or adds, so a tracked deletion or
+  replacement is listed as the words it takes out and puts in, never as the deleted and inserted text run together.
+  `[]` when the method changes no words; `null` for an ordinary plan's sample (the chat's sentences say what the plan changes) and for a
   sample the checker left no record of; absent from an older server. The chat says the same words as an app message
   before the approval button, once per preview.
 - `occurrences` is the find-and-replace list of the plan waiting for the user (stages `preview` and `question`; empty

@@ -282,6 +282,18 @@ def _rev_elements(root) -> List[tuple]:
     return out
 
 
+def has_content_revisions(root) -> bool:
+    """Whether a part carries a content revision — an insertion, deletion or move wrapping runs (a paragraph-mark
+    revision inside ``w:rPr`` changes no block's text): where there is none, the accept-all and reject-all views read
+    exactly as the part does."""
+    for tag in ("ins", "del", "moveFrom", "moveTo"):
+        for el in root.iter(W + tag):
+            parent = el.getparent()
+            if parent is not None and parent.tag != W + "rPr":
+                return True
+    return False
+
+
 def _total_key(v: Any) -> tuple:
     """A sort key for every value the suite sorts, so a sort never raises: None (no block on that side of a V2 change,
     a revision element without a w:id) first, then text, then tuples element by element, then anything else by type
@@ -504,6 +516,21 @@ def _run_suite(source: bytes, output: bytes, plan: Dict[str, Any], source_name: 
         extra = [a for a in actual if a not in expected]
         gone_parts = [p for p in scope if p not in out_tp]
         new_parts = [p for p in scope if p not in src_tp]
+        # The block text above keeps tracked-deleted text (``w:delText``), as V2's enumeration must; what a part's
+        # words become is read apart, for the record, in the accept-all and reject-all views of every part that
+        # carries a content revision on either side (a part without one reads the same in every view): the same
+        # block comparison on each view, kept as data under ``views`` for whoever lists a copy's word changes.
+        revised = [p for p in scope if (p in src_xml and has_content_revisions(src_xml[p]))
+                   or (p in out_xml and has_content_revisions(out_xml[p]))]
+        views: Dict[str, Any] = {"parts": revised, "accepted": [], "rejected": []}
+        for part in revised:
+            for which, view in (("accepted", accept_view), ("rejected", reject_view)):
+                v_before = blocks(view(src_xml[part])) if part in src_xml else []
+                v_after = blocks(view(out_xml[part])) if part in out_xml else []
+                for ch in diff_blocks(v_before, v_after):
+                    if ch.before != ch.after:
+                        views[which].append({"part": part, "before": ch.before, "after": ch.after,
+                                             "before_index": ch.before_index, "after_index": ch.after_index})
         rec.set(CheckResult("V2", "Text preservation", "PASS" if v2_ok else "FAIL",
                             f"blocks compared: {n_blocks} across {len(scope)} part(s)"
                             + (f" (no longer text parts: {gone_parts})" if gone_parts else "")
@@ -511,7 +538,8 @@ def _run_suite(source: bytes, output: bytes, plan: Dict[str, Any], source_name: 
                             + f"; diffs found: {len(actual)}; "
                             f"matches predicted list exactly: {'yes' if v2_ok else 'NO'}"
                             + ("" if v2_ok else f" — missing {len(missing)}, unpredicted {len(extra)}"),
-                            {"parts": scope, "actual": actual_text_changes, "missing": missing, "unpredicted": extra}))
+                            {"parts": scope, "actual": actual_text_changes, "missing": missing, "unpredicted": extra,
+                             "views": views}))
         rec.set(CheckResult("V3", "Structural children", "PASS" if not struct_changes else "FAIL",
                             "w:tab(in w:r)/w:br/w:cr/noBreakHyphen/sym/fldChar/… per block: "
                             + ("identical on every aligned block, or changed exactly as the plan declared" if not struct_changes

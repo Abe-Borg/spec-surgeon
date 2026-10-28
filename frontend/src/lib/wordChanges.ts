@@ -12,7 +12,8 @@ export interface WordChangeLine {
   removed: string;
   /** The words added, each stretch quoted; "" when none. */
   added: string;
-  /** What else the line should say: the whole paragraph is new or gone, or only the spacing changed. */
+  /** What else the line should say: the whole paragraph is new or gone, only the spacing changed, or the words sit
+   *  in the copy's tracked changes. */
   note: string;
 }
 
@@ -25,11 +26,12 @@ const quote = (words: string[]): string => words.map((w) => `\u201c${w}\u201d`).
 export function wordChangeLine(change: TextChange): WordChangeLine {
   const removed = quote(change.removed ?? []);
   const added = quote(change.added ?? []);
-  let note = "";
-  if (change.block === "new") note = added ? "a new paragraph" : "a new paragraph without words";
-  else if (change.block === "gone") note = removed ? "the whole paragraph" : "an empty paragraph removed";
-  else if (!removed && !added) note = "only the spacing changes, no words";
-  return { where: change.where || change.part, removed, added, note };
+  const notes: string[] = [];
+  if (change.block === "new") notes.push(added ? "a new paragraph" : "a new paragraph without words");
+  else if (change.block === "gone") notes.push(removed ? "the whole paragraph" : "an empty paragraph removed");
+  else if (!removed && !added) notes.push("only the spacing changes, no words");
+  if (change.tracked) notes.push("in the copy's tracked changes");
+  return { where: change.where || change.part, removed, added, note: notes.join(", ") };
 }
 
 /** The card's lines for a sample: null when the sample carries no comparison (an ordinary plan's sample, or an
