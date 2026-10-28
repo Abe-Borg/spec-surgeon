@@ -648,18 +648,24 @@ def _call(client, *, model, system, tools, messages, record, max_output_tokens, 
         # the connection, the proxy's tunnel or a pooled connection was never made: no byte of the request left this
         # computer, so nothing reached Anthropic and nothing can have been charged
         unsent = not stopped and record.get("phase") == "stream.open" and not seen and never_sent(exc)
+        # or Anthropic refused it before running it, for its key or its permission: no model ran, nothing is charged
+        refused = (not unsent and not stopped and record.get("phase") == "stream.open" and not seen
+                   and refused_unrun(exc))
         for budget, reservation in zip(budgets, reservations if budgets else ()):
             budget.failed_calls += 1
             if stopped:
                 budget._settle_stopped(model, reservation, seen.get("usage"), max_tokens, time.monotonic() - started,
                                        fast=fast)
-            elif unsent:
+            elif unsent or refused:
                 budget._release(reservation)
             else:
                 # Keep the reservation: a dropped stream may have consumed tokens without reporting its usage.
                 budget._abandon(reservation)
         if unsent:
             diag.event("model.call.unsent", level="warning", error_type=type(exc).__name__)
+        if refused:
+            diag.event("model.call.refused", level="warning", error_type=type(exc).__name__,
+                       status=getattr(exc, "status_code", None))
         if budgets:
             record["budgets"] = _budget_records()
         if stopped and isinstance(exc, Exception):
@@ -711,6 +717,22 @@ def never_sent(e: BaseException) -> bool:
             return True
         e = e.__cause__
     return False
+
+
+# The HTTP statuses with which the API refuses a request it does not run (``refused_unrun``): the key (401
+# authentication_error) and its permission (403 permission_error). Every other status keeps its reservation.
+REFUSED_UNRUN_STATUSES = frozenset({401, 403})
+
+
+def refused_unrun(e: BaseException) -> bool:
+    """``e`` is the SDK's own error for an answer of HTTP 401 or 403 (``REFUSED_UNRUN_STATUSES``): Anthropic refused
+    the request for its key or its permission before any model ran, and such a refusal is never charged. Read as the
+    SDK raises it (a status error of the ``anthropic`` package, with its ``status_code``); the caller counts it only
+    before the stream opened (the deep-dive stress test: three such answers kept $24.27 as spent)."""
+    root = (type(e).__module__ or "").split(".")[0]
+    status = getattr(e, "status_code", None)
+    return (root == "anthropic" and isinstance(status, int) and not isinstance(status, bool)
+            and status in REFUSED_UNRUN_STATUSES)
 
 
 def is_api_error(e: BaseException) -> bool:
@@ -1097,7 +1119,8 @@ class CallBudget:
 
     Failed calls count and retain their reservations because a dropped stream can still have incurred a charge — except
     a call that never left this computer (``never_sent``: the connection, the proxy's tunnel or a pooled connection was
-    never made), which keeps none (``_release``). A call
+    never made) and one Anthropic refused for its key or its permission before running it (``refused_unrun``: HTTP 401
+    or 403 before the stream opened), which keep none (``_release``). A call
     the user stopped (the kill switch) is settled from the usage its stream reported plus at most what it could have
     written in the time it ran. ``spent_usd`` is what the window shows: finished and failed calls, never the
     reservation of a call still running.
@@ -1217,8 +1240,9 @@ class CallBudget:
             self._inflight_cost_usd = max(0.0, self._inflight_cost_usd - reservation[1])
 
     def _release(self, reservation: Tuple[int, Optional[float]]) -> None:
-        """A call that never left this computer (``never_sent``: no connection was made): nothing reached Anthropic, so
-        nothing of its reservation is kept. It still counts as a failed call and an attempt."""
+        """A call that never left this computer (``never_sent``: no connection was made), or that Anthropic refused
+        before running it (``refused_unrun``): nothing can have been charged, so nothing of its reservation is kept.
+        It still counts as a failed call and an attempt."""
         self._abandon(reservation)
         self._reserved_tokens -= reservation[0]
         if reservation[1] is None:

@@ -50,7 +50,8 @@ is the owner's decision to lift, for that mode only, the guardrails that protect
 trace (invariant 6: `compose_submission(unguarded=, shown=)` traces placed words to the user's words or to the reply
 the user reads, `Conversation.shown_text`, never to nothing; Claude may write wording once its reply shows it;
 `compiler.UNGUARDED_RULES` rewrites the prompt's rules it lifts), a custom method's formatting-only limits
-(`codegen` skips `hard_limits`; `UNGUARDED_LIMITS`; the writer gets the `GOAL_FROM` helpers and the user's attachments
+(`codegen` skips `hard_limits`, and a copy that changes a part no check reads fails `UNREAD`, from V10's
+`unread_members`, `codegen._check_unread`; `UNGUARDED_LIMITS`; the writer gets the `GOAL_FROM` helpers and the user's attachments
 as `pkg.inputs`, pinned in `GeneratedOp.attachments`, and its failed checks go back to it `UNGUARDED_CHECK_ROUNDS`
 times, to fix or to keep with a reason in `GeneratedOp.accepted_failures`; `NEVER_KEPT_CHECKS` can never be kept; after the
 rounds the latest method is used and never called passed: `codegen.samples_verdict` words the note, the message and the

@@ -174,6 +174,13 @@ specifications, Windows and Word, and only the owner can do them. Record what a 
   Word, never "no renderer run yet"; a method whose words move where its plan says none do shows "Did not pass" on
   the sample, the chat says the page-layout check failed before the button, and Create is unavailable. The same in
   Obliterate: the copy is delivered marked UNVERIFIED with V7 beside it.
+- **Parts no check reads, page counts, refused calls (the deep-dive stress test's follow-ups, built 2026-10-28):** in
+  Obliterate, a custom method over a real specification that changes the theme's accent colours (the report's
+  four-file theme batch): every copy reads UNVERIFIED with UNREAD naming the theme part, or with Claude's reason when
+  it kept the check, and opens in Word with the colours asked for; a Default request for the same is refused with
+  the reason. A preview of a long specification (17 pages or more) with the visual check on: its findings never say a
+  later page was not rendered. A request sent with a revoked or mistyped key: the chat says the request failed
+  (HTTP 401), and the pill and the request's spending stay where they were.
 - **Default mode:** a choice's drafted wording edited before it is picked, and the copy carrying the edit.
 - **Changing your mind in Default and Obliterate** (built 2026-10-28): over a real batch in the installed app, a
   preview **Discard preview**d (nothing created, the copies list as it was, the next message planned as a new

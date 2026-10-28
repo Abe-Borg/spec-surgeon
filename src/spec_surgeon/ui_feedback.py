@@ -16,6 +16,8 @@ CHECK_MESSAGES = {
     "V9": "The original file could not pass the check required before delivery.",
     "V10": "The copy's formatting, filename or another requested property does not match the approved plan.",
     "FINAL": "The copy does not meet one of the plan's final requirements.",
+    "UNREAD": "The copy changes a part of the Word file that no check reads (a chart, an embedded file, stored data, "
+              "the theme), so nothing proves what it now holds.",
 }
 
 

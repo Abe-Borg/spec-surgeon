@@ -210,6 +210,68 @@ def test_a_call_that_may_have_reached_the_api_keeps_its_reservation(failure):
     assert budget.failed_calls == 1 and budget.estimated_cost_usd > 0 and budget.spent_usd > 0
 
 
+def sdk_status(kind, status):
+    """The SDK's own status error as it raises one for an answer of ``status`` before the stream opened."""
+    import anthropic
+    import httpx2
+    request = httpx2.Request("POST", "https://api.anthropic.com/v1/messages")
+    return getattr(anthropic, kind)(f"Error code: {status}", response=httpx2.Response(status, request=request),
+                                    body=None)
+
+
+@pytest.mark.parametrize("kind,status", [("AuthenticationError", 401), ("PermissionDeniedError", 403)])
+def test_a_call_refused_for_its_key_or_permission_keeps_no_reservation(kind, status):
+    """The deep-dive stress test's ledger: HTTP 401 "Invalid bearer token" answers kept $4.16, $8.38 and $24.27 as
+    spent, enough to trip a spending check, though Anthropic ran no model for them. A call refused for its key or
+    its permission before the stream opened is released like one that never connected; it is still a failed call
+    and an attempt against the call limit."""
+    fake = FakeClient(raise_on_enter(sdk_status(kind, status)), resp())
+    budget = llm.CallBudget(max_calls=2)
+    with llm.budget_scope(budget):
+        with pytest.raises(Exception) as caught:
+            ask(fake)
+        assert llm.is_api_error(caught.value) and llm.refused_unrun(caught.value)
+        assert budget.spent_usd == budget.estimated_cost_usd == 0 and budget.accounted_tokens == 0
+        assert budget.calls == budget.failed_calls == 1 and budget.usage.calls == 0
+        ask(fake)                                         # the next call is counted as usual
+    assert budget.calls == 2 and budget.spent_usd > 0 and budget.accounted_tokens == budget.usage.tokens()
+
+
+def test_the_sdk_s_own_authentication_refusal_keeps_no_reservation():
+    """End to end with the real SDK over its HTTP stack: the API answers 401 authentication_error, the SDK raises its
+    AuthenticationError, and the call costs nothing."""
+    anthropic = pytest.importorskip("anthropic")
+    import httpx2
+
+    def refuse(request):
+        return httpx2.Response(401, json={"type": "error", "error": {"type": "authentication_error",
+                                                                     "message": "invalid x-api-key"}})
+    client = anthropic.Anthropic(api_key="sk-ant-test-not-a-key", max_retries=0,
+                                 http_client=anthropic.DefaultHttpxClient(transport=httpx2.MockTransport(refuse)))
+    budget = llm.CallBudget(max_calls=1)
+    with llm.budget_scope(budget):
+        with pytest.raises(anthropic.AuthenticationError) as caught:
+            ask(client)
+    assert llm.refused_unrun(caught.value) and not llm.never_sent(caught.value)
+    assert budget.failed_calls == 1 and budget.spent_usd == 0 and budget.accounted_tokens == 0
+
+
+@pytest.mark.parametrize("failure", [
+    raise_on_enter(sdk_status("BadRequestError", 400)),                     # every other status keeps its estimate
+    raise_on_enter(sdk_status("RateLimitError", 429)),
+    raise_on_enter(sdk_status("InternalServerError", 500)),
+    raise_on_enter(api_error("Unauthorized", status=401, module="mypackage.http")),   # not the SDK's own error
+    raise_on_final(sdk_status("AuthenticationError", 401)),                 # after the stream opened
+])
+def test_every_other_status_or_a_refusal_mid_stream_keeps_its_reservation(failure):
+    fake = FakeClient(failure)
+    budget = llm.CallBudget(max_calls=1)
+    with llm.budget_scope(budget):
+        with pytest.raises(Exception):
+            ask(fake)
+    assert budget.failed_calls == 1 and budget.estimated_cost_usd > 0 and budget.spent_usd > 0
+
+
 def test_never_sent_reads_the_transport_not_the_sdk_s_own_names():
     """Only the HTTP stack's names count, through the cause chain; an SDK class or an unrelated one of the same name
     does not, and a cycle in the chain ends."""
