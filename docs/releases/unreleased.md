@@ -66,3 +66,19 @@ Changes since v1.12.0.
   refused the connection) no longer counts its largest possible cost as spent. Before, three such attempts could show
   about $12 spent with nothing sent, and trip the spending check. Every other failed call still keeps its estimate,
   because it may have been billed.
+
+## The deep-dive stress test: a review read whole, a custom method's pages checked, a template's distances kept
+
+- Claude's visual check is never shown as clean when its answer could not be read. An answer that left out its
+  summary or its list of findings was read as "no findings": in one run Claude put its whole review, two blocking
+  findings among it, under an extra key, and the preview showed a clean check. Now such an answer is a skipped check,
+  said as one; an answer whose only key holds the whole review is read as that review, every finding kept.
+- A custom method's sample pages get the page-layout check a plan's get, by what the method's own plan says will move,
+  and its copies are rendered and compared before any is delivered. Before, the preview said the layout "is checked
+  when the copies are created", and the copies went out with that check never made. A sample whose words moved where
+  its plan says none do shows "Did not pass", the chat says so before the button, and Create is unavailable; in
+  Obliterate mode its copies are delivered marked UNVERIFIED with that check beside them.
+- A header/footer template request that keeps each document's own header and footer distances is checked against
+  those distances. Before, the page-layout check always measured the headers and footers against the template's
+  distances, so every such copy was held although it was exactly as asked, and the app spent its calls repairing
+  correct copies. A copy whose distances moved anyway, though the request kept them, still fails the check.
