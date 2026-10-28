@@ -250,10 +250,11 @@ export const RUNTIME_CARDS: RuntimeCard[] = [
     automatic: true,
     you:
       "Nothing beyond your request: when no ordinary plan fits (Claude finds no operation for it, the plan covers no " +
-      "file, a sample fails its check, or every sample is refused), the app asks Claude for a plan of outcomes on " +
+      "file, or no sample passes its checks), the app asks Claude for a plan of outcomes on " +
       "its own, then offers it to you as one choice, Use these outcomes and continue, with every word it would place " +
       "beneath it; nothing is tried until you pick it. A file the plan " +
-      "refuses while the others plan does not start it, at whichever step of a plan done in steps: that " +
+      "refuses while the others plan does not start it, at whichever step of a plan done in steps, and neither does " +
+      "a sample that fails its checks while another passes: that " +
       "file waits under Left untouched beside the preview of the others, and goes on your to-do list when you " +
       "create theirs. The documents you left out of the request stay out of the outcomes.",
     runs:
@@ -374,15 +375,17 @@ export const RUNTIME_CARDS: RuntimeCard[] = [
     you: "Create edited copies (or “I reviewed the flagged pages — create copies”).",
     runs:
       "The click approves exactly the plan and files on screen: if a file or the plan changed since the preview, it " +
-      "is refused. In Safe and Default modes a failed preview check also blocks Create, with its reason beside " +
-      "the button. Every approved file is edited from its original, checked by the independent checker (its checks " +
-      `V1–V10) and rendered; ${F.processMinFiles} files or more are shared over the app's own worker processes, one per ` +
+      "is refused. In Safe and Default modes a document whose preview failed a check is left as it is, under Left " +
+      "untouched with its failed checks, while the others are created; a preview none of whose samples passed " +
+      "blocks Create, with its reason beside the button. Every approved file is edited from its original, checked " +
+      `by the independent checker (its checks V1–V10) and rendered; ${F.processMinFiles} files or more are shared ` +
+      "over the app's own worker processes, one per " +
       `core (at most ${F.maxProcessWorkers}), each file edited and checked whole in one of them, and Word renders over ` +
       `up to ${F.wordInstances} instances side by side. A copy that passes goes to a new timestamped folder; one that fails is moved to failed ` +
       "and never delivered. Then, if any copy failed, the app looks at those files again on its own (recovery) and " +
       "comes back with a question or a new plan — except after a Safe-mode button, whose copies get no recovery. A " +
-      "file the preview refused, or one whose copy failed with nothing to check it again, goes on your to-do list " +
-      "with the reason; a click that is refused moves nothing there. In Obliterate mode a copy that " +
+      "file the preview refused or whose preview failed, or one whose copy failed with nothing to check it again, " +
+      "goes on your to-do list with the reason; a click that is refused moves nothing there. In Obliterate mode a copy that " +
       "fails its check is delivered anyway, marked UNVERIFIED with the checks it failed, and no recovery runs.",
     sent:
       "Nothing to make and check the copies. Recovery, if it runs, sends the failed files' names and full paths, their " +

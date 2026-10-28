@@ -2,7 +2,7 @@
 
 The conversation window continues into outcome planning when
 the compiler cannot offer a supported method. A failed ordinary preview (its plan covers
-no file, a sample fails its check, or every sample is refused) or a failed custom-method
+no file, or no sample gets through: each fails its check or is refused) or a failed custom-method
 trial also feeds its evidence into that investigation. A preview in which some files plan
 and others are refused is not a failed preview: the refused files wait under Left untouched,
 the preview of the others stands, and the conversation stays with the assistant (the 1.9.0
@@ -11,7 +11,11 @@ outcome planner). A sample that a later step of a chain refuses is a refused fil
 way: a chain plans its later steps on the samples alone, so that refusal shows on the
 sample, and the file waits under Left untouched beside the others (the 1.10.0 live run of
 2026-10-23, where the font step refused two samples' list numbering and handed a
-nineteen-file preview, sixteen of its samples passed, to the outcome planner). The
+nineteen-file preview, sixteen of its samples passed, to the outcome planner). A sample
+that fails its check while another passes is set aside the same way (`preview.failed_samples`):
+Create makes no copy of it, it waits under Left untouched with its failed checks, and it goes
+on the to-do list once the others are created (the owner's Safe-mode run of 2026-10-28, where
+one sample's page layout held back the copies of a twelve-file batch). The
 conversation keeps the original request, actual answers, template and source pins.
 
 The plan is carried out internally and its result is shown as the ordinary plan view, with

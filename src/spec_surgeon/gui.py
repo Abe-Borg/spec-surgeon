@@ -799,23 +799,23 @@ class Session:
             self._visual_check(self.preview, self._intent(), out / "preview", log)
         self._note_preview()
         c = self.conversation
-        # A failed preview is one the plan cannot stand on: no file plans, a sample fails its check, or no sample got
-        # through. A file the plan refuses while others plan — at any step of a chain, every step being planned on
-        # every file — is set aside under Left untouched (docs/CONVERSATIONAL_DESKTOP.md) and the preview stands: the
-        # conversation hears why, the user decides. Outcome planning never takes the conversation over for refused
+        # A failed preview is one the plan cannot stand on: no file plans, or no sample got through (each failed its
+        # check or was refused). A file the plan refuses while others plan — at any step of a chain, every step being
+        # planned on every file — is set aside under Left untouched (docs/CONVERSATIONAL_DESKTOP.md) and the preview
+        # stands: the conversation hears why, the user decides. Outcome planning never takes the conversation over for refused
         # files (the 1.9.0 live run of 2026-10-22: one file's even-page footers voided a twelve-file preview; the 1.10.0
         # run of 2026-10-23: two samples' list numbering, refused by the font step, voided a nineteen-file one).
-        from .preview import refusals, sample_refused
+        # A sample that failed its check (or that the engine failed on) while another got through is set aside the same
+        # way (``preview.failed_samples``; the owner's Safe-mode run of 2026-10-28, one failed sample of twelve holding
+        # back every copy): the preview of the others stands. Obliterate mode (``unguarded``): a sample whose copy was
+        # made but failed its checks is not a failed sample at all — its failed checks show on its preview and Create
+        # delivers it marked UNVERIFIED.
+        from .preview import refusals, sample_failed, sample_refused
         bp = self.preview.batch_plan
         samples = self.preview.samples
-        # Obliterate mode (``unguarded``): a sample whose copy was made but failed its checks does not void the plan —
-        # its failed checks show on its preview and Create delivers it marked UNVERIFIED; a refusal or an engine
-        # failure (no copy to deliver) still does
         if c is not None and c.continuous_recovery and (
                 len(refusals(self.preview)) >= len(bp.files)
-                or any(not s.passed and not sample_refused(s) and not (self.unguarded and s.exception is None)
-                       for s in samples)
-                or (samples and all(sample_refused(s) for s in samples))):
+                or (samples and all(sample_refused(s) or sample_failed(s, self.unguarded) for s in samples))):
             evidence = {"reason": self.preview.to_text(), "candidate": copy.deepcopy(self.spec)}
             self._set_outcome(left_out=self.left_out)   # the documents left out stay out of the outcome plan too
             return self._after_turn(c.investigate_failure(evidence))
@@ -936,8 +936,9 @@ class Session:
             # Recovery's Save ready copies exports only READY files; its other samples may still be failing.
             return ""
         from .preview import refusals, sample_refused
+        aside = {Path(sv.source).resolve() for sv in self.failed_samples()}   # Create leaves these as they are
         for sample in getattr(preview, "samples", []) or []:
-            if sample_refused(sample) or sample.passed is True:
+            if sample_refused(sample) or sample.passed is True or Path(sample.source).resolve() in aside:
                 continue
             if self.unguarded and sample.passed is False and sample.exception is None:
                 continue
@@ -951,6 +952,17 @@ class Session:
         if self.model_free and planned is not None and (not planned or len(refusals(preview)) >= len(planned)):
             return "No documents can take this change, so no copies can be created. Choose another change."
         return ""
+
+    def failed_samples(self) -> list:
+        """The samples of the displayed plan's preview set aside because they failed while another got through
+        (``preview.failed_samples``): Create makes no copy of them and runs the others, and they wait under Left
+        untouched with their failed checks, as the files the plan refused do. A custom method's preview has none — a
+        sample its method fails on makes Create unavailable for the method (``run_blocked_reason``) — and neither has
+        recovery's, which saves only its READY files."""
+        if self.spec is None or self.generated is not None or self.recovery is not None or self.preview is None:
+            return []
+        from .preview import failed_samples
+        return failed_samples(self.preview, self.unguarded)
 
     @_session_action
     def acknowledge_review(self, token: str) -> None:
@@ -976,7 +988,8 @@ class Session:
         total, planned = len(bp.files), len(bp.files) - len(refused)
         flagged = len(pv.review.blocking()) if pv.review is not None else 0
         # what Claude must not miss leads, ahead of the full text the note cuts: the files the plan refused (a chain's
-        # preview repeats its assumptions per stage, and pushed them out of the cut) and the blocking visual findings
+        # preview repeats its assumptions per stage, and pushed them out of the cut), the samples set aside because they
+        # failed, and the blocking visual findings
         lead = [f"{planned} of {total} file(s) plan cleanly."]
         if self.left_out:
             lead.append("LEFT OUT AT THE USER'S REQUEST (not planned, previewed or changed): "
@@ -986,6 +999,15 @@ class Session:
                         "with its reason and what would let it take part, or offer to leave it out):")
             lead += [f"   {source.name}: [{exc.get('code')}] {exc.get('reason', '')}"[:400]
                      for source, exc in refused[:20]]
+        failed = self.failed_samples()
+        if failed:
+            from .ui_feedback import failed_preview_checks
+            lead.append("LEFT UNTOUCHED (these samples did not pass their checks while others did; Create makes no "
+                        "copy of them and creates the others — name each to the user with its failed checks and what "
+                        "would let it take part, or offer to leave it out):")
+            lead += [(f"   {Path(sv.source).name}: " + "; ".join(f"{f['check']} {f['reason']}"
+                                                               for f in failed_preview_checks(sv)))[:400]
+                     for sv in failed[:20]]
         for finding in (pv.review.blocking() if pv.review is not None else [])[:10]:
             lead.append(f"BLOCKING VISUAL FINDING — {finding.get('file')}, page {finding.get('page')}: "
                         f"{finding.get('text', '')}"[:400])
@@ -1002,19 +1024,21 @@ class Session:
         self._save_chat()
 
     def runnable_files(self) -> List[Path]:
-        """What Create can run of the displayed plan: ``planned_files`` without the files its preview refused (while
-        another file planned) — the set the window counts the documents left to run in."""
+        """What Create can run of the displayed plan: ``planned_files`` without the files its preview refused or set
+        aside because their sample failed (while another file planned) — the set the window counts the documents left
+        to run in."""
         files = self.planned_files()
         kept = self._without_refused(files, None)
         return files if kept is None else kept
 
     def _without_refused(self, files: List[Path], only) -> Optional[List[Path]]:
         """What Create runs of an approved spec: the files the preview refused (the plan, or a later step on a sample)
-        stay as they are — the window listed them under Left untouched, not part of the plan — so they are never run,
-        and so never sent on to recovery, while another file planned (a plan that refused every file went to outcome
-        planning instead)."""
+        and the samples it set aside because they failed (``failed_samples``) stay as they are — the window listed
+        them under Left untouched, not part of the plan — so they are never run, and so never sent on to recovery,
+        while another file planned (a plan that refused every file went to outcome planning instead)."""
         from .preview import refusals
         refused = {source.resolve() for source, _ in refusals(self.preview)}
+        refused |= {Path(sv.source).resolve() for sv in self.failed_samples()}
         if not refused or len(refused) >= len(files):
             return only
         return [f for f in (files if only is None else only) if Path(f).resolve() not in refused]

@@ -215,6 +215,19 @@ function samples() {
   }));
 }
 
+/** A sample that did not pass its checks (V2 and V7), as the server shows it. */
+function failSample(sample) {
+  sample.passed = false;
+  sample.failures = [
+    { check: "V2", reason: "The copy's wording does not match the change predicted by the plan." },
+    { check: "V7", reason: "The page layout does not match the layout predicted by the plan." },
+  ];
+  sample.geometry = {
+    status: "FAIL",
+    note: "Page layout differs from what the plan predicts: reference = source render; max |Δy| 11.60pt on asserted pages (tol 0.5pt); MOVED pages [3, 4]",
+  };
+}
+
 /** The find-and-replace list of a waiting plan (docs/WEB_API.md `occurrences`): every occurrence per document. */
 function occurrences(skipped = []) {
   const item = (source, paragraph, before, match, after, heading = "", part = "word/document.xml") => ({
@@ -494,17 +507,31 @@ const SCENARIOS = {
     v.connection = { ready: true, origin: "environment" };
     return v;
   },
+  // One sample of two did not pass: the server sets it aside under Left untouched (`samples[].set_aside`) and Create
+  // makes the other's copy.
   "failed-preview": () => {
     const v = SCENARIOS.preview();
     v.mode = "safe";
-    v.samples[0].passed = false;
-    v.samples[0].failures = [{ check: "V2", reason: "The copy's wording does not match the change predicted by the plan." }];
-    v.samples[0].geometry = {
-      status: "FAIL",
-      note: "Page layout differs from what the plan predicts: reference = source render; max |Δy| 11.60pt on asserted pages (tol 0.5pt); MOVED pages [3, 4]",
+    failSample(v.samples[0]);
+    v.samples[0].set_aside = true;
+    v.plan = {
+      ...v.plan,
+      set_aside: [
+        {
+          name: v.samples[0].name,
+          reason:
+            "Its preview did not pass its checks, so no copy of it is made: The copy's wording does not match the change predicted by the plan (V2); The page layout does not match the layout predicted by the plan (V7).",
+        },
+      ],
     };
-    v.samples[0].failures.push({ check: "V7", reason: "The page layout does not match the layout predicted by the plan." });
-    v.action.disabled_reason = `${v.samples[0].name} did not pass its preview checks (V2, V7).`;
+    return v;
+  },
+  // Every sample did not pass: nothing shows the plan working, so Create is unavailable and says why.
+  "failed-every-preview": () => {
+    const v = SCENARIOS.preview();
+    v.mode = "safe";
+    v.samples.forEach(failSample);
+    v.action.disabled_reason = `Create is unavailable: ${v.samples[0].name} did not pass its preview checks (V2, V7). Choose another change or prepare a new preview before creating copies.`;
     return v;
   },
 };
