@@ -5,7 +5,8 @@ Python's ``re`` cannot be interrupted, planning has no deadline and the sandbox'
 (stress-test finding F8): a catastrophic pattern — ``(a|aa)+$`` on thirty letters and a stop — would hold the engine
 for minutes on one paragraph. The owner's decision (2026-10-28): the ``regex`` module, whose default ``V0`` behaviour
 is ``re``'s (the same syntax, flags, match objects and zero-width rules; a pattern that matches differently under
-the two is not expected), and whose ``search``, ``match``, ``fullmatch``, ``finditer``, ``findall``, ``sub``,
+the two is not expected — ``regex`` only accepts a little more, such as a variable-width lookbehind or ``\\p{L}``,
+and the verifier's twin accepts the same), and whose ``search``, ``match``, ``fullmatch``, ``finditer``, ``findall``, ``sub``,
 ``subn`` and ``split`` take ``timeout=`` seconds. A search past ``REGEX_TIMEOUT_S`` is a refusal with the code
 ``regex-timeout`` that sets the file aside; a pattern that is not a string, is longer than ``MAX_PATTERN_CHARS`` or
 does not compile is ``bad-params``.
@@ -129,18 +130,23 @@ class BoundedPattern:
         return self._run("split", string, maxsplit)
 
 
-def compile_pattern(pattern: Any, flags: int = 0, *, where: str, max_chars: Optional[int] = MAX_PATTERN_CHARS) -> BoundedPattern:
+def compile_pattern(pattern: Any, flags: int = 0, *, where: str, label: Optional[str] = None,
+                    max_chars: Optional[int] = MAX_PATTERN_CHARS) -> BoundedPattern:
     """``pattern`` as a ``BoundedPattern``, every search on ``where`` (words: "a paragraph's text") bounded by
     ``REGEX_TIMEOUT_S``. Not a string, over ``max_chars`` characters (``None``: a pattern the app built from an
-    escaped literal, whose length is the user's words') or not compiling: ``JobException`` with ``bad-params``."""
+    escaped literal, whose length is the user's words') or not compiling: ``JobException`` with ``bad-params``,
+    its reason opening with ``label`` (the parameter's name: "rows.text_regex") when one is given — so no caller
+    re-raises with a code of its own (``tests/test_diagnostics.py`` reads every code as a literal)."""
+    head = f"{label}: " if label else ""
     if not isinstance(pattern, str):
-        raise JobException(f"a pattern must be text (a Python regular expression), got {type(pattern).__name__}",
-                           "bad-params")
+        raise JobException(f"{head}a pattern must be text (a Python regular expression), got "
+                           f"{type(pattern).__name__}", "bad-params")
     if max_chars is not None and len(pattern) > max_chars:
-        raise JobException(f"the pattern is {len(pattern)} characters long; at most {max_chars} are accepted",
+        raise JobException(f"{head}the pattern is {len(pattern)} characters long; at most {max_chars} are accepted",
                            "bad-params", {"length": len(pattern), "max": max_chars})
     try:
         compiled = regex.compile(pattern, _to_regex_flags(flags))
     except (regex.error, RecursionError, OverflowError) as e:
-        raise JobException(f"the pattern {pattern!r} is not a regular expression ({e})", "bad-params") from None
+        raise JobException(f"{head}the pattern {pattern!r} is not a regular expression ({e})",
+                           "bad-params") from None
     return BoundedPattern(compiled, pattern, where)

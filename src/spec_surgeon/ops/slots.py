@@ -643,16 +643,9 @@ def _validate_rule_syntax(name: str, rule: Dict[str, Any]) -> None:
                 or not isinstance(rule.get("source_md5"), str)):
             raise JobException(f"slot {name!r}: binding requires exact value, part, paragraph and source_md5", "bad-params")
     elif kind == "regex":
-        try:
-            compile_pattern(rule.get("pattern"), where=SOURCE_TEXT)
-        except JobException as e:
-            raise JobException(f"slot {name!r}: bad or missing 'pattern' ({e.reason})", e.code, e.details) from None
+        compile_pattern(rule.get("pattern"), where=SOURCE_TEXT, label=f"slot {name!r}: 'pattern'")
     elif kind == "paragraph_after":
-        try:
-            compile_pattern(rule.get("anchor_regex"), where=SOURCE_TEXT)
-        except JobException as e:
-            raise JobException(f"slot {name!r}: bad or missing 'anchor_regex' ({e.reason})", e.code,
-                               e.details) from None
+        compile_pattern(rule.get("anchor_regex"), where=SOURCE_TEXT, label=f"slot {name!r}: 'anchor_regex'")
     else:
         raise JobException(f"slot {name!r}: rule must be literal | regex | paragraph_after | first_match, got {kind!r}",
                            "bad-params")

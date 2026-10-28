@@ -145,10 +145,8 @@ class EnsureEndOfSection(Op):
             raise JobException("'text' must hold {number} exactly once", "bad-params")
         if any(ord(c) < 32 for c in text):
             raise JobException("'text' holds a control character", "bad-params")
-        try:
-            detect = compile_pattern(params.get("detect_regex", DEFAULT_DETECT), where="a body paragraph's text")
-        except JobException as e:
-            raise JobException(f"bad detect_regex ({e.reason})", e.code, e.details) from None
+        detect = compile_pattern(params.get("detect_regex", DEFAULT_DETECT), where="a body paragraph's text",
+                                 label="detect_regex")
         formatting = params.get("formatting", "style")
         if formatting not in ("style", "copy"):
             raise JobException("formatting must be 'style' or 'copy'", "bad-params")
@@ -208,7 +206,7 @@ class EnsureEndOfSection(Op):
                 if style is not None:                       # the new line names it: removing it beside is a conflict
                     frag.touches.append((sheet.part, f"style:{style}", "verify"))
             else:
-                rx = compile_pattern(params["copy_from_regex"], where="a body paragraph's text")
+                rx = compile_pattern(params["copy_from_regex"], where="a body paragraph's text", label="copy_from_regex")
                 hits = [i for i, p in enumerate(pars) if p.getparent() is body and rx.search(RunText(p).text)]
                 if len(hits) != 1:
                     raise JobException(f"copy_from_regex matches {len(hits)} body paragraph(s); exactly one needed",

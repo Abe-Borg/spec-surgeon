@@ -67,10 +67,7 @@ def check_row_selector(pred: Any, where: str = "select.rows") -> None:
     if "text_regex" in pred:
         if not isinstance(pred["text_regex"], str):
             raise JobException("rows.text_regex must be a regular expression (text)", "bad-params")
-        try:
-            compile_pattern(pred["text_regex"], where=ROW_TEXT)
-        except JobException as e:
-            raise JobException(f"rows.text_regex: {e.reason}", e.code, e.details) from None
+        compile_pattern(pred["text_regex"], where=ROW_TEXT, label="rows.text_regex")
     if "header" in pred and not isinstance(pred["header"], bool):
         raise JobException("rows.header must be true or false", "bad-params")
 

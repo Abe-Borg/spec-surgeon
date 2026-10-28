@@ -54,10 +54,7 @@ def match_rule(raw: Any, what: str) -> Dict[str, Any]:
         if k == "md5" and isinstance(v, str) and re.fullmatch(r"[0-9a-fA-F]{32}", v):
             return {"how": "md5", "md5": v.lower()}
         if k == "name_regex" and isinstance(v, str) and v:
-            try:
-                compile_pattern(v, where=NAME_TEXT)
-            except JobException as e:
-                raise JobException(f"{what}.match.name_regex: {e.reason}", e.code, e.details) from None
+            compile_pattern(v, where=NAME_TEXT, label=f"{what}.match.name_regex")
             return {"how": "name", "name_regex": v}
     raise JobException("'match' must be {'image': '<the picture file>'}, {'md5': '<32 hex digits>'}, "
                        "{'name_regex': '<regex on the picture's name/description>'} or 'all'", "bad-params")

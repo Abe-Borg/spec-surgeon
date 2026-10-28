@@ -66,10 +66,7 @@ def check_table_selector(pred: Any) -> None:
         if key in pred:
             if not isinstance(pred[key], str):
                 raise JobException(f"tables.{key} must be a regular expression (text)", "bad-params")
-            try:
-                compile_pattern(pred[key], where=TABLE_TEXT[key])
-            except JobException as e:
-                raise JobException(f"tables.{key}: {e.reason}", e.code, e.details) from None
+            compile_pattern(pred[key], where=TABLE_TEXT[key], label=f"tables.{key}")
     if "nested" in pred and not isinstance(pred["nested"], bool):
         raise JobException("tables.nested must be true or false", "bad-params")
 

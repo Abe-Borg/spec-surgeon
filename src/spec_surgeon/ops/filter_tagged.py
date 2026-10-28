@@ -133,11 +133,8 @@ class FilterTaggedParagraphs(Op):
             raise JobException(f"filter_tagged_paragraphs selects by scope only", "bad-params")
         if not params.get("tag_regex"):
             raise JobException("'tag_regex' is required", "bad-params")
-        try:
-            rx = compile_pattern(params["tag_regex"], where="a paragraph's text")
-            sep = compile_pattern(params.get("tag_separator", DEFAULT_SEPARATOR), where="a tag")
-        except JobException as e:
-            raise JobException(f"bad regex ({e.reason})", e.code, e.details) from None
+        rx = compile_pattern(params["tag_regex"], where="a paragraph's text", label="tag_regex")
+        sep = compile_pattern(params.get("tag_separator", DEFAULT_SEPARATOR), where="a tag", label="tag_separator")
         keep = [norm_system(s) for s in params.get("keep") or []]
         delete = [norm_system(s) for s in params.get("delete") or []]
         if bool(keep) == bool(delete):

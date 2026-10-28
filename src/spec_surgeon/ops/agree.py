@@ -67,10 +67,7 @@ def compile_places(raw: Any) -> Dict[str, Tuple[str, Any, bool]]:
     for name, place in raw.items():
         if not isinstance(place, dict) or set(place) - {"in", "pattern", "required"} or place.get("in") not in WHERE:
             raise JobException(f"place {name!r} must be {{in: {'|'.join(WHERE)}, pattern, required?}}", "bad-params")
-        try:
-            rx = compile_pattern(place.get("pattern") or "", where=PLACE_TEXT[place["in"]])
-        except JobException as e:
-            raise JobException(f"place {name!r}: {e.reason}", e.code, e.details) from None
+        rx = compile_pattern(place.get("pattern") or "", where=PLACE_TEXT[place["in"]], label=f"place {name!r}")
         if not rx.groupindex:
             raise JobException(f"place {name!r}: the pattern names no value (use (?P<number>…) / (?P<title>…))",
                                "bad-params")

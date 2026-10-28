@@ -921,7 +921,4 @@ def regex(pattern: Any, name: str, where: str = "a note's text"):
     """A note filter's pattern, bounded (``ops/patterns.py``)."""
     if not isinstance(pattern, str):
         raise JobException(f"{name} must be a regular expression", "bad-params")
-    try:
-        return compile_pattern(pattern, where=where)
-    except JobException as e:
-        raise JobException(f"bad {name}: {e.reason}", e.code, e.details) from None
+    return compile_pattern(pattern, where=where, label=name)

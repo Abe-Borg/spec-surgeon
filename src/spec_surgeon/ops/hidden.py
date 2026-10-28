@@ -630,10 +630,7 @@ def _rule(raw: Any, where: str, keys: Sequence[str]) -> Dict[str, Any]:
         out["style_in"] = list(v)
     if "text_regex" in raw:
         v = raw["text_regex"]
-        try:
-            compile_pattern(v, where="a paragraph's text")
-        except JobException as e:
-            raise JobException(f"{where}: bad text_regex {v!r} ({e.reason})", e.code, e.details) from None
+        compile_pattern(v, where="a paragraph's text", label=f"{where}: text_regex")
         if not v:
             raise JobException(f"{where}: text_regex is empty", "bad-params")
         out["text_regex"] = v

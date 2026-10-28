@@ -69,14 +69,11 @@ def normalize_pair(raw: Any, where: str) -> Dict[str, Any]:
     pair = {"find": find, "replace": rep, "regex": bool(raw.get("regex", False)),
             "match_case": bool(raw.get("match_case", True)), "whole_word": bool(raw.get("whole_word", True)),
             "flexible_whitespace": bool(raw.get("flexible_whitespace", False))}
-    try:
-        compile_pair(pair)
-    except JobException as e:
-        raise JobException(f"{where}: {e.reason}", e.code, e.details) from None
+    compile_pair(pair, label=where)
     return pair
 
 
-def compile_pair(pair: Dict[str, Any]):
+def compile_pair(pair: Dict[str, Any], label: Optional[str] = None):
     """The pair's pattern, bounded (``ops/patterns.py``); a pattern the app builds from the literal find is as long
     as the user's words, so only a regex find is held to the length limit."""
     if pair["regex"]:
@@ -85,7 +82,7 @@ def compile_pair(pair: Dict[str, Any]):
         pattern = flexible_regex_from_literal(pair["find"])
     else:
         pattern = re.escape(pair["find"])
-    return compile_pattern(pattern, 0 if pair["match_case"] else re.IGNORECASE, where="a paragraph's text",
+    return compile_pattern(pattern, 0 if pair["match_case"] else re.IGNORECASE, where="a paragraph's text", label=label,
                            max_chars=MAX_PATTERN_CHARS if pair["regex"] else None)
 
 

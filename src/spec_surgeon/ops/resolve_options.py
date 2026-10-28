@@ -53,10 +53,8 @@ def compile_rules(raw: Any) -> List[Tuple[Any, str, str]]:
             raise JobException(f"rule {n}: 'match' must be a regex", "bad-params")
         if "match_case" in r and not isinstance(r["match_case"], bool):
             raise JobException(f"rule {n}: match_case must be true or false", "bad-params")
-        try:
-            rx = compile_pattern(r["match"], 0 if r.get("match_case") else re.IGNORECASE, where="an option's text")
-        except JobException as e:
-            raise JobException(f"rule {n}: {e.reason}", e.code, e.details) from None
+        rx = compile_pattern(r["match"], 0 if r.get("match_case") else re.IGNORECASE, where="an option's text",
+                             label=f"rule {n}")
         out.append((rx, r["action"], f"{r['action']} {r['match']!r}"))
     return out
 

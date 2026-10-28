@@ -72,10 +72,7 @@ def check_column_selector(pred: Any, where: str = "select.columns") -> None:
     if "header_regex" in pred:
         if not isinstance(pred["header_regex"], str):
             raise JobException("columns.header_regex must be a regular expression (text)", "bad-params")
-        try:
-            compile_pattern(pred["header_regex"], where=HEADER_TEXT)
-        except JobException as e:
-            raise JobException(f"columns.header_regex: {e.reason}", e.code, e.details) from None
+        compile_pattern(pred["header_regex"], where=HEADER_TEXT, label="columns.header_regex")
 
 
 def selects_every_column(pred: Any) -> bool:
