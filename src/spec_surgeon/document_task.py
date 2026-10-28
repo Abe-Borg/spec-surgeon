@@ -531,10 +531,13 @@ class DocumentTask:
             self.attachments.append(found)
         else:
             known = {a.path for a in self.attachments}
-            for path in checked:
-                if path in known:
-                    continue
-                self.attachments.append(triage(path) if path.suffix.lower() == ".docx" else triage_reference(path))
+            # Every file is triaged before any is attached: an exception from one (the stress test's F6, a malformed
+            # zip beside a valid document) leaves the attachments, the fresh list, the pass and the session as they
+            # were. A triage refusal is not an exception: the file is attached, refused, with its reason.
+            found = [(path, triage(path) if path.suffix.lower() == ".docx" else triage_reference(path))
+                     for path in checked if path not in known]
+            for path, attachment in found:
+                self.attachments.append(attachment)
                 if self.working and path.suffix.lower() == ".docx":
                     fresh.append(path.name)
                     self.fresh.append(str(path))
