@@ -1399,7 +1399,9 @@ def main(argv=None) -> int:
         # A clean close deletes the scratch folder: nothing of the session outlives the window but what Export saved.
         # Copies never saved are deleted only once the user said so at the close (``web.shell.on_closing``); a close
         # that asked nothing (the browser fallback) keeps the folder, and the next start restores it.
-        unsaved = len(state.settings_task.unsaved_copies())    # the user's own task's, never the tour's practice
+        # the user's own task's, never the tour's practice; every copy's bytes read again (a copy changed since it
+        # was saved, in Word, is unsaved again)
+        unsaved = len(state.settings_task.unsaved_copies(fresh=True))
         if unsaved and not state.close_confirmed:
             scratch.release()
             diag.app_log().info(f"The window closed with {unsaved} unsaved cop{'y' if unsaved == 1 else 'ies'}; its "

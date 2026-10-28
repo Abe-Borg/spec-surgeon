@@ -189,9 +189,12 @@ export interface Result {
   name: string;
   /** Obliterate mode: the checks this copy failed; it was delivered anyway. Empty for a verified copy. */
   unverified?: string[];
-  /** Where Export → Save the copies… saved this copy; "" while it lives only in the window's scratch folder. Absent
-   *  from an older server. */
+  /** Where Export → Save the copies… saved this copy, while that file is still there; "" while the copy lives only
+   *  in the window's scratch folder. Absent from an older server. */
   saved_to?: string;
+  /** The copy's bytes moved since it was saved to `saved_to` (opened from the window and edited in Word): it counts
+   *  as unsaved again, and its link opens the working copy, the newer one. */
+  changed_since_saved?: boolean;
 }
 
 /** Export → Save the copies…: where the copies were last saved, how many working copies are not saved yet (only a
@@ -210,8 +213,11 @@ export interface PdfResult {
   /** Made from a working copy delivered UNVERIFIED (Obliterate mode): that copy's failed checks, as an earlier
    *  copy's. Empty when nothing failed on the way. */
   unverified?: string[];
-  /** Where Export → Save the copies… saved this PDF; "" while it lives only in the window's scratch folder. */
+  /** Where Export → Save the copies… saved this PDF, while that file is still there; "" while it lives only in the
+   *  window's scratch folder. */
   saved_to?: string;
+  /** The PDF's bytes moved since it was saved to `saved_to`: unsaved again, and its link opens the working file. */
+  changed_since_saved?: boolean;
 }
 
 /** Whether this computer can make PDFs (Save clean PDFs needs Word or LibreOffice), and with which program. */

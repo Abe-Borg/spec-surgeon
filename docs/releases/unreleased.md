@@ -16,3 +16,17 @@ Changes since v1.12.0.
 - **Add a folder of documents** attaches a folder's own Word documents at once; its subfolders are not entered, and
   the chat says how many documents they hold.
 - The guided tour has a chapter on the occurrence list.
+
+## A copy is saved while a file with its content sits where Export put it
+
+- Export records, with each copy's destination, a fingerprint of the bytes it wrote. A copy whose content changed
+  since — opened through the window's link, which opens the working copy in the scratch folder, then edited and
+  saved in Word — reads **CHANGED** beside its name and counts as unsaved again: the close question asks about it,
+  New conversation asks about it, and the next Export writes it beside the file saved before (never over it). A copy
+  whose saved file is gone is unsaved again, plainly. Before, a copy once exported counted as saved whatever became
+  of it, and closing the window could delete an edit the exported file never had.
+- Clicking a copy opens the saved file while it holds the copy's current content, else the working copy in the
+  scratch folder (the one with the newer content); the link's hover text says which.
+- The close reads every copy's bytes again, not the last fingerprint; a conversation restored from a window that
+  never closed checks the same way, and an older journal's export entries are read as saved, with the fingerprint
+  taken from the saved file while it is there.

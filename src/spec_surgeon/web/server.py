@@ -325,12 +325,21 @@ class WindowState:
                    for sv in raw["samples"]]
         unverified = raw.get("unverified") or {}
         exported = raw.get("exported") or {}
+        states = raw.get("export_state") or {}
+
+        def saved(output: str) -> Dict[str, Any]:
+            # where Export saved this copy while that file is still there (``""`` once it is gone, or never saved),
+            # and whether the copy's bytes moved since: the page then opens the working copy, the newer one
+            state = states.get(output, "unsaved")
+            entry = exported.get(output) or {}
+            return {"saved_to": entry.get("to", "") if state in ("saved", "changed") else "",
+                    "changed_since_saved": state == "changed"}
         results = [{"source": source, "output": output, "name": Path(output).name,
-                    "unverified": list(unverified.get(source, [])), "saved_to": exported.get(output, "")}
+                    "unverified": list(unverified.get(source, [])), **saved(output)}
                    for source, output in raw["results"].items()]
         pdf_marks = raw.get("pdf_unverified") or {}
         pdfs = [{"source": source, "output": output, "name": Path(output).name,
-                 "unverified": list(pdf_marks.get(source, [])), "saved_to": exported.get(output, "")}
+                 "unverified": list(pdf_marks.get(source, [])), **saved(output)}
                 for source, output in raw.get("pdfs", {}).items()]
         return {"version": self.version, "busy": busy, "stage": stage, "mode": raw.get("mode", "default"),
                 "modes": task.available_modes(), "template": task.template_info(),
@@ -932,6 +941,8 @@ def create_app(state: WindowState, *, dev: bool = False) -> FastAPI:
 
     @app.post("/api/open")
     async def open_result(request: Request):
+        # The page sends the file Export saved when it still holds the copy's current bytes (``saved_to`` without
+        # ``changed_since_saved``), else the working copy in the scratch folder: the one with the newer content.
         try:
             body = await json_object(request)
         except ValueError as e:

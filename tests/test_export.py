@@ -5,7 +5,9 @@ The window says which copies are unsaved, asks once before a close would delete 
 the next dialog, and the journal keeps what was saved where."""
 from __future__ import annotations
 
+import hashlib
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -42,6 +44,17 @@ def _names(folder: Path) -> list:
     return sorted(p.name for p in folder.iterdir())
 
 
+def _md5(path) -> str:
+    return hashlib.md5(Path(path).read_bytes()).hexdigest()
+
+
+def _edit(copy, title="ANOTHER TITLE") -> None:
+    """Word standing in: the working copy rewritten in place through the window's own link."""
+    before = Path(copy).read_bytes()
+    Path(copy).write_bytes(build(Path(copy).stem, title))
+    assert Path(copy).read_bytes() != before
+
+
 # ---- the task ----------------------------------------------------------------------------------------------------
 
 def test_export_writes_the_working_copies_verbatim_into_the_chosen_folder(tmp_path, files):
@@ -55,8 +68,10 @@ def test_export_writes_the_working_copies_verbatim_into_the_chosen_folder(tmp_pa
     assert made == {"folder": str(dest.resolve()), "saved": 2, "already": 0}
     for current in task.working.values():
         saved = dest / Path(current).name
-        assert saved.read_bytes() == Path(current).read_bytes() and task.exported[current] == str(saved)
+        assert saved.read_bytes() == Path(current).read_bytes()
+        assert task.exported[current] == {"to": str(saved), "md5": _md5(saved)}   # the bytes written, fingerprinted
     assert task.unsaved_copies() == [] and task.export_folder == str(dest.resolve())
+    assert task.export_states() == {current: "saved" for current in task.working.values()}
     assert task.messages[-1]["text"] == f"Saved 2 copies to {dest.resolve()}."
     view = task.view()
     assert view["unsaved"] == [] and view["copies"] == 2 and view["export_folder"] == str(dest.resolve())
@@ -72,8 +87,63 @@ def test_export_writes_the_working_copies_verbatim_into_the_chosen_folder(tmp_pa
     made = task.export(dest)
     numbered = dest / f"{Path(name).stem} (2){Path(name).suffix}"
     assert made["saved"] == 1 and made["already"] == 1 and numbered.read_bytes() == Path(first).read_bytes()
-    assert (dest / name).read_bytes() == b"someone else's" and task.exported[first] == str(numbered)
+    assert (dest / name).read_bytes() == b"someone else's" and task.exported[first]["to"] == str(numbered)
     assert _names(dest) == sorted(names + [numbered.name])
+
+
+def test_a_copy_changed_since_it_was_saved_is_unsaved_again_until_the_next_export(tmp_path, files):
+    """A copy opened through the window's link is the working copy in the scratch folder, not the exported file:
+    edited there (in Word) and saved, it holds content the exported file never had. It counts as unsaved again (the
+    close question asks, the view says so), and the next Export writes it beside the file saved before."""
+    task = _run(tmp_path, files)
+    dest = tmp_path / "Saved"
+    dest.mkdir()
+    task.export(dest)
+    first, second = task.working.values()
+    assert task.unsaved_copies() == [] and task.view()["unsaved"] == []
+    _edit(first)
+    assert task.unsaved_copies() == [first] and task.export_states() == {first: "changed", second: "saved"}
+    view = task.view()
+    assert view["unsaved"] == [first] and view["export_state"] == {first: "changed", second: "saved"}
+    assert view["exported"][first]["to"] == str(dest / Path(first).name)     # where it was saved is still said
+    # the second export writes it again: the file saved before is the user's, so the copy lands numbered beside it
+    made = task.export(dest)
+    numbered = dest / f"{Path(first).stem} (2).docx"
+    assert made == {"folder": str(dest.resolve()), "saved": 1, "already": 1}
+    assert numbered.read_bytes() == Path(first).read_bytes() and task.exported[first]["to"] == str(numbered)
+    assert task.unsaved_copies() == [] and task.export_states() == {first: "saved", second: "saved"}
+    assert _names(dest) == sorted([Path(first).name, numbered.name, Path(second).name])
+
+
+def test_a_saved_file_that_is_gone_makes_its_copy_unsaved_again(tmp_path, files):
+    task = _run(tmp_path, files)
+    dest = tmp_path / "Saved"
+    dest.mkdir()
+    task.export(dest)
+    first, second = task.working.values()
+    (dest / Path(first).name).unlink()
+    assert task.unsaved_copies() == [first] and task.export_states() == {first: "gone", second: "saved"}
+    assert task.view()["unsaved"] == [first]
+    assert task.export(dest) == {"folder": str(dest.resolve()), "saved": 1, "already": 1}
+    assert task.unsaved_copies() == [] and (dest / Path(first).name).read_bytes() == Path(first).read_bytes()
+
+
+def test_the_close_fingerprints_every_copy_again(tmp_path, files):
+    """A view reads the last fingerprint while a copy's size and mtime stand; the close question (``fresh``) reads
+    every copy's bytes again, so a copy rewritten to the same size and time is still caught where it matters."""
+    task = _run(tmp_path, files)
+    dest = tmp_path / "Saved"
+    dest.mkdir()
+    task.export(dest)
+    first = next(iter(task.working.values()))
+    st = os.stat(first)
+    data = bytearray(Path(first).read_bytes())
+    data[-1] ^= 0xFF                                   # the same size
+    Path(first).write_bytes(bytes(data))
+    os.utime(first, ns=(st.st_atime_ns, st.st_mtime_ns))   # and the same time
+    assert task.unsaved_copies() == []                 # the view's reading: nothing moved that a stat can see
+    assert task.unsaved_copies(fresh=True) == [first]  # the close's reading: the bytes
+    assert task.unsaved_copies() == [first]            # and the fingerprint taken is kept
 
 
 def test_export_refuses_a_folder_where_a_copy_would_land_on_an_input(tmp_path, files):
@@ -138,6 +208,28 @@ def test_the_journal_keeps_what_was_saved_where(tmp_path, files):
     assert restored.restore()
     assert restored.exported == task.exported and restored.export_folder == task.export_folder
     assert restored.unsaved_copies() == []
+    # the hash check runs on the restored state too: a copy changed since it was saved, with the window closed
+    first, second = restored.working.values()
+    saved_bytes = Path(first).read_bytes()
+    _edit(first)
+    restored = safe_task(tmp_path, journal=journal)
+    assert restored.restore() and restored.unsaved_copies() == [first]
+    assert restored.export_states() == {first: "changed", second: "saved"}
+    Path(first).write_bytes(saved_bytes)                 # the saved bytes again
+    # a journal from before the fingerprint kept the destination alone: saved, its hash taken from the saved file
+    old = {copy: entry["to"] for copy, entry in task.exported.items()}
+    journal.write_text(json.dumps({**data, "exported": old}), encoding="utf-8")
+    plain = safe_task(tmp_path, journal=journal)
+    assert plain.restore() and plain.exported == task.exported and plain.unsaved_copies() == []
+    # ... and with the saved file gone, the copy is unsaved again (the hash stays unknown)
+    (dest / Path(first).name).unlink()
+    gone = safe_task(tmp_path, journal=journal)
+    assert gone.restore() and gone.exported[first] == {"to": old[first], "md5": ""}
+    assert gone.exported[second] == task.exported[second] and gone.unsaved_copies() == [first]
+    # a malformed entry is dropped, never an error
+    journal.write_text(json.dumps({**data, "exported": {first: 7, second: {"md5": "x"}, "other": ["y"]}}), encoding="utf-8")
+    odd = safe_task(tmp_path, journal=journal)
+    assert odd.restore() and odd.exported == {} and odd.unsaved_copies() == [first, second]
     # a journal from before Export has nothing saved
     data.pop("exported")
     data.pop("export_folder")
@@ -210,7 +302,27 @@ def test_the_export_route_saves_through_the_folder_dialog_and_remembers_the_fold
     assert state.shell.starts == [str(Path.home())]                        # the first dialog opens at home
     assert view["export"] == {"folder": str(dest.resolve()), "unsaved": 0, "copies": 2}
     assert {r["saved_to"] for r in view["results"]} == {str(dest / r["name"]) for r in view["results"]}
+    assert all(r["changed_since_saved"] is False for r in view["results"])
     assert _names(dest) == sorted(r["name"] for r in view["results"])
+    # a copy changed since it was saved (opened from the window, edited in Word): the view says so beside its
+    # saved_to, so the page opens the working copy and says "changed since it was saved"; a saved file that is gone
+    # leaves its copy plainly unsaved
+    first, second = view["results"]
+    _edit(first["output"])
+    view = client.get("/api/state").json()
+    assert view["export"]["unsaved"] == 1
+    assert [(r["saved_to"], r["changed_since_saved"]) for r in view["results"]] == [
+        (str(dest / first["name"]), True), (str(dest / second["name"]), False)]
+    (dest / second["name"]).unlink()
+    view = client.get("/api/state").json()
+    assert view["export"]["unsaved"] == 2
+    assert [(r["saved_to"], r["changed_since_saved"]) for r in view["results"]] == [
+        (str(dest / first["name"]), True), ("", False)]
+    view = client.post("/api/export").json()
+    assert view["export"]["unsaved"] == 0 and _names(dest) == sorted(
+        [first["name"], f"{Path(first['name']).stem} (2).docx", second["name"]])
+    assert [(r["saved_to"], r["changed_since_saved"]) for r in view["results"]] == [
+        (str(dest / f"{Path(first['name']).stem} (2).docx"), False), (str(dest / second["name"]), False)]
     assert view["messages"][-1]["text"].startswith("Saved 2 copies to ")
     assert load_settings().export_folder == str(dest.resolve())            # kept for the next dialog
     assert client.get("/api/settings").json()["export_folder"] == str(dest.resolve())
@@ -221,7 +333,7 @@ def test_the_export_route_saves_through_the_folder_dialog_and_remembers_the_fold
     other = tmp_path / "Other"
     other.mkdir()
     view = client.post("/api/export", json={"folder": str(other)}).json()
-    assert view["export"]["folder"] == str(other.resolve()) and _names(other) == _names(dest)
+    assert view["export"]["folder"] == str(other.resolve()) and _names(other) == sorted(r["name"] for r in view["results"])
     refused = client.post("/api/export", json={"folder": str(tmp_path / "Specs")})
     assert refused.status_code == 400 and "one of the files this conversation works on" in refused.json()["error"]
 
@@ -258,11 +370,12 @@ def test_closing_asks_once_before_unsaved_copies_are_deleted(tmp_path):
     assert on_closing(state) is False and not state.close_confirmed
     title, question = state.shell.questions[-1]
     assert title == "Copies not saved" and question == unsaved_copies_question(2)
-    assert question.startswith("2 files made in this window (edited copies or clean PDFs) have not been saved. "
-                               "Closing deletes them")
+    assert question.startswith("2 files made in this window (edited copies or clean PDFs) have not been saved as "
+                               "they are now (never saved with Export, or changed since). Closing deletes them")
     assert "Export → Save the copies…" in question and "Cancel goes back" in question
     assert unsaved_copies_question(1).startswith("1 file made in this window (an edited copy or a clean PDF) has not "
-                                                 "been saved. Closing deletes it")
+                                                 "been saved as it is now (never saved with Export, or changed "
+                                                 "since). Closing deletes it")
     state.shell.answer = True
     assert on_closing(state) is True and state.close_confirmed and len(state.shell.questions) == 2
     # a shell that cannot ask answers no: the close is refused rather than the copies deleted
@@ -274,6 +387,13 @@ def test_closing_asks_once_before_unsaved_copies_are_deleted(tmp_path):
     state.task.export(dest)
     state.shell = FolderShell(answer=False)
     assert on_closing(state) is True and not state.close_confirmed and state.shell.questions == []
+    # a copy changed since it was saved (opened through the window's link and edited in Word) is asked about again
+    first = next(iter(state.task.working.values()))
+    _edit(first)
+    assert on_closing(state) is False and not state.close_confirmed
+    assert state.shell.questions[-1] == ("Copies not saved", unsaved_copies_question(1))
+    state.task.export(dest)
+    assert on_closing(state) is True and len(state.shell.questions) == 1
 
 
 def test_a_dropped_file_lands_in_the_scratch_folder(tmp_path):

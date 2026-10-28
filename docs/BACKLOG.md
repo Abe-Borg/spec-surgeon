@@ -124,8 +124,10 @@ specifications, Windows and Word, and only the owner can do them. Record what a 
 - **The scratch folder and Export (H1, built 2026-10-27):** a real batch attached, previewed, run, undone and
   saved with Export from the installed app (the dialog opening where the last export went; a second export of the
   same copies writing nothing; a different file under a copy's name left alone and the copy numbered; the originals'
-  folder refused); the saved copies open in Word; closing with an unsaved copy asks once in a native dialog, Cancel
-  keeps the window open and OK closes; after the window closes nothing of the session is under
+  folder refused); the saved copies open in Word (a copy's link opens the saved file; after a change to the working
+  copy in Word, through the folder button, the list says CHANGED beside it, the link opens the working copy, the
+  close asks again, and the next Export writes it beside the file saved before); closing with an unsaved copy asks
+  once in a native dialog, Cancel keeps the window open and OK closes; after the window closes nothing of the session is under
   `%LOCALAPPDATA%\Spec Surgeon\scratch` but `.render-cache`, and `%APPDATA%\Spec Surgeon` holds only
   `settings.json`; the process killed mid-session and the next start restoring the conversation and its copies from
   the scratch folder, then sweeping it at that window's clean close; a copy left open in Word at the close and the
