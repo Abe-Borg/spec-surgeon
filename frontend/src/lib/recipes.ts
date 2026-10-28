@@ -68,6 +68,9 @@ export function initialInputs(recipe: Recipe, view: Attached): RecipeInputs {
       case "pairs":
         inputs[field.name] = [{ find: "", replace: "" }];
         break;
+      case "lines":
+        inputs[field.name] = [""];
+        break;
       case "slots":
         inputs[field.name] = Object.fromEntries((view.template?.typed_slots ?? []).map((slot) => [slot, ""]));
         break;
@@ -131,19 +134,32 @@ function filledPairs(value: unknown): FindReplacePair[] {
   return (value as FindReplacePair[]).filter((p) => p.find.trim() !== "" || p.replace.trim() !== "");
 }
 
+/** A list field's rows with words in them (the issue stamp's wordings). */
+export function filledLines(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return (value as unknown[]).filter((line): line is string => typeof line === "string" && line.trim() !== "");
+}
+
+/** "Type the …" for a field whose words are missing. */
+function typeThe(label: string): string {
+  const words = label.charAt(0).toLowerCase() + label.slice(1);
+  return `Type ${words.startsWith("the ") ? words : `the ${words}`}.`;
+}
+
 /** What the form still needs before Preview, in one sentence; "" when it can be sent. */
 export function missing(recipe: Recipe, inputs: RecipeInputs): string {
   for (const field of recipe.fields) {
     if (!fieldShown(recipe, field, inputs)) continue;
     const value = inputs[field.name];
     if (field.kind === "text" && (field.required || recipe.id === "watermark") && !String(value ?? "").trim()) {
-      return `Type ${field.label.charAt(0).toLowerCase()}${field.label.slice(1)}.`;
+      return typeThe(field.label);
     }
     if (field.kind === "slots" && value && typeof value === "object" && !Array.isArray(value)) {
       const empty = Object.entries(value as Record<string, string>).find(([, v]) => !String(v).trim());
       if (empty) return `Type the value for “${empty[0]}”.`;
     }
     if (field.kind === "picture" && field.required && !value) return `Choose the ${field.label.toLowerCase()}.`;
+    if (field.kind === "lines" && field.required && filledLines(value).length === 0) return typeThe(field.label);
   }
   if (recipe.id === "find_replace") {
     const pairs = filledPairs(inputs.pairs);
@@ -153,11 +169,24 @@ export function missing(recipe: Recipe, inputs: RecipeInputs): string {
   return "";
 }
 
-/** The form as sent: empty find-and-replace rows dropped. */
+/** The form as sent: empty find-and-replace rows and empty list rows dropped. */
 export function payload(recipe: Recipe, inputs: RecipeInputs): RecipeInputs {
   const out: RecipeInputs = { ...inputs };
   if (recipe.id === "find_replace") out.pairs = filledPairs(inputs.pairs);
+  for (const field of recipe.fields) if (field.kind === "lines") out[field.name] = filledLines(inputs[field.name]);
   return out;
+}
+
+/** The form's fields in the rows they render in: a field alone, or the consecutive fields that share a ``row`` (the
+ *  four page margins) side by side. */
+export function fieldRows(fields: RecipeField[]): RecipeField[][] {
+  const rows: RecipeField[][] = [];
+  for (const field of fields) {
+    const last = rows[rows.length - 1];
+    if (field.row && last && last[0].row === field.row) last.push(field);
+    else rows.push([field]);
+  }
+  return rows;
 }
 
 /** The buttons in their groups, in the server's order. */

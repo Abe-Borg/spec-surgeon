@@ -23,7 +23,8 @@ copies themselves are kept nowhere but the window's scratch folder until they ar
 is never stored — ``mode`` is Safe or Default, and a window left in Obliterate opens in Default. ``tutorial_version``
 is the version of the guided tour this computer finished (0: never): the empty chat's tour chip stops inviting once it
 is the page's current version (``frontend/src/lib/tour.ts``); the page owns what a version means, the file keeps the
-number. Not settings
+number. ``safe_note_hidden`` is whether the note about Safe mode at the top of its buttons is folded to its one line
+(the note's Hide and "What is Safe mode?"). Not settings
 at all (since the GUI rework after v0.4.1): the automatic update check (once a day, always;
 ``SPEC_SURGEON_NO_UPDATE_CHECK`` is the only off switch). Keys an older ``settings.json`` still holds for it
 (``native_style``, ``auto_check_updates``) are ignored.
@@ -152,6 +153,7 @@ class Settings:
     show_obliterate: bool = False                 # Settings → Advanced: the top bar offers Obliterate mode (its warning
                                                   # each time; the mode itself is never kept: see MODES)
     tutorial_version: int = 0                     # the guided tour's version this computer finished (0: never)
+    safe_note_hidden: bool = False                # the note about Safe mode above its buttons is folded to one line
     last_update_check: float = 0.0                # epoch seconds of the last automatic attempt (success or not)
     skipped_version: str = ""
     pending_update: Dict[str, Any] = field(default_factory=dict)   # {"version", "log", "started"} while installing

@@ -17,7 +17,7 @@ import { TRUST_FACTS as F } from "./trustFacts.ts";
  * Bump whenever chapter or step ORDER changes: the resume record (lib/tourStorage.ts) keeps numeric indexes, and a
  * stale one would land a reload on another chapter than the one it was left at. A bump discards it.
  */
-export const TOUR_VERSION = 2;
+export const TOUR_VERSION = 3;
 
 /** The version a finished tour is recorded as (settings.json `tutorial_version`); bump it when the tour changes
  *  enough that someone who finished the old one should be invited again. */
@@ -196,6 +196,16 @@ export const TOUR: readonly TourChapter[] = [
     scenario: "start",
     steps: [
       {
+        id: "note",
+        capabilities: ["safe.note", "safe.default"],
+        mode: "explanatory",
+        anchor: "safe-note",
+        placement: "right",
+        title: "What Safe mode is, and where to go for more",
+        body:
+          "The note above the buttons says what Safe mode is: fixed buttons, no AI, no API key needed. It also says what it cannot do. For anything else, Default mode takes a change you describe in plain English and needs a Claude API key; the note's buttons switch to it or open Settings to add the key. Hide folds the note to one line, and What is Safe mode? opens it again.",
+      },
+      {
         id: "buttons",
         capabilities: ["safe.buttons"],
         mode: "explanatory",
@@ -203,7 +213,7 @@ export const TOUR: readonly TourChapter[] = [
         placement: "right",
         title: "The common changes, one button each",
         body:
-          "Headers and footers from your template, a watermark, the logo; body formatting and fonts from your template; find and replace; accepting tracked changes, removing comments, highlighting, hidden text and blank lines; file names, the title property and Track Changes. A button that cannot be used yet says why when the pointer rests on it, such as no template attached. No model is called by any of them.",
+          "Headers and footers from your template, a watermark, the logo; fonts, page size and margins; find and replace, the issue stamp, END OF SECTION, units kept on their line; accepting or rejecting tracked changes, removing comments, highlighting, hidden text, blank lines, links and unused styles, tidying spaces, quotes and fields; file names and properties, the proofing language and Track Changes. A button that cannot be used yet says why when the pointer rests on it, such as no template attached. No model is called by any of them.",
       },
       {
         id: "form",

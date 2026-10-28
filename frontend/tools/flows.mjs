@@ -430,6 +430,18 @@ try {
   await page.getByRole("region", { name: "Safe mode" }).waitFor({ timeout: 5000 });
   check("Safe mode puts the buttons where the message box was", (await page.getByLabel("Describe a change or answer a question").count()) === 0);
   check("…and says no AI is used", await page.getByText("No AI in Safe mode").isVisible());
+  // The note above the buttons: what Safe mode is and cannot do, Default mode with an API key for more; Hide folds it
+  // to one line and the window remembers it across a reload.
+  const safeNote = page.getByRole("note", { name: "About Safe mode" });
+  check("a note above the buttons says what Safe mode cannot do", await safeNote.getByText("What it can't do:").isVisible());
+  check("…and points to Default mode with a Claude API key", await safeNote.getByText(/It needs a Claude API key/).isVisible());
+  await safeNote.getByRole("button", { name: "Hide" }).click();
+  await page.getByRole("button", { name: "What is Safe mode?" }).waitFor({ timeout: 5000 });
+  await page.reload();
+  await page.getByRole("button", { name: "What is Safe mode?" }).waitFor({ timeout: 5000 });
+  check("Hide folds the note to one line, and the window remembers", (await page.getByText("What it can't do:").count()) === 0);
+  await page.getByRole("button", { name: "What is Safe mode?" }).click();
+  await page.getByText("What it can't do:").waitFor({ timeout: 5000 });
   await page.getByRole("button", { name: "Match body formatting to template" }).click();
   check("the body button's form starts from the template's roles",
     (await page.getByRole("combobox", { name: "PART", exact: true }).inputValue()) === "PRT" &&

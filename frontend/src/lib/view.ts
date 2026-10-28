@@ -106,6 +106,7 @@ export const EMPTY_VIEW: View = {
   template: { kind: "none", typed_slots: [], reason: "" },
   left_untouched: [],
   tutorial: { active: false, id: null, scenario: null, finished_version: 0 },
+  safe_note_hidden: false,
 };
 
 export const INITIAL_STATE: UiState = {
@@ -176,6 +177,7 @@ export function normalizeView(raw: unknown): View {
     template: obj(v.template, EMPTY_VIEW.template),
     left_untouched: list(v.left_untouched),
     tutorial: normalizeTutorial(v.tutorial),
+    safe_note_hidden: v.safe_note_hidden === true,
   };
 }
 

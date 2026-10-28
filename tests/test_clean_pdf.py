@@ -257,7 +257,7 @@ def test_the_window_shows_the_pdfs_and_whether_pdfs_can_be_made(tmp_path, render
     view = stream("/api/primary", {"token": view["action"]["token"]})
     assert view["results"] == [] and view["action"]["export"] == ""
     assert [p["name"] for p in view["pdfs"]] == ["redline.pdf"] and Path(view["pdfs"][0]["output"]).is_file()
-    assert client.get("/api/recipes").json()["recipes"][-1]["needs"] == ["pdf"]
+    assert next(r for r in client.get("/api/recipes").json()["recipes"] if r["id"] == "clean_pdf")["needs"] == ["pdf"]
 
 
 # ---- with the real LibreOffice, when this computer has it --------------------------------------------------------------

@@ -27,9 +27,11 @@ export const TYPICAL_INTRO =
 
 export const SAFE_OPERATIONS: readonly TypicalOperation[] = [
   {
-    task: "Clean a set before issue: accept tracked changes, strip comments, highlighting, hidden text, blank lines",
+    task:
+      "Clean a set before issue: accept or reject tracked changes, strip comments, highlighting, hidden text, blank " +
+      "lines",
     buttons: [
-      "Accept all tracked changes",
+      "Accept or reject all tracked changes",
       "Remove all comments",
       "Remove highlighting",
       "Remove hidden text",
@@ -42,13 +44,48 @@ export const SAFE_OPERATIONS: readonly TypicalOperation[] = [
       "white or tiny text.",
   },
   {
+    task: "Tidy the text: double spaces, quote marks, dashes, units that break across lines",
+    buttons: ["Clean up spaces", "Standardize quotes and dashes", "Keep numbers with their units"],
+    can: "Yes",
+    note:
+      "No word changes: only spaces and punctuation. A quotation mark right after a digit stays straight, as an " +
+      "inch or foot mark. A space inside a field, such as a cross-reference, sets that file aside, because Word " +
+      "would put the field's own result back.",
+  },
+  {
+    task: "Freeze or strip what changes on its own: fields, hyperlinks, unused styles",
+    buttons: ["Freeze fields as plain text", "Remove hyperlinks", "Remove unused styles"],
+    can: "Yes",
+    note:
+      "Page numbers are never frozen. A table of contents (a field over several paragraphs) sets the file aside. " +
+      "Linked words stay as they are; links to places in the document stay unless you choose them.",
+  },
+  {
+    task: "Change the issue stamp: ISSUED FOR BID to ISSUED FOR CONSTRUCTION, on the cover, in headers or footers",
+    buttons: ["Change the issue stamp"],
+    can: "Yes",
+    note:
+      "Found by its wording exactly as you type it, several wordings at once. A document without it is left as it " +
+      "is unless you untick that. Tracked or clean.",
+  },
+  {
+    task: "End every section with END OF SECTION and its own number",
+    buttons: ["Add END OF SECTION where missing"],
+    can: "Yes, with one real weakness",
+    note:
+      "The number comes from each document's SECTION line by fixed rules, and some outside firms' layouts write that " +
+      "line in a way the rules do not read; those files are left untouched. A line that reads otherwise is " +
+      "corrected; content after it sets the file aside.",
+  },
+  {
     task:
       "Rebrand sections reused from an old job: firm headers and footers with project values, the logo, the Title " +
-      "property, file names",
+      "property, author and company, file names",
     buttons: [
       "Match headers and footers to template",
       "Swap the logo",
       "Set the document title property",
+      "Set author and company",
       "Name files by section number and title",
     ],
     can: "Yes, with one real weakness",
@@ -67,11 +104,25 @@ export const SAFE_OPERATIONS: readonly TypicalOperation[] = [
   },
   {
     task: "Standardize on the office font",
-    buttons: ["Match font to template"],
-    can: "Yes, narrowly",
+    buttons: ["Match font to template", "Change font"],
+    can: "Yes",
     note:
-      "Needs a template with one dominant body font. Only text in the documents' body size changes size; headings " +
-      "and notes keep theirs. You cannot type “Arial 10” here; that is a Default request.",
+      "Match font to template needs a template with one dominant body font; Change font takes the name you type, " +
+      "such as Arial. Only text in each document's own body size changes size; headings and notes keep theirs.",
+  },
+  {
+    task: "Set the paper size and margins across the set",
+    buttons: ["Page size and margins"],
+    can: "Yes",
+    note:
+      "Every section. With a paper size chosen, a document with landscape pages is left untouched so nothing turns " +
+      "upright; margins alone go on every document. The text reflows, so page counts can change.",
+  },
+  {
+    task: "Set the spell-check language",
+    buttons: ["Set proofing language"],
+    can: "Yes",
+    note: "Every language, or only other kinds of English. No text changes.",
   },
   {
     task:
@@ -114,8 +165,9 @@ export const SAFE_OPERATIONS: readonly TypicalOperation[] = [
 ];
 
 export const SAFE_LIMITS =
-  "Safe mode cannot change wording beyond literal replacement, delete or insert articles, fix numbering, change " +
-  "page setup, touch tables or fields, or do anything that needs judgment per document. Those are Default requests.";
+  "Safe mode cannot change wording beyond literal replacement and the issue stamp, delete or insert articles, fix " +
+  "numbering, edit tables, remove specifier notes, fill placeholders, or do anything that needs judgment per " +
+  "document. Those are Default requests.";
 
 export const DEFAULT_OPERATIONS: readonly TypicalOperation[] = [
   {

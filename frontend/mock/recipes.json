@@ -157,6 +157,140 @@
    "fields": []
   },
   {
+   "id": "set_font",
+   "label": "Change font",
+   "group": "Fonts & formatting",
+   "summary": "Sets the text in the font and size you choose, no template needed; headings, notes and other sizes keep theirs.",
+   "needs": [],
+   "fields": [
+    {
+     "name": "font",
+     "kind": "text",
+     "label": "Font",
+     "required": true,
+     "help": "The font's name exactly as Word lists it.",
+     "placeholder": "Arial"
+    },
+    {
+     "name": "size",
+     "kind": "choice",
+     "label": "Size",
+     "required": false,
+     "default": "keep",
+     "options": [
+      {
+       "value": "keep",
+       "label": "Keep each document's sizes"
+      },
+      {
+       "value": "8",
+       "label": "8 pt"
+      },
+      {
+       "value": "9",
+       "label": "9 pt"
+      },
+      {
+       "value": "10",
+       "label": "10 pt"
+      },
+      {
+       "value": "10.5",
+       "label": "10.5 pt"
+      },
+      {
+       "value": "11",
+       "label": "11 pt"
+      },
+      {
+       "value": "12",
+       "label": "12 pt"
+      }
+     ],
+     "help": "Only text in each document's own body size changes size; headings, notes and other sizes keep theirs."
+    }
+   ]
+  },
+  {
+   "id": "page_setup",
+   "label": "Page size and margins",
+   "group": "Fonts & formatting",
+   "summary": "Sets the paper size and the four margins on every section of every document.",
+   "needs": [],
+   "fields": [
+    {
+     "name": "paper",
+     "kind": "choice",
+     "label": "Paper",
+     "required": false,
+     "default": "letter",
+     "options": [
+      {
+       "value": "letter",
+       "label": "Letter (8.5 × 11 in)"
+      },
+      {
+       "value": "legal",
+       "label": "Legal (8.5 × 14 in)"
+      },
+      {
+       "value": "tabloid",
+       "label": "Tabloid (11 × 17 in)"
+      },
+      {
+       "value": "a4",
+       "label": "A4 (210 × 297 mm)"
+      },
+      {
+       "value": "keep",
+       "label": "Keep each document's own"
+      }
+     ],
+     "help": "A paper size is set upright: a document with landscape pages is left untouched, with the reason."
+    },
+    {
+     "name": "margin_top",
+     "kind": "text",
+     "label": "Top margin (in)",
+     "required": true,
+     "default": "1",
+     "row": "margins"
+    },
+    {
+     "name": "margin_bottom",
+     "kind": "text",
+     "label": "Bottom margin (in)",
+     "required": true,
+     "default": "1",
+     "row": "margins"
+    },
+    {
+     "name": "margin_left",
+     "kind": "text",
+     "label": "Left margin (in)",
+     "required": true,
+     "default": "1",
+     "row": "margins"
+    },
+    {
+     "name": "margin_right",
+     "kind": "text",
+     "label": "Right margin (in)",
+     "required": true,
+     "default": "1",
+     "row": "margins"
+    },
+    {
+     "name": "header_footer",
+     "kind": "text",
+     "label": "Header and footer distance from the page edge (in)",
+     "required": false,
+     "help": "Leave it empty to keep each document's own.",
+     "placeholder": "Keep each document's own"
+    }
+   ]
+  },
+  {
    "id": "find_replace",
    "label": "Find and replace",
    "group": "Text",
@@ -201,12 +335,153 @@
    ]
   },
   {
-   "id": "accept_changes",
-   "label": "Accept all tracked changes",
-   "group": "Clean up",
-   "summary": "Accepts every pending tracked change, so the copies are clean.",
+   "id": "issue_stamp",
+   "label": "Change the issue stamp",
+   "group": "Text",
+   "summary": "Finds the issue stamp wherever it sits, on the cover, in a header or in a footer, and replaces every one with your new wording.",
    "needs": [],
-   "fields": []
+   "fields": [
+    {
+     "name": "current",
+     "kind": "lines",
+     "label": "The stamp as it reads now",
+     "required": true,
+     "help": "Each wording exactly as it reads; any of them is replaced.",
+     "placeholder": "ISSUED FOR BID"
+    },
+    {
+     "name": "text",
+     "kind": "text",
+     "label": "The new stamp",
+     "required": true,
+     "help": "Exactly as it should appear; one line.",
+     "placeholder": "ISSUED FOR CONSTRUCTION"
+    },
+    {
+     "name": "match_case",
+     "kind": "check",
+     "label": "Match capitals exactly",
+     "required": false,
+     "default": true
+    },
+    {
+     "name": "allow_missing",
+     "kind": "check",
+     "label": "Leave a document without the stamp as it is",
+     "required": false,
+     "default": true,
+     "help": "Off: such a document waits under Left untouched, with the reason."
+    },
+    {
+     "name": "tracked",
+     "kind": "check",
+     "label": "Show my changes as tracked changes in Word",
+     "required": false,
+     "default": false,
+     "help": "Off: clean copies. On: each change is a tracked change a reviewer can accept or reject."
+    }
+   ]
+  },
+  {
+   "id": "end_of_section",
+   "label": "Add END OF SECTION where missing",
+   "group": "Text",
+   "summary": "Ends every document with your closing line and its own section number, and corrects one that reads otherwise.",
+   "needs": [],
+   "fields": [
+    {
+     "name": "text",
+     "kind": "text",
+     "label": "The line",
+     "required": true,
+     "default": "END OF SECTION {number}",
+     "help": "{number} is each document's own section number, from its SECTION line; it appears once."
+    },
+    {
+     "name": "look",
+     "kind": "choice",
+     "label": "Its look",
+     "required": false,
+     "default": "section_line",
+     "options": [
+      {
+       "value": "section_line",
+       "label": "Like the SECTION line at the top"
+      },
+      {
+       "value": "plain",
+       "label": "The document's plain text style"
+      }
+     ]
+    },
+    {
+     "name": "tracked",
+     "kind": "check",
+     "label": "Show my changes as tracked changes in Word",
+     "required": false,
+     "default": false,
+     "help": "Off: clean copies. On: each change is a tracked change a reviewer can accept or reject."
+    }
+   ]
+  },
+  {
+   "id": "nonbreaking_spaces",
+   "label": "Keep numbers with their units",
+   "group": "Text",
+   "summary": "Puts non-breaking spaces in “150 psi” and “21 13 13” so Word never splits them across two lines; no words change.",
+   "needs": [],
+   "fields": [
+    {
+     "name": "units",
+     "kind": "text",
+     "label": "Units",
+     "required": false,
+     "default": "psi, gpm",
+     "help": "Unit symbols separated by commas, such as psi, gpm, ft, in or °F."
+    },
+    {
+     "name": "section_numbers",
+     "kind": "check",
+     "label": "Section numbers too (21 13 13)",
+     "required": false,
+     "default": true
+    },
+    {
+     "name": "tracked",
+     "kind": "check",
+     "label": "Show my changes as tracked changes in Word",
+     "required": false,
+     "default": false,
+     "help": "Off: clean copies. On: each change is a tracked change a reviewer can accept or reject."
+    }
+   ]
+  },
+  {
+   "id": "accept_changes",
+   "label": "Accept or reject all tracked changes",
+   "group": "Clean up",
+   "summary": "Accepts every pending tracked change, so the copies are clean, or rejects every one.",
+   "needs": [],
+   "fields": [
+    {
+     "name": "action",
+     "kind": "choice",
+     "label": "Every tracked change",
+     "required": false,
+     "default": "accept",
+     "options": [
+      {
+       "value": "accept",
+       "label": "Accept it"
+      },
+      {
+       "value": "reject",
+       "label": "Reject it"
+      }
+     ],
+     "help": "Reject: insertions go, deletions come back, moves and formatting changes are undone."
+    }
+   ]
   },
   {
    "id": "remove_comments",
@@ -272,6 +547,208 @@
      "required": false,
      "default": false,
      "help": "Off: clean copies. On: each change is a tracked change a reviewer can accept or reject."
+    }
+   ]
+  },
+  {
+   "id": "clean_spaces",
+   "label": "Clean up spaces",
+   "group": "Clean up",
+   "summary": "Turns two or more spaces in a row into one and removes spaces at the end of a line; tabs stay.",
+   "needs": [],
+   "fields": [
+    {
+     "name": "tracked",
+     "kind": "check",
+     "label": "Show my changes as tracked changes in Word",
+     "required": false,
+     "default": false,
+     "help": "Off: clean copies. On: each change is a tracked change a reviewer can accept or reject."
+    }
+   ]
+  },
+  {
+   "id": "quotes_dashes",
+   "label": "Standardize quotes and dashes",
+   "group": "Clean up",
+   "summary": "Makes every quotation mark straight or curly, turns “--” into a dash, and writes section numbers one way.",
+   "needs": [],
+   "fields": [
+    {
+     "name": "quotes",
+     "kind": "choice",
+     "label": "Quotation marks",
+     "required": false,
+     "default": "straight",
+     "options": [
+      {
+       "value": "straight",
+       "label": "Straight ( \" ' )"
+      },
+      {
+       "value": "curly",
+       "label": "Curly ( “ ” ‘ ’ )"
+      },
+      {
+       "value": "keep",
+       "label": "Leave them as they are"
+      }
+     ]
+    },
+    {
+     "name": "dash",
+     "kind": "choice",
+     "label": "Two hyphens (--)",
+     "required": false,
+     "default": "keep",
+     "options": [
+      {
+       "value": "keep",
+       "label": "Leave them as they are"
+      },
+      {
+       "value": "en",
+       "label": "An en dash (–)"
+      },
+      {
+       "value": "em",
+       "label": "An em dash (—)"
+      }
+     ]
+    },
+    {
+     "name": "section_separator",
+     "kind": "choice",
+     "label": "Between the parts of a section number",
+     "required": false,
+     "default": "keep",
+     "options": [
+      {
+       "value": "keep",
+       "label": "Leave them as they are"
+      },
+      {
+       "value": "space",
+       "label": "A space (21 13 13)"
+      },
+      {
+       "value": "hyphen",
+       "label": "A hyphen (21-13-13)"
+      }
+     ]
+    },
+    {
+     "name": "tracked",
+     "kind": "check",
+     "label": "Show my changes as tracked changes in Word",
+     "required": false,
+     "default": false,
+     "help": "Off: clean copies. On: each change is a tracked change a reviewer can accept or reject."
+    }
+   ]
+  },
+  {
+   "id": "remove_hyperlinks",
+   "label": "Remove hyperlinks",
+   "group": "Clean up",
+   "summary": "Takes the links off web and e-mail addresses; the words stay and look like the text around them.",
+   "needs": [],
+   "fields": [
+    {
+     "name": "which",
+     "kind": "choice",
+     "label": "Which links",
+     "required": false,
+     "default": "external",
+     "options": [
+      {
+       "value": "external",
+       "label": "Web and e-mail links"
+      },
+      {
+       "value": "internal",
+       "label": "Links to a place in the document (a table of contents)"
+      },
+      {
+       "value": "all",
+       "label": "Every link"
+      }
+     ]
+    },
+    {
+     "name": "keep_style",
+     "kind": "check",
+     "label": "Keep the blue underline",
+     "required": false,
+     "default": false
+    }
+   ]
+  },
+  {
+   "id": "freeze_fields",
+   "label": "Freeze fields as plain text",
+   "group": "Clean up",
+   "summary": "Turns fields into the text they show now, so dates and cross-references stop changing; page numbers are never frozen.",
+   "needs": [],
+   "fields": [
+    {
+     "name": "which",
+     "kind": "choice",
+     "label": "Which fields",
+     "required": false,
+     "default": "all",
+     "options": [
+      {
+       "value": "all",
+       "label": "Every field but page numbers"
+      },
+      {
+       "value": "dates",
+       "label": "Dates (DATE, SAVEDATE, PRINTDATE, CREATEDATE)"
+      },
+      {
+       "value": "references",
+       "label": "Cross-references (REF, NOTEREF)"
+      },
+      {
+       "value": "properties",
+       "label": "Document properties (DOCPROPERTY, TITLE, AUTHOR, FILENAME …)"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "remove_unused_styles",
+   "label": "Remove unused styles",
+   "group": "Clean up",
+   "summary": "Deletes the styles nothing in the document uses, so the Styles pane lists only what is in use.",
+   "needs": [],
+   "fields": [
+    {
+     "name": "which",
+     "kind": "choice",
+     "label": "Which styles",
+     "required": false,
+     "default": "custom",
+     "options": [
+      {
+       "value": "custom",
+       "label": "Only the document's own styles"
+      },
+      {
+       "value": "all",
+       "label": "Word's built-in styles too"
+      }
+     ]
+    },
+    {
+     "name": "keep",
+     "kind": "text",
+     "label": "Styles to keep (optional)",
+     "required": false,
+     "help": "Style names separated by commas; these stay even when unused.",
+     "placeholder": "CMT, SpecifierNote"
     }
    ]
   },
@@ -377,6 +854,97 @@
     "pdf"
    ],
    "fields": []
+  },
+  {
+   "id": "author_company",
+   "label": "Set author and company",
+   "group": "Files & properties",
+   "summary": "Sets File → Info → Author, Company and Subject to your words, or clears the author names before issue.",
+   "needs": [],
+   "fields": [
+    {
+     "name": "author",
+     "kind": "text",
+     "label": "Author",
+     "required": false
+    },
+    {
+     "name": "company",
+     "kind": "text",
+     "label": "Company",
+     "required": false
+    },
+    {
+     "name": "subject",
+     "kind": "text",
+     "label": "Subject",
+     "required": false
+    },
+    {
+     "name": "clear_authors",
+     "kind": "check",
+     "label": "Clear the author names (Author and Last Modified By)",
+     "required": false,
+     "default": false,
+     "help": "Tracked changes and comments keep their authors' names."
+    }
+   ]
+  },
+  {
+   "id": "proofing_language",
+   "label": "Set proofing language",
+   "group": "Files & properties",
+   "summary": "Sets the language Word checks spelling and grammar in; no text changes.",
+   "needs": [],
+   "fields": [
+    {
+     "name": "language",
+     "kind": "choice",
+     "label": "Language",
+     "required": false,
+     "default": "en-US",
+     "options": [
+      {
+       "value": "en-US",
+       "label": "English (United States)"
+      },
+      {
+       "value": "en-GB",
+       "label": "English (United Kingdom)"
+      },
+      {
+       "value": "en-CA",
+       "label": "English (Canada)"
+      },
+      {
+       "value": "fr-CA",
+       "label": "French (Canada)"
+      },
+      {
+       "value": "es-US",
+       "label": "Spanish (United States)"
+      }
+     ]
+    },
+    {
+     "name": "only",
+     "kind": "choice",
+     "label": "Change",
+     "required": false,
+     "default": "every",
+     "options": [
+      {
+       "value": "every",
+       "label": "Every language to this one"
+      },
+      {
+       "value": "english",
+       "label": "Only other kinds of English to this one"
+      }
+     ],
+     "help": "Only other kinds of English: French or Spanish quotations keep their language."
+    }
+   ]
   }
  ],
  "groups": [

@@ -363,6 +363,14 @@ export default function App() {
   useEffect(() => {
     api.getRecipes().then(setRecipes).catch((failure: unknown) => setNotice(failureText(failure)));
   }, []);
+  // The note above the buttons: Hide and What is Safe mode? are kept in settings.json, and the view carries them.
+  const onSafeNoteHidden = useCallback(
+    (hidden: boolean) => applyView(api.setSafeNoteHidden(hidden).then(() => api.getState())),
+    [applyView],
+  );
+  const onDefaultMode = useCallback(() => onMode("default"), [onMode]);
+  const onOpenSettings = useCallback(() => setSettingsOpen(true), []);
+  const tourRunning = view.tutorial.active;
   const panel = useMemo(
     () => (
       <SafePanel
@@ -373,9 +381,15 @@ export default function App() {
         onDiscard={onDiscard}
         form={safeForm}
         onFormChange={setSafeForm}
+        keyReady={view.connection.ready}
+        noteHidden={view.safe_note_hidden}
+        tourActive={tourRunning}
+        onNoteHidden={onSafeNoteHidden}
+        onDefaultMode={onDefaultMode}
+        onAddKey={onOpenSettings}
       />
     ),
-    [recipes, view, busy, onRecipe, onDiscard, safeForm],
+    [recipes, view, busy, onRecipe, onDiscard, safeForm, tourRunning, onSafeNoteHidden, onDefaultMode, onOpenSettings],
   );
 
   const onPutBack = useCallback((path: string) => applyView(api.putBack(path)), [applyView]);
@@ -449,7 +463,6 @@ export default function App() {
 
   // Stable handlers: the header, the workbench and the composer are memoized and skip the renders a streamed
   // delta would otherwise cause, as long as nothing handed to them is a new function each time.
-  const onOpenSettings = useCallback(() => setSettingsOpen(true), []);
   const onAddKind = useCallback((kind: PickKind) => void onAdd(kind), [onAdd]);
   // Add a folder of documents: the server opens the folder dialog and attaches the folder's own .docx files; a
   // dismissed dialog changes nothing, and a window without a dialog says so.

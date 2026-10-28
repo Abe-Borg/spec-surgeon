@@ -33,6 +33,8 @@ export const END_USER_CAPABILITIES = [
   "documents.template",
   "documents.references",
   // Safe mode
+  "safe.note",
+  "safe.default",
   "safe.buttons",
   "safe.form",
   // the previews and the one button

@@ -86,7 +86,16 @@ export interface BodyRoles {
   problems: string[];
 }
 
-export type RecipeFieldKind = "text" | "pairs" | "choice" | "check" | "picture" | "table" | "slots" | "roles";
+export type RecipeFieldKind =
+  | "text"
+  | "lines"
+  | "pairs"
+  | "choice"
+  | "check"
+  | "picture"
+  | "table"
+  | "slots"
+  | "roles";
 
 export interface RecipeField {
   name: string;
@@ -99,6 +108,8 @@ export interface RecipeField {
   placeholder?: string;
   /** picture: the label of the choice that names no file ("Every picture in the headers"). */
   optional_choice?: string;
+  /** Consecutive fields with the same row sit side by side (the four page margins). */
+  row?: string;
 }
 
 /** One Safe-mode button (GET /api/recipes). */
@@ -118,7 +129,7 @@ export interface FindReplacePair {
 }
 
 /** A button's form as the page sends it: field name → its value. */
-export type RecipeInputs = Record<string, string | boolean | FindReplacePair[] | Record<string, string>>;
+export type RecipeInputs = Record<string, string | boolean | string[] | FindReplacePair[] | Record<string, string>>;
 
 export interface Plan {
   groups: PlanGroup[];
@@ -400,6 +411,9 @@ export interface View {
   left_untouched: Untouched[];
   /** The guided tour's state; absent from an older server. */
   tutorial: Tutorial;
+  /** The note about Safe mode above its buttons is folded to its one line (settings.json); false from an older
+   *  server. */
+  safe_note_hidden: boolean;
 }
 
 /** The kinds the `status` frame names; anything else renders as "Working…". */
@@ -460,6 +474,8 @@ export interface Settings {
   spending_default_usd?: number;
   /** The guided tour's version this computer finished (0: never). Absent from an older server. */
   tutorial_version?: number;
+  /** The note about Safe mode above its buttons is folded to its one line. Absent from an older server. */
+  safe_note_hidden?: boolean;
 }
 
 /** What Settings says about fast mode, from the server's own price table (llm.PRICES / llm.FAST_PRICES): the model

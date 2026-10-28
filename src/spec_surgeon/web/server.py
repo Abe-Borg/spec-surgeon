@@ -362,7 +362,7 @@ class WindowState:
                 "working": raw["working"], "budget": {"paused": bool(raw["budget_paused"]),
                                                       "reason": raw.get("pause_reason", "")},
                 "discard": "" if busy else raw.get("discard", ""),
-                "tutorial": self.tutorial_block(),
+                "tutorial": self.tutorial_block(), "safe_note_hidden": bool(self.settings.safe_note_hidden),
                 "update": self.updates.state() if self.updates else _no_update()}
 
     def image_url(self, path) -> str:
@@ -973,7 +973,8 @@ def create_app(state: WindowState, *, dev: bool = False) -> FastAPI:
                 "spending_limit_usd": state.task.spending_limit, "spending_default_usd": DEFAULT_SPENDING_LIMIT_USD,
                 "fast_mode": state.settings.fast_mode, "fast": fast_offer(),
                 "show_obliterate": state.settings.show_obliterate,
-                "tutorial_version": state.settings.tutorial_version}
+                "tutorial_version": state.settings.tutorial_version,
+                "safe_note_hidden": state.settings.safe_note_hidden}
 
     @app.post("/api/settings")
     async def set_settings(request: Request):
@@ -1013,6 +1014,12 @@ def create_app(state: WindowState, *, dev: bool = False) -> FastAPI:
             if isinstance(version, bool) or not isinstance(version, int) or version < 0:
                 return error("The finished tour's version is a whole number.")
             state.settings.tutorial_version = version
+            state.save_settings()
+        if "safe_note_hidden" in body:
+            # the note about Safe mode above its buttons: folded to one line, or open
+            if not isinstance(body["safe_note_hidden"], bool):
+                return error("The Safe mode note is hidden or shown.")
+            state.settings.safe_note_hidden = body["safe_note_hidden"]
             state.save_settings()
         if "fast_mode" in body:
             if not isinstance(body["fast_mode"], bool):

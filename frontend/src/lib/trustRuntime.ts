@@ -298,15 +298,19 @@ export const RUNTIME_CARDS: RuntimeCard[] = [
       "copy; its results are kept beside it.",
   },
   {
-    covers: ["A23", "A24", "A25", "A29", "A30", "A32"],
+    covers: ["A23", "A24", "A25", "A29", "A30", "A32", "A37"],
     title: "Safe mode: choosing a mode, pressing a button, saving clean PDFs, changing your mind (in every mode), handing documents over",
     you:
-      "Choose Safe or Default in the top bar; in Safe mode, pick a button, fill in its form and press Preview; " +
+      "Choose Safe or Default in the top bar; in Safe mode, read or Hide the note above the buttons (What is Safe " +
+      "mode? opens it again), and use its Add a Claude API key or Switch to Default mode; pick a button, fill in " +
+      "its form and press Preview; " +
       "Save clean PDFs, then Save clean PDFs beside its preview; " +
       "Discard preview, All buttons or Clear form; Undo the last button; Try these in Default mode beside what a " +
       "button left untouched. In Default and Obliterate: Discard preview, Drop this request and Undo the last change.",
     runs:
-      "Choosing a mode keeps it in settings.json for the next start. Switching modes keeps your unsent message and " +
+      "Choosing a mode keeps it in settings.json for the next start, and so is whether the note above the buttons " +
+      "is folded; the note's Add a Claude API key opens Settings, and its Switch to Default mode is the top bar's " +
+      "switch. Switching modes keeps your unsent message and " +
       "Safe-mode form in this window; an unsent message holds Create only in a conversation mode. A button builds its plan in code from your form " +
       "and your attachments; the plan passes the same gate as a conversation's (its settings, the files it reads, " +
       "every word it would place traced to what you typed) and the ordinary preview runs, without Claude's visual " +

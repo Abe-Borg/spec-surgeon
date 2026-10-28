@@ -283,6 +283,7 @@ function emptyView() {
     template: NO_TEMPLATE,
     left_untouched: [],
     tutorial: { active: false, id: "", scenario: "", finished_version: 0 }, // GET /api/state refreshes it from settings
+    safe_note_hidden: false, // GET /api/state refreshes it from settings
   };
 }
 
@@ -532,7 +533,7 @@ function discardOf(v) {
   if (v.mode !== "safe" && ["question", "resume", "budget"].includes(v.stage)) return "request";
   return "";
 }
-let settings = { key_present: true, origin: "saved", can_remember: true, export_folder: "", logs_dir: "C:/Users/abe/AppData/Roaming/Spec Surgeon/logs", theme: "clay", fast_mode: false, show_obliterate: false, tutorial_version: 0, spending_limit_usd: 20, spending_default_usd: 20, fast: { model: "claude-opus-5-5", available: true, speedup: 2.5, price_factor: 2, standard_usd_per_mtok: [4, 20], fast_usd_per_mtok: [8, 40], refused: null } };
+let settings = { key_present: true, origin: "saved", can_remember: true, export_folder: "", logs_dir: "C:/Users/abe/AppData/Roaming/Spec Surgeon/logs", theme: "clay", fast_mode: false, show_obliterate: false, tutorial_version: 0, safe_note_hidden: false, spending_limit_usd: 20, spending_default_usd: 20, fast: { model: "claude-opus-5-5", available: true, speedup: 2.5, price_factor: 2, standard_usd_per_mtok: [4, 20], fast_usd_per_mtok: [8, 40], refused: null } };
 const THEMES = ["clay", "blueprint", "graphite", "carbon", "linen"];
 function keySettings() { return { ...settings, can_remove_key: ["saved", "session"].includes(settings.origin) }; }
 let running = null; // { stop: boolean }
@@ -1151,6 +1152,7 @@ async function handle(req, res) {
   switch (`${req.method} ${path}`) {
     case "GET /api/state":
       view.tutorial = tutorialBlock();
+      view.safe_note_hidden = settings.safe_note_hidden;
       return json(res, 200, view);
     case "GET /api/tutorial/status":
       return json(res, 200, tutorialBlock());
@@ -1468,6 +1470,12 @@ async function handle(req, res) {
         if (typeof v !== "number" || !Number.isInteger(v) || v < 0) return json(res, 400, { error: "The tour's version is a whole number." });
         settings = { ...settings, tutorial_version: v };
         view.tutorial = tutorialBlock();
+        if (Object.keys(body).length === 1) return json(res, 200, keySettings());
+      }
+      if ("safe_note_hidden" in body) {
+        if (typeof body.safe_note_hidden !== "boolean") return json(res, 400, { error: "The Safe mode note is hidden or shown." });
+        settings = { ...settings, safe_note_hidden: body.safe_note_hidden };
+        view.safe_note_hidden = body.safe_note_hidden;
         if (Object.keys(body).length === 1) return json(res, 200, keySettings());
       }
       if ("show_obliterate" in body) {

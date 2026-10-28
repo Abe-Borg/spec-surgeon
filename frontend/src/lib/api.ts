@@ -208,6 +208,11 @@ export async function saveTutorialVersion(version: number): Promise<Settings> {
   return post<Settings>("/api/settings", { tutorial_version: version });
 }
 
+/** Fold the note about Safe mode to its one line, or open it again (settings.json `safe_note_hidden`). */
+export async function setSafeNoteHidden(hidden: boolean): Promise<Settings> {
+  return post<Settings>("/api/settings", { safe_note_hidden: hidden });
+}
+
 // --- The job stream --------------------------------------------------------
 
 async function* streamJob(path: string, body: unknown): AsyncGenerator<JobEvent> {
