@@ -105,12 +105,15 @@ def build(section_number: str, title: str, stamp: str = "ISSUED FOR CONSTRUCTION
           with_cover_page_field: bool = True, single_section: bool = False, footer_revision: bool = False,
           side_margin_twips: int | None = None, header_distance_twips: int | None = None,
           footer_distance_twips: int | None = None, body_picture: bool = False,
-          body_footer_linked: bool = False, appendix_restart: bool = False) -> bytes:
+          body_footer_linked: bool = False, appendix_restart: bool = False, body_size: float = 10,
+          table_size: float | None = None) -> bytes:
     """``body_footer_linked``: the body section has no footer of its own ("Link to Previous"), so Word shows the
     cover's footer — and its PAGE field — on every body page. ``appendix_restart``: a third section (an appendix)
-    that restarts page numbering at 1 again, like the body section does."""
+    that restarts page numbering at 1 again, like the body section does. ``body_size``: Normal's size in points
+    (the body text's); ``table_size``: a direct size on every run of the revision table's cells (a specification
+    whose tables are set smaller than its body)."""
     doc = Document()
-    st = doc.styles["Normal"]; st.font.name = "Arial"; st.font.size = Pt(10)
+    st = doc.styles["Normal"]; st.font.name = "Arial"; st.font.size = Pt(body_size)
 
     cover = doc.sections[0]
     _header(cover, stamp)
@@ -126,6 +129,11 @@ def build(section_number: str, title: str, stamp: str = "ISSUED FOR CONSTRUCTION
     t = doc.add_table(rows=2, cols=3)
     t.cell(0, 0).text = "Rev"; t.cell(0, 1).text = "Date"; t.cell(0, 2).text = "Description"
     t.cell(1, 0).text = "0"; t.cell(1, 1).text = "2026-01-01"; t.cell(1, 2).text = "Issued for Construction"
+    if table_size is not None:
+        for cell in t._cells:
+            for cp in cell.paragraphs:
+                for run in cp.runs:
+                    _sz(run, int(round(table_size * 2)))
 
     if not single_section:
         body = doc.add_section(WD_SECTION.NEW_PAGE)
