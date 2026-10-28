@@ -9,6 +9,7 @@ setting and the acknowledgement, voids the plan when entered or left, and is nev
 from __future__ import annotations
 
 import json
+import zipfile
 from pathlib import Path
 
 import pytest
@@ -959,3 +960,107 @@ def test_an_ordinary_plans_samples_carry_no_word_comparison(tmp_path):
     view = task.perform("send", text=REQUEST)
     assert view["stage"] == "preview" and task._samples_view()["samples"][0]["text_changes"] is None
     assert not any("words change" in m["text"] for m in task.messages)
+
+
+# ---- a part no check reads (the deep-dive stress test's D2) ----------------------------------------------------------
+
+THEME_OP = '''from spec_surgeon.ops.base import Op, JobException
+
+THEME = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/theme"
+A = "{http://schemas.openxmlformats.org/drawingml/2006/main}"
+
+
+class SetAccentOne(Op):
+    name = "set_accent_one"
+    mode = "formatting"
+    description = "Set the theme's first accent colour."
+    params_schema = {"type": "object", "properties": {"rgb": {"type": "string"}}}
+    select_schema = {}
+
+    def plan(self, pkg, select, params):
+        parts = pkg.parts_of_type(THEME, pkg.main_part())
+        if len(parts) != 1:
+            raise JobException("no single theme part", "structure")
+        frag = self.fragment(select, params)
+        frag.intended_parts = [parts[0]]
+        frag.touches.append((parts[0], "accent1", "srgbClr"))
+        frag.transform_data = {"part": parts[0], "rgb": params["rgb"]}
+        frag.geometry_reference = "none"
+        frag.geometry_reason = "a theme colour moves no word"
+        return frag
+
+    def apply(self, pkg, frag):
+        td = frag.transform_data
+        root = pkg.xml(td["part"])
+        root.find(".//" + A + "accent1/" + A + "srgbClr").set("val", td["rgb"])
+        pkg.write_xml(td["part"], root)
+'''
+THEME_PART = "word/theme/theme1.xml"
+UNREAD_LINE = "UNREAD (Changed parts no check reads)"
+
+
+def test_a_copy_that_changes_a_part_no_check_reads_is_never_called_verified(folder, tmp_path):
+    """The finding: a bound control's store set to WRONG OWNER and a chart's workbook left stale passed every check,
+    since V10 reads the text parts, the styles and the settings and properties members, and nothing else. A method
+    that changes the theme passed the same way. In Obliterate the copy now fails UNREAD, naming the part, and is
+    delivered marked UNVERIFIED; V10 itself is unchanged. In Default the same method is refused outright."""
+    f = sorted(folder.glob("*.docx"))[0]
+    t = trial(THEME_OP, f, {}, {"rgb": "207060"}, tmp_path / "u", unguarded=True)
+    assert t.passed and t.unverified == [UNREAD_LINE], t.problems
+    unread = t.record.get("UNREAD")
+    assert unread.status == "FAIL" and unread.data == {"members": [THEME_PART]} and THEME_PART in unread.summary
+    assert t.record.get("V10").status == "PASS" and t.record.get("V10").data["unread_members"] == [THEME_PART]
+    assert b'val="207060"' in zipfile.ZipFile(t.output).read(THEME_PART)
+    results = codegen.run_generated(codegen.GeneratedOp(source=THEME_OP, passed=True, params={"rgb": "207060"},
+                                                        unguarded=True), [str(f)], tmp_path / "run")
+    assert results[0].passed and results[0].unverified == [UNREAD_LINE] and results[0].output.is_file()
+    plain = trial(THEME_OP, f, {}, {"rgb": "207060"}, tmp_path / "plain")
+    assert not plain.passed and f"no verified assertion kind covers ['{THEME_PART}']" in plain.problems[0]
+
+
+def test_a_copy_that_changes_only_what_the_checks_read_has_no_unread_failure(folder, tmp_path):
+    f = sorted(folder.glob("*.docx"))[0]
+    t = trial(GOOD_OP, f, {}, {"twips": 900}, tmp_path / "u", unguarded=True)
+    assert t.passed and t.unverified == [] and t.record.get("UNREAD") is None
+    assert t.record.get("V10").data["unread_members"] == []
+
+
+def test_the_writer_hears_unread_and_may_keep_it_with_a_reason(folder, tmp_path):
+    f = sorted(folder.glob("*.docx"))[:1]
+    why = "the request changes the theme's first accent colour"
+    fake = write_op((THEME_OP, {"rgb": "207060"}, None),
+                    (THEME_OP, {"rgb": "207060"}, [{"check": "unread", "reason": why}]))
+    g = codegen.generate_op("make accent 1 dark teal", "set the theme accent", f, tmp_path / "cg", client=fake,
+                            unguarded=True)
+    back = fake.requests[1]["messages"][-1]["content"][0]
+    assert back["is_error"] and "UNREAD FAIL: the copy changes 1 part(s)" in back["content"]
+    assert g.passed and g.accepted_failures == {"UNREAD": why}
+    assert g.trials[0].unverified == [f"{UNREAD_LINE} — Claude says this is part of the change: {why}"]
+    assert codegen.samples_verdict(g)[0] == codegen.SAMPLES_UNVERIFIED
+    assert "fails UNREAD" in codegen.system_prompt(unguarded=True)
+
+
+def test_the_verifier_names_a_changed_member_it_did_not_read_and_fails_nothing_for_it(tmp_path):
+    """V10 lists the members the copy changed that none of its checks read (``unread_members``): information, never
+    a failure — a built-in op is held to its own kinds. A properties change (a member V10 compares) lists nothing;
+    the same copy with a data store changed as well (the report's WRONG OWNER, planted after the method ran) lists
+    that store, and still passes every check."""
+    from spec_surgeon.ops import get_op, merge_fragments
+    from spec_surgeon.package import DocxPackage
+    from spec_surgeon.verify import run_suite
+    src = build("21 00 00", "SPEC")
+    pkg = DocxPackage(src)
+    frag = get_op("set_document_properties").plan(pkg, {}, {"set": {"title": "WET-PIPE"}})
+    plan = merge_fragments([frag]).to_dict()
+    work = pkg.copy()
+    get_op("set_document_properties").apply(work, frag)
+    out = work.output_bytes()
+    rec = run_suite(src, out, plan, "src.docx", "out.docx")
+    assert rec.passed and rec.get("V10").data["unread_members"] == []
+    store = "customXml/item1.xml"
+    tampered = DocxPackage(out)
+    tampered.write(store, tampered.read(store).replace(b'StyleName="APA"', b'StyleName="WRONG OWNER"', 1))
+    assert tampered.read(store) != DocxPackage(out).read(store)
+    planted = dict(plan, intended_parts=list(plan["intended_parts"]) + [store])
+    rec = run_suite(src, tampered.output_bytes(), planted, "src.docx", "out.docx")
+    assert rec.passed and rec.get("V10").data["unread_members"] == [store], rec.to_markdown()

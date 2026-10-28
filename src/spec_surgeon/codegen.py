@@ -568,6 +568,8 @@ def _trial(source, f, select, params, workdir, goal_contract, goal_binding, ungu
                                       "PASS" if goal_result.get("passed") else "FAIL",
                                       "approved effects independently verified" if goal_result.get("passed")
                                       else "; ".join(goal_result.get("errors", [])), goal_result))
+    if unguarded:
+        _check_unread(rec)
     try:
         drift = guard.drifted(identity)
     except OSError as error:
@@ -584,6 +586,27 @@ def _trial(source, f, select, params, workdir, goal_contract, goal_binding, ungu
                                      for c in rec.checks if c.status == "FAIL"], plan=sb.plan)
     return FileTrial(f, rec.passed, fails, sb.output, rec, hashlib.md5(out_bytes).hexdigest(), identity, goal_binding,
                      plan=sb.plan)
+
+
+UNREAD_CHECK = ("UNREAD", "Changed parts no check reads")
+
+
+def _check_unread(rec) -> None:
+    """Obliterate: a copy that changes a part no check reads by content (V10's ``unread_members``: a chart, an embedded
+    file, a data store, the theme, numbering no kind proved) fails ``UNREAD_CHECK``. Without it such a copy passed
+    every check, its change seen by nothing but the method itself (the deep-dive stress test's D2: a bound control's
+    store set to WRONG OWNER and a chart's workbook left stale both passed). Like any failed check here it goes back to
+    the writer, may be kept with a reason, and marks the copy UNVERIFIED. Safe and Default never reach it:
+    ``hard_limits`` refuses those parts outright."""
+    from .verify import CheckResult
+    v10 = rec.get("V10")
+    unread = list(((v10.data or {}) if v10 is not None else {}).get("unread_members") or [])
+    if unread:
+        shown = ", ".join(unread[:20]) + (f" and {len(unread) - 20} more" if len(unread) > 20 else "")
+        rec.set(CheckResult(UNREAD_CHECK[0], UNREAD_CHECK[1], "FAIL",
+                            f"the copy changes {len(unread)} part(s) that no check reads by content: {shown}. The "
+                            "checks prove the rest of the copy; nothing proves what these parts now hold.",
+                            {"members": unread}))
 
 
 @dataclass
@@ -959,7 +982,8 @@ UNGUARDED_LIMITS = (
     "mapping from each attached file's absolute path to its bytes (the first message lists them; DocxPackage(bytes) "
     "opens a .docx). Never open a path.\n"
     "- Assert every change with the independent V10 assertion kinds: {kinds}. An unasserted change fails V10. Read a "
-    "kind's contract with describe_assertion_kind before you write its assertion.\n"
+    "kind's contract with describe_assertion_kind before you write its assertion. A change to a part no check reads "
+    "(a chart, an embedded file, a data store, the theme, numbering no kind proves) fails UNREAD.\n"
     "- The independent checks run on every sample. In this mode a failed check does not stop the method, but it "
     "comes back to you: fix what you did not intend and submit again. When a failure IS the change the request "
     "asks for (a check that cannot describe it), submit again with accept_failures [{{check, reason}}]: the user "

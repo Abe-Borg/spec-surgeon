@@ -230,8 +230,10 @@ mode you last used (Safe the first time; never Obliterate).
   you, which the app checks before the plan is previewed); when no operation
   fits, Claude may write a custom method that changes anything Word stores, not only formatting, and may use the
   template, pictures and tables you attached (a check the method fails goes back to Claude first, to fix or to keep
-  with a reason you read beside the copy; the words the method's sample copies add and remove are listed before you
-  approve, in the chat and under each sample, as the independent checker read them); and a copy that fails a check is
+  with a reason you read beside the copy; a change to a part no check reads, such as a chart, an embedded file,
+  stored data or the theme, fails a check of its own, UNREAD, so such a copy is never called verified; the words the
+  method's sample copies add and remove are listed before you approve, in the chat and under each sample, as the
+  independent checker read them); and a copy that fails a check is
   delivered anyway, marked **UNVERIFIED**
   with the checks it failed, instead of being held back (the mark stays on every later copy built on it). What it
   costs: no proof that the rest of the file is untouched, content can be lost or invented without a refusal, a copy

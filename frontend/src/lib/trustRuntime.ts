@@ -227,7 +227,9 @@ export const RUNTIME_CARDS: RuntimeCard[] = [
       "independent checker's own comparison of each copy with its original (check V2), never from the method or the " +
       "model, or say that no words change. In Obliterate mode " +
       "(its own card) it is offered whenever any method could make the change, may change anything Word stores, " +
-      "and may use the template, pictures and tables you attached; a result whose only failures are its checks goes " +
+      "and may use the template, pictures and tables you attached (a change to a part no check reads, such as a chart, " +
+      "an embedded file, stored data or the theme, is a failed check of its own, UNREAD); a result whose only " +
+      "failures are its checks goes " +
       `back to Claude up to ${F.obliterateCheckRounds} times to fix them or keep each with a reason you read beside ` +
       "every copy (the package-integrity checks V1, V4, V5a, V5c and V9 cannot be kept with a reason: they go back " +
       "each round); after those rounds the latest method is used, and its copies are delivered marked UNVERIFIED " +

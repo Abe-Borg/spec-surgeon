@@ -2996,6 +2996,24 @@ def _residual_members(ctx: Ctx, errs: List[str]) -> List[str]:
     return checked
 
 
+def _unread_members(ctx: Ctx, residual_parts: List[str]) -> List[str]:
+    """The members the copy changed, added or removed that nothing in V10 read: not a text part (V2 and the residual),
+    not the styles part or a settings/document-properties member (the residual compares them), not one a kind
+    compared whole (``verified_parts``, ``verified_members``), not ``[Content_Types].xml`` (V1's and V5's). A record
+    of what the check did not cover, never a failure here: a built-in op's plan is held to its own kinds. A custom
+    method in Obliterate, which may change members no kind covers (a chart, an embedded file, a data store, the
+    theme), is held to it by ``codegen`` (the deep-dive stress test's D2: such a copy passed every check)."""
+    src, out = ctx.src, ctx.out
+    in_src, in_out = set(src.names), set(out.names)
+    changed = {m for m in in_src | in_out
+               if not m.endswith("/") and (m not in in_src or m not in in_out or src.read(m) != out.read(m))}
+    covered = (set(ctx.src_tp) | set(ctx.out_tp) | set(residual_parts) | ctx.verified_parts | ctx.verified_members
+               | protected_members(src) | protected_members(out) | {"[Content_Types].xml"})
+    if ctx.styles_part:
+        covered.add(ctx.styles_part)
+    return sorted(changed - covered)
+
+
 def check_properties(src: VPackage, out: VPackage, plan: Dict[str, Any], source_name: Optional[str] = None,
                      output_name: Optional[str] = None) -> Tuple[bool, str, Dict[str, Any]]:
     ctx = Ctx(src, out, plan, source_name, output_name)
@@ -3039,12 +3057,14 @@ def check_properties(src: VPackage, out: VPackage, plan: Dict[str, Any], source_
         residual_parts.append(ctx.styles_part)
         _residual_styles(ctx, errs)
     residual_parts += _residual_members(ctx, errs)
+    unread = _unread_members(ctx, residual_parts)
     ok = not errs
     head = (f"{len(assertions)} assertion(s): " + "; ".join(summaries)) if assertions else "no property change predicted"
     summary = (head + f" | residual identity over {len(residual_parts)} changed part(s): "
                + ("everything not asserted is identical" if ok else f"{len(errs)} problem(s): {errs[:3]}"))
     return ok, summary, {"errors": errs[:50], "error_count": len(errs),
-                         "assertions": summaries, "residual_parts": residual_parts, **ctx.findings}
+                         "assertions": summaries, "residual_parts": residual_parts, "unread_members": unread,
+                         **ctx.findings}
 
 
 # header/footer templating kinds live in verify/template.py, built-in batch 1's word-changing kinds in verify/textops.py
