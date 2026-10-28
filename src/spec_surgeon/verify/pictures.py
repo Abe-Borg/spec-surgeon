@@ -40,6 +40,7 @@ from .images import _labels, _own_picture, _rels_of, v_picture_info
 from .markup import check_content_types, check_paragraph, check_relationships, drop
 from .props import Ctx, first_difference, mask_picture_sizes, para_matches, sect_prs, sig
 from .reader import CT, REL, VPackage, W
+from .patterns import v_compile
 
 _W_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
 _WP_NS = "http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"
@@ -119,7 +120,7 @@ def _v_match(raw: Any, pinned: Optional[str], kind: str, errs: List[str]) -> Dic
         if key == "md5" and isinstance(val, str) and re.fullmatch(r"[0-9a-fA-F]{32}", val):
             return {"how": "md5", "md5": val.lower()}
         if key == "name_regex" and isinstance(val, str) and val:
-            return {"how": "name", "rx": re.compile(val)}
+            return {"how": "name", "rx": v_compile(val, where="a picture's name or description")}
     raise ValueError(f"unknown match {raw!r}")
 
 

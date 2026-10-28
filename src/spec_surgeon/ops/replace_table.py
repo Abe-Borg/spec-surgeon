@@ -32,6 +32,7 @@ from ..package import DocxPackage
 from . import prose, register
 from . import tables
 from .base import JobException, Op, PlanFragment
+from .patterns import MAX_PATTERN_CHARS, compile_pattern
 from .selectors import SCOPE_KINDS, StyleSheet, check_paragraph_selector, paragraph_selected, scope_parts
 from .slots import field_runs
 from .textedit import Edit, RunText, apply_part_edits, edits_to_data, nearest_p, plan_paragraph, shown
@@ -68,21 +69,21 @@ def normalize_pair(raw: Any, where: str) -> Dict[str, Any]:
     pair = {"find": find, "replace": rep, "regex": bool(raw.get("regex", False)),
             "match_case": bool(raw.get("match_case", True)), "whole_word": bool(raw.get("whole_word", True)),
             "flexible_whitespace": bool(raw.get("flexible_whitespace", False))}
-    try:
-        compile_pair(pair)
-    except re.error as e:
-        raise JobException(f"{where}: bad regular expression {find!r} ({e})", "bad-params")
+    compile_pair(pair, label=where)
     return pair
 
 
-def compile_pair(pair: Dict[str, Any]):
+def compile_pair(pair: Dict[str, Any], label: Optional[str] = None):
+    """The pair's pattern, bounded (``ops/patterns.py``); a pattern the app builds from the literal find is as long
+    as the user's words, so only a regex find is held to the length limit."""
     if pair["regex"]:
         pattern = pair["find"]
     elif pair["flexible_whitespace"]:
         pattern = flexible_regex_from_literal(pair["find"])
     else:
         pattern = re.escape(pair["find"])
-    return re.compile(pattern, 0 if pair["match_case"] else re.IGNORECASE)
+    return compile_pattern(pattern, 0 if pair["match_case"] else re.IGNORECASE, where="a paragraph's text", label=label,
+                           max_chars=MAX_PATTERN_CHARS if pair["regex"] else None)
 
 
 def _wordch(c: str) -> bool:

@@ -141,6 +141,7 @@ def _gui(request, result):
     import fastapi  # noqa: F401
     import pymupdf
     import pythoncom  # noqa: F401
+    import regex  # noqa: F401 — bounded pattern searches (ops/patterns.py, verify/patterns.py)
     import uvicorn  # noqa: F401
     import webview
     import win32com.client  # noqa: F401

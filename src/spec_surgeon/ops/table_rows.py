@@ -31,13 +31,15 @@ it.
 """
 from __future__ import annotations
 
-import re
 from typing import Any, Iterable, List, Optional, Sequence, Set
 
 from ..ooxml import block_full_text
 from ..package import W
 from .base import JobException, Touch
+from .patterns import compile_pattern
 from .table_select import own_cells, own_rows
+
+ROW_TEXT = "a table row's text"          # what rows.text_regex is searched on
 
 ROW_KEYS = ("index_range", "text_regex", "header")
 OFF = ("0", "false", "off")
@@ -65,10 +67,7 @@ def check_row_selector(pred: Any, where: str = "select.rows") -> None:
     if "text_regex" in pred:
         if not isinstance(pred["text_regex"], str):
             raise JobException("rows.text_regex must be a regular expression (text)", "bad-params")
-        try:
-            re.compile(pred["text_regex"])
-        except re.error as e:
-            raise JobException(f"rows.text_regex is not a valid regular expression: {e}", "bad-params")
+        compile_pattern(pred["text_regex"], where=ROW_TEXT, label="rows.text_regex")
     if "header" in pred and not isinstance(pred["header"], bool):
         raise JobException("rows.header must be true or false", "bad-params")
 
@@ -139,7 +138,7 @@ def row_selected(pred: Any, r: int, tr, chain: Sequence[Any]) -> bool:
             return False
     if "header" in pred and is_header_row(tr, chain) != pred["header"]:
         return False
-    if "text_regex" in pred and not re.search(pred["text_regex"], row_text(tr)):
+    if "text_regex" in pred and not compile_pattern(pred["text_regex"], where=ROW_TEXT).search(row_text(tr)):
         return False
     return True
 

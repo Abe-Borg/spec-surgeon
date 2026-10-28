@@ -280,7 +280,7 @@ def _document_properties(ctx: Ctx, a: Dict[str, Any], errs: List[str]) -> str:
         for key in sorted(set(found)):
             try:
                 values[key] = fill_value(ctx.src, key, _V_REFERENCE[key])
-            except (ValueError, KeyError, re.error) as e:
+            except (ValueError, KeyError) as e:
                 c.err(f"{k}: this file's section {key} cannot be read ({e}) — the op must refuse")
         if len(values) != len(set(_V_PLACEHOLDER.findall(text))):
             continue

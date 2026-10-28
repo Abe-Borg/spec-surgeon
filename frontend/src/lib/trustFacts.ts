@@ -52,6 +52,9 @@ export const TRUST_FACTS = {
   obliterateCheckRounds: 3,
   analysisSeconds: 120,
   analysisMemoryMB: 1024,
+  // Text patterns in a plan (ops/patterns.py; the checker's twin verify/patterns.py)
+  regexTimeoutSeconds: 2,
+  maxPatternChars: 1000,
   // Attachments (inputs.py, package_limits.py)
   maxTableOrPictureMB: 20,
   maxDocxMB: 256,

@@ -33,8 +33,9 @@ from ..ooxml import paragraphs
 from ..package import CT, CT_PART, DocxPackage
 from . import prose
 from .base import JobException
+from .patterns import compile_pattern
 from .images import file_md5
-from .swap_image import A, MC, R, V, W, WP, enclosing, names_of, picture_of, ref_id
+from .swap_image import A, MC, NAME_TEXT, R, V, W, WP, enclosing, names_of, picture_of, ref_id
 
 WATERMARK_NAMES = ("PowerPlusWaterMarkObject", "WordPictureWatermark")
 SCOPES = ("document", "headers", "footers")
@@ -53,10 +54,7 @@ def match_rule(raw: Any, what: str) -> Dict[str, Any]:
         if k == "md5" and isinstance(v, str) and re.fullmatch(r"[0-9a-fA-F]{32}", v):
             return {"how": "md5", "md5": v.lower()}
         if k == "name_regex" and isinstance(v, str) and v:
-            try:
-                re.compile(v)
-            except re.error as e:
-                raise JobException(f"{what}.match.name_regex: bad pattern ({e})", "bad-params")
+            compile_pattern(v, where=NAME_TEXT, label=f"{what}.match.name_regex")
             return {"how": "name", "name_regex": v}
     raise JobException("'match' must be {'image': '<the picture file>'}, {'md5': '<32 hex digits>'}, "
                        "{'name_regex': '<regex on the picture's name/description>'} or 'all'", "bad-params")
@@ -159,7 +157,7 @@ def matched_pictures(pkg: DocxPackage, part: str, root, match: Dict[str, Any],
     ordinal = {id(d): k for k, d in enumerate(drawings)}
     pars = paragraphs(root)
     index = {id(p): k for k, p in enumerate(pars)}
-    rx = re.compile(match["name_regex"]) if match["how"] == "name" else None
+    rx = compile_pattern(match["name_regex"], where=NAME_TEXT) if match["how"] == "name" else None
     found: Dict[int, Found] = {}
     skipped = 0
     for ref in list(root.iter(A + "blip", V + "imagedata")):

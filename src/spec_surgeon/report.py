@@ -137,6 +137,13 @@ FAILURE_EXPLANATIONS: Dict[str, Tuple[str, str]] = {
         "half an inch of text width or height, a header or footer off the page, or a table column narrower than 0.1 "
         "inch). The reason names the section or paragraph and the value.",
     ),
+    "regex-timeout": (
+        "Text Pattern Took Too Long",
+        "A text pattern in the plan (a selector's text_regex, a fill's pattern, a table's first_row_regex, a comment or "
+        "note filter …) ran for more than two seconds on one piece of this file's text — the sign of a pattern with "
+        "nested repeats that tries every way to match before it gives up. The file was set aside before anything was "
+        "changed. Simplify the pattern (anchored words, short character classes, no nested repeats) and run again.",
+    ),
     "conflict": (
         "Two Operations Touch the Same Thing",
         "Two operations in the spec would change the same paragraph, property or part; the engine never guesses an "

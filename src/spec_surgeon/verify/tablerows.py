@@ -15,10 +15,12 @@ docs/BUILTIN_OPS_BATCH6_DESIGN.md §6). The transform side is ops/table_rows.py;
 """
 from __future__ import annotations
 
-import re
 from typing import Any, Dict, List, Optional, Set
 
 from .reader import W
+from .patterns import v_compile, v_search
+
+_V_ROW_TEXT = "a table row's text"
 from .tableselect import v_cells, v_rows
 
 _V_KEYS = {"index_range", "text_regex", "header"}
@@ -37,10 +39,7 @@ def v_check_rows(pred: Any) -> None:
     if "text_regex" in pred:
         if not isinstance(pred["text_regex"], str):
             raise ValueError("bad rows.text_regex (the op must refuse)")
-        try:
-            re.compile(pred["text_regex"])
-        except re.error as e:
-            raise ValueError(f"bad rows.text_regex: {e} (the op must refuse)")
+        v_compile(pred["text_regex"], where=_V_ROW_TEXT)            # a ValueError where the op must refuse
     if "header" in pred and not isinstance(pred["header"], bool):
         raise ValueError("bad rows.header (the op must refuse)")
 
@@ -92,7 +91,7 @@ def v_rows_chosen(tbl, pred: Any, chain: List[Any], text_of: Dict[Any, str]) -> 
             continue
         if "header" in pred and v_header_row(tr, chain) is not pred["header"]:
             continue
-        if "text_regex" in pred and re.search(pred["text_regex"], v_row_text(tr, text_of)) is None:
+        if "text_regex" in pred and v_search(pred["text_regex"], v_row_text(tr, text_of), where=_V_ROW_TEXT) is None:
             continue
         out.append(r)
     return out

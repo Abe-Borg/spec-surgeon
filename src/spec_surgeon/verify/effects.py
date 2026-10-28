@@ -24,6 +24,7 @@ from .props import (Styles, Theme, _check_effective_para, _check_effective_run, 
                     _check_rpr_change, _v_inherit_ppr, _v_inherit_rpr, _v_run_elements,
                     effective_fonts, effective_size, first_difference, sect_prs, sig, symbolic)
 from .reader import STYLES_REL, THEME_REL, VPackage, W, default_author
+from .patterns import v_compile, v_search
 from .template import _v_field_runs
 from .goal_operations import (TYPES as OPERATION_EFFECTS, validate as validate_operation,
                               verify_operations, normalize_operations, paragraph_selector)
@@ -88,7 +89,7 @@ def _target_schema(target):
         if "role" in locator and locator["role"] != "section_title":
             raise ValueError("unsupported semantic role")
         if "text_regex" in locator:
-            re.compile(locator["text_regex"])
+            v_compile(locator["text_regex"], where="a paragraph's text")
 
 
 def _enum_values(values, allowed, where):
@@ -120,7 +121,7 @@ def _fill_schema(rule):
         _keys(rule, common | {pattern, "source", "section", "occurrence", "strip", "flexible_whitespace"},
               "extracted fill")
         _literal(rule.get(pattern), "fill." + pattern)
-        re.compile(rule[pattern])
+        v_compile(rule[pattern], where="a source paragraph's text")
         if rule.get("source", "document") not in {
                 "document", "header.default", "header.first", "header.even",
                 "footer.default", "footer.first", "footer.even"}:
@@ -395,7 +396,8 @@ def _resolve(pkg, roots, styles, target, source_hash):
                         continue
                     if "contains_text" in locator and locator["contains_text"] not in text:
                         continue
-                    if "text_regex" in locator and re.search(locator["text_regex"], text) is None:
+                    if "text_regex" in locator and v_search(locator["text_regex"], text,
+                                                            where="a paragraph's text") is None:
                         continue
                     if "style_id" in locator and style != locator["style_id"]:
                         continue

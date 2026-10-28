@@ -34,7 +34,7 @@ computer* to keep it in Windows Credential Manager. The installer is unsigned, s
 **Python package / development setup** (Python 3.10+ on Windows, macOS or Linux; from the project folder):
 
 ```powershell
-py -3 -m pip install -e .            # core: lxml, PyMuPDF 1.x (2.0 loads an AI layout model the app never uses)
+py -3 -m pip install -e .            # core: lxml, regex (bounded pattern searches), PyMuPDF 1.x (2.0 loads an AI layout model the app never uses)
 py -3 -m pip install -e ".[gui]"     # the window: FastAPI, uvicorn, pywebview (WebView2 on Windows) — spec-surgeon-gui
 py -3 -m pip install -e ".[word]"    # Windows: adds pywin32 so Word is the renderer/oracle (recommended)
 py -3 -m pip install -e ".[agent]"   # optional: anthropic SDK for typed requests in the window
