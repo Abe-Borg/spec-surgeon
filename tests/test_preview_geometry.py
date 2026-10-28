@@ -1,7 +1,9 @@
 """The preview's sample verdict covers the page layout too (backlog P7): V6 and V7 run on the samples the preview
 renders, with the run's own geometry code, so a sample's PASS is what the run will find; where the preview cannot
-check the layout (no render; a chain's step whose reference is its own input) the sample says so, in the text Claude
-reads and in what the window shows, and the layout check waits for the run."""
+check the layout (no render; a chain's step whose reference is its own input; a custom method's trial, whose plan the
+preview does not hold; a layout reference it could not render or compare) the sample says so, in the text Claude
+reads and in what the window shows, and the layout check waits for the run. The note says what did happen: a sample
+whose pages were rendered (its before/after pictures and page counts are real) never says no pages were rendered."""
 from __future__ import annotations
 
 import copy
@@ -17,7 +19,8 @@ from spec_surgeon.batch import run_batch
 from spec_surgeon.editspec import load_spec
 from spec_surgeon.ooxml import block_full_text, paragraphs
 from spec_surgeon.package import DocxPackage
-from spec_surgeon.preview import make_chain_preview, make_preview
+from spec_surgeon.preview import (GEOMETRY_AT_RUN, GEOMETRY_RENDERED_AT_RUN, GEOMETRY_RENDERED_NOT_COMPARED,
+                                  make_chain_preview, make_preview, preview_generated)
 from spec_surgeon.ui_feedback import failed_preview_checks
 
 SPECS = Path(__file__).resolve().parent.parent / "examples" / "specs"
@@ -92,8 +95,67 @@ def test_without_a_render_the_sample_says_the_layout_is_checked_at_the_run(folde
     assert sv.passed is True and sv.checks["V7"] == "NA"
     assert sv.geometry == {"status": "NA", "at": "run",
                            "note": "Page layout is checked when the copies are created; no pages were rendered here."}
+    assert sv.geometry == GEOMETRY_AT_RUN and not sv.source_pdf and not sv.images and sv.pages_before is None
     assert "page geometry (V7): checked at the run" in pv.to_text()
     assert failed_preview_checks(sv) == []
+
+
+def _trial(folder: Path, tmp_path: Path):
+    """A custom method's trial as ``preview_generated`` reads one: a source, its output and a verdict, no plan."""
+    from types import SimpleNamespace
+    [f] = sorted(folder.glob("*.docx"))
+    out = tmp_path / "trial" / f.name
+    out.parent.mkdir(parents=True)
+    out.write_bytes(f.read_bytes())
+    return SimpleNamespace(name="op", trials=[SimpleNamespace(source=str(f), output=str(out), passed=True,
+                                                               record=None, unverified=None, problems=[])])
+
+
+def test_a_rendered_sample_whose_plan_the_preview_does_not_hold_says_its_pages_were_rendered(folder, tmp_path, monkeypatch):
+    # live QA's F07: a custom method's trial is rendered (pictures, page counts, the visual check's pages) but has no
+    # plan for the preview to check the layout against; its note said no pages were rendered
+    rendered = fake_renderer(monkeypatch)
+    gp = preview_generated(_trial(folder, tmp_path), tmp_path / "pv", renderer="fake", do_render=True)
+    [sv] = gp.samples
+    assert sv.plan is None and len(rendered) == 2 and sv.source_pdf and sv.output_pdf
+    assert sv.pages_before == sv.pages_after == 1 and sv.images and sv.look_pages == [1]
+    assert sv.geometry == GEOMETRY_RENDERED_AT_RUN
+    assert sv.geometry["status"] == "NA" and sv.geometry["at"] == "run"          # what the page keys off, unchanged
+    assert "Pages were rendered here" in sv.geometry["note"] and "no pages" not in sv.geometry["note"]
+    assert "does not hold this sample's plan" in sv.geometry["note"]
+    assert "page geometry (V7): checked at the run — Pages were rendered here" in gp.to_text()
+    assert sv.passed is True and "V7" not in sv.checks and failed_preview_checks(sv) == []
+    assert not [w for w in gp.warnings if "checked when the copies" in w]        # nothing failed: no warning either
+
+
+def test_without_a_render_a_custom_methods_sample_says_no_pages_were_rendered(folder, tmp_path):
+    gp = preview_generated(_trial(folder, tmp_path), tmp_path / "pv", renderer="none", do_render=False)
+    [sv] = gp.samples
+    assert sv.plan is None and not sv.source_pdf and sv.geometry == GEOMETRY_AT_RUN
+
+
+@pytest.mark.parametrize("broken", ["geometry_references", "compare_pair"])
+def test_a_comparison_the_preview_could_not_make_says_the_pages_were_rendered(folder, tmp_path, monkeypatch, broken):
+    # the references could not be rendered, or the rendered pages could not be compared: a warning beside the plan
+    # (the run makes the comparison again), and the sample's note says the pages were rendered, not that none were
+    from spec_surgeon import batch as batch_mod
+
+    def boom(*a, **k):
+        raise RuntimeError("planted")
+    monkeypatch.setattr(batch_mod, broken, boom)
+    fake_renderer(monkeypatch)
+    pv = make_preview(copy.deepcopy(TITLE), [str(folder)], tmp_path / "pv", renderer="fake", do_render=True)
+    [sv] = pv.samples
+    assert sv.plan is not None and sv.source_pdf and sv.output_pdf and sv.pages_before == sv.pages_after == 1
+    assert sv.geometry == GEOMETRY_RENDERED_NOT_COMPARED
+    assert sv.geometry["status"] == "NA" and sv.geometry["at"] == "run"
+    assert "Pages were rendered here" in sv.geometry["note"] and "no pages" not in sv.geometry["note"]
+    assert "could not be rendered or compared" in sv.geometry["note"]
+    assert sv.passed is True and sv.checks["V7"] == "NA" and failed_preview_checks(sv) == []
+    [warning] = [w for w in pv.warnings if "checked when the copies are created" in w]
+    assert "planted" in warning and ("references could not be rendered" in warning
+                                     or "pages could not be compared" in warning)
+    assert "page geometry (V7): checked at the run — Pages were rendered here" in pv.to_text()
 
 
 def test_a_plan_with_no_layout_reference_by_design_says_why(folder, tmp_path, monkeypatch):
