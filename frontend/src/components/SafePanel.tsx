@@ -5,6 +5,7 @@ import {
   clearForm,
   fieldRows,
   fieldShown,
+  filledFromEachDocument,
   grouped,
   leaveForm,
   missing,
@@ -240,20 +241,26 @@ function FieldInput({
     case "slots": {
       const slots = value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, string>) : {};
       const names = Object.keys(slots);
+      const filled = filledFromEachDocument(view.template);
       if (names.length === 0) {
         return (
           <p className="text-[13px] leading-snug text-ink-dim">
             {view.template?.kind === "reference"
               ? "Your template is an ordinary specification: its own section number and title become each document's own."
-              : "Each document's own section number and title fill the template's placeholders."}
+              : filled
+                ? `${filled} Nothing to type.`
+                : "Each document's own section number and title fill the template's placeholders."}
           </p>
         );
       }
       return (
         <div className="flex flex-col gap-2">
           <p className="text-[13px] leading-snug text-ink-dim">
-            The section number and title come from each document. Type the template's other values exactly as they
-            should appear:
+            {filled
+              ? `${filled} Type the template's other placeholders exactly as they should appear, the same in every copy:`
+              : "No placeholder in your template is named for the section number or title (such as “00 00 00” or " +
+                "“SECTION TITLE”), so none is filled from each document. Type each one exactly as it should appear, " +
+                "the same in every copy:"}
           </p>
           {names.map((slot) => (
             <label key={slot} className="block">

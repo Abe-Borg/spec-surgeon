@@ -85,7 +85,10 @@ paragraphs, clean up spaces, standardize quotes and dashes); every other button'
 tracked, as in Default mode. The template buttons tell a prepared template (yellow-highlighted or `{{NAME}}`
 placeholders) from an ordinary specification used as one without a model (`recipes.template_kind`): a prepared
 template's section number and title placeholders are filled from each document and its other placeholders are typed
-in the form; an ordinary specification gives each document its own number and title wherever its headers and footers
+in the form, one value for every copy. A placeholder is the number or the title by its name or, for the number, its
+shape (`recipes.slot_role`: `NUMBER_SLOTS`, `NUMBER_SHAPE` — `XX XX XX`, `00 00 00`, `000000` — and `TITLE_SLOTS`,
+`Specification Name` among them), and the form names the ones each document fills (`slot_roles`); an ordinary
+specification gives each document its own number and title wherever its headers and footers
 show its own; a template with nothing to fill is refused at the button.
 
 **Save clean PDFs** (`recipes._clean_pdf`, `pdf_export.py`) makes a PDF of every document with all its comments off and

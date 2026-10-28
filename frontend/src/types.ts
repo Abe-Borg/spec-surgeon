@@ -70,6 +70,8 @@ export interface TemplateInfo {
   kind: "none" | "prepared" | "reference" | "unusable";
   /** A prepared template's placeholders the user types a value for. */
   typed_slots: string[];
+  /** A prepared template's placeholders each document fills itself, by what it fills them with. */
+  slot_roles?: Record<string, "number" | "title">;
   reason: string;
   /** What "Match body formatting to template" reads from the template (template_roles.detect). */
   body?: BodyRoles;

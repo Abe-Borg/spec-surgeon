@@ -19,7 +19,7 @@ from spec_surgeon.editspec import plan_spec
 from spec_surgeon.fingerprint import fingerprint
 from spec_surgeon.gui import Session
 from spec_surgeon.ops.selectors import StyleSheet
-from spec_surgeon.package import DocxPackage, W
+from spec_surgeon.package import FOOTER_REL, DocxPackage, W
 from spec_surgeon.settings import MODES, Settings, load_settings, save_settings
 
 
@@ -113,6 +113,62 @@ def test_a_template_without_headers_or_footers_is_unusable_with_the_reason(tmp_p
 def test_slot_names_for_the_number_and_title(folder):
     assert [recipes.slot_role(n) for n in ("XX XX XX", "SECTION_NUMBER", "section number", "{{TITLE}}"[2:-2],
                                            "ISSUED FOR PERMIT")] == ["number", "number", "number", "title", ""]
+    # the owner's template (2026-10-28): "00 00 00" and "Specification Name" were asked for in the form, and typing
+    # the placeholder back in left it in every copy's footer
+    assert [recipes.slot_role(n) for n in ("00 00 00", "000000", "xx.xx.xx", "## ## ##", "00 00 00.00", "Spec No.",
+                                           "[SECTION NUMBER]")] == ["number"] * 7
+    assert [recipes.slot_role(n) for n in ("Specification Name", "Section_Name", "Spec Title", "<SECTION TITLE>",
+                                           "«Specification Section Name»")] == ["title"] * 5
+    assert [recipes.slot_role(n) for n in ("Project Name", "NAME", "DATE", "00 00", "0000", "XX XX XX XX",
+                                           "100% IFR PACKAGE", "21 05 17")] == [""] * 8
+
+
+def named_slot_template(path: Path) -> Path:
+    """The owner's prepared template as it was laid out (2026-10-28): one section, a header stamp the user types, and a
+    footer with the title placeholder "Specification Name" over the number placeholder "00 00 00" and the page."""
+    from make_fixtures import _highlight, _page_field
+    doc = Document()
+    header = doc.sections[0].header.paragraphs[0]
+    header.add_run("MICROSOFT CONFIDENTIAL\t")
+    _highlight(header.add_run("100% IFR PACKAGE"))
+    footer = doc.sections[0].footer
+    _highlight(footer.paragraphs[0].add_run("Specification Name"))
+    number = footer.add_paragraph()
+    _highlight(number.add_run("00 00 00"))
+    number.add_run(" - ")
+    _page_field(number)
+    doc.add_paragraph("SECTION 00 00 00")
+    doc.add_paragraph("SPECIFICATION NAME")
+    doc.save(path)
+    return path
+
+
+def test_a_template_with_00_00_00_and_specification_name_fills_both_from_each_document(folder, tmp_path,
+                                                                                         monkeypatch):
+    template = named_slot_template(tmp_path / "00_00_00_SPECIFICATION HEADER AND FOOTER TEMPLATE.docx")
+    kind = recipes.template_kind(template)
+    assert kind["kind"] == "prepared" and kind["typed_slots"] == ["100% IFR PACKAGE"]
+    assert kind["slot_roles"] == {"Specification Name": "title", "00 00 00": "number"}
+    monkeypatch.setattr(llm, "client", lambda *a, **k: (_ for _ in ()).throw(AssertionError("no AI")))
+    task = DocumentTask(Session(out_root=tmp_path / "out", visual_check=False), render=False, mode="safe")
+    task.attach(docs(folder))
+    task.attach([template], template=True)
+    assert task.template_info()["typed_slots"] == ["100% IFR PACKAGE"]          # what the form asks for
+    view = task.perform("recipe", recipe="headers_footers_template",
+                        inputs={"slots": {"100% IFR PACKAGE": "100% IFR"}})
+    assert view["stage"] == "preview", [m["text"] for m in task.messages]
+    fills = task.session.spec["ops"][0]["params"]["slot_fills"]
+    assert fills["00 00 00"] == recipes.REFERENCE_FILLS["SECTION_NUMBER"]
+    assert fills["Specification Name"] == recipes.REFERENCE_FILLS["SECTION_TITLE"]
+    task.perform("primary", token=view["token"])
+    assert len(task.results) == 2 and all(r.status == "PASS" for r in task.session.last_batch.files)
+    for original, output in task.results.items():
+        pkg = DocxPackage.from_path(Path(output))
+        footers = [r.resolved for r in pkg.rels(pkg.main_part()).values() if r.type == FOOTER_REL]
+        shown = " | ".join("".join(t.text or "" for t in p.iter(W + "t"))
+                           for part in footers for p in pkg.xml(part).iter(W + "p"))
+        number, title = Path(original).stem.split(" – ")
+        assert f"{title} | {number} - 1" in shown and "00 00 00" not in shown and "Specification Name" not in shown
 
 
 # ---- every button through the gate and the engine -------------------------------------------------------------------

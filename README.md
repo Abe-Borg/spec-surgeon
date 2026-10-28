@@ -199,8 +199,11 @@ mode you last used (Safe the first time; never Obliterate).
   mode. What it costs: only what the buttons do. The copies are clean unless you tick *Show my changes as tracked
   changes in Word* (offered where the change can be tracked). The template buttons take either a prepared template
   (yellow-highlighted or `{{NAME}}` placeholders: the section number and title come from each document, every other
-  placeholder's value is typed in the form) or an ordinary specification whose headers and footers show its own
-  section number and title. No model is called — no plan, no visual check, no recovery — so it needs no API key and
+  placeholder's value is typed in the form, the same in every copy) or an ordinary specification whose headers and
+  footers show its own section number and title. A placeholder is the section number when it is shaped like one
+  (`XX XX XX`, `00 00 00`, `000000`, `## ## ##`) or named for it (`SECTION NUMBER`, `SPEC NO.`…), and the title when
+  it is named for it (`SECTION TITLE`, `SECTION NAME`, `Specification Name`…); case, underscores and enclosing
+  brackets do not matter. The form names the placeholders each document fills itself, so it asks only for the rest. No model is called — no plan, no visual check, no recovery — so it needs no API key and
   spends nothing.
 - **Match body formatting to template** (Safe mode) makes each document look like your template without touching a
   word or a table. The form shows the template's style for each part of a section (the section number line, the
