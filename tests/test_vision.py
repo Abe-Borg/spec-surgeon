@@ -327,6 +327,18 @@ UNREADABLE = {
     "content is not a list": _odd(5, GOOD_USAGE),
     "a block without a name": _odd([{"type": "tool_use", "id": "t1", "input": {"summary": "x", "findings": []}}],
                                    GOOD_USAGE),
+    # a missing field is never read as empty (the deep-dive stress test's D1)
+    "findings is missing": resp(tool("submit_review", {"summary": "Nothing to see."})),
+    "summary is missing": resp(tool("submit_review", {"findings": []})),
+    "findings is null": resp(tool("submit_review", {"summary": "x", "findings": None})),
+    "summary is not text": resp(tool("submit_review", {"summary": ["x"], "findings": []})),
+    "input is empty": resp(tool("submit_review", {})),
+    "a wrapper beside a field": resp(tool("submit_review", {"summary": "x", "parameters": {
+        "summary": "x", "findings": [{"severity": "block", "text": "Logo squashed."}]}})),
+    "a wrapper without both fields": resp(tool("submit_review", {"parameters": {
+        "findings": [{"severity": "block", "text": "Logo squashed."}]}})),
+    "two wrappers": resp(tool("submit_review", {"a": {"summary": "x", "findings": []},
+                                                "b": {"summary": "y", "findings": []}})),
 }
 
 
@@ -383,10 +395,28 @@ def test_finding_items_of_any_type_are_read_or_dropped(tmp_path):
     assert "p.True" not in rv.to_text()
 
 
-def test_findings_missing_is_a_review_without_findings(tmp_path):
-    fake = FakeClient(resp(tool("submit_review", {"summary": "Nothing to see."})))
+def test_a_review_nested_under_one_key_keeps_its_blocking_findings(tmp_path):
+    """The deep-dive stress test's D1: Claude put its whole review under ``parameters``; the reader took the absent
+    top-level findings for none and showed a clean review, its two blocking findings gone. Nested under one key with
+    both fields, the review is read as it is, every finding kept, and the transcript says it was nested."""
+    s = _sample(tmp_path)
+    nested = {"parameters": {"summary": "The footer title now overlaps the date and is clipped.", "findings": [
+        {"severity": "block", "file": s.source.name, "page": 1, "text": "Footer title overlaps the revision date."},
+        {"severity": "block", "file": s.source.name, "page": 1, "text": "Footer sentence is clipped at the right."},
+        {"severity": "warn", "text": "The page number sits lower than before."}]}}
+    fake = FakeClient(resp(tool("submit_review", nested)))
+    rv = review_samples("r", [s], tmp_path / "review", lambda: fake)
+    assert not rv.skipped and rv.summary == "The footer title now overlaps the date and is clipped."
+    assert [f["severity"] for f in rv.findings] == ["block", "block", "warn"] and len(rv.blocking()) == 2
+    assert rv.transcript[-1] == {"turn": 1, "unwrapped": "parameters"}
+    assert "[block]" in rv.to_text() and "no findings" not in rv.to_text()
+
+
+def test_a_review_with_both_fields_and_no_findings_is_a_clean_review(tmp_path):
+    fake = FakeClient(resp(tool("submit_review", {"summary": "Nothing to see.", "findings": []})))
     rv = review_samples("r", [_sample(tmp_path)], tmp_path / "review", lambda: fake)
     assert not rv.skipped and rv.summary == "Nothing to see." and rv.findings == []
+    assert not any("unwrapped" in e for e in rv.transcript)
 
 
 def test_a_client_factory_error_is_classified_like_a_call_error(tmp_path):

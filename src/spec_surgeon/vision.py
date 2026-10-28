@@ -13,9 +13,12 @@ Nothing here raises into a preview, at any stage
 (preparing the pages, making the client, the call, reading the answer): a renderer that cannot run, a missing key or an
 API error is a ``skipped`` review with the reason (``llm.failure_text``: its kind, HTTP status and request id); any
 other exception — of the client factory, of the call, or while reading Claude's answer ("Claude's answer could not be
-read (…)": a ``findings`` that is not a list, an input that is not an object) — is skipped the same way, with its
-traceback kept in ``VisualReview.transcript`` (visual_review.json) — the exchange as plain data, without the page
-images. A skipped review has no findings: a review read part-way keeps nothing.
+read (…)": a ``findings`` that is not a list, an input that is not an object, an input without ``summary`` or
+``findings``) — is skipped the same way, with its traceback kept in ``VisualReview.transcript`` (visual_review.json) —
+the exchange as plain data, without the page images. A skipped review has no findings: a review read part-way keeps
+nothing. Both fields are required: an answer that leaves one out is never read as a clean review (the deep-dive
+stress test's D1: the review nested under ``parameters`` read as "no findings" and hid two blocking ones); the one
+wrapper taken off is an input whose only key holds an object with both fields (``_review_input``).
 """
 from __future__ import annotations
 
@@ -28,7 +31,7 @@ import time
 import traceback
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Sequence
+from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
 from . import llm
 from .resources import DEFAULT_MAX_IMAGE_TOKENS
@@ -265,6 +268,27 @@ def _finding(f: Any, sent: Dict[str, List[int]]) -> Optional[Dict[str, Any]]:
     return {"severity": sev, "file": file, "page": page, "text": str(f["text"]).strip()}
 
 
+REVIEW_FIELDS = ("summary", "findings")      # submit_review's required fields
+
+
+def _review_input(inp: Any) -> Tuple[Dict[str, Any], str]:
+    """submit_review's input with both its fields, and the key it was nested under ("" when it was not). A missing
+    field is never read as empty: an answer without ``findings`` is not a review without findings. One wrapper comes
+    off, when it is the input's only key and its object has both fields (seen live: ``{"parameters": {...}}``);
+    anything else raises, which the caller makes a skipped review."""
+    if not isinstance(inp, dict):
+        raise ValueError(f"submit_review's input is {type(inp).__name__}, not an object")
+    if len(inp) == 1 and not any(k in inp for k in REVIEW_FIELDS):
+        (key, inner), = inp.items()
+        if isinstance(inner, dict) and all(k in inner for k in REVIEW_FIELDS):
+            return inner, str(key)[:100]
+    missing = [k for k in REVIEW_FIELDS if k not in inp]
+    if missing:
+        keys = ", ".join(sorted(str(k)[:40] for k in inp)[:8]) or "none"
+        raise ValueError(f"submit_review has no {' and no '.join(missing)} (its keys: {keys})")
+    return inp, ""
+
+
 def _read_answer(rv: VisualReview, resp: Any, model: str, sent: Dict[str, List[int]]) -> None:
     """The review out of Claude's answer. Raises on an answer that is not a review's shape (the caller makes that a
     skip); the summary and findings are set together, at the end, so a review read part-way leaves nothing behind."""
@@ -279,16 +303,16 @@ def _read_answer(rv: VisualReview, resp: Any, model: str, sent: Dict[str, List[i
         said = " ".join(t.strip() for t in llm.texts(body) if t.strip())
         rv.skipped = "Claude answered without a review" + (f": {said[:300]}" if said else "")
         return
-    inp = uses[0].input
-    if not isinstance(inp, dict):
-        raise ValueError(f"submit_review's input is {type(inp).__name__}, not an object")
-    raw = inp.get("findings")
-    if raw is None:
-        raw = []
+    inp, wrapper = _review_input(uses[0].input)
+    raw, summary = inp["findings"], inp["summary"]
     if not isinstance(raw, list):
         raise ValueError(f"submit_review's findings is {type(raw).__name__}, not a list")
+    if not isinstance(summary, str):
+        raise ValueError(f"submit_review's summary is {type(summary).__name__}, not text")
     findings = [x for x in (_finding(f, sent) for f in raw) if x is not None]
-    rv.summary, rv.findings = str(inp.get("summary") or "").strip(), findings
+    if wrapper:
+        _record(rv, lambda: {"turn": 1, "unwrapped": wrapper})
+    rv.summary, rv.findings = summary.strip(), findings
 
 
 def review_samples(intent: str, samples: Sequence[Any], work_dir: Path, client_factory: Callable[[], Any],
