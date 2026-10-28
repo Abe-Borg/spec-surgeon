@@ -86,7 +86,11 @@ Rules the page relies on:
   `question`, under the latest assistant message. Choices with `words` show the words beneath the button.
   Each of the model's words shows once: the assistant message carries its reply without the questions, and
   `questions` never repeats that message (a reply with nothing to pick, plain words or a failure, is in `messages`
-  only; `questions` carries it only when the chat did not say it, as a recovery turn's). An outcome plan (the
+  only; `questions` carries it only when the chat did not say it, as a recovery turn's). A reply that is an answer
+  with nothing pending (words alone: no question, choice, suggested reply, plan or custom method, and no plan the gate
+  refused on the way) ends the request: the stage is `done` when copies exist, else `empty`, `action.kind` is `none`,
+  and the next `send` is a new request, told the exchange as context (docs/CONVERSATIONAL_DESKTOP.md, "When a request
+  ends"). An outcome plan (the
   conversation's fallback when no ordinary plan fits) is one choice, **Use these outcomes and continue**, with the
   words it would place beneath it and the outcomes in full in `questions`; the app carries it out only once it is
   picked (`DocumentTask._take` approves the words as any pick does).
@@ -149,7 +153,9 @@ Rules the page relies on:
   whose copy a partial save already delivered; every other stage sends none, so a finished run takes its
   pages along. The visual check's findings in `warnings`, and `blocking`, follow the same rule.
 - `action.kind`: `approve` → the one button "Create edited copies" (or "I reviewed the flagged pages — create
-  copies" when `blocking`), `continue` → "Continue", `save` → "Save N ready copies", `none` → no button. The button
+  copies" when `blocking`), `continue` → "Continue" (stage `resume`: a request is open and the documents or the plan
+  changed, or work stopped; never after an answer that ended the request), `save` → "Save N ready copies", `none` →
+  no button. The button
   lives in the conversation pane, above the composer; while `busy` the composer shows "Stop now" instead.
   `action.disabled_reason` is empty when the action is available; otherwise the button is disabled and this reason
   appears beside it and in its tooltip. Safe and Default refuse Create after a failed preview check; the server

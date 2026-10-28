@@ -146,6 +146,13 @@ specifications, Windows and Word, and only the owner can do them. Record what a 
   alone gives the same copy. Then two specifications built alike (one structure pattern) with different body sizes:
   the odd one waits under Left untouched with the reason, and pressed alone it is matched at its own size.
 - **Default mode:** a choice's drafted wording edited before it is picked, and the copy carrying the edit.
+- **A question answered without a plan (the stress test's F7, built 2026-10-28):** in Default mode over a real
+  batch, park one document on the to-do list, edit the other two, ask a status question ending "Do not prepare or
+  make an edit" (the assistant answers in words), put the parked document back, then ask for a Subject property
+  change in all three. No Continue follows the answer; the edit is previewed for all three without the question being
+  answered again; that request's `compile.json` (the session folder, the diagnostic bundle) shows the edit as the
+  REQUEST and the question with the answer's first sentence under EARLIER IN THIS CONVERSATION. Then a follow-up
+  typed straight after an answer ("and the headers?") planned as a new request that reads the exchange.
 - **A request kept to one document** (built 2026-10-27): over a real batch, "only 23" (and "just the Michigan one",
   "in 21 and 22, …") plans, previews and runs those documents alone, every other one under Left untouched and
   unchanged; a follow-up "now make its title bold too" keeps to them; a later request about the whole set covers

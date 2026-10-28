@@ -1712,12 +1712,15 @@ def build_messages(request: str, batch: _Batch, answers: Sequence[str],
                    prior_failures: Optional[Sequence[Dict[str, Any]]] = None,
                    history: Optional[Sequence[str]] = None,
                    fresh: Optional[Sequence[str]] = None, context: Optional[str] = None,
-                   todo: Optional[Sequence[str]] = None) -> List[Dict[str, Any]]:
+                   todo: Optional[Sequence[str]] = None,
+                   earlier: Optional[Sequence[str]] = None) -> List[Dict[str, Any]]:
     """The first user message: the request, the user's answers, the changes already made to these copies (a request
-    that builds on a result), any prior pass's set-aside diagnostics, the attached template, the input files a spec
-    names, and the batch's profiles per structure pattern. ``context`` is the app's own account of how these
-    documents come to be planned (set aside after a preview, say); it is never the user's words. ``todo``: one line
-    per document waiting on the user's to-do list (its name and why), which THE BATCH does not hold."""
+    that builds on a result), the exchanges answered before it, any prior pass's set-aside diagnostics, the attached
+    template, the input files a spec names, and the batch's profiles per structure pattern. ``context`` is the app's
+    own account of how these documents come to be planned (set aside after a preview, say); it is never the user's
+    words. ``todo``: one line per document waiting on the user's to-do list (its name and why), which THE BATCH does
+    not hold. ``earlier``: one line per request the window finished with Claude's answer and no plan (what the user
+    asked, the answer's first sentence), oldest first — context this request may refer to, never a request itself."""
     parts = [f"REQUEST:\n{request}"]
     if context and context.strip():
         parts.append(context.strip())
@@ -1735,6 +1738,10 @@ def build_messages(request: str, batch: _Batch, answers: Sequence[str],
                       "them. One plan makes the same change to every document, so it gets only what is planned now; "
                       "say so to the user (they can start over from the originals to give it every change).")
         parts.append(block)
+    if earlier:
+        parts.append("EARLIER IN THIS CONVERSATION (requests you answered without a plan, oldest first; finished — do not "
+                     "answer them again. The REQUEST above is what the user wants now, and may refer to them):\n"
+                     + "\n".join(f"- {e}" for e in earlier))
     if prior_failures:
         parts.append("PRIOR PASS SET-ASIDE DIAGNOSTICS (these files failed the previous pass for the reasons below; "
                      "inspect their structure and compile an EditSpec tailored to them):\n"

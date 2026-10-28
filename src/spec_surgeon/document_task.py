@@ -68,6 +68,11 @@ NO_PDF = "Its PDF could not be made"   # Save clean PDFs: a clean copy passed, i
 CONVERSATION_EFFORT = "medium"   # the model's own default: fewer tool rounds per turn than high, measured by the owner
 RECOVERY_EFFORT = "high"         # the hard path keeps the depth
 RECOVERY_ATTEMPTS = 8            # candidate attempts per problem group (docs/RECOVERY.md), on every recovery path
+# A request Claude answers without a plan is finished with the answer (``_answered``): the exchange is kept as
+# context for the next request — the last EXCHANGES_KEPT of them, each with the first sentence of the answer, cut at
+# ANSWER_LINE characters (``answer_line``)
+EXCHANGES_KEPT = 5
+ANSWER_LINE = 240
 
 # What the window says while the model uses a tool: one plain sentence per tool, never the tool's name.
 TOOL_ACTIVITY = {
@@ -262,6 +267,19 @@ def _md5(data: bytes) -> str:
     return hashlib.md5(data).hexdigest()
 
 
+def answer_line(text: str) -> str:
+    """The one-line account of Claude's answer the next request is told (``exchanges``): the first sentence of its
+    first paragraph (a leading list mark dropped), at most ``ANSWER_LINE`` characters, cut with an ellipsis."""
+    first = next((p.strip() for p in str(text or "").splitlines() if p.strip()), "")
+    first = re.sub(r"\s+", " ", first).lstrip("-•*#> ").strip()
+    end = re.search(r"[.!?](?=\s|$)", first)
+    if end:
+        first = first[:end.end()]
+    if len(first) > ANSWER_LINE:
+        first = first[:ANSWER_LINE - 1].rstrip() + "…"
+    return first
+
+
 def _same_file_key(path) -> str:
     """One spelling of a path for comparing files: resolved when the file system can, the text otherwise."""
     try:
@@ -285,6 +303,9 @@ class DocumentTask:
         self.journal = Path(journal) if journal else None
         self.messages: List[Dict[str, str]] = []
         self.decisions: List[str] = []
+        # the requests Claude answered without a plan, finished with the answer (``_end_exchange``): the user's words
+        # and the first sentence of the answer, the last EXCHANGES_KEPT, told to the model with the next request
+        self.exchanges: List[Dict[str, Any]] = []
         self.word_sources: List[str] = []
         self.results: Dict[str, str] = {}
         self.unverified: Dict[str, List[str]] = {}   # original → the failed checks its copy was delivered with
@@ -670,7 +691,8 @@ class DocumentTask:
         self._emit({"type": "status", "kind": "reading", "text": "Reading your documents…"})
         with self._conversation():
             self.session.compile(self._request(), log, history=self._history_in_scope(), fresh=self._fresh_documents(),
-                                 context=self._focus_context(), todo=self._todo_lines())
+                                 context=self._focus_context(), todo=self._todo_lines(),
+                                 earlier=self._exchange_lines())
 
     def _history_in_scope(self) -> List[str]:
         """The changes the documents in scope carry, one line each, in the order they were made: a change every one
@@ -723,6 +745,45 @@ class DocumentTask:
     def _todo_lines(self) -> List[str]:
         """The to-do list as the model is told it at the start of a request: one line per waiting document."""
         return [f"{entry['name']}: {entry.get('reason') or HELD_REASON}" for entry in self.todo.values()]
+
+    def _exchange_lines(self) -> List[str]:
+        """The finished exchanges the model is told with a new request (``exchanges``), one line each, oldest first:
+        the user's words in the order they came, and the one-line account of the answer."""
+        lines: List[str] = []
+        for entry in self.exchanges:
+            asked = [a.strip() for a in entry.get("asked", []) if isinstance(a, str) and a.strip()]
+            if not asked:
+                continue
+            said = "; then: ".join(f"“{a}”" for a in asked)
+            lines.append(f"The user asked {said} — the assistant answered: “{entry.get('answered') or '(no words)'}”")
+        return lines
+
+    def _answered(self, outcome) -> bool:
+        """Claude's reply ended the exchange with an answer and nothing pending: words to the user alone — no question,
+        no choice, no suggested reply, no spec, no custom method being prepared, no recovery, and no submission the
+        gate refused on the way (then the request stands: Claude has still to plan it). Such a reply finishes the
+        request (``_end_exchange``); with anything pending the request stays open and the next message is a revision
+        of it in the same conversation."""
+        s = self.session
+        turn = s.turn
+        return (outcome.kind == "question" and bool(self.decisions) and s.conversation is not None
+                and not getattr(s.conversation, "recovery_active", False)
+                and s.recovery is None and s.pending_custom_transform is None
+                and s.spec is None and s.generated is None
+                and turn is not None and turn.status == "questions" and not turn.questions and not turn.choices
+                and not turn.chips and not turn.errors and bool((turn.message or "").strip())
+                and not self._request_budget.exhausted_reason)
+
+    def _end_exchange(self, message: str) -> None:
+        """Claude's answer finished the request (``_answered``). Its words stay in the chat as they are; the exchange
+        — the user's words and the first sentence of the answer — is kept as context for the next request
+        (``_exchange_lines``, the last ``EXCHANGES_KEPT``); the decisions are cleared, so a put-back, an attach or a
+        mode change has nothing stale to revive; and the conversation is over: the next message is a new request."""
+        self.exchanges.append({"asked": list(self.decisions), "answered": answer_line(message)})
+        del self.exchanges[:-EXCHANGES_KEPT]
+        self.decisions = []
+        self.session._set_outcome()
+        self.session.end_conversation()
 
     # ---- continue on the result ----
     def _advance_generation(self) -> None:
@@ -1379,6 +1440,11 @@ class DocumentTask:
             self._take_set_aside()
             outcome = s.outcome()
         self._revision += 1
+        if self._answered(outcome):
+            # an answer with nothing pending: the request is finished with it, and the window rests on the copies
+            self._end_exchange(s.turn.message)
+            self.stage = "done" if self.results and self.generation else "empty"
+            return
         self.stage = {"question": "question", "preview": "preview", "resume": "resume", "auto": "question",
                       "empty": "resume" if self.decisions else "empty"}[outcome.kind]
         if self._request_budget.exhausted_reason and self.stage == "question":
@@ -2259,6 +2325,7 @@ class DocumentTask:
             "version": 2,
             "attachments": [a.to_dict() for a in self.attachments],
             "messages": self.messages, "decisions": self.decisions, "word_sources": self.word_sources,
+            "exchanges": self.exchanges,
             "results": self.results, "unverified": self.unverified, "pdfs": self.pdfs,
             "recovery": str(self.session.recovery.out_dir) if self.session.recovery else
                         str(self.session.recovery_checkpoint) if self.session.recovery_checkpoint else self._resume_recovery,
@@ -2418,6 +2485,15 @@ class DocumentTask:
         self.word_sources = data.get("word_sources", [])
         if not isinstance(self.word_sources, list) or not all(isinstance(x, str) for x in self.word_sources):
             raise ValueError("The saved wording approvals could not be read.")
+        # the requests answered without a plan (a journal from before them has none)
+        exchanges = data.get("exchanges", [])
+        if not (isinstance(exchanges, list)
+                and all(isinstance(e, dict) and isinstance(e.get("asked"), list)
+                        and all(isinstance(a, str) for a in e["asked"]) and isinstance(e.get("answered", ""), str)
+                        for e in exchanges)):
+            raise ValueError("The saved conversation could not be read.")
+        self.exchanges = [{"asked": list(e["asked"]), "answered": str(e.get("answered", ""))}
+                          for e in exchanges][-EXCHANGES_KEPT:]
         self.results = data.get("results", {})
         pdfs = data.get("pdfs", {})
         # the last run's PDFs, while they are where they were saved (a journal from before Save clean PDFs has none)
