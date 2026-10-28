@@ -11,7 +11,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
-    "test": "node --test tests/sse.test.ts tests/view.test.ts tests/chat.test.ts tests/action.test.ts tests/connection.test.ts tests/workbench.test.ts tests/review.test.ts tests/help.test.ts tests/theme.test.ts tests/reveal.test.ts tests/diagnostics.test.ts tests/trust.test.ts tests/fastMode.test.ts tests/recipes.test.ts tests/modes.test.ts tests/wording.test.ts tests/typicalOperations.test.ts tests/tour.test.ts tests/occurrences.test.ts",
+    "test": "node --test tests/sse.test.ts tests/view.test.ts tests/chat.test.ts tests/action.test.ts tests/connection.test.ts tests/workbench.test.ts tests/review.test.ts tests/help.test.ts tests/theme.test.ts tests/reveal.test.ts tests/diagnostics.test.ts tests/trust.test.ts tests/fastMode.test.ts tests/recipes.test.ts tests/modes.test.ts tests/wording.test.ts tests/typicalOperations.test.ts tests/tour.test.ts tests/occurrences.test.ts tests/wordChanges.test.ts",
     "mock": "node mock/server.mjs",
     "screenshots": "node tools/screenshots.mjs",
     "flows": "node tools/flows.mjs && node tools/lifecycle-flows.mjs && node tools/key-flows.mjs && node tools/feedback-flows.mjs",

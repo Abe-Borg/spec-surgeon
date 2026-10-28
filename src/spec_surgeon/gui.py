@@ -579,6 +579,7 @@ class Session:
         message = self._generate_custom(pending, log, render)
         if self.conversation is not None:
             from .codegen import kept_lines, samples_verdict, unverified_lines
+            from .preview import text_changes_lines
             failed, kept = unverified_lines(self.generated), kept_lines(self.generated)
             if not failed and not kept:
                 self.conversation.note("The custom transform passed its independent sample verification.",
@@ -594,6 +595,12 @@ class Session:
                                        display="Custom transform prepared; the samples passed, and the writer kept "
                                        + "; ".join(kept) + " (a copy that fails it is delivered marked UNVERIFIED with "
                                        "that reason). Review the resulting preview before Run.")
+            # the words the method's sample copies add and remove, as the independent checker read them (never the
+            # method's or the model's account): a note of its own, so the transcript keeps them beside the verdict and
+            # the model hears them next turn; the window says them before the button (``DocumentTask._say_text_changes``)
+            words = text_changes_lines(getattr(self.generated_preview, "samples", None) or [])
+            if words:
+                self.conversation.note("\n".join(words))
             self._save_chat()
         return message
 

@@ -53,7 +53,10 @@ export default function WhyTrustIt({ onDeepDive }: { onDeepDive: () => void }) {
                 attached; a suggested reply you tap is never used as wording. When the app falls back to an outcome plan
                 Claude proposed, that plan’s wording is shown beneath the choice you pick, and only your pick approves
                 it. In Obliterate mode, chosen after its warning, Claude may write wording itself; every word it places
-                must be in the reply you read, and the app checks that before the plan is previewed.
+                must be in the reply you read, and the app checks that before the plan is previewed. A custom method
+                has no such sentence of its own, so before you approve one the chat and each sample's card list the
+                words its sample copies add and remove, as the independent checker read them, never as the method
+                describes them; a method that changes no words is said to change none.
               </>
             ),
           },
