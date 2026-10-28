@@ -1935,8 +1935,10 @@ class DocumentTask:
         changes = review_display.spec_changes(s.spec)
         assumptions = review_display.spec_assumptions(s.spec)
         if not changes and s.generated is not None:
+            # a method kept with failed checks (Obliterate) is never called passed: the details name the checks
+            from .codegen import samples_verdict
             changes = [{"title": "Requested changes", "summary": s.generated.proposal,
-                        "details": [s.generated.request, "The sample copies passed independent verification."]}]
+                        "details": [s.generated.request, *samples_verdict(s.generated)]}]
         if not changes:
             return []
         return [{"id": "", "label": "", "count": count, "files": [], "changes": changes, "assumptions": assumptions}]

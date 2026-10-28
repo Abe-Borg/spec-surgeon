@@ -220,7 +220,9 @@ export const RUNTIME_CARDS: RuntimeCard[] = [
       "(its own card) it is offered whenever any method could make the change, may change anything Word stores, " +
       "and may use the template, pictures and tables you attached; a result whose only failures are its checks goes " +
       `back to Claude up to ${F.obliterateCheckRounds} times to fix them or keep each with a reason you read beside ` +
-      "every copy, then the latest is used with its failures listed.",
+      "every copy (the package-integrity checks V1, V4, V5a, V5c and V9 cannot be kept with a reason: they go back " +
+      "each round); after those rounds the latest method is used, and its copies are delivered marked UNVERIFIED " +
+      "with those failures listed.",
     sent: "To the Anthropic API: the request, the sample files' XML and text that its tools read, and each failure's " +
       "reason; in Obliterate mode also what its tools read of the files you attached.",
     ai: codegenModel,
