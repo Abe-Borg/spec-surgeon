@@ -396,12 +396,29 @@ def test_a_method_kept_with_failed_checks_is_never_called_passed(folder, tmp_pat
     s.compile(UNSUPPORTED["request"], lambda m: None)
     said = s.reply(choice_id=s.turn.choices[0].id, log=lambda m: None, render=False)
     assert "FAILED checks" in said and line in said and "marked UNVERIFIED" in said and "passed" not in said
-    # a check the writer kept with a reason that no sample failed is named too: a copy that fails it carries the reason
+    # a check the writer kept with a reason that no sample failed is not a failure: the samples passed, and the kept
+    # check is named apart, with its reason (a copy that fails it carries it)
     clean = trial(GOOD_OP, files[0], {}, {"twips": 900}, tmp_path / "ct", unguarded=True)
     assert clean.passed and not clean.unverified
-    [kept] = codegen.unverified_lines(SimpleNamespace(trials=[clean], accepted_failures={"V10": "the footer moves too"}))
-    assert kept.startswith("V10 kept by the writer") and kept.endswith(": the footer moves too")
-    assert codegen.unverified_lines(SimpleNamespace(trials=[clean], accepted_failures={})) == []
+    kept = SimpleNamespace(trials=[clean], accepted_failures={"V10": "the footer moves too"})
+    assert codegen.unverified_lines(kept) == []
+    assert codegen.kept_lines(kept) == ["V10 — Claude says this is part of the change: the footer moves too"]
+    assert codegen.samples_verdict(kept) == [codegen.SAMPLES_PASSED, codegen.SAMPLES_KEPT, *codegen.kept_lines(kept)]
+    assert codegen.kept_lines(g) == [] and codegen.samples_verdict(SimpleNamespace(trials=[clean])) == [codegen.SAMPLES_PASSED]
+    why = "the footer moves with the header"
+    task, c = prepared("kept-clean", resp(tool("submit_op", {"source": UNASSERTED_OP, "params": {"twips": 900}}, "t0")),
+                       resp(tool("submit_op", {"source": GOOD_OP, "params": {"twips": 900},
+                                               "accept_failures": [{"check": "V10", "reason": why}]}, "t1")))
+    g = task.session.generated
+    assert g.accepted_failures == {"V10": why} and codegen.unverified_lines(g) == []
+    [kept_line] = codegen.kept_lines(g)
+    assert kept_line.endswith(why)
+    assert any(n.startswith(codegen.SAMPLES_PASSED) and codegen.SAMPLES_KEPT in n and n.endswith(kept_line) for n in c.notes)
+    assert not any("FAILED" in n for n in c.notes), c.notes
+    assert any(e.role == "app" and e.text.startswith("Custom transform prepared; the samples passed, and the writer kept")
+               and kept_line in e.text for e in c.entries)
+    assert task._plan_view()["groups"][0]["changes"][0]["details"][1:] == [codegen.SAMPLES_PASSED, codegen.SAMPLES_KEPT,
+                                                                           kept_line]
     # a method that passes clean keeps today's sentences, in Obliterate too
     task, c = prepared("clean", resp(tool("submit_op", {"source": GOOD_OP, "params": {"twips": 900}}, "w1")))
     assert codegen.unverified_lines(task.session.generated) == []

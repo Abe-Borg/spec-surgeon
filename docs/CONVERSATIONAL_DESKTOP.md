@@ -168,7 +168,8 @@ What it lifts (`Session.unguarded`; CLAUDE.md, "Modes"):
   After those rounds the latest method is used with its failures listed, never called passed: the notes the model
   hears, the transcript lines beside them, the window's message and the plan group's details name the checks each
   sample failed, as the preview and the delivered copies list them (`codegen.samples_verdict`,
-  `codegen.unverified_lines`); a writer that stops otherwise (an API error, a stall, its attempts) leaves the best such
+  `codegen.unverified_lines`; a check the writer kept with a reason that no sample failed is named apart, never as a
+  failure: `codegen.kept_lines`); a writer that stops otherwise (an API error, a stall, its attempts) leaves the best such
   method, but the pause for the user's go-ahead never does.
 - **Holding back.** A copy that fails a check is delivered to the run's `outputs/` instead of `failed/`, its record
   kept with every failure and V9 saying *delivered UNVERIFIED*; a chain's step hands its copy on and the chain's copy

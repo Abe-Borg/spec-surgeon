@@ -576,17 +576,22 @@ class Session:
             raise ValueError("The original files changed; press Preview to prepare the transform again.")
         message = self._generate_custom(pending, log, render)
         if self.conversation is not None:
-            from .codegen import samples_verdict, unverified_lines
-            failed = unverified_lines(self.generated)
-            if not failed:
+            from .codegen import kept_lines, samples_verdict, unverified_lines
+            failed, kept = unverified_lines(self.generated), kept_lines(self.generated)
+            if not failed and not kept:
                 self.conversation.note("The custom transform passed its independent sample verification.",
                                        display="Custom transform prepared; review the resulting preview before Run.")
-            else:
+            elif failed:
                 # Obliterate: a method kept with failed checks is never called passed — this note is what the model
                 # plans on next turn, and its transcript line is what the user reads
                 self.conversation.note("\n".join(samples_verdict(self.generated)),
                                        display="Custom transform prepared, with failed checks — " + "; ".join(failed)
                                        + ". Review the preview before Run: its copies are delivered marked UNVERIFIED.")
+            else:                                 # Obliterate: the samples passed; a kept check is not a failure
+                self.conversation.note("\n".join(samples_verdict(self.generated)),
+                                       display="Custom transform prepared; the samples passed, and the writer kept "
+                                       + "; ".join(kept) + " (a copy that fails it is delivered marked UNVERIFIED with "
+                                       "that reason). Review the resulting preview before Run.")
             self._save_chat()
         return message
 
@@ -596,7 +601,7 @@ class Session:
         return [f for f in self.files() if f not in out]
 
     def _generate_custom(self, pending, log: Log, render: bool) -> str:
-        from .codegen import generate_op, pick_samples, unverified_lines
+        from .codegen import generate_op, kept_lines, pick_samples, unverified_lines
         from .preview import approval_inputs, _approval_token_from_inputs, explain_approval_change
         request, proposal, files, brief, out = (pending[k] for k in ("request", "proposal", "files", "brief", "out"))
         # A writer the spending check paused (``GeneratedOp.budget_stop``) goes on in its own folder from its checkpoint
@@ -645,12 +650,14 @@ class Session:
             log("A file changed while the custom transform was being written and tried — it runs only once Preview has "
                 "tried it again on the files as they are now:" + "".join(f"\n  • {w}" for w in moved))
         self._show_generated(g, out, token, inputs, intent, render, log, left_out=pending.get("left_out") or [])
-        failed = unverified_lines(g)              # Obliterate: a method kept with failed checks is never called passed
+        failed, kept = unverified_lines(g), kept_lines(g)   # Obliterate: kept with failed checks is never "passed"
         return ((f"An AI-written transform ({g.name}) passed verification on {len(samples)} sample file(s). "
                  if not failed else
                  f"An AI-written transform ({g.name}) ran on {len(samples)} sample file(s) but FAILED checks — "
                  + "; ".join(failed) + " (Obliterate mode: it is kept, and its copies are delivered marked UNVERIFIED "
                  "with those checks beside them). ")
+                + (f"The writer kept {'; '.join(kept)}, which no sample failed: a copy that fails it is delivered "
+                   "marked UNVERIFIED with that reason. " if kept else "")
                 + f"It is saved at {g.path} — Run writes edited copies only (never over your files)." +
                 ("\nA file changed while it was written: press Preview to try it again on the files as they are now."
                  if moved else ""))
