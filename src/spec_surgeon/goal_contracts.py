@@ -8,6 +8,7 @@ editing method must still satisfy verify.effects against the original bytes.
 from __future__ import annotations
 
 import copy
+import functools
 import math
 import re
 from pathlib import Path
@@ -17,6 +18,8 @@ from .goals import GoalError, NeedsInput, _digest, _visible_text, contract_autho
 from .goal_operations import (OPERATIONS, operation_catalog, operation_spec,
                               source_operation_count, validate_operation_effect)
 from .ooxml import block_full_text, paragraphs
+from .ops.base import JobException
+from .ops.patterns import compile_pattern
 from .ops.selectors import StyleSheet
 from .package import DocxPackage, W
 
@@ -106,8 +109,8 @@ def _fill_rule(rule):
             key = "pattern" if kind == "regex" else "anchor_regex"
             _text(rule.get(key), key)
             try:
-                re.compile(rule[key])
-            except re.error as exc:
+                compile_pattern(rule[key], where="a template fill's source text")
+            except JobException as exc:
                 raise GoalError(f"invalid template fill regex: {exc}") from exc
             if rule.get("source", "document") not in {"document", "header.default", "header.first", "header.even",
                                                         "footer.default", "footer.first", "footer.even"}:
@@ -189,8 +192,8 @@ def _target(target):
             raise GoalError("the supported semantic role is section_title")
         if "text_regex" in locator:
             try:
-                re.compile(locator["text_regex"])
-            except re.error as exc:
+                _locator_pattern(locator["text_regex"])
+            except JobException as exc:
                 raise GoalError(f"invalid approved text_regex: {exc}") from exc
 
 
@@ -368,14 +371,26 @@ def _role_indices(texts):
     return result
 
 
+@functools.lru_cache(maxsize=256)
+def _locator_pattern(pattern):
+    """A locator's ``text_regex``, written by the model: bounded like every pattern under ``ops/``
+    (``ops.patterns.compile_pattern``), never searched with ``re`` — stress-test finding F8."""
+    return compile_pattern(pattern, where="a paragraph's text", label="locator.text_regex")
+
+
 def _matches(locator, index, texts, style, in_table, role_indices):
     text = texts[index]
     if "exact_text" in locator and text != locator["exact_text"]:
         return False
     if "contains_text" in locator and locator["contains_text"] not in text:
         return False
-    if "text_regex" in locator and re.search(locator["text_regex"], text) is None:
-        return False
+    if "text_regex" in locator:
+        try:
+            found = _locator_pattern(locator["text_regex"]).search(text)
+        except JobException as exc:          # past the deadline: the contract cannot bind, as for any refusal
+            raise GoalError(exc.reason, exc.code) from exc
+        if found is None:
+            return False
     if "style_id" in locator and style != locator["style_id"]:
         return False
     if locator.get("role") == "section_title" and index not in role_indices:

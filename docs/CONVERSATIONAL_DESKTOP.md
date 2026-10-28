@@ -176,7 +176,8 @@ What it lifts (`Session.unguarded`; CLAUDE.md, "Modes"):
   `GeneratedOp.accepted_failures`, in the approval too; V1, V4, V5a, V5c and V9 can never be kept, since their
   failure is a member, revision or XML the method got wrong, or a source that moved: `codegen.NEVER_KEPT_CHECKS`).
   After those rounds the latest method is used with its failures listed, never called passed: the notes the model
-  hears, the transcript lines beside them, the window's message and the plan group's details name the checks each
+  hears, the transcript lines beside them, the chat before the button (the app's own note, ahead of the words below:
+  `DocumentTask._say_text_changes`), the window's message and the plan group's details name the checks each
   sample failed, as the preview and the delivered copies list them (`codegen.samples_verdict`,
   `codegen.unverified_lines`; a check the writer kept with a reason that no sample failed is named apart, never as a
   failure: `codegen.kept_lines`); a writer that stops otherwise (an API error, a stall, its attempts) leaves the best such
@@ -600,7 +601,10 @@ covered has no specification to recover against; it stays as it was and is named
 
 When no built-in operation fits a request, Spec Surgeon may prepare a custom method internally, prove it on
 the sample documents, and show its result as a preview like any other. You never choose a method; you see what
-will change and decide once: before the button the chat says, as the app, the words the method's sample copies add
+will change and decide once. Nobody picks the method (`Session.outcome` takes it on its own), so before it is
+written the chat says Claude's reason and, as the app, what the method is to do in Claude's words — its proposal,
+which otherwise lived only in the plan's data the window does not show (`DocumentTask._collect_conversation`,
+`CUSTOM_METHOD_WRITTEN`; the stress test's F1). Then before the button the chat says, as the app, the words the method's sample copies add
 and remove — derived from the independent checker's V2 record of each copy, never from the method or the model
 (`preview.text_changes_of`, `DocumentTask._say_text_changes`) — or that no words change, and each sample's card lists
 the same words. Custom methods write edited copies only and run under the same verification.

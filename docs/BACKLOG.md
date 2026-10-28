@@ -169,11 +169,14 @@ specifications, Windows and Word, and only the owner can do them. Record what a 
   documents and let a failed preview send the request to the outcome planner. The left-out documents stay under
   Left untouched, the plan is offered as **Use these outcomes and continue** with its words beneath it and runs
   only once picked, its trials cover the others alone, and the planner's message names the left-out documents as out
-  of scope instead of asking which to do.
+  of scope instead of asking which to do. An outcome that deletes several long paragraphs of a real specification
+  (a whole article's submittal items) runs as the built-in deletion in one step, not a custom method.
 - **Obliterate:** a request Default refuses (a text box, Claude's own wording), with Word; a copy marked UNVERIFIED
   opened in Word. The stress-test finding's request again (widen the footer text boxes and add a sentence, with the
-  wording to be shown before approval; built 2026-10-28): before Create the chat lists the exact sentence as words
-  added to the footer and each preview card lists the same, with rendering on and off; a request that says to keep the
+  wording to be shown before approval; built 2026-10-28): before the method is written the chat says Claude's reason
+  and what the method is to do in Claude's words; before Create the chat lists the exact sentence as words
+  added to the footer and each preview card lists the same, with rendering on and off; a method kept with failed
+  checks has them said in the chat before Create, ahead of the words; a request that says to keep the
   words as they are, whose method changes a title anyway, lists the words removed and added before Create; a
   formatting-only method reads "No words change". A request that needs a custom method using an attached file (a logo from an attached picture, a
   template's text box): its failed checks going back to the writer, any it keeps shown with its reason beside the

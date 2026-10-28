@@ -32,3 +32,19 @@ Changes since v1.12.0.
 - The close reads every copy's and every saved file's bytes again, not the last fingerprint; a conversation
   restored from a window that never closed checks the same way, and an older journal's export entries are read as
   saved, with the fingerprint taken from the saved file while it is there.
+
+## A custom method says what it is for, and long paragraphs are selected again
+
+- When no built-in operation fits and the app writes a custom method on its own, the chat now says Claude's reason
+  and what the method is to do, in Claude's words, before it is written. Before, both lived only in the plan's data,
+  which the window does not show, so Create could stand enabled over a method whose purpose nobody had read. In
+  Obliterate mode, a method kept with failed checks (or with a check the writer kept with a reason) also has that
+  said in the chat before Create, ahead of the words its copies add and remove.
+- An approved outcome that deletes or formats long paragraphs uses the built-in operation again. The two-second
+  pattern deadline added earlier in this release also held every pattern to 1,000 characters, and the app selects
+  such paragraphs by their own whole words: five ordinary submittal paragraphs, or one long one, came back refused
+  and went to a custom method. A pattern that names one exact text has no length limit now; the deadline still
+  holds it, and every other pattern keeps the 1,000-character limit.
+- The patterns Claude gives its read tools (sampling, reading and finding paragraphs) and an outcome's locators are
+  searched with the same two-second deadline; a pattern that runs past it is answered as an error instead of
+  holding the window's work.

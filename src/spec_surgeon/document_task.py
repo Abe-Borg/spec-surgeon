@@ -64,6 +64,9 @@ WHY_HELD, WHY_ASKED, WHY_REFUSED, WHY_FAILED = "held", "asked", "refused", "fail
 HELD_REASON = "You marked its preview as needing more work."
 ASKED_REASON = "You asked to set it aside for later."
 EARLIER_COPY = "in an earlier copy: "   # an UNVERIFIED mark a later copy builds on (``_mark_unverified``)
+# said when the app takes a custom method on its own (``_collect_conversation``), Claude's proposal after it
+CUSTOM_METHOD_WRITTEN = ("Claude is writing a one-off custom method for this and trying it on copies of your documents; "
+                         "nothing is created until you have seen its preview and approved it.")
 NO_PDF = "Its PDF could not be made"   # Save clean PDFs: a clean copy passed, its PDF did not (``_without_pdf``)
 CONVERSATION_EFFORT = "medium"   # the model's own default: fewer tool rounds per turn than high, measured by the owner
 RECOVERY_EFFORT = "high"         # the hard path keeps the depth
@@ -1421,8 +1424,19 @@ class DocumentTask:
             if entry.role != "claude":
                 continue
             self._replied = None
-            if c.recovery_active or any(choice.get("kind") in {"custom_transform", "recovery_plan", "recovery_target"}
-                                        for choice in entry.choices):
+            kinds = {choice.get("kind") for choice in entry.choices}
+            if c.recovery_active or kinds & {"recovery_plan", "recovery_target"}:
+                continue
+            if "custom_transform" in kinds:
+                # the one choice the app takes on its own (``Session.outcome``): nobody picks it, so the chat says
+                # Claude's reason and what the method is to do before it is written — never only in the plan's data,
+                # which the window does not show (the stress test's F1: Create stood enabled over a method whose
+                # proposal no one had read)
+                self.say(entry.message, "assistant")
+                proposal = next((str(choice.get("detail") or "").strip() for choice in entry.choices
+                                 if choice.get("kind") == "custom_transform"), "")
+                self.say(CUSTOM_METHOD_WRITTEN + (f" What it is to do, in Claude’s words: “{proposal}”" if proposal
+                                                  else ""))
                 continue
             # Questions and choices are shown once, in the clarification card, never twice: the chat says Claude's
             # words alone (its own "• " lines included; a question of several lines stays whole in the card).
@@ -1985,13 +1999,21 @@ class DocumentTask:
         """A custom method's preview has no plan sentence to say what it changes (the window shows no plan card, and
         the method's words are checked against its own plan only), so before the approval button the chat says the
         words its sample copies add and remove — the independent checker's reading of each copy (V2), never the
-        method's or the model's (``preview.text_changes_of``) — or that no words change; once per preview."""
+        method's or the model's (``preview.text_changes_of``) — or that no words change; once per preview. Before
+        them, a method kept with failed checks, or with a check the writer kept with a reason (Obliterate), has its
+        verdict said too (``codegen.samples_verdict``): its copies are delivered marked UNVERIFIED, and that is said
+        where the user reads, not only in the notes the model hears."""
+        from .codegen import SAMPLES_KEPT, SAMPLES_PASSED, SAMPLES_UNVERIFIED, kept_lines, samples_verdict, \
+            unverified_lines
         from .preview import text_changes_lines
         s = self.session
         gp = s.generated_preview if s.generated is not None else None
         if gp is None or gp is self._words_said_for:
             return
         self._words_said_for = gp
+        if unverified_lines(s.generated) or kept_lines(s.generated):
+            heads = (SAMPLES_PASSED, SAMPLES_UNVERIFIED, SAMPLES_KEPT)
+            self.say("\n\n".join(line if line in heads else f"• {line}" for line in samples_verdict(s.generated)))
         lines = text_changes_lines(getattr(gp, "samples", None) or [])
         if lines:
             self.say("\n\n".join(lines))         # a paragraph each: the page shows a note of several as a block

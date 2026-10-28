@@ -579,6 +579,16 @@ def test_custom_method_is_prepared_internally_but_only_delivered_after_review(tm
     assert view["stage"] == "preview"
     assert task.session.generated.passed and not task.results
     assert task.session.conversation.batch.inputs == []   # nothing beside the attachments is ever read
+    # nobody picks the method, so the chat says Claude's reason and what the method is to do before it is written,
+    # then (as the app, from the checker's record) that no words change; a clean pass says no verdict of its own
+    from spec_surgeon.codegen import SAMPLES_PASSED
+    from spec_surgeon.document_task import CUSTOM_METHOD_WRITTEN
+    said = [(m["role"], m["text"]) for m in view["messages"]]
+    told = said.index(("assistant", "Use a custom method"))
+    assert said[told + 1] == ("app", CUSTOM_METHOD_WRITTEN + " What it is to do, in Claude’s words: “Set the header "
+                                     "distance to 900 twips”")
+    assert said[-1][0] == "app" and said[-1][1].startswith("No words change") and len(said) == told + 3
+    assert not any(SAMPLES_PASSED in text for _, text in said)
     task.perform("primary", token=view["token"])
     assert task.stage == "done" and Path(task.results[str(source)]).is_file()
     assert Document(task.results[str(source)]).sections[0].header_distance.twips == 900

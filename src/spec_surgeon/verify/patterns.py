@@ -8,7 +8,9 @@ behaviour (``re``'s syntax and matching) with a deadline on every search: ``V_RE
 A search that runs past it, a pattern longer than ``V_MAX_PATTERN_CHARS``, a pattern that is not a string or one
 that does not compile is a ``ValueError`` — the verifier's own way of saying "the op must refuse" — which every
 V10 kind reports as a failed check with that reason (``props.check_properties`` turns a kind's ``ValueError`` into
-an error line, and the suite turns anything else into a failed V10); nothing escapes the suite.
+an error line, and the suite turns anything else into a failed V10); nothing escapes the suite. A pattern that says
+one exact text and nothing else (``v_is_exact_text``) is not held to the length, only to the deadline: a plan
+selects paragraphs by their own whole words that way, and a long paragraph's words are long.
 
 Flags come in ``re``'s numbering (the verifier writes ``re.I``) and are mapped name by name onto ``regex``'s, whose
 numbers differ for some flags (``re.ASCII`` shares its value with ``regex.V1``): a number is never handed across.
@@ -44,6 +46,31 @@ def _v_re_flags(flags: int) -> int:
     return sum(int(getattr(re, name)) for name in _V_FLAG_NAMES if int(flags) & int(getattr(regex, name)))
 
 
+def v_is_exact_text(pattern: str) -> bool:
+    """True when ``pattern`` reads ``\\A`` … ``\\Z`` around plain text, or around one ``(?:…)`` group of plain-text
+    alternatives: nothing in it can repeat, so its cost is its length. Plain text is any character outside
+    ``.^$*+?{}[]|()\\``, or a backslash and a character that is neither an ASCII letter nor an ASCII digit."""
+    if not (pattern.startswith("\\A") and pattern.endswith("\\Z")) or len(pattern) < 4:
+        return False
+    inner = pattern[2:-2]
+    grouped = inner.startswith("(?:") and inner.endswith(")")
+    at, end, escaping = (3, len(inner) - 1, False) if grouped else (0, len(inner), False)
+    while at < end:
+        ch = inner[at]
+        if escaping:
+            if ch in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789":
+                return False                      # \d, \b, \1 …: a class, an assertion or a reference
+            escaping = False
+        elif ch == "\\":
+            escaping = True
+        elif ch == "|" and grouped:
+            pass                                  # between two alternatives of the group
+        elif ch in ".^$*+?{}[]|()":
+            return False
+        at += 1
+    return not escaping                           # the \Z's backslash is not escaped by the text before it
+
+
 class VPattern:
     """A compiled plan pattern; each search ends at the deadline with a ``ValueError`` naming the pattern."""
 
@@ -51,7 +78,7 @@ class VPattern:
                  max_chars: Optional[int] = V_MAX_PATTERN_CHARS):
         if not isinstance(pattern, str):
             raise ValueError(f"a pattern must be text, not {type(pattern).__name__} — the op must refuse")
-        if max_chars is not None and len(pattern) > max_chars:
+        if max_chars is not None and len(pattern) > max_chars and not v_is_exact_text(pattern):
             raise ValueError(f"the pattern is {len(pattern)} characters long, over {max_chars} — the op must refuse")
         try:
             self._compiled = regex.compile(pattern, _v_module_flags(flags))

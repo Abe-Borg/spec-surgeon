@@ -188,7 +188,8 @@ export const RUNTIME_CARDS: RuntimeCard[] = [
       `Word has ${F.wordTimeoutSeconds} s per file, LibreOffice ${F.libreOfficeTimeoutSeconds} s per batch. A render ` +
       `that fails is reported and the preview stands without that page. At most ${F.maxProcessWorkers} worker processes, ` +
       `one per core, ending with the work. A text pattern in the plan (a selector's text_regex, a fill's pattern …) ` +
-      `is at most ${grouped(F.maxPatternChars)} characters and has ${F.regexTimeoutSeconds} s on each text it is searched on; past that ` +
+      `is at most ${grouped(F.maxPatternChars)} characters (unless it names one exact text, as the app's own selection of whole ` +
+      `paragraphs does) and has ${F.regexTimeoutSeconds} s on each text it is searched on; past that ` +
       "the file is set aside with the reason (in the checker, a failed check), never searched on without a limit. " +
       "Nothing is written to your files.",
   },
@@ -220,7 +221,8 @@ export const RUNTIME_CARDS: RuntimeCard[] = [
       "Claude writes one small Python program (an operation) after reading sample files. The app checks the program's " +
       "text (only whitelisted modules, no file, process or network calls), runs it on copies of the samples in a " +
       "separate Python process, and checks every result with the independent checker. It may change formatting only: " +
-      "no words, no new parts, no tracked changes. A failure goes back to Claude with the reason. Before you approve, " +
+      "no words, no new parts, no tracked changes. A failure goes back to Claude with the reason. Before it is " +
+      "written, the chat says Claude's reason and what the method is to do, in Claude's words. Before you approve, " +
       "the chat and each sample's card list the words the method's sample copies add and remove, taken from the " +
       "independent checker's own comparison of each copy with its original (check V2), never from the method or the " +
       "model, or say that no words change. In Obliterate mode " +
@@ -229,7 +231,7 @@ export const RUNTIME_CARDS: RuntimeCard[] = [
       `back to Claude up to ${F.obliterateCheckRounds} times to fix them or keep each with a reason you read beside ` +
       "every copy (the package-integrity checks V1, V4, V5a, V5c and V9 cannot be kept with a reason: they go back " +
       "each round); after those rounds the latest method is used, and its copies are delivered marked UNVERIFIED " +
-      "with those failures listed.",
+      "with those failures listed, which the chat says before you approve.",
     sent: "To the Anthropic API: the request, the sample files' XML and text that its tools read, and each failure's " +
       "reason; in Obliterate mode also what its tools read of the files you attached.",
     ai: codegenModel,
