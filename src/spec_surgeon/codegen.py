@@ -619,6 +619,46 @@ class GeneratedOp:
     check_rounds: int = 0
 
 
+# What the samples' independent verification said of a method, in the words the plan's details and the notes the model
+# hears are built from (``samples_verdict``): a clean pass, or, in Obliterate mode, that checks failed and that the
+# copies are delivered marked UNVERIFIED with them; and, apart from either, a check the writer kept with a reason that
+# no sample failed. A method adopted with failed checks is never called passed, and a kept check is never a failure.
+SAMPLES_PASSED = "The sample copies passed independent verification."
+SAMPLES_UNVERIFIED = ("The sample copies were checked independently and FAILED checks. Obliterate mode keeps the method, "
+                      "and every copy it makes is delivered marked UNVERIFIED with its failed checks beside it:")
+SAMPLES_KEPT = ("The writer also kept a check with a reason that no sample failed (Obliterate mode): a copy that fails "
+                "it is delivered marked UNVERIFIED with that reason beside it:")
+
+
+def unverified_lines(g: Any) -> List[str]:
+    """Obliterate: what the independent verification of ``g``'s samples holds against it — one line per sample that
+    failed checks and was kept (``FileTrial.unverified``: the checks as the preview and the delivered copies list them,
+    the writer's reason after one it kept on purpose). Empty when every sample passed clean — always, in Safe and
+    Default."""
+    return [f"{Path(t.source).name}: {'; '.join(t.unverified)}"
+            for t in (getattr(g, "trials", None) or []) if getattr(t, "unverified", None)]
+
+
+def kept_lines(g: Any) -> List[str]:
+    """Obliterate: the checks the writer kept with a reason that no sample failed (``GeneratedOp.accepted_failures``
+    outlives the failure it was given for when the next submission also fixes it), each with its reason as the
+    delivered copies word it — a copy that fails one carries it. Never a sample's failure: ``unverified_lines`` has
+    those."""
+    trials = list(getattr(g, "trials", None) or [])
+    failed = {u.split(" ", 1)[0].upper() for t in trials for u in (getattr(t, "unverified", None) or [])}
+    return [f"{check} — Claude says this is part of the change: {reason}"
+            for check, reason in (getattr(g, "accepted_failures", None) or {}).items() if check.upper() not in failed]
+
+
+def samples_verdict(g: Any) -> List[str]:
+    """What the samples' independent verification said of ``g``, in the sentences the plan's details
+    (``DocumentTask._groups``) and the notes the model hears (``gui.Session``) are built from: ``SAMPLES_PASSED`` after
+    a clean pass, else ``SAMPLES_UNVERIFIED`` and then ``unverified_lines``; then, only when there are any,
+    ``SAMPLES_KEPT`` and ``kept_lines``."""
+    failed, kept = unverified_lines(g), kept_lines(g)
+    return ([SAMPLES_UNVERIFIED, *failed] if failed else [SAMPLES_PASSED]) + ([SAMPLES_KEPT, *kept] if kept else [])
+
+
 class ResumeMismatch(ValueError):
     """A paused writer's folder that cannot be continued from (``generate_op(resume_from=)`` then starts afresh and
     says why)."""

@@ -52,7 +52,9 @@ the user reads, `Conversation.shown_text`, never to nothing; Claude may write wo
 `compiler.UNGUARDED_RULES` rewrites the prompt's rules it lifts), a custom method's formatting-only limits
 (`codegen` skips `hard_limits`; `UNGUARDED_LIMITS`; the writer gets the `GOAL_FROM` helpers and the user's attachments
 as `pkg.inputs`, pinned in `GeneratedOp.attachments`, and its failed checks go back to it `UNGUARDED_CHECK_ROUNDS`
-times, to fix or to keep with a reason in `GeneratedOp.accepted_failures`; `NEVER_KEPT_CHECKS` can never be kept), and
+times, to fix or to keep with a reason in `GeneratedOp.accepted_failures`; `NEVER_KEPT_CHECKS` can never be kept; after the
+rounds the latest method is used and never called passed: `codegen.samples_verdict` words the note, the message and the
+plan's details), and
 the holding back of a copy that fails a check (`deliver_unverified`: delivered to `outputs/` marked UNVERIFIED, its
 failed checks in `FileResult.unverified`/`ChainFile.unverified`, no recovery; the mark stays on every later copy built
 on it, `DocumentTask._mark_unverified`, in every mode). The verifier still runs on every copy
