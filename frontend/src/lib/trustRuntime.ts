@@ -452,10 +452,11 @@ export const RUNTIME_CARDS: RuntimeCard[] = [
       "passed. A file already there with the same bytes is that " +
       "copy, saved; a different file under the name is left alone and the copy is numbered beside it. Each copy's " +
       "destination is recorded with a fingerprint of the bytes written, in the conversation's journal: a copy " +
-      "is saved while a file with its current bytes sits where Export put it. The copies list says SAVED while the " +
-      "copy's bytes are those, CHANGED once they moved (a copy opened from the window and edited in Word; the next " +
-      "Export writes it again, beside the file saved before), and nothing once the saved file is gone. The folder is " +
-      "kept in settings.json for the next dialog.",
+      "is saved while a file with its current bytes sits where Export put it: the copy and the saved file are both " +
+      "compared with the fingerprint. The copies list says SAVED while they agree, CHANGED once the copy's bytes " +
+      "moved (a copy opened from the window and edited in Word; the next Export writes it again, beside the file " +
+      "saved before), NOT SAVED once the saved file no longer holds them (written over, truncated or edited since), " +
+      "and nothing once the saved file is gone. The folder is kept in settings.json for the next dialog.",
     sent: "Nothing.",
     ai: NONE,
     bounds:
@@ -470,8 +471,9 @@ export const RUNTIME_CARDS: RuntimeCard[] = [
     automatic: true,
     you: "Close the window.",
     runs:
-      "If any edited copy or clean PDF is not saved as it is now (never saved with Export, changed since, or its " +
-      "saved file gone; every copy's bytes are read again here), one native question first: OK closes and gives the " +
+      "If any edited copy or clean PDF is not saved as it is now (never saved with Export, changed since, its " +
+      "saved file changed since, or gone; every copy and every saved file is read again here), one native " +
+      "question first: OK closes and gives the " +
       "copies up, Cancel keeps the window open. Then a running AI step is cut off, the settings are saved, and the " +
       "window's scratch folder — every session folder, dropped file and the conversation's journal — is deleted.",
     sent: "Nothing.",

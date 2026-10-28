@@ -12,6 +12,7 @@ import {
   copyTip,
   isSaved,
   kindTag,
+  notSavedTip,
   openTarget,
   pageCount,
   parentFolder,
@@ -174,12 +175,13 @@ test("the Export button says how many copies are not saved yet, and its hover te
 });
 
 test("the copies note says where they were saved, or that they are kept only in the scratch folder", () => {
-  const copy = (name: string, saved_to = "", changed_since_saved = false) => ({
+  const copy = (name: string, saved_to = "", changed_since_saved = false, saved_file_changed = false) => ({
     source: `s/${name}`,
     output: `C:/scratch/run/outputs/${name}`,
     name,
     saved_to,
     changed_since_saved,
+    saved_file_changed,
   });
   assert.equal(copiesNote({ results: [] }), "");
   assert.match(copiesNote({ results: [copy("a.docx")] }), /^Not saved yet: Export, in the top bar, saves them to a folder you choose\. Until then they live only in this window's scratch folder/);
@@ -192,14 +194,21 @@ test("the copies note says where they were saved, or that they are kept only in 
     /^2 of 3 not saved yet \(2 changed since they were saved\): Export/,
   );
   assert.match(copiesNote({ results: [copy("a.docx", "C:/Saved/a.docx", true), copy("b.docx"), copy("c.docx", "C:/Saved/c.docx")] }), /^2 of 3 not saved yet \(1 changed since it was saved\): Export/);
+  // a saved file that no longer holds its copy (written over, truncated or edited after Export)
+  assert.match(copiesNote({ results: [copy("a.docx", "C:/Saved/a.docx", false, true)] }), /^Not saved yet \(1 whose saved file changed since\): Export/);
+  assert.match(
+    copiesNote({ results: [copy("a.docx", "C:/Saved/a.docx", true), copy("b.docx", "C:/Saved/b.docx", false, true), copy("c.docx", "C:/Saved/c.docx")] }),
+    /^2 of 3 not saved yet \(1 changed since it was saved, 1 whose saved file changed since\): Export/,
+  );
 });
 
 test("a copy's link opens the saved file while it holds the copy's bytes, else the working copy, and says which", () => {
   const working = "C:/scratch/run/outputs/a.docx";
-  const copy = (saved_to = "", changed_since_saved = false) => ({ output: working, saved_to, changed_since_saved });
+  const copy = (saved_to = "", changed_since_saved = false, saved_file_changed = false) => ({ output: working, saved_to, changed_since_saved, saved_file_changed });
   assert.equal(isSaved(copy()), false);
   assert.equal(isSaved(copy("C:/Saved/a.docx")), true);
   assert.equal(isSaved(copy("C:/Saved/a.docx", true)), false);
+  assert.equal(isSaved(copy("C:/Saved/a.docx", false, true)), false);
   // never saved, or an older server without the flag: the working copy
   assert.equal(openTarget(copy()), working);
   assert.equal(openTarget({ output: working }), working);
@@ -207,6 +216,8 @@ test("a copy's link opens the saved file while it holds the copy's bytes, else t
   // saved and unchanged: the saved file; changed since: the working copy, the one with the newer content
   assert.equal(openTarget(copy("C:/Saved/a.docx")), "C:/Saved/a.docx");
   assert.equal(openTarget(copy("C:/Saved/a.docx", true)), working);
+  // the saved file no longer holds the copy (written over, truncated or edited after Export): the working copy
+  assert.equal(openTarget(copy("C:/Saved/a.docx", false, true)), working);
   assert.equal(copyTip(copy()), `Opens the working copy, kept in the window's scratch folder until it closes (Export saves it): ${working}`);
   assert.equal(copyTip(copy("C:/Saved/a.docx")), "Opens the saved file: C:/Saved/a.docx");
   assert.equal(
@@ -214,6 +225,11 @@ test("a copy's link opens the saved file while it holds the copy's bytes, else t
     `Opens the working copy, which changed since it was saved to C:/Saved/a.docx (Export saves it again): ${working}`,
   );
   assert.equal(changedTip(copy("C:/Saved/a.docx", true)), "Changed since it was saved to C:/Saved/a.docx. Export saves it again, beside the file saved before.");
+  assert.equal(
+    copyTip(copy("C:/Saved/a.docx", false, true)),
+    `Opens the working copy; the file saved to C:/Saved/a.docx no longer holds it (changed or replaced since Export, which saves this copy again, beside it): ${working}`,
+  );
+  assert.equal(notSavedTip(copy("C:/Saved/a.docx", false, true)), "The file saved to C:/Saved/a.docx no longer holds this copy (changed or replaced since Export). Export saves it again, beside that file.");
 });
 
 test("the PDF folder is the parent of the first clean PDF", () => {

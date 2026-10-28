@@ -101,18 +101,20 @@ def serve(state: WindowState, port: int, *, dev: bool = False):
 
 def unsaved_copies_question(count: int) -> str:
     """What the close asks when edited copies or clean PDFs are not saved as they are now (never saved with Export,
-    changed since they were, or their saved file gone): closing deletes them with the scratch folder."""
+    changed since they were, their saved file changed since, or gone): closing deletes them with the scratch
+    folder."""
     files = ("1 file made in this window (an edited copy or a clean PDF) has" if count == 1
              else f"{count} files made in this window (edited copies or clean PDFs) have")
     them = "it" if count == 1 else "them"
     return (f"{files} not been saved as {'it is' if count == 1 else 'they are'} now (never saved with Export, or "
-            f"changed since). Closing deletes {them} with the window's scratch folder.\n\n"
+            f"the copy or its saved file changed since). Closing deletes {them} with the window's scratch folder.\n\n"
             f"OK closes anyway. Cancel goes back, so you can save {them} with Export → Save the copies…")
 
 
 def on_closing(state: WindowState) -> bool:
-    """The window's X. With edited copies not saved as they are now (never saved by Export, changed since, or their
-    saved file gone: ``DocumentTask.export_states``, every copy fingerprinted again here), one native question
+    """The window's X. With edited copies not saved as they are now (never saved by Export, changed since, their
+    saved file changed since, or gone: ``DocumentTask.export_states``, every copy and saved file read again here),
+    one native question
     first: OK closes and lets the scratch folder (the copies in it) be deleted (``close_confirmed``), Cancel keeps
     the window open — the only time a close is refused. With nothing unsaved, nothing is asked and nothing is
     recorded, so copies a run still finishing delivers after this are kept for the next start (``gui.main``).

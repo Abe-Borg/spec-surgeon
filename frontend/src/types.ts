@@ -195,6 +195,9 @@ export interface Result {
   /** The copy's bytes moved since it was saved to `saved_to` (opened from the window and edited in Word): it counts
    *  as unsaved again, and its link opens the working copy, the newer one. */
   changed_since_saved?: boolean;
+  /** The file at `saved_to` no longer holds the bytes Export wrote (written over, truncated or edited since): the
+   *  copy is not saved as it is now, and its link opens the working copy. */
+  saved_file_changed?: boolean;
 }
 
 /** Export → Save the copies…: where the copies were last saved, how many working copies are not saved yet (only a
@@ -218,6 +221,8 @@ export interface PdfResult {
   saved_to?: string;
   /** The PDF's bytes moved since it was saved to `saved_to`: unsaved again, and its link opens the working file. */
   changed_since_saved?: boolean;
+  /** The file at `saved_to` no longer holds the bytes Export wrote: unsaved again, the link opens the working file. */
+  saved_file_changed?: boolean;
 }
 
 /** Whether this computer can make PDFs (Save clean PDFs needs Word or LibreOffice), and with which program. */

@@ -51,9 +51,10 @@ that ends a job is authoritative.
                               "find": "2022 CBC", "replace": "2025 CBC", "skipped": false, "op_index": 0}]}],
   "warnings": ["…"], "blocking": false,
   "results": [{"source": "…", "output": "…", "name": "21 13 13.docx", "unverified": [], "saved_to": "",
-               "changed_since_saved": false}],
+               "changed_since_saved": false, "saved_file_changed": false}],
   "pdfs": [{"source": "C:/Specs/21 13 13.docx", "output": "C:/.../scratch/20261027-090000-7/20261027-1/run/pdf/21 13 13.pdf",
-            "name": "21 13 13.pdf", "unverified": [], "saved_to": "", "changed_since_saved": false}],
+            "name": "21 13 13.pdf", "unverified": [], "saved_to": "", "changed_since_saved": false,
+            "saved_file_changed": false}],
   "pdf": {"available": true, "renderer": "Microsoft Word | LibreOffice", "reason": ""},
   "export": {"folder": "", "unsaved": 2, "copies": 2},
   "action": {"label": "Create edited copies", "token": "…", "kind": "approve | continue | save | none",
@@ -176,14 +177,17 @@ Rules the page relies on:
   is still there; `""` while the copy lives only in the window's scratch folder, or once the saved file is gone) and
   `changed_since_saved` (the copy's bytes are no longer the ones written to `saved_to`: a copy opened from the window
   — the working copy in the scratch folder — and edited in Word; it counts as unsaved again, the page says "changed
-  since it was saved" beside the link, and the next Export writes it beside the file saved before). A copy is saved
-  when a file with its current bytes sits where Export put it: the server keeps the md5 of the bytes it wrote and
-  compares (`DocumentTask.export_states`). `pdfs[]` carries the same two fields. `working.generation` > 0 means the
+  since it was saved" beside the link, and the next Export writes it beside the file saved before) and
+  `saved_file_changed` (the copy is as it was, but the file at `saved_to` no longer holds the bytes Export wrote:
+  written over, truncated or edited since; the page says NOT SAVED beside the link and opens the working copy, and
+  the next Export writes the copy beside that file). A copy is saved when a file with its current bytes sits where
+  Export put it: the server keeps the md5 of the bytes it wrote and compares both the copy and the saved file with
+  it (`DocumentTask.export_states`). `pdfs[]` carries the same three fields. `working.generation` > 0 means the
   next request builds on those copies, and `can_start_over` shows the "Start over from the originals" chip.
 - `export` is `{"folder", "unsaved", "copies"}`: where Export last saved (`""` before the first), how many working
-  copies and clean PDFs are not saved as they are now (never saved, changed since they were, or their saved file
-  gone; only a saved copy survives closing the window), and how many working copies there are. The Export button is
-  disabled at `copies` 0 and says the `unsaved` count.
+  copies and clean PDFs are not saved as they are now (never saved, changed since they were, their saved file
+  changed since, or gone; only a saved copy survives closing the window), and how many working copies there are.
+  The Export button is disabled at `copies` 0 and says the `unsaved` count.
 - `working.undo` is the request of the last run that delivered copies (the button's sentence in Safe mode), which
   `POST /api/undo` goes back before; "" when nothing can be undone. `working.undo_blocked` says why it cannot be
   undone now ("Discard the preview first." while a preview waits, a request still open); "" when it can. In Safe mode
@@ -240,7 +244,7 @@ explicitly injected clients are retained. Both key replacement and removal refus
 | POST | `/api/tutorial/scenario` | `{"tutorial_id": "<id>", "kind": "start \| button \| copies \| conversation \| question \| plan \| todo"}` | builds that chapter's state from the showcase through the production paths (no model call) and shows it; the view. The kind already shown is answered without rebuilding; 400 for an unknown kind; 409 for a stale id or while work runs; 500 when the build fails (the view is unchanged) |
 | POST | `/api/tutorial/restore` | `{"tutorial_id": "<id>"}` (`null` ends whatever tour runs) | ends the tour: the conversation's task back exactly as it was, the practice folder deleted; the view (`tutorial.active` false). Idempotent for a tour already ended; 409 for another tour's id or while work runs |
 | POST | `/api/export` | `{"folder": "…"}`, optional: without it the native folder dialog asks, opened at `export_folder` | Export → Save the copies…: every working copy, and every clean PDF of the last Save clean PDFs run, written into the folder under its planned name (a file there with the same bytes is that copy, saved; a different one is left alone and the copy numbered beside it; a destination that is an attached file or a working copy, or a folder inside the app's scratch tree, refuses the whole export, nothing written); the view, with `results[].saved_to`, `pdfs[].saved_to` and `export` filled (each copy's destination recorded with the md5 of the bytes written, so a copy changed since reads as unsaved again) and one `app` message; `{"cancelled": true}` when the dialog was dismissed; 400 with `{"error"}` for nothing to save or a folder that refuses, 409 while work runs or a tour runs, 501 without a dialog and a folder |
-| POST | `/api/open` | `{"path": "..."}` | opens a result in Word, a clean PDF in the PDF viewer, or a folder, with the OS (`{"ok": true}`); 404 if gone. The page sends `results[].saved_to` when it is set and `changed_since_saved` is false (the saved file holds the copy's current bytes), else `results[].output`, the working copy in the scratch folder (the one with the newer content, or the only one; `frontend/src/lib/workbench.ts`, `openTarget`); the hover text says which opens |
+| POST | `/api/open` | `{"path": "..."}` | opens a result in Word, a clean PDF in the PDF viewer, or a folder, with the OS (`{"ok": true}`); 404 if gone. The page sends `results[].saved_to` when it is set and neither `changed_since_saved` nor `saved_file_changed` (the saved file holds the copy's current bytes), else `results[].output`, the working copy in the scratch folder (the copy the list names, with the newer content when it was edited there; `frontend/src/lib/workbench.ts`, `openTarget`); the hover text says which opens |
 | GET | `/api/image` | `?path=…` | the PNG (only files under the window's scratch folder or its config folder are served; else 404) |
 | GET | `/api/settings` | | `{"key_present": true, "origin": "saved", "can_remember": true, "export_folder": "…", "logs_dir": "…", "theme": "clay", "spending_limit_usd": 20.0, "spending_default_usd": 20.0, "fast_mode": false, "show_obliterate": false, "tutorial_version": 0, "fast": {"model": "claude-opus-5-5", "available": true, "speedup": 2.5, "price_factor": 2, "standard_usd_per_mtok": [4.0, 20.0], "fast_usd_per_mtok": [8.0, 40.0], "refused": null}}` — `fast` is what Settings says about fast mode, from `llm.PRICES` / `llm.FAST_PRICES` for the model the calls use; `refused` is the API's reason when it refused fast mode for this key; `export_folder` is where Export last saved (its dialog opens there; `""` before the first export) |
 | POST | `/api/settings` | `{"api_key": "sk-…", "remember": true}` and/or `{"theme": "linen"}` and/or `{"fast_mode": true}` and/or `{"show_obliterate": true}` and/or `{"spending_limit_usd": 12.5}` and/or `{"tutorial_version": 1}` | the settings (`GET` also carries `tutorial_version`, the tour version this computer finished, 0 = never; the page writes it when the tour is finished, and it is kept in `settings.json`); 400 with `{"error"}` (an unknown scheme, a `fast_mode` or `show_obliterate` that is not a boolean, a `spending_limit_usd` that is neither a positive amount nor `null`/`0`, a `tutorial_version` that is not a whole number of 0 or more). `spending_limit_usd` is the spending check per request (`null` or `0` turns it off; `GET` says `null` then), kept in `settings.json` and used from the next request (`DocumentTask.set_spending_limit`). `show_obliterate` (Settings → Advanced) adds `obliterate` to the view's `modes` and is kept; turning it off while the window is in Obliterate leaves the mode for Default (409 while work runs). `theme` is one of `clay`, `blueprint`, `graphite`, `carbon`, `linen` and is saved to `settings.json` at once; `fast_mode` is saved too and applies from the next AI step (`llm.set_fast_mode`; a call already running keeps its speed) |

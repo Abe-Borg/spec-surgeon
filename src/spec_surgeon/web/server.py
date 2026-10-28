@@ -328,12 +328,13 @@ class WindowState:
         states = raw.get("export_state") or {}
 
         def saved(output: str) -> Dict[str, Any]:
-            # where Export saved this copy while that file is still there (``""`` once it is gone, or never saved),
-            # and whether the copy's bytes moved since: the page then opens the working copy, the newer one
+            # where Export saved this copy while that file is still there (``""`` once it is gone, or never saved);
+            # whether the copy's bytes moved since (the page then opens the working copy, the newer one); and whether
+            # the saved file no longer holds the bytes Export wrote (written over, truncated or edited since)
             state = states.get(output, "unsaved")
             entry = exported.get(output) or {}
-            return {"saved_to": entry.get("to", "") if state in ("saved", "changed") else "",
-                    "changed_since_saved": state == "changed"}
+            return {"saved_to": entry.get("to", "") if state in ("saved", "changed", "replaced") else "",
+                    "changed_since_saved": state == "changed", "saved_file_changed": state == "replaced"}
         results = [{"source": source, "output": output, "name": Path(output).name,
                     "unverified": list(unverified.get(source, [])), **saved(output)}
                    for source, output in raw["results"].items()]
@@ -942,7 +943,8 @@ def create_app(state: WindowState, *, dev: bool = False) -> FastAPI:
     @app.post("/api/open")
     async def open_result(request: Request):
         # The page sends the file Export saved when it still holds the copy's current bytes (``saved_to`` without
-        # ``changed_since_saved``), else the working copy in the scratch folder: the one with the newer content.
+        # ``changed_since_saved`` or ``saved_file_changed``), else the working copy in the scratch folder: the copy
+        # the list names, with the newer content when it was edited there.
         try:
             body = await json_object(request)
         except ValueError as e:

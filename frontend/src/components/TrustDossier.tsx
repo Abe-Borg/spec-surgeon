@@ -596,7 +596,7 @@ function Dossier() {
           word="Copies only"
           claim="The window never writes to a file you attached. Every run delivers into the window’s scratch folder, and Export writes the copies where you choose, never over an input."
           not={[
-            "That copies are kept: the scratch folder is deleted when the window closes, after one question if a copy is not saved as it is now (never saved with Export, or changed since it was).",
+            "That copies are kept: the scratch folder is deleted when the window closes, after one question if a copy is not saved as it is now (never saved with Export, or the copy or its saved file changed since).",
             "That the folder is private: the scratch folder is under the app’s local data, and the saved copies are wherever you chose.",
           ]}
         />

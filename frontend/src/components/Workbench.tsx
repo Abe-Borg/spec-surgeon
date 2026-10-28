@@ -2,7 +2,7 @@ import { memo, useEffect, useRef } from "react";
 import type { Attachment, View } from "../types";
 import type { Mark, Reviews } from "../lib/review";
 import type { Unticks } from "../lib/occurrences";
-import { changedTip, copiesNote, copyTip, isSaved, openTarget, pdfFolder, planHasContent, runFolder, undoLink } from "../lib/workbench";
+import { changedTip, copiesNote, copyTip, isSaved, notSavedTip, openTarget, pdfFolder, planHasContent, runFolder, undoLink } from "../lib/workbench";
 import { unverifiedLine } from "../lib/modes";
 import DocumentsTray from "./DocumentsTray";
 import Markdown from "./Markdown";
@@ -347,6 +347,14 @@ function Workbench({
                         CHANGED
                       </span>
                     )}
+                    {result.saved_to && !result.changed_since_saved && result.saved_file_changed && (
+                      <span
+                        className="ml-auto flex-none rounded-full border border-warn/50 bg-warn/10 px-2 py-0.5 text-[10px] font-semibold tracking-wide text-warn"
+                        title={notSavedTip(result)}
+                      >
+                        NOT SAVED
+                      </span>
+                    )}
                     {(result.unverified ?? []).length > 0 && (
                       <span
                         className="ml-auto flex-none rounded-full border border-err/50 bg-err/10 px-2 py-0.5 text-[10px] font-semibold tracking-wide text-err"
@@ -423,6 +431,14 @@ function Workbench({
                           title={changedTip(pdf)}
                         >
                           CHANGED
+                        </span>
+                      )}
+                      {pdf.saved_to && !pdf.changed_since_saved && pdf.saved_file_changed && (
+                        <span
+                          className="ml-auto flex-none rounded-full border border-warn/50 bg-warn/10 px-2 py-0.5 text-[10px] font-semibold tracking-wide text-warn"
+                          title={notSavedTip(pdf)}
+                        >
+                          NOT SAVED
                         </span>
                       )}
                       {(pdf.unverified ?? []).length > 0 ? (

@@ -23,10 +23,12 @@ Changes since v1.12.0.
   since — opened through the window's link, which opens the working copy in the scratch folder, then edited and
   saved in Word — reads **CHANGED** beside its name and counts as unsaved again: the close question asks about it,
   New conversation asks about it, and the next Export writes it beside the file saved before (never over it). A copy
-  whose saved file is gone is unsaved again, plainly. Before, a copy once exported counted as saved whatever became
-  of it, and closing the window could delete an edit the exported file never had.
+  whose saved file was written over, truncated or edited after Export reads **NOT SAVED** and counts the same way
+  (the next Export writes it beside that file); one whose saved file is gone is unsaved again, plainly. Before, a
+  copy once exported counted as saved whatever became of it, and closing the window could delete an edit the
+  exported file never had.
 - Clicking a copy opens the saved file while it holds the copy's current content, else the working copy in the
   scratch folder (the one with the newer content); the link's hover text says which.
-- The close reads every copy's bytes again, not the last fingerprint; a conversation restored from a window that
-  never closed checks the same way, and an older journal's export entries are read as saved, with the fingerprint
-  taken from the saved file while it is there.
+- The close reads every copy's and every saved file's bytes again, not the last fingerprint; a conversation
+  restored from a window that never closed checks the same way, and an older journal's export entries are read as
+  saved, with the fingerprint taken from the saved file while it is there.

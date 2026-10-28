@@ -2119,9 +2119,10 @@ class DocumentTask:
 
     # ---- Export: the one place a copy is written where the user chose ----
     def _digest(self, path: str, *, fresh: bool = False) -> Optional[str]:
-        """The md5 of a copy's bytes as they are now; None when the file cannot be read. Taken again whenever the
-        file's size or mtime moved since the last fingerprint, and always with ``fresh`` (the close question, the
-        restore): a file rewritten to the same size and time is caught where it matters."""
+        """The md5 of a file's bytes as they are now (a copy's, or the file Export saved it as); None when the file
+        cannot be read. Taken again whenever the file's size or mtime moved since the last fingerprint, and always
+        with ``fresh`` (the close question): a file rewritten to the same size and time is caught where it
+        matters."""
         try:
             st = os.stat(path)
             cached = self._digests.get(path)
@@ -2136,10 +2137,13 @@ class DocumentTask:
 
     def export_states(self, *, fresh: bool = False) -> Dict[str, str]:
         """Each working copy and clean PDF (its path) with whether it is saved: ``saved`` when a file with its
-        current bytes sits where Export put it, ``changed`` when its bytes moved since (a copy opened from the window
-        and edited in Word) or cannot be read, ``gone`` when the saved file is no longer there, ``unsaved`` when Export
-        never saved it. Read over copies of the dicts, so the close question can be asked while a job is still
-        running; ``fresh`` fingerprints every copy again."""
+        current bytes sits where Export put it (the copy's bytes, the saved file's bytes and the fingerprint Export
+        recorded all agree); ``changed`` when the copy's bytes moved since (a copy opened from the window and edited
+        in Word) or cannot be read; ``replaced`` when the copy is as it was but the saved file no longer holds its
+        bytes (written over, truncated or edited since Export); ``gone`` when the saved file is no longer there;
+        ``unsaved`` when Export never saved it. Only ``saved`` survives the close. Read over copies of the dicts, so
+        the close question can be asked while a job is still running; ``fresh`` reads every copy and every saved
+        file again."""
         states: Dict[str, str] = {}
         for path in [*dict(self.working).values(), *dict(self.pdfs).values()]:
             entry = self.exported.get(path)
@@ -2147,15 +2151,18 @@ class DocumentTask:
                 states[path] = "unsaved"
             elif not Path(entry["to"]).is_file():
                 states[path] = "gone"
+            elif not entry["md5"] or self._digest(path, fresh=fresh) != entry["md5"]:
+                states[path] = "changed"
+            elif self._digest(entry["to"], fresh=fresh) != entry["md5"]:
+                states[path] = "replaced"
             else:
-                md5 = self._digest(path, fresh=fresh)
-                states[path] = "saved" if md5 and md5 == entry["md5"] else "changed"
+                states[path] = "saved"
         return states
 
     def unsaved_copies(self, *, fresh: bool = False) -> List[str]:
         """The working copies and the last run's clean PDFs that are not saved as they are now (their paths): never
-        saved by Export, changed since, or their saved file gone — what closing the window would delete
-        (``export_states``)."""
+        saved by Export, changed since, their saved file changed since, or gone — what closing the window would
+        delete (``export_states``)."""
         return [path for path, state in self.export_states(fresh=fresh).items() if state != "saved"]
 
     def export(self, folder) -> Dict[str, Any]:
