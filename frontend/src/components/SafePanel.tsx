@@ -3,6 +3,7 @@ import type { FindReplacePair, Recipe, RecipeField, RecipeInputs, View } from ".
 import {
   availability,
   clearForm,
+  fieldRows,
   fieldShown,
   filledFromEachDocument,
   grouped,
@@ -15,7 +16,10 @@ import {
   tables,
   type SafeFormState,
 } from "../lib/recipes";
+import { SWITCH_TO_DEFAULT, safeNoteWords } from "../lib/safeNote";
+import { TOUR_HOLD } from "../lib/tour";
 import { primaryBtn } from "./ModalShell";
+import SafeNote from "./SafeNote";
 import Tip from "./Tip";
 
 interface Props {
@@ -28,6 +32,13 @@ interface Props {
   onDiscard: () => void;
   form: SafeFormState;
   onFormChange: Dispatch<SetStateAction<SafeFormState>>;
+  /** The note above the buttons (SafeNote): whether a key is set, whether it is folded, and its three ways out. */
+  keyReady: boolean;
+  noteHidden: boolean;
+  tourActive: boolean;
+  onNoteHidden: (hidden: boolean) => void;
+  onDefaultMode: () => void;
+  onAddKey: () => void;
 }
 
 export type { SafeFormState };
@@ -82,6 +93,46 @@ function Pairs({ value, onChange }: { value: FindReplacePair[]; onChange: (pairs
       <button
         type="button"
         onClick={() => onChange([...value, { find: "", replace: "" }])}
+        className="self-start text-xs text-accent underline decoration-accent/40 underline-offset-2 hover:decoration-accent"
+      >
+        Add a row
+      </button>
+    </div>
+  );
+}
+
+function Lines({ label, value, placeholder, onChange }: {
+  label: string;
+  value: string[];
+  placeholder?: string;
+  onChange: (lines: string[]) => void;
+}) {
+  const rows = value.length ? value : [""];
+  return (
+    <div className="flex flex-col gap-1.5">
+      {rows.map((line, i) => (
+        <div key={i} className="flex items-center gap-1.5">
+          <input
+            aria-label={`${label}, row ${i + 1}`}
+            className={inputClass}
+            value={line}
+            placeholder={i === 0 ? placeholder : undefined}
+            onChange={(e) => onChange(rows.map((l, j) => (j === i ? e.target.value : l)))}
+          />
+          <button
+            type="button"
+            aria-label={`Remove row ${i + 1}`}
+            disabled={rows.length === 1}
+            onClick={() => onChange(rows.filter((_, j) => j !== i))}
+            className="rounded px-1.5 text-ink-faint transition-colors hover:text-ink disabled:opacity-30"
+          >
+            ✕
+          </button>
+        </div>
+      ))}
+      <button
+        type="button"
+        onClick={() => onChange([...rows, ""])}
         className="self-start text-xs text-accent underline decoration-accent/40 underline-offset-2 hover:decoration-accent"
       >
         Add a row
@@ -174,6 +225,19 @@ function FieldInput({
           <Pairs value={Array.isArray(value) ? (value as FindReplacePair[]) : []} onChange={(p) => onChange(field.name, p)} />
         </div>
       );
+    case "lines":
+      return (
+        <div>
+          <Label field={field} />
+          <Lines
+            label={field.label}
+            value={Array.isArray(value) ? (value as string[]).filter((l) => typeof l === "string") : []}
+            placeholder={field.placeholder}
+            onChange={(lines) => onChange(field.name, lines)}
+          />
+          <Help text={field.help} />
+        </div>
+      );
     case "slots": {
       const slots = value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, string>) : {};
       const names = Object.keys(slots);
@@ -254,7 +318,21 @@ function FieldInput({
  * one chosen, and Preview. No AI call is made: the server builds the change from the form (recipes.py) and the
  * previews, the checks and the one button that creates the copies are the same as in Default mode.
  */
-function SafePanel({ recipes, view, busy, onPreview, onDiscard, form, onFormChange }: Props) {
+function SafePanel({
+  recipes,
+  view,
+  busy,
+  onPreview,
+  onDiscard,
+  form,
+  onFormChange,
+  keyReady,
+  noteHidden,
+  tourActive,
+  onNoteHidden,
+  onDefaultMode,
+  onAddKey,
+}: Props) {
   const chosen = recipes.find((recipe) => recipe.id === form.recipe) ?? null;
   const inputs = form.inputs;
   const groups = useMemo(() => grouped(recipes), [recipes]);
@@ -314,9 +392,17 @@ function SafePanel({ recipes, view, busy, onPreview, onDiscard, form, onFormChan
             </Tip>
           </div>
         </div>
-        {chosen.fields.map((field) => (
-          <FieldInput key={field.name} recipe={chosen} field={field} inputs={inputs} view={view} onChange={change} />
-        ))}
+        {fieldRows(chosen.fields).map((row) =>
+          row.length === 1 ? (
+            <FieldInput key={row[0].name} recipe={chosen} field={row[0]} inputs={inputs} view={view} onChange={change} />
+          ) : (
+            <div key={row[0].name} className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+              {row.map((field) => (
+                <FieldInput key={field.name} recipe={chosen} field={field} inputs={inputs} view={view} onChange={change} />
+              ))}
+            </div>
+          ),
+        )}
         <div className="flex items-center justify-between gap-3">
           <p className="min-w-0 flex-1 text-[13px] leading-snug text-ink-dim">
             {needs ||
@@ -339,30 +425,56 @@ function SafePanel({ recipes, view, busy, onPreview, onDiscard, form, onFormChan
     );
   }
 
+  const tail = safeNoteWords(keyReady).tail;
   return (
-    <div className="flex flex-col gap-3" aria-label="Safe mode's buttons" data-tour="safe-buttons" data-capability="safe.buttons">
-      {groups.map(({ group, recipes: items }) => (
-        <div key={group}>
-          <p className="mb-1.5 text-[11px] font-medium tracking-wide text-ink-faint uppercase">{group}</p>
-          <div className="flex flex-wrap gap-1.5">
-            {items.map((recipe) => {
-              const ready = availability(recipe, view);
-              return (
-                <Tip key={recipe.id} tip={busy ? "Wait for the current work to finish" : ready.reason || recipe.summary}>
-                  <button
-                    type="button"
-                    disabled={busy || !ready.ready}
-                    onClick={() => open(recipe)}
-                    className="rounded-lg border border-edge bg-raised px-2.5 py-1 text-xs text-ink transition-colors hover:border-accent hover:text-accent disabled:pointer-events-none disabled:opacity-40"
-                  >
-                    {recipe.label}
-                  </button>
-                </Tip>
-              );
-            })}
+    <div className="flex flex-col gap-3">
+      <SafeNote
+        keyReady={keyReady}
+        hidden={noteHidden}
+        busy={busy}
+        tourActive={tourActive}
+        onHidden={onNoteHidden}
+        onDefaultMode={onDefaultMode}
+        onAddKey={onAddKey}
+      />
+      <div className="flex flex-col gap-3" aria-label="Safe mode's buttons" data-tour="safe-buttons" data-capability="safe.buttons">
+        {groups.map(({ group, recipes: items }) => (
+          <div key={group}>
+            <p className="mb-1.5 text-[11px] font-medium tracking-wide text-ink-faint uppercase">{group}</p>
+            <div className="flex flex-wrap gap-1.5">
+              {items.map((recipe) => {
+                const ready = availability(recipe, view);
+                return (
+                  <Tip key={recipe.id} tip={busy ? "Wait for the current work to finish" : ready.reason || recipe.summary}>
+                    <button
+                      type="button"
+                      disabled={busy || !ready.ready}
+                      onClick={() => open(recipe)}
+                      className="rounded-lg border border-edge bg-raised px-2.5 py-1 text-xs text-ink transition-colors hover:border-accent hover:text-accent disabled:pointer-events-none disabled:opacity-40"
+                    >
+                      {recipe.label}
+                    </button>
+                  </Tip>
+                );
+              })}
+            </div>
           </div>
-        </div>
-      ))}
+        ))}
+      </div>
+      <p className="flex flex-wrap items-baseline gap-x-2 gap-y-1 border-t border-edge pt-2.5 text-[12.5px] text-ink-faint">
+        <span>{tail}</span>
+        <Tip tip={tourActive ? TOUR_HOLD : busy ? "Wait for the current work to finish" : "The buttons give way to the message box"}>
+          <button
+            type="button"
+            disabled={busy || tourActive}
+            onClick={onDefaultMode}
+            className="text-xs text-accent underline decoration-accent/40 underline-offset-2 hover:decoration-accent disabled:pointer-events-none disabled:opacity-50"
+            data-capability="safe.default"
+          >
+            {SWITCH_TO_DEFAULT}
+          </button>
+        </Tip>
+      </p>
     </div>
   );
 }

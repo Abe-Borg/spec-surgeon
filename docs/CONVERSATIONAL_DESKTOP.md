@@ -25,12 +25,24 @@ mode changes. A Default-mode preview approved after switching to Safe mode is cr
 step: what it leaves untouched waits beside the copies instead of going to recovery.
 
 In Safe mode the box you type in gives way to buttons, in groups: headers and footers (match to template, remove, a
-watermark, swap the logo), fonts and formatting (match body formatting to template, match font to template), text
-(find and replace, with every occurrence listed to untick), clean up (accept all tracked changes,
-remove comments, highlighting, hidden text or empty paragraphs) and files and properties (name the copies by section
-number and title, the document title property, Track Changes off, save clean PDFs). A button that cannot be pressed yet says why when
+watermark, swap the logo), fonts and formatting (match body formatting to template, match font to template, change
+font, page size and margins), text (find and replace, with every occurrence listed to untick; change the issue stamp;
+add END OF SECTION where missing; keep numbers with their units), clean up (accept or reject all tracked changes,
+remove comments, highlighting, hidden text or empty paragraphs, clean up spaces, standardize quotes and dashes, remove
+hyperlinks, freeze fields as plain text, remove unused styles) and files and properties (name the copies by section
+number and title, the document title property, Track Changes off, save clean PDFs, set author and company, set the
+proofing language). A button that cannot be pressed yet says why when
 the pointer rests on it (no documents, no template, no picture). Pressing one opens a short form — the words to find
-and their replacements, the watermark's words, a template's values, a naming pattern — and **Preview**.
+and their replacements, the issue stamp as it reads now and as it should, the watermark's words, a template's values,
+a font's name, the margins, a naming pattern — and **Preview**.
+
+Above the buttons a note says what Safe mode is (fixed buttons, no AI, no API key needed), what it cannot do
+(anything that is not a button: rewriting or moving paragraphs, editing tables, adding an article, a change that
+depends on reading what each document says), and that Default mode, with a Claude API key, is the way to more. Its
+buttons are **Add a Claude API key** (opens Settings; shown while no key is set) and **Switch to Default mode** (the
+top bar's switch); the same switch ends the line under the buttons. **Hide** folds the note to one line that still
+points to Default mode, and **What is Safe mode?** opens it again; the window keeps the choice in `settings.json`
+(`safe_note_hidden`). The note's words are `frontend/src/lib/safeNote.ts`.
 
 What happens then is what happens to a plan in Default mode, with no model anywhere (`recipes.py`):
 
@@ -68,7 +80,8 @@ Obliterate, below under "The conversation"):
   restart) clears them too, so no undo reaches past a step it did not record.
 
 Tracked changes are off in Safe mode unless the form's *Show my changes as tracked changes in Word* is ticked (find
-and replace, remove hidden text, remove empty paragraphs); every other button's change is plain formatting or never
+and replace, the issue stamp, END OF SECTION, numbers kept with their units, remove hidden text, remove empty
+paragraphs, clean up spaces, standardize quotes and dashes); every other button's change is plain formatting or never
 tracked, as in Default mode. The template buttons tell a prepared template (yellow-highlighted or `{{NAME}}`
 placeholders) from an ordinary specification used as one without a model (`recipes.template_kind`): a prepared
 template's section number and title placeholders are filled from each document and its other placeholders are typed
@@ -145,6 +158,35 @@ more body sizes is a layout plan with one layout per size (`recipes._font_layout
 patterns, so documents built alike (one pattern) whose body sizes differ take the size most of them have (the
 first attached decides a tie); the others are left out with the reason, to be pressed alone. A document with no
 measurable body size takes the font alone; one that cannot be read is set aside by the preview with its reason.
+
+**Change font** (`recipes._set_font`) is Match font to template with the font and size typed in its form instead of
+read from a template, by the same rule (`_font_by_body_size`): "Keep each document's sizes" sets the font alone; a
+size changes only the text in each document's own body size. **Page size and margins** (`set_page_setup` on every
+section) sets the paper upright, so with a paper size chosen a document with a landscape page is left out with the
+reason (its schedule never turns upright); margins alone, with "Keep each document's own" paper, go on every
+document. A header and footer distance left empty keeps each document's own.
+
+**Change the issue stamp** (`set_issue_stamp`) finds the stamp by the wordings typed in its rows, wherever it sits
+(the cover, a header or a footer), and replaces each with the new wording; a change of capitals alone is refused as
+find and replace refuses it. **Add END OF SECTION where missing** (`ensure_end_of_section`) takes each document's
+number from its SECTION line by the reference rule and the line as typed (`END OF SECTION {number}` to start; it
+starts with END OF SECTION, the words a line already there is recognized by, so a second press adds nothing), adds
+it after the last content or corrects one that reads otherwise, formatted like the SECTION line (written in
+capitals, so a "Section 230513" reference is never taken for it) or in the plain text style. **Keep numbers with their
+units** (`protect_nonbreaking_spaces`) puts non-breaking spaces between a number and the units typed and inside spaced
+section numbers; a space a field shows (a cross-reference) sets the document aside, since Word would put the field's
+own result back.
+
+**Clean up spaces** (`normalize_whitespace`), **Standardize quotes and dashes** (`normalize_punctuation`: quotation
+marks straight or curly, `--` as an en or em dash, section numbers with spaces or hyphens; at least one),
+**Remove hyperlinks** (`remove_hyperlinks`: web and e-mail links, links to places in the document, or every link; the
+words stay), **Freeze fields as plain text** (`unlink_fields`: every field but page numbers, the dates, the
+cross-references or the document properties) and **Remove unused styles** (`remove_unused_styles`: the document's own
+styles, or Word's built-in ones too; names typed to keep) are one operation each. **Accept or reject all tracked
+changes** is the accept button with a choice: reject undoes every change. **Set author and company**
+(`set_document_properties`) sets Author, Company and Subject to the words typed, or clears the author names (Author
+and Last Modified By), not both for Author. **Set proofing language** (`set_language`) sets every language, or only
+other kinds of English, to the one chosen.
 
 Typing is not possible in Safe mode, and the server refuses a message there; the conversation and its question cards
 belong to Default mode.
@@ -277,7 +319,7 @@ touched:
 - **A fixed track you only watch.** The tour highlights one control at a time with a card beside it: Continue, Back,
   and End the tour at every step; the mode switch is held while it runs (the tour switches modes as its chapters
   need). Escape asks before ending. The last step's Continue is **Finish and return to my conversation**. The chapters,
-  in order: your practice workspace, the documents, Safe mode's buttons, the preview (checkmarks and the red X, Left
+  in order: your practice workspace, the documents, Safe mode's note and buttons, the preview (checkmarks and the red X, Left
   untouched, the one button), the copies (the working set, the hand-off to Default mode, the to-do list), the
   conversation, questions and suggested replies, a plan in Default mode, the to-do list's pass, Help and About, and the
   finish.

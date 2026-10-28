@@ -46,8 +46,8 @@ class RecipeError(ValueError):
 
 @dataclass(frozen=True)
 class Field:
-    """One input of a button's form, as the panel renders it (``kind``: text, pairs, choice, check, picture, table,
-    slots)."""
+    """One input of a button's form, as the panel renders it (``kind``: text, lines, pairs, choice, check, picture,
+    table, slots, roles). Consecutive fields with the same ``row`` sit side by side (the page margins)."""
     name: str
     kind: str
     label: str
@@ -57,6 +57,7 @@ class Field:
     help: str = ""
     placeholder: str = ""
     optional_choice: str = ""                          # picture: the label of the choice that names no file
+    row: str = ""
 
     def to_dict(self) -> Dict[str, Any]:
         out: Dict[str, Any] = {"name": self.name, "kind": self.kind, "label": self.label, "required": self.required}
@@ -64,7 +65,7 @@ class Field:
             out["default"] = self.default
         if self.options:
             out["options"] = [{"value": v, "label": label} for v, label in self.options]
-        for key in ("help", "placeholder", "optional_choice"):
+        for key in ("help", "placeholder", "optional_choice", "row"):
             if getattr(self, key):
                 out[key] = getattr(self, key)
         return out
@@ -157,6 +158,58 @@ def _choice(inputs: Dict[str, Any], f: Field) -> str:
     return value
 
 
+def _lines(inputs: Dict[str, Any], name: str, *, label: str, limit: int = 255) -> List[str]:
+    """A list of one-line wordings, each typed in its own row: empty rows dropped, none twice, at least one."""
+    raw = inputs.get(name) or []
+    if not isinstance(raw, list) or not all(isinstance(v, str) for v in raw):
+        raise RecipeError(f"{label}: type each wording on its own row.")
+    out: List[str] = []
+    for value in raw:
+        value = value.strip()
+        if not value:
+            continue
+        if "\n" in value or "\r" in value or "\t" in value:
+            raise RecipeError(f"{label}: each wording must be one line.")
+        if len(value) > limit:
+            raise RecipeError(f"{label}: a wording is longer than {limit} characters.")
+        if value in out:
+            raise RecipeError(f"{label}: {_quote(value)} is listed twice.")
+        out.append(value)
+    if not out:
+        raise RecipeError(f"Type {label[0].lower() + label[1:]}.")
+    return out
+
+
+def _names(raw: str, *, label: str) -> List[str]:
+    """Names typed in one box, separated by commas: blanks dropped, each once, in the order typed."""
+    out: List[str] = []
+    for name in raw.split(","):
+        name = name.strip()
+        if name and name not in out:
+            out.append(name)
+    if any(len(n) > 255 for n in out):
+        raise RecipeError(f"{label}: a name is longer than 255 characters.")
+    return out
+
+
+def _inches(inputs: Dict[str, Any], name: str, *, label: str, required: bool = True) -> Optional[int]:
+    """A length typed in inches (``1``, ``0.75``, ``1.25 in``, ``1"``), as twips; None for an empty optional box."""
+    raw = _text(inputs, name, label=label, required=required, limit=12)
+    if not raw:
+        return None
+    m = re.fullmatch(r'(\d+(?:\.\d+)?|\.\d+)\s*(?:in|inch|inches|")?', raw, re.IGNORECASE)
+    if not m:
+        raise RecipeError(f"{label} must be a number of inches, such as 1 or 0.75.")
+    value = float(m.group(1))
+    if value > 22:
+        raise RecipeError(f"{label} is more than 22 inches.")
+    return int(round(value * 1440))
+
+
+def _in(twips: int) -> str:
+    return f"{twips / 1440:g} in"
+
+
 def _attached(path_value: Any, among: Sequence[Path], what: str) -> Path:
     """A file the form names must be one the user attached (``compose_submission`` checks it again)."""
     if not isinstance(path_value, str) or not path_value.strip():
@@ -176,6 +229,11 @@ def _spec(request: str, summary: str, mode: str, ops: List[Dict[str, Any]], assu
 
 def _quote(words: str) -> str:
     return f"“{words}”"
+
+
+def _and(items: Sequence[str]) -> str:
+    items = list(items)
+    return items[0] if len(items) == 1 else ", ".join(items[:-1]) + " and " + items[-1]
 
 
 # ---- headers and footers ----
@@ -382,15 +440,23 @@ def _pt(size: Optional[float]) -> str:
 
 
 def _font_request(template_name: str, font: str, size: Optional[float]) -> str:
-    return f"Match the font to the template {template_name} ({font}" + (f" {size:g} pt" if size else "") + ")"
+    """The button's sentence: the template's font (``template_name``), or the font typed in Change font (``""``)."""
+    what = font + (f" {size:g} pt" if size else "")
+    return f"Match the font to the template {template_name} ({what})" if template_name else f"Set the font to {what}"
+
+
+def _font_origin(template_name: str, font: str, size: Optional[float]) -> str:
+    """Where the font comes from, as the plan's first assumption."""
+    what = font + (f" {size:g} pt" if size else "")
+    return f"the template's body text is {what}" if template_name else f"the font you chose is {what}"
 
 
 def _font_spec(font: str, size: Optional[float], size_from: List[float], template_name: str
                ) -> Tuple[Dict[str, Any], str]:
     """The font button's spec for the documents whose body text is in ``size_from`` (one size; empty when none could
-    be measured, or the template has no size: then the font alone), and its one sentence: ``font`` on the runs that
-    name a font, every style and the document defaults, and ``size`` only on the text in ``size_from``, so headings,
-    notes and the other sizes keep theirs."""
+    be measured, or no size is asked: then the font alone), and its one sentence: ``font`` on the runs that name a
+    font, every style and the document defaults, and ``size`` only on the text in ``size_from``, so headings, notes
+    and the other sizes keep theirs. ``template_name`` is the template's file name, or ``""`` for Change font."""
     scope = list(FONT_SCOPE)
     sized = {"size": size, "size_from": size_from} if size and size_from else {}
     ops = [{"op": "set_font", "select": {"scope": scope, "runs": "all"},
@@ -401,7 +467,7 @@ def _font_spec(font: str, size: Optional[float], size_from: List[float], templat
                  "scope": scope, "include_paragraph_marks": True}
     sizes_text = ", ".join(f"{s:g}" for s in size_from)
     request = _font_request(template_name, font, size if sized else None)
-    assumptions = [f"the template's body text is {font}" + (f" {size:g} pt" if sized else ""),
+    assumptions = [_font_origin(template_name, font, size if sized else None),
                    "Symbol and Wingdings text (bullets, special characters) keeps its font",
                    "the East Asian font slot is left as it is"]
     if sized:
@@ -430,8 +496,35 @@ def _font_template(inputs: Dict[str, Any], ctx: Context) -> Built:
     if not top or top[0]["share"] < MIN_FONT_SHARE or not top[0]["font"]:
         raise RecipeError(f"{Path(ctx.template).name} has no one body font (its text is too short or too mixed to "
                           f"tell). Try it in Default mode, or use a template with more body text.")
-    font, size = top[0]["font"], top[0]["size_pt"]
-    name = Path(ctx.template).name
+    return _font_by_body_size(top[0]["font"], top[0]["size_pt"], Path(ctx.template).name, ctx)
+
+
+FONT_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9 &'+.()-]*")
+FONT_SIZE = Field("size", "choice", "Size", default="keep",
+                  options=(("keep", "Keep each document's sizes"), ("8", "8 pt"), ("9", "9 pt"), ("10", "10 pt"),
+                           ("10.5", "10.5 pt"), ("11", "11 pt"), ("12", "12 pt")),
+                  help="Only text in each document's own body size changes size; headings, notes and other sizes "
+                       "keep theirs.")
+
+
+def _set_font(inputs: Dict[str, Any], ctx: Context) -> Built:
+    """Change font: the font the user typed, and the size chosen (or none), by the same rule as Match font to template
+    (``_font_by_body_size``), with no template."""
+    font = _text(inputs, "font", label="The font", limit=31)
+    if not FONT_NAME.fullmatch(font):
+        raise RecipeError("The font is a font's name, such as Arial or Times New Roman: letters, digits and spaces.")
+    size = _choice(inputs, FONT_SIZE)
+    return _font_by_body_size(font, None if size == "keep" else float(size), "", ctx)
+
+
+def _font_by_body_size(font: str, size: Optional[float], name: str, ctx: Context) -> Built:
+    """``font`` (and ``size``, when one is asked) on every document, each document's size changing only where it is
+    that document's own body size; ``name`` is the template's file name, or ``""`` for Change font."""
+    from .package import DocxPackage
+    from .profile import body_text_fonts
+    if not size:
+        spec, request = _font_spec(font, None, [], name)          # the font alone: no document's size is read
+        return Built(spec, [], request)
     own: Dict[str, Optional[float]] = {}           # str(resolved path) → its body size; None where none is measurable
     unread: Dict[str, str] = {}
     for path in ctx.documents:
@@ -441,7 +534,7 @@ def _font_template(inputs: Dict[str, Any], ctx: Context) -> Built:
         except Exception as e:  # noqa: BLE001 — an unreadable document is set aside by the preview, with its reason
             unread[key] = type(e).__name__
             continue
-        own[key] = found[0]["size_pt"] if found and found[0]["size_pt"] and size else None
+        own[key] = found[0]["size_pt"] if found and found[0]["size_pt"] else None
     groups: Dict[Optional[float], List[str]] = {}
     for key, body in own.items():
         groups.setdefault(body, []).append(key)
@@ -517,13 +610,70 @@ def _font_layouts(font: str, size: float, name: str, groups: Dict[Optional[float
     plan = plan_from_submission(
         {"summary": f"Set the text in {font} {size:g} pt: runs that name a font, every style and the document "
                     f"defaults; each document's size changes only where it is that document's own body size.",
-         "assumptions": [f"the template's body text is {font} {size:g} pt",
+         "assumptions": [_font_origin(name, font, size),
                          "each document's body size is its own: the size most of its body text is in",
                          "Symbol and Wingdings text (bullets, special characters) keeps its font",
                          "the East Asian font slot is left as it is"],
          "layouts": layouts}, request)
     validate_layout_plan(plan)
     return Built(None, [], request, outcome=plan, left_out=left, gated=True)
+
+
+PAPER = Field("paper", "choice", "Paper", default="letter",
+              options=(("letter", "Letter (8.5 × 11 in)"), ("legal", "Legal (8.5 × 14 in)"),
+                       ("tabloid", "Tabloid (11 × 17 in)"), ("a4", "A4 (210 × 297 mm)"),
+                       ("keep", "Keep each document's own")),
+              help="A paper size is set upright: a document with landscape pages is left untouched, with the reason.")
+PAPER_SIZES = {"letter": (12240, 15840), "legal": (12240, 20160), "tabloid": (15840, 24480), "a4": (11906, 16838)}
+MARGIN_SIDES = ("top", "bottom", "left", "right")
+MARGINS = tuple(Field(f"margin_{side}", "text", f"{side.capitalize()} margin (in)", required=True, default="1",
+                      row="margins") for side in MARGIN_SIDES)
+HEADER_FOOTER_DISTANCE = Field("header_footer", "text", "Header and footer distance from the page edge (in)",
+                               placeholder="Keep each document's own",
+                               help="Leave it empty to keep each document's own.")
+
+
+def _page_setup(inputs: Dict[str, Any], ctx: Context) -> Built:
+    """The paper size and the four margins on every section (``set_page_setup``). A paper size is set upright, so a
+    document with a landscape page is left out with the reason rather than turned upright; margins alone go on every
+    document, landscape pages included, as Word's own Page Setup does for the whole document."""
+    from .package import DocxPackage
+    from .template_roles import read_page
+    paper = _choice(inputs, PAPER)
+    margins = {side: _inches(inputs, f"margin_{side}", label=f"The {side} margin") for side in MARGIN_SIDES}
+    distance = _inches(inputs, "header_footer", label="The header and footer distance", required=False)
+    params: Dict[str, Any] = {"margins": dict(margins)}
+    if distance is not None:
+        params["margins"].update(header=distance, footer=distance)
+    words = (f"the margins to {_in(margins['top'])} top, {_in(margins['bottom'])} bottom, {_in(margins['left'])} "
+             f"left and {_in(margins['right'])} right")
+    assumptions = ["every section of every document",
+                   (f"the header and footer sit {_in(distance)} from the page edge" if distance is not None
+                    else "each document keeps its header and footer distances"),
+                   "the text reflows, so the page count can change"]
+    left: Dict[str, str] = {}
+    if paper != "keep":
+        width, height = PAPER_SIZES[paper]
+        params["size"] = {"w": width, "h": height}
+        words = f"the paper to {dict(PAPER.options)[paper]} and " + words
+        assumptions.insert(1, "a document with a landscape page is left untouched, so its landscape pages are never "
+                              "turned upright")
+        for path in ctx.documents:
+            try:
+                pkg = DocxPackage.from_path(path)
+                pages = [read_page(sp) for sp in DocxPackage.sect_prs(pkg.xml(pkg.main_part()))]
+            except Exception:  # noqa: BLE001 — an unreadable document is set aside by the preview, with its reason
+                continue
+            if any(p is not None and p["orientation"] == "landscape" for p in pages):
+                left[str(Path(path).resolve())] = (
+                    "Not changed: it has landscape pages, and a paper size set on every section would turn them "
+                    "upright. Set its pages in Word, choose Keep each document's own paper, or try it in Default mode.")
+    request = f"Set {words}"
+    op = {"op": "set_page_setup", "select": {"sections": "all"}, "params": params}
+    spec = _spec(request, f"Set {words} on every section.", "formatting", [op], assumptions)
+    if left and len(left) == len(ctx.documents):
+        return Built(None, [], request, left_out=left, gated=True)
+    return Built(spec, [], request, left_out=left)
 
 
 def _body_formatting(inputs: Dict[str, Any], ctx: Context) -> Built:
@@ -620,12 +770,113 @@ def _find_replace(inputs: Dict[str, Any], ctx: Context) -> Built:
                  [p["replace"] for p in pairs if p["replace"]], request)
 
 
+def _tracked_words(tracked: bool) -> str:
+    return "tracked changes, so a reviewer can accept or reject each one" if tracked else "clean copies"
+
+
+def _issue_stamp(inputs: Dict[str, Any], ctx: Context) -> Built:
+    """``set_issue_stamp``: the stamp found by the wordings the user typed, wherever it sits, replaced by the new one."""
+    current = _lines(inputs, "current", label="The stamp as it reads now")
+    text = _text(inputs, "text", label="The new stamp")
+    match_case = _flag(inputs, "match_case", True)
+    for old in current:
+        if old == text:
+            raise RecipeError(f"{_quote(old)} already reads as the new stamp.")
+        if old.casefold() == text.casefold():
+            raise RecipeError(f"{_quote(old)} → {_quote(text)} changes only capitals. A change of capitals is not a "
+                              f"stamp change here; ask for it in Default mode.")
+    allow_missing = _flag(inputs, "allow_missing", True)
+    tracked = _flag(inputs, "tracked")
+    request = "Change the issue stamp " + " or ".join(_quote(s) for s in current) + f" to {_quote(text)}"
+    op = {"op": "set_issue_stamp", "params": {"any_of": current, "text": text, "match_case": match_case,
+                                               "allow_missing": allow_missing, "tracked": tracked}}
+    assumptions = ["the stamp is found wherever it sits: the cover, a header or a footer",
+                   "exact capitals" if match_case else "any capitals",
+                   ("a document without the stamp is left as it is" if allow_missing
+                    else "a document without the stamp is left untouched, with the reason"),
+                   _tracked_words(tracked)]
+    return Built(_spec(request, f"Replace the issue stamp with {_quote(text)} wherever it reads as you typed it.",
+                       "content" if tracked else "untracked", [op], assumptions), [text], request)
+
+
+SECTION_LINE = r"^\s*SECTION\s+\d{2}[\s-]*\d{2}[\s-]*\d{2}(?:\.\d{2})?\b"   # capitals: never a "Section 230513" reference
+END_LINE = re.compile(r"END\s+OF\s+SECTION\b", re.IGNORECASE)   # what ensure_end_of_section's detect_regex finds
+EOS_LOOK = Field("look", "choice", "Its look", default="section_line",
+                 options=(("section_line", "Like the SECTION line at the top"),
+                          ("plain", "The document's plain text style")))
+
+
+def _end_of_section(inputs: Dict[str, Any], ctx: Context) -> Built:
+    """``ensure_end_of_section``: the line the user typed, with each document's own number where ``{number}`` stands
+    (read from its SECTION line by the reference rule), after the last content; one that reads otherwise is
+    corrected. The line starts with END OF SECTION, the words the operation recognizes an end line by
+    (``end_of_section.DEFAULT_DETECT``): a line in other words would not be found again in a document that already
+    ends with it, and a second press would add another."""
+    text = _text(inputs, "text", label="The line", limit=100)
+    if text.count("{number}") != 1:
+        raise RecipeError("The line needs {number} once, where each document's own section number goes.")
+    if re.search(r"\{(?!number\})[^}]*\}", text):
+        raise RecipeError("Only {number} can stand for each document's own value.")
+    if not END_LINE.match(text):
+        raise RecipeError("The line starts with END OF SECTION, so a document that already ends with it is "
+                          "recognized and never gets a second one.")
+    look = _choice(inputs, EOS_LOOK)
+    tracked = _flag(inputs, "tracked")
+    params: Dict[str, Any] = {"number": REFERENCE_FILLS["SECTION_NUMBER"], "text": text, "tracked": tracked}
+    if look == "section_line":
+        params.update(formatting="copy", copy_from_regex=SECTION_LINE)
+    request = f"End every document with {_quote(text)}, each with its own section number"
+    op = {"op": "ensure_end_of_section", "params": params}
+    assumptions = ["{number} is each document's own, from its 'SECTION nn nn nn' line",
+                   "a missing line is added after the last content; one that reads otherwise is corrected",
+                   ("the new line is formatted like the SECTION line (a document where that line, in capitals, is "
+                    "not found exactly once is left untouched)" if look == "section_line"
+                    else "the new line is in the document's plain text style"),
+                   "a document with content after its END OF SECTION line is left untouched",
+                   _tracked_words(tracked)]
+    return Built(_spec(request, "Make every document end with your line and its own section number.",
+                       "content" if tracked else "untracked", [op], assumptions), [text], request)
+
+
+UNIT = re.compile(r"[A-Za-z°%]+(?:/[A-Za-z]+)?")
+
+
+def _nonbreaking_spaces(inputs: Dict[str, Any], ctx: Context) -> Built:
+    """``protect_nonbreaking_spaces``: a number and its unit, and a spaced section number, kept on one line."""
+    units = _names(_text(inputs, "units", label="The units", required=False), label="The units")
+    for unit in units:
+        if not UNIT.fullmatch(unit):
+            raise RecipeError(f"{_quote(unit)} is not a unit symbol: letters, such as psi or gpm (°, % and one / "
+                              f"allowed).")
+    section_numbers = _flag(inputs, "section_numbers", True)
+    if not units and not section_numbers:
+        raise RecipeError("Type at least one unit, or tick section numbers.")
+    tracked = _flag(inputs, "tracked")
+    kept = ([f"numbers with {_and(units)}"] if units else []) + \
+           (["the parts of section numbers (21 13 13)"] if section_numbers else [])
+    request = "Keep " + ", and ".join(kept) + (", on one line" if len(kept) > 1 else " on one line")
+    op = {"op": "protect_nonbreaking_spaces",
+          "params": {"units": units, "section_numbers": section_numbers, "tracked": tracked}}
+    return Built(_spec(request, "Put non-breaking spaces where a line must not break; no words change.",
+                       "content" if tracked else "untracked", [op],
+                       ["the body, headers and footers", "only ordinary spaces become non-breaking ones",
+                        _tracked_words(tracked)]), [], request)
+
+
 # ---- clean up ----
+CHANGES_ACTION = Field("action", "choice", "Every tracked change", default="accept",
+                       options=(("accept", "Accept it"), ("reject", "Reject it")),
+                       help="Reject: insertions go, deletions come back, moves and formatting changes are undone.")
+
+
 def _accept_changes(inputs: Dict[str, Any], ctx: Context) -> Built:
-    request = "Accept all tracked changes"
-    op = {"op": "resolve_tracked_changes", "params": {"action": "accept"}}
-    return Built(_spec(request, "Accept every tracked change: insertions, deletions, moves and formatting changes.",
-                       "untracked", [op],
+    action = _choice(inputs, CHANGES_ACTION)
+    request = "Accept all tracked changes" if action == "accept" else "Reject all tracked changes"
+    summary = ("Accept every tracked change: insertions, deletions, moves and formatting changes." if action == "accept"
+               else "Reject every tracked change: insertions go, deletions come back, moves and formatting changes "
+                    "are undone.")
+    op = {"op": "resolve_tracked_changes", "params": {"action": action}}
+    return Built(_spec(request, summary, "untracked", [op],
                        ["the body, headers, footers, footnotes, endnotes and comments",
                         "a change Word must settle itself (a table cell inserted or merged, a change inside an "
                         "equation) sets the document aside"]), [], request)
@@ -669,6 +920,118 @@ def _remove_empty_paragraphs(inputs: Dict[str, Any], ctx: Context) -> Built:
                                                                              if how == "collapse" else " (all)"),
                     summary, ["the body only", "a numbered, bordered or bookmarked empty line is not blank"],
                     {"mode": how}, _flag(inputs, "tracked"))
+
+
+def _clean_spaces(inputs: Dict[str, Any], ctx: Context) -> Built:
+    return _cleanup("normalize_whitespace", "Clean up spaces",
+                    "Turn two or more spaces in a row into one, and remove spaces at the end of a line.",
+                    ["the body, headers and footers", "words, tabs and non-breaking spaces stay as they are"], {},
+                    _flag(inputs, "tracked"))
+
+
+QUOTES = Field("quotes", "choice", "Quotation marks", default="straight",
+               options=(("straight", "Straight ( \" ' )"), ("curly", "Curly ( “ ” ‘ ’ )"),
+                        ("keep", "Leave them as they are")))
+DASHES = Field("dash", "choice", "Two hyphens (--)", default="keep",
+               options=(("keep", "Leave them as they are"), ("en", "An en dash (–)"), ("em", "An em dash (—)")))
+SEPARATOR = Field("section_separator", "choice", "Between the parts of a section number", default="keep",
+                  options=(("keep", "Leave them as they are"), ("space", "A space (21 13 13)"),
+                           ("hyphen", "A hyphen (21-13-13)")))
+QUOTE_WORDS = {"straight": "straight quotation marks", "curly": "curly quotation marks"}
+DASH_WORDS = {"en": "an en dash for each “--”", "em": "an em dash for each “--”"}
+SEPARATOR_WORDS = {"space": "a space between the parts of a section number",
+                   "hyphen": "a hyphen between the parts of a section number"}
+
+
+def _quotes_dashes(inputs: Dict[str, Any], ctx: Context) -> Built:
+    """``normalize_punctuation`` with the choices the user made; at least one."""
+    quotes, dash, separator = _choice(inputs, QUOTES), _choice(inputs, DASHES), _choice(inputs, SEPARATOR)
+    params: Dict[str, Any] = {}
+    asked: List[str] = []
+    if quotes != "keep":
+        params["quotes"] = quotes
+        asked.append(QUOTE_WORDS[quotes])
+    if dash != "keep":
+        params["dash"] = dash
+        asked.append(DASH_WORDS[dash])
+    if separator != "keep":
+        params["section_separator"] = separator
+        asked.append(SEPARATOR_WORDS[separator])
+    if not params:
+        raise RecipeError("Choose at least one change: the quotation marks, the dashes or the section numbers.")
+    assumptions = ["the body, headers and footers"]
+    if quotes == "curly":
+        assumptions.append("a quotation mark right after a digit stays straight, as an inch or foot mark")
+    return _cleanup("normalize_punctuation", "Use " + _and(asked), "Use " + _and(asked) + ".", assumptions, params,
+                    _flag(inputs, "tracked"))
+
+
+LINKS = Field("which", "choice", "Which links", default="external",
+              options=(("external", "Web and e-mail links"),
+                       ("internal", "Links to a place in the document (a table of contents)"),
+                       ("all", "Every link")))
+LINK_WORDS = {"external": "the web and e-mail links", "internal": "the links to places in the document",
+              "all": "every link"}
+
+
+def _remove_hyperlinks(inputs: Dict[str, Any], ctx: Context) -> Built:
+    which = _choice(inputs, LINKS)
+    keep_style = _flag(inputs, "keep_style")
+    request = f"Remove {LINK_WORDS[which]}"
+    op = {"op": "remove_hyperlinks", "params": {"which": which, "keep_style": keep_style}}
+    return Built(_spec(request, f"Take the link off {LINK_WORDS[which]}; the words stay.", "formatting", [op],
+                       ["the linked words stay exactly as they are",
+                        ("they keep the blue underline" if keep_style
+                         else "they lose the blue underline and look like the text around them"),
+                        "a picture's link stays", "a document with no such link is left as it is"]), [], request)
+
+
+FIELDS_WHICH = Field("which", "choice", "Which fields", default="all",
+                     options=(("all", "Every field but page numbers"),
+                              ("dates", "Dates (DATE, SAVEDATE, PRINTDATE, CREATEDATE)"),
+                              ("references", "Cross-references (REF, NOTEREF)"),
+                              ("properties", "Document properties (DOCPROPERTY, TITLE, AUTHOR, FILENAME …)")))
+FIELD_TYPES: Dict[str, Any] = {
+    "all": "all",
+    "dates": ["DATE", "TIME", "SAVEDATE", "PRINTDATE", "CREATEDATE", "EDITTIME"],
+    "references": ["REF", "NOTEREF"],
+    "properties": ["DOCPROPERTY", "DOCVARIABLE", "TITLE", "SUBJECT", "AUTHOR", "KEYWORDS", "COMMENTS",
+                   "LASTSAVEDBY", "FILENAME"],
+}
+FIELD_WORDS = {"all": "every field but page numbers", "dates": "the date fields",
+               "references": "the cross-references", "properties": "the document-property fields"}
+
+
+def _freeze_fields(inputs: Dict[str, Any], ctx: Context) -> Built:
+    which = _choice(inputs, FIELDS_WHICH)
+    request = f"Freeze {FIELD_WORDS[which]} as plain text"
+    op = {"op": "unlink_fields", "params": {"types": FIELD_TYPES[which]}}
+    return Built(_spec(request, f"Turn {FIELD_WORDS[which]} into the text they show now; Word no longer updates it.",
+                       "formatting", [op],
+                       ["page numbers are never frozen", "what each field shows now stays, with its formatting",
+                        "a field over two paragraphs (a table of contents) sets the document aside",
+                        "a document with no such field is left as it is"]), [], request)
+
+
+STYLES_WHICH = Field("which", "choice", "Which styles", default="custom",
+                     options=(("custom", "Only the document's own styles"), ("all", "Word's built-in styles too")))
+
+
+def _remove_unused_styles(inputs: Dict[str, Any], ctx: Context) -> Built:
+    which = _choice(inputs, STYLES_WHICH)
+    keep = _names(_text(inputs, "keep", label="The styles to keep", required=False, limit=1000),
+                  label="The styles to keep")
+    params: Dict[str, Any] = {"which": which}
+    if keep:
+        params["keep"] = keep
+    request = "Remove the unused styles" + (" (Word's built-in ones too)" if which == "all" else "") + \
+              (f", keeping {_and([_quote(k) for k in keep])}" if keep else "")
+    op = {"op": "remove_unused_styles", "params": params}
+    return Built(_spec(request, "Delete the styles nothing in the document uses.", "formatting", [op],
+                       ["a style a used style is based on, followed by or linked to stays",
+                        "a style a field or a table of contents would use stays",
+                        "Word brings back its own built-in style if it is used later",
+                        "a document with nothing unused is left as it is"]), [], request)
 
 
 # ---- files and properties ----
@@ -743,6 +1106,65 @@ def _title_property(inputs: Dict[str, Any], ctx: Context) -> Built:
                         "a document whose number or title cannot be found is left untouched"]), [pattern], request)
 
 
+PROPERTY_FIELDS = (("author", "Author"), ("company", "Company"), ("subject", "Subject"))
+
+
+def _author_company(inputs: Dict[str, Any], ctx: Context) -> Built:
+    """``set_document_properties``: Author, Company and Subject to the user's words, or the author names cleared."""
+    values = {key: _text(inputs, key, label=label, required=False) for key, label in PROPERTY_FIELDS}
+    values = {k: v for k, v in values.items() if v}
+    clear = _flag(inputs, "clear_authors")
+    if clear and "author" in values:
+        raise RecipeError("Type an author or clear the author names, not both.")
+    if not values and not clear:
+        raise RecipeError("Type an author, a company or a subject, or tick Clear the author names.")
+    params: Dict[str, Any] = {}
+    said: List[str] = []
+    if values:
+        params["set"] = values
+        said += [f"{dict(PROPERTY_FIELDS)[k]} to {_quote(v)}" for k, v in values.items()]
+    if clear:
+        params["clear"] = ["author", "last_modified_by"]
+    request = ("Set " + _and(said) if said else "") + \
+              ((" and clear" if said else "Clear") + " the author names" if clear else "")
+    op = {"op": "set_document_properties", "params": params}
+    assumptions = ["File → Info: only the properties named change; one already as asked is left alone",
+                   "tracked changes and comments keep their authors' names"]
+    if clear:
+        assumptions.insert(1, "clearing the author names removes Author and Last Modified By")
+    return Built(_spec(request, request + " in File → Info.", "untracked", [op], assumptions),
+                 list(values.values()), request)
+
+
+LANGUAGE = Field("language", "choice", "Language", default="en-US",
+                 options=(("en-US", "English (United States)"), ("en-GB", "English (United Kingdom)"),
+                          ("en-CA", "English (Canada)"), ("fr-CA", "French (Canada)"),
+                          ("es-US", "Spanish (United States)")))
+LANGUAGE_SCOPE = Field("only", "choice", "Change", default="every",
+                       options=(("every", "Every language to this one"),
+                                ("english", "Only other kinds of English to this one")),
+                       help="Only other kinds of English: French or Spanish quotations keep their language.")
+ENGLISH = ("en-US", "en-GB", "en-CA", "en-AU", "en-NZ", "en-IE", "en-ZA", "en-IN")
+
+
+def _proofing_language(inputs: Dict[str, Any], ctx: Context) -> Built:
+    language, only = _choice(inputs, LANGUAGE), _choice(inputs, LANGUAGE_SCOPE)
+    name = dict(LANGUAGE.options)[language]
+    params: Dict[str, Any] = {"language": language}
+    if only == "english":
+        if not language.startswith("en-"):
+            raise RecipeError("“Only other kinds of English” turns them into an English; choose one, or change every "
+                              "language.")
+        params["replace_only"] = [tag for tag in ENGLISH if tag != language]
+    request = f"Set the proofing language to {name}" + (" (other kinds of English only)" if only == "english" else "")
+    op = {"op": "set_language", "params": params}
+    return Built(_spec(request, f"Spelling and grammar check the text as {name}.", "formatting", [op],
+                       ["every style, run and paragraph mark that names a language, and the document default",
+                        ("only text in another kind of English changes; other languages stay" if only == "english"
+                         else "text in every other language changes too"),
+                        "no text changes"]), [], request)
+
+
 REMOVE_WHICH = Field("which", "choice", "Remove", default="both",
                      options=(("both", "Headers and footers"), ("headers", "Headers only"), ("footers", "Footers only")))
 WATERMARK_ACTION = Field("action", "choice", "Watermark", default="add",
@@ -789,6 +1211,14 @@ RECIPES: Tuple[Recipe, ...] = (
     Recipe("font_template", "Match font to template", "Fonts & formatting",
            "Sets the text in your template's body font and size; headings, notes and other sizes keep theirs.",
            ("template",), (), _font_template),
+    Recipe("set_font", "Change font", "Fonts & formatting",
+           "Sets the text in the font and size you choose, no template needed; headings, notes and other sizes "
+           "keep theirs.", (),
+           (Field("font", "text", "Font", required=True, placeholder="Arial",
+                  help="The font's name exactly as Word lists it."), FONT_SIZE), _set_font),
+    Recipe("page_setup", "Page size and margins", "Fonts & formatting",
+           "Sets the paper size and the four margins on every section of every document.", (),
+           (PAPER, *MARGINS, HEADER_FOOTER_DISTANCE), _page_setup),
     Recipe("find_replace", "Find and replace", "Text",
            "Replaces words you list with your replacements in the body, headers and footers.", (),
            (Field("pairs", "pairs", "Find → replace with"),
@@ -797,8 +1227,34 @@ RECIPES: Tuple[Recipe, ...] = (
             Field("whole_word", "check", "Whole words only", default=True,
                   help="On: “NFPA 13” leaves “NFPA 13R” alone."),
             TRACKED), _find_replace),
-    Recipe("accept_changes", "Accept all tracked changes", "Clean up",
-           "Accepts every pending tracked change, so the copies are clean.", (), (), _accept_changes),
+    Recipe("issue_stamp", "Change the issue stamp", "Text",
+           "Finds the issue stamp wherever it sits, on the cover, in a header or in a footer, and replaces every one "
+           "with your new wording.", (),
+           (Field("current", "lines", "The stamp as it reads now", required=True, placeholder="ISSUED FOR BID",
+                  help="Each wording exactly as it reads; any of them is replaced."),
+            Field("text", "text", "The new stamp", required=True, placeholder="ISSUED FOR CONSTRUCTION",
+                  help="Exactly as it should appear; one line."),
+            Field("match_case", "check", "Match capitals exactly", default=True),
+            Field("allow_missing", "check", "Leave a document without the stamp as it is", default=True,
+                  help="Off: such a document waits under Left untouched, with the reason."),
+            TRACKED), _issue_stamp),
+    Recipe("end_of_section", "Add END OF SECTION where missing", "Text",
+           "Ends every document with your closing line and its own section number, and corrects one that reads "
+           "otherwise.", (),
+           (Field("text", "text", "The line", required=True, default="END OF SECTION {number}",
+                  help="It starts with END OF SECTION; {number} is each document's own section number, from its "
+                       "SECTION line, and appears once."),
+            EOS_LOOK, TRACKED), _end_of_section),
+    Recipe("nonbreaking_spaces", "Keep numbers with their units", "Text",
+           "Puts non-breaking spaces in “150 psi” and “21 13 13” so Word never splits them across two lines; no "
+           "words change.", (),
+           (Field("units", "text", "Units", default="psi, gpm",
+                  help="Unit symbols separated by commas, such as psi, gpm, ft, in or °F."),
+            Field("section_numbers", "check", "Section numbers too (21 13 13)", default=True), TRACKED),
+           _nonbreaking_spaces),
+    Recipe("accept_changes", "Accept or reject all tracked changes", "Clean up",
+           "Accepts every pending tracked change, so the copies are clean, or rejects every one.", (),
+           (CHANGES_ACTION,), _accept_changes),
     Recipe("remove_comments", "Remove all comments", "Clean up",
            "Removes every comment and its replies.", (), (), _remove_comments),
     Recipe("remove_highlight", "Remove highlighting", "Clean up",
@@ -807,6 +1263,23 @@ RECIPES: Tuple[Recipe, ...] = (
            "Removes text Word hides with its Hidden font setting.", (), (TRACKED,), _remove_hidden_text),
     Recipe("remove_empty_paragraphs", "Remove empty paragraphs", "Clean up",
            "Removes blank lines from the body.", (), (EMPTY_HOW, TRACKED), _remove_empty_paragraphs),
+    Recipe("clean_spaces", "Clean up spaces", "Clean up",
+           "Turns two or more spaces in a row into one and removes spaces at the end of a line; tabs stay.", (),
+           (TRACKED,), _clean_spaces),
+    Recipe("quotes_dashes", "Standardize quotes and dashes", "Clean up",
+           "Makes every quotation mark straight or curly, turns “--” into a dash, and writes section numbers one way.",
+           (), (QUOTES, DASHES, SEPARATOR, TRACKED), _quotes_dashes),
+    Recipe("remove_hyperlinks", "Remove hyperlinks", "Clean up",
+           "Takes the links off web and e-mail addresses; the words stay and look like the text around them.", (),
+           (LINKS, Field("keep_style", "check", "Keep the blue underline", default=False)), _remove_hyperlinks),
+    Recipe("freeze_fields", "Freeze fields as plain text", "Clean up",
+           "Turns fields into the text they show now, so dates and cross-references stop changing; page numbers "
+           "are never frozen.", (), (FIELDS_WHICH,), _freeze_fields),
+    Recipe("remove_unused_styles", "Remove unused styles", "Clean up",
+           "Deletes the styles nothing in the document uses, so the Styles pane lists only what is in use.", (),
+           (STYLES_WHICH, Field("keep", "text", "Styles to keep (optional)", placeholder="CMT, SpecifierNote",
+                                help="Style names separated by commas; these stay even when unused.")),
+           _remove_unused_styles),
     Recipe("name_files", "Name files by section number and title", "Files & properties",
            "Names each edited copy from its own section number and title.", (),
            (NAME_PATTERN, NAME_NUMBER, NAME_TITLE), _name_files),
@@ -820,6 +1293,14 @@ RECIPES: Tuple[Recipe, ...] = (
     Recipe("clean_pdf", "Save clean PDFs", "Files & properties",
            "Saves a PDF of every document with its comments removed and its tracked changes accepted; your Word "
            "documents stay as they are.", ("pdf",), (), _clean_pdf),
+    Recipe("author_company", "Set author and company", "Files & properties",
+           "Sets File → Info → Author, Company and Subject to your words, or clears the author names before issue.",
+           (), (*(Field(key, "text", label) for key, label in PROPERTY_FIELDS),
+                Field("clear_authors", "check", "Clear the author names (Author and Last Modified By)", default=False,
+                      help="Tracked changes and comments keep their authors' names.")), _author_company),
+    Recipe("proofing_language", "Set proofing language", "Files & properties",
+           "Sets the language Word checks spelling and grammar in; no text changes.", (),
+           (LANGUAGE, LANGUAGE_SCOPE), _proofing_language),
 )
 BY_ID: Dict[str, Recipe] = {r.id: r for r in RECIPES}
 

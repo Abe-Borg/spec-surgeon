@@ -76,7 +76,7 @@ function HowToUse({ onStartTourAt }: { onStartTourAt: (chapter: string) => void 
           items={[
             {
               t: "Safe — buttons, no AI",
-              d: "What you control: the common changes, one button each — headers and footers from your template, the body formatting from your template (its outline styles and numbering, page, font and paragraph spacing), the font from your template, find and replace, accepting tracked changes, removing comments, highlighting, hidden text or blank lines, removing headers and footers, a watermark, a logo, file names, the title property and the Track Changes setting. What it costs: only what the buttons do. A document a button cannot change exactly is left untouched with the reason, and can be handed to Default mode. No AI is used, so it needs no API key and spends nothing.",
+              d: "What you control: the common changes, one button each — headers and footers from your template, the body formatting from your template (its outline styles and numbering, page, font and paragraph spacing), the font from your template or one you name, the page size and margins, find and replace, the issue stamp, END OF SECTION, numbers kept with their units, accepting or rejecting tracked changes, removing comments, highlighting, hidden text, blank lines, hyperlinks or unused styles, tidying spaces, quotes and dashes, freezing fields, removing headers and footers, a watermark, a logo, file names, the title, author and company properties, the proofing language and the Track Changes setting. What it costs: only what the buttons do. A document a button cannot change exactly is left untouched with the reason, and can be handed to Default mode. No AI is used, so it needs no API key and spends nothing.",
             },
             {
               t: "Default — a conversation",
@@ -97,7 +97,10 @@ function HowToUse({ onStartTourAt }: { onStartTourAt: (chapter: string) => void 
       </Guide>
       <Steps
         items={[
-          { t: "Safe mode: choose Safe in the top bar", d: "The buttons take the place of the message box. The window remembers the mode you last used." },
+          {
+            t: "Safe mode: choose Safe in the top bar",
+            d: "The buttons take the place of the message box, under a short note on what Safe mode is and how to get more: Default mode, with a Claude API key. Hide folds the note to one line. The window remembers the mode you last used, and whether the note is folded.",
+          },
           {
             t: "Add your documents, and what a button needs",
             d: (
@@ -109,7 +112,7 @@ function HowToUse({ onStartTourAt }: { onStartTourAt: (chapter: string) => void 
           },
           {
             t: "Pick a button, fill in its short form, press Preview",
-            d: "A button that cannot be used yet says why when you hover over it. Its form asks only for your words and choices: the words to find and their replacements, the watermark’s words, a template’s values. Tracked changes are off unless you tick the box. Going back to All buttons keeps what you typed in each form; Clear form empties it.",
+            d: "A button that cannot be used yet says why when you hover over it. Its form asks only for your words and choices: the words to find and their replacements, the issue stamp as it reads now and as it should, the watermark’s words, a template’s values, a font’s name, the margins. Tracked changes are off unless you tick the box. Going back to All buttons keeps what you typed in each form; Clear form empties it.",
           },
           {
             t: "Look at the pages, then create the copies",
@@ -366,7 +369,8 @@ function Workflows() {
         tagline="One button at a time, each building on the last."
         steps={[
           "Choose Safe in the top bar and drop the whole set in. Add your template if the headers, footers or font should match it.",
-          "Accept all tracked changes, then Remove all comments, then Remove highlighting — each one previewed, then created.",
+          "Accept or reject all tracked changes, then Remove all comments, then Remove highlighting — each one previewed, then created.",
+          "Change the issue stamp to the new wording, and Add END OF SECTION where missing.",
           "Match body formatting to template (its outline styles and numbering, page and font), then Match headers and footers to template.",
           "Name files by section number and title last, so the copies carry their names.",
           "Save clean PDFs for the issue: a PDF of each document with its comments removed and its tracked changes accepted, made by Word (or LibreOffice) from a checked clean copy. The PDFs open from the window; the Word documents keep their comments and tracked changes.",

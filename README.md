@@ -183,12 +183,18 @@ mode you last used (Safe the first time; never Obliterate).
 
 - **Safe — buttons, no AI.** What you control: the common changes, one button each — *Match headers and footers to
   template*, *Remove headers and footers*, *Add or remove a watermark*, *Swap the logo*, *Match body formatting to
-  template*, *Match font to template*,
+  template*, *Match font to template*, *Change font*, *Page size and margins*,
   *Find and replace* (typed pairs or an attached table; body, headers and footers; every occurrence found is listed
   under the previews with a checkbox, so a historical reference can be unticked and left as it is, the plan remade
-  with **Update the preview**, and the checker confirms it was left untouched), *Accept all tracked changes*,
-  *Remove all comments*, *Remove highlighting*, *Remove hidden text*, *Remove empty paragraphs*, *Name files by
-  section number and title*, *Set the document title property*, *Turn off Track Changes* and *Save clean PDFs*. Each button has a short
+  with **Update the preview**, and the checker confirms it was left untouched), *Change the issue stamp*, *Add END OF
+  SECTION where missing*, *Keep numbers with their units*, *Accept or reject all tracked changes*,
+  *Remove all comments*, *Remove highlighting*, *Remove hidden text*, *Remove empty paragraphs*, *Clean up spaces*,
+  *Standardize quotes and dashes*, *Remove hyperlinks*, *Freeze fields as plain text*, *Remove unused styles*, *Name
+  files by section number and title*, *Set the document title property*, *Turn off Track Changes*, *Save clean PDFs*,
+  *Set author and company* and *Set proofing language*. A note above the buttons says what Safe mode is, what it
+  cannot do (anything that is not a button), and that Default mode, with a Claude API key, is the way to more; its
+  **Add a Claude API key** opens Settings and **Switch to Default mode** switches, and **Hide** folds it to one line
+  (the window remembers). Each button has a short
   form (your words and choices only), then **Preview**, the same pages, checks and **Create edited copies** as Default
   mode. What it costs: only what the buttons do. The copies are clean unless you tick *Show my changes as tracked
   changes in Word* (offered where the change can be tracked). The template buttons take either a prepared template
@@ -211,6 +217,24 @@ mode you last used (Safe the first time; never Obliterate).
   bold, italic and underlined words stay. Documents built alike run as one plan and the rest are planned their own way; a document it
   cannot read (no outline, typed and Word numbers mixed, an outline deeper than the template's, one of its styles
   shared with paragraphs it does not restyle) is left untouched with the reason.
+- **The third set of Safe buttons** (2026-10-28), each one operation the engine already checks, built in code from
+  its form. *Change font* is *Match font to template* without a template: you type the font (Arial) and choose a
+  size, or keep each document's sizes; only text in each document's own body size changes size, so headings and
+  notes keep theirs. *Page size and margins* sets the paper (Letter, Legal, Tabloid, A4, or each document's own) and
+  the four margins in inches on every section, and optionally the header and footer distance; with a paper size
+  chosen, a document with landscape pages is left untouched so a landscape schedule never turns upright. *Change the
+  issue stamp* finds the stamp by the wordings you type (ISSUED FOR BID, ISSUED FOR PERMIT) wherever it sits, on the
+  cover, in a header or a footer, and replaces each with your new wording. *Add END OF SECTION where missing* ends
+  each document with your line (`END OF SECTION {number}` to start; it begins with END OF SECTION, so pressing it
+  again adds nothing), its own number read from its SECTION line,
+  formatted like that line or as plain text, and corrects one that reads otherwise. *Keep numbers with their units*
+  puts non-breaking spaces in "150 psi" and "21 13 13" so Word never splits them; no words change. *Clean up spaces*,
+  *Standardize quotes and dashes* (straight or curly quotes, `--` as an en or em dash, section numbers with spaces or
+  hyphens), *Remove hyperlinks* (the words stay), *Freeze fields as plain text* (page numbers never) and *Remove
+  unused styles* (the document's own, or Word's built-in ones too) tidy a set before issue. *Accept or reject all
+  tracked changes* can now throw away a round of edits. *Set author and company* sets File → Info → Author, Company
+  and Subject, or clears the author names before issue. *Set proofing language* sets every language, or only other
+  kinds of English, to the one you choose.
 - **Save clean PDFs** (Safe mode) gives you a PDF of every document with all comments off and every tracked change
   accepted, ready to issue. It plans two steps, in this order: every comment (and its replies) is removed, then every
   tracked change is accepted (insertions, deletions, moves and formatting changes, in the body, headers, footers and

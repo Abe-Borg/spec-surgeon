@@ -10,8 +10,10 @@ import {
   EMPTY_SAFE_FORM,
   availability,
   clearForm,
+  fieldRows,
   fieldShown,
   filledFromEachDocument,
+  filledLines,
   grouped,
   initialInputs,
   leaveForm,
@@ -22,6 +24,7 @@ import {
   refreshInputs,
   tables,
 } from "../src/lib/recipes.ts";
+import { ADD_KEY, SWITCH_TO_DEFAULT, safeNoteWords } from "../src/lib/safeNote.ts";
 import { EMPTY_VIEW, normalizeView } from "../src/lib/view.ts";
 
 const file = (name: string, kind: Attachment["kind"], state: Attachment["state"] = "ok"): Attachment => ({
@@ -200,7 +203,7 @@ test("a form says what it still needs, and sends only filled rows", () => {
   assert.deepEqual(payload(FIND, ready).pairs, [{ find: "ACME", replace: "Contoso" }]);
   assert.equal(missing(HEADERS, { slots: { "ISSUED FOR PERMIT": " " } }), "Type the value for “ISSUED FOR PERMIT”.");
   assert.equal(missing(LOGO, { image: "", old: "" }), "Choose the new logo.");
-  assert.equal(missing(WATERMARK, { action: "add", text: "" }), "Type watermark words.");
+  assert.equal(missing(WATERMARK, { action: "add", text: "" }), "Type the watermark words.");
   assert.equal(missing(WATERMARK, { action: "remove", text: "" }), "");
   assert.equal(fieldShown(WATERMARK, WATERMARK.fields[1], { action: "remove" }), false);
 });
@@ -260,4 +263,75 @@ test("Save clean PDFs waits for a program that makes PDFs, and says why", () => 
   assert.equal(availability(PDF, { ...view([]), pdf: { available: false, renderer: "", reason: "x" } }).reason, "Add the Word documents first.");
   assert.equal(availability(PDF, view(docs)).ready, true);
   assert.equal(availability(PDF, normalizeView({ attachments: docs })).ready, true);
+});
+
+const STAMP = recipe({
+  id: "issue_stamp",
+  label: "Change the issue stamp",
+  group: "Text",
+  fields: [
+    { name: "current", kind: "lines", label: "The stamp as it reads now", required: true },
+    { name: "text", kind: "text", label: "The new stamp", required: true },
+  ],
+});
+const PAGE = recipe({
+  id: "page_setup",
+  label: "Page size and margins",
+  group: "Fonts & formatting",
+  fields: [
+    { name: "paper", kind: "choice", label: "Paper", required: false, default: "letter",
+      options: [{ value: "letter", label: "Letter" }] },
+    ...["top", "bottom", "left", "right"].map((side) => ({
+      name: `margin_${side}`, kind: "text" as const, label: `${side} margin (in)`, required: true, default: "1", row: "margins",
+    })),
+    { name: "header_footer", kind: "text", label: "Header and footer distance", required: false },
+  ],
+});
+
+test("a list field opens with one empty row, needs one filled row, and is sent without the empty ones", () => {
+  const v = view([file("a.docx", "document")]);
+  assert.deepEqual(initialInputs(STAMP, v), { current: [""], text: "" });
+  assert.equal(missing(STAMP, { current: ["", "  "], text: "ISSUED FOR BID" }), "Type the stamp as it reads now.");
+  assert.equal(missing(STAMP, { current: ["ISSUED FOR PERMIT"], text: " " }), "Type the new stamp.");
+  assert.equal(missing(STAMP, { current: ["ISSUED FOR PERMIT"], text: "ISSUED FOR BID" }), "");
+  assert.deepEqual(payload(STAMP, { current: ["ISSUED FOR PERMIT", "", " "], text: "ISSUED FOR BID" }),
+    { current: ["ISSUED FOR PERMIT"], text: "ISSUED FOR BID" });
+  assert.deepEqual(filledLines("not a list"), []);
+  // a list typed in a form is kept when the attachments change
+  assert.deepEqual(refreshInputs(STAMP, { current: ["A", "B"], text: "C" }, v), { current: ["A", "B"], text: "C" });
+});
+
+test("the four margins share one row, every other field has its own", () => {
+  const rows = fieldRows(PAGE.fields).map((row) => row.map((f) => f.name));
+  assert.deepEqual(rows, [["paper"], ["margin_top", "margin_bottom", "margin_left", "margin_right"], ["header_footer"]]);
+  assert.deepEqual(initialInputs(PAGE, view([])), {
+    paper: "letter", margin_top: "1", margin_bottom: "1", margin_left: "1", margin_right: "1", header_footer: "",
+  });
+  assert.equal(missing(PAGE, { ...initialInputs(PAGE, view([])), margin_left: "" }), "Type the left margin (in).");
+});
+
+test("the Safe mode note says what Safe mode is, what it cannot do, and that Default mode needs an API key", () => {
+  const without = safeNoteWords(false);
+  const withKey = safeNoteWords(true);
+  for (const words of [without, withKey]) {
+    assert.match(words.tags, /no AI/);
+    assert.match(words.cannot, /anything that isn't a button/);
+    assert.match(words.more, /Default mode/);
+    assert.match(words.more, /Claude API key/);
+    assert.match(words.tail, /Default mode/);
+  }
+  // no key: the filled button adds one, and the folded line says Default mode needs it
+  assert.equal(without.primary, "key");
+  assert.match(without.key, /No API key yet/);
+  assert.match(without.line, /with a Claude API key/);
+  // a key already set: the one filled button switches modes, and nothing asks for a key
+  assert.equal(withKey.primary, "default");
+  assert.match(withKey.key, /Default mode is ready/);
+  assert.doesNotMatch(withKey.line, /API key/);
+  assert.equal(ADD_KEY, "Add a Claude API key");
+  assert.equal(SWITCH_TO_DEFAULT, "Switch to Default mode");
+  // an older server says nothing: the note is open
+  assert.equal(normalizeView({}).safe_note_hidden, false);
+  assert.equal(normalizeView({ safe_note_hidden: true }).safe_note_hidden, true);
+  assert.equal(normalizeView({ safe_note_hidden: "yes" }).safe_note_hidden, false);
 });

@@ -4,11 +4,13 @@ verify carries it out with no AI call — no visual check, no recovery — on cl
 button cannot do on a document is said beside the copies, and can be handed to Default mode."""
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import pytest
 from docx import Document
 from docx.shared import Pt
+from lxml import etree
 
 from make_fixtures import DIRTY_KINDS, build, build_dirty, build_reference_spec, build_rich, build_sized, build_template
 from spec_surgeon import compiler, layouts, llm, preview, recipes, vision
@@ -67,20 +69,24 @@ def test_every_button_is_in_a_group_with_a_form_the_panel_can_render():
         seen.add(item["id"])
         assert item["label"] and item["summary"].endswith(".")
         for f in item["fields"]:
-            assert f["kind"] in {"text", "pairs", "choice", "check", "picture", "table", "slots", "roles"}
+            assert f["kind"] in {"text", "lines", "pairs", "choice", "check", "picture", "table", "slots", "roles"}
             if f["kind"] == "choice":
                 assert f["default"] in {o["value"] for o in f["options"]}
     assert seen == set(recipes.BY_ID)
-    # the owner's list (2026-10-23): first set and second set, nothing dropped back in; and the body button
+    # the owner's list (2026-10-23): first set and second set, nothing dropped back in; and the body button; and the
+    # third set (2026-10-28: N1–N12 of the Safe mode proposal, with Accept widened to reject)
     assert seen == {"headers_footers_template", "remove_headers_footers", "watermark", "swap_logo", "font_template",
                     "find_replace", "accept_changes", "remove_comments", "remove_highlight", "remove_hidden_text",
                     "remove_empty_paragraphs", "name_files", "title_property", "track_changes_off", "body_formatting",
-                    "clean_pdf"}
+                    "clean_pdf", "set_font", "page_setup", "issue_stamp", "end_of_section", "nonbreaking_spaces",
+                    "clean_spaces", "quotes_dashes", "remove_hyperlinks", "freeze_fields", "remove_unused_styles",
+                    "author_company", "proofing_language"}
 
 
 def test_tracking_is_offered_only_where_the_operation_can_track_and_is_off_by_default():
     with_check = {r.id for r in recipes.RECIPES if any(f.name == "tracked" for f in r.fields)}
-    assert with_check == {"find_replace", "remove_hidden_text", "remove_empty_paragraphs"}
+    assert with_check == {"find_replace", "remove_hidden_text", "remove_empty_paragraphs", "issue_stamp",
+                          "end_of_section", "nonbreaking_spaces", "clean_spaces", "quotes_dashes"}
     assert recipes.TRACKED.default is False
 
 
@@ -181,6 +187,19 @@ CASES = {
     "title_property": {"pattern": "SECTION {number} - {title}"},
     "track_changes_off": {},
     "font_template": {},
+    "set_font": {"font": "Times New Roman", "size": "11"},
+    "page_setup": {"paper": "letter", "margin_top": "1", "margin_bottom": "1", "margin_left": "1.25",
+                   "margin_right": "1.25", "header_footer": "0.5"},
+    "issue_stamp": {"current": ["ISSUED FOR CONSTRUCTION  2026-01-01"], "text": "ISSUED FOR BID 2026-11-20"},
+    "end_of_section": {"text": "END OF SECTION {number}"},
+    "nonbreaking_spaces": {"units": "psi, gpm", "section_numbers": False},
+    "clean_spaces": {},
+    "quotes_dashes": {"quotes": "curly"},
+    "remove_hyperlinks": {},
+    "freeze_fields": {},
+    "remove_unused_styles": {"which": "all"},
+    "author_company": {"author": "A. Designer", "company": "ACME Engineering"},
+    "proofing_language": {"language": "en-US"},
 }
 
 
@@ -708,3 +727,281 @@ def test_a_sample_a_later_step_refused_is_left_untouched_beside_a_buttons_copies
     assert list(task.results) == [str(a)] and b.read_bytes() == before
     assert [(e["name"], e["reason"]) for e in view["left_untouched"]] == [
         (b.name, "a list defined through a numbering style")]
+
+
+# ---- the third set (2026-10-28): each new button's own rules --------------------------------------------------------
+
+def two_specs(tmp_path):
+    files = []
+    for num, title in (("21 13 13", "WET-PIPE SPRINKLER SYSTEMS"), ("21 13 16", "DRY-PIPE SPRINKLER SYSTEMS")):
+        path = tmp_path / f"{num}.docx"
+        path.write_bytes(build(num, title))
+        files.append(path)
+    return files
+
+
+def created(tmp_path, monkeypatch, files, recipe_id, inputs):
+    """The button pressed, previewed and created with no AI call; each copy by its source's name."""
+    no_ai(monkeypatch)
+    task = DocumentTask(Session(out_root=tmp_path / "out", visual_check=False), render=False, mode="safe")
+    task.attach(files)
+    view = task.perform("recipe", recipe=recipe_id, inputs=inputs)
+    assert view["stage"] == "preview", [m["text"] for m in task.messages]
+    view = task.perform("primary", token=view["token"])
+    assert view["stage"] == "done"
+    for record in task.session.last_batch.files:
+        assert record.status == "PASS"
+    return task, {Path(src).name: DocxPackage.from_path(out) for src, out in task.results.items()}
+
+
+def shown_text(pkg, part):
+    """The text a part shows: its w:t, never a pending deletion's w:delText."""
+    return "".join(t.text or "" for t in pkg.xml(part).iter(W + "t"))
+
+
+def body_paragraphs(pkg):
+    body = pkg.xml(pkg.main_part()).find(W + "body")
+    return [p for p in body if p.tag == W + "p"]
+
+
+def paragraph_text(p):
+    return "".join(t.text or "" for t in p.iter(W + "t"))
+
+
+def simple_doc(path, lines, landscape=False):
+    from docx.enum.section import WD_ORIENT
+    doc = Document()
+    for line in lines:
+        doc.add_paragraph(line)
+    if landscape:
+        sec = doc.sections[0]
+        sec.orientation = WD_ORIENT.LANDSCAPE
+        sec.page_width, sec.page_height = sec.page_height, sec.page_width
+    doc.save(path)
+    return path
+
+
+def test_the_margins_sit_side_by_side_and_a_list_field_is_one_the_panel_renders():
+    fields = {f["name"]: f for f in recipes.BY_ID["page_setup"].to_dict()["fields"]}
+    assert [n for n, f in fields.items() if f.get("row") == "margins"] == [
+        "margin_top", "margin_bottom", "margin_left", "margin_right"]
+    assert all(fields[n]["default"] == "1" for n in ("margin_top", "margin_bottom", "margin_left", "margin_right"))
+    current = recipes.BY_ID["issue_stamp"].to_dict()["fields"][0]
+    assert current["kind"] == "lines" and current["required"] is True
+
+
+def test_the_issue_stamp_is_replaced_wherever_it_reads_as_typed(tmp_path, monkeypatch):
+    files = two_specs(tmp_path)
+    old, new = "ISSUED FOR CONSTRUCTION  2026-01-01", "ISSUED FOR BID 2026-11-20"
+    built, _, errors = built_and_gated("issue_stamp", {"current": [old, "ISSUED FOR PERMIT"], "text": new}, files)
+    assert errors == [] and built.sources == [new] and built.spec["mode"] == "untracked"
+    assert built.spec["ops"][0]["params"]["any_of"] == [old, "ISSUED FOR PERMIT"]
+    _, copies = created(tmp_path, monkeypatch, files, "issue_stamp", {"current": [old], "text": new})
+    for pkg in copies.values():
+        headers = [p for p in pkg.text_parts() if "header" in p]
+        assert any(new in shown_text(pkg, p) for p in headers)
+        assert not any(old in shown_text(pkg, p) for p in pkg.text_parts())
+    for inputs, said in (({"current": [], "text": new}, "Type the stamp as it reads now"),
+                         ({"current": ["  "], "text": new}, "Type the stamp as it reads now"),
+                         ({"current": [old], "text": ""}, "Type the new stamp"),
+                         ({"current": [new], "text": new}, "already reads as the new stamp"),
+                         ({"current": ["issued for bid"], "text": "ISSUED FOR BID"}, "changes only capitals"),
+                         ({"current": [old, old], "text": new}, "listed twice")):
+        with pytest.raises(recipes.RecipeError, match=said):
+            recipes.build("issue_stamp", inputs, recipes.Context(files))
+
+
+def test_end_of_section_ends_each_document_with_its_own_number_like_its_section_line(tmp_path, monkeypatch):
+    files = two_specs(tmp_path)
+    built, _, errors = built_and_gated("end_of_section", {"text": "END OF SECTION {number}"}, files)
+    params = built.spec["ops"][0]["params"]
+    assert errors == [] and built.sources == ["END OF SECTION {number}"]
+    assert params["formatting"] == "copy" and params["number"] == recipes.REFERENCE_FILLS["SECTION_NUMBER"]
+    assert not re.search(params["copy_from_regex"], "Section 230513 Common Motor Requirements")   # a reference
+    assert re.search(params["copy_from_regex"], "SECTION 21 13 13")
+    _, copies = created(tmp_path, monkeypatch, files, "end_of_section", {"text": "END OF SECTION {number}"})
+    for name, pkg in copies.items():
+        pars = [p for p in body_paragraphs(pkg) if paragraph_text(p).strip()]
+        assert paragraph_text(pars[-1]) == f"END OF SECTION {Path(name).stem}"
+        section_line = next(p for p in pars if paragraph_text(p).startswith("SECTION "))
+        ppr = lambda p: etree.tostring(p.find(W + "pPr")) if p.find(W + "pPr") is not None else None  # noqa: E731
+        assert ppr(pars[-1]) == ppr(section_line)
+        # pressed again on the copy: the line is recognized and nothing more is added
+        again, _ = plan_spec(pkg, built.spec)
+        assert [a["expected_case"] for a in again.property_assertions if a["kind"] == "end_of_section"] == ["none"]
+    # the line, in any capitals, is the one the operation recognizes by its default: a second press changes nothing
+    from spec_surgeon.ops.end_of_section import DEFAULT_DETECT
+    assert re.search(DEFAULT_DETECT, "End of Section 21 13 13") and recipes.END_LINE.match("end of section {number}")
+    plain, _, errors = built_and_gated("end_of_section", {"text": "END OF SECTION {number}", "look": "plain"}, files)
+    assert errors == [] and "formatting" not in plain.spec["ops"][0]["params"]
+    # a line in other words would not be recognized in a document that already ends with it: a second one each press
+    for text, said in (("END OF SECTION", "needs {number} once"), ("{number} END {number}", "needs {number} once"),
+                       ("END OF {title} {number}", "Only {number}"), ("END OF {number}", "starts with END OF SECTION"),
+                       ("SECTION {number} ENDS", "starts with END OF SECTION")):
+        with pytest.raises(recipes.RecipeError, match=re.escape(said)):
+            recipes.build("end_of_section", {"text": text}, recipes.Context(files))
+
+
+def test_page_size_and_margins_leave_a_landscape_document_untouched_unless_only_margins_change(tmp_path, monkeypatch):
+    files = two_specs(tmp_path)
+    wide = simple_doc(tmp_path / "21 05 00 schedule.docx", ["SECTION 21 05 00", "SCHEDULE"], landscape=True)
+    inputs = {"paper": "letter", "margin_top": "1", "margin_bottom": "1", "margin_left": "1.25",
+              "margin_right": '1.25"', "header_footer": "0.5 in"}
+    built = recipes.build("page_setup", inputs, recipes.Context([*files, wide]))
+    params = built.spec["ops"][0]["params"]
+    assert params == {"size": {"w": 12240, "h": 15840},
+                      "margins": {"top": 1440, "bottom": 1440, "left": 1800, "right": 1800, "header": 720,
+                                  "footer": 720}}
+    assert list(built.left_out) == [str(wide.resolve())] and "landscape" in built.left_out[str(wide.resolve())]
+    assert built.request == ("Set the paper to Letter (8.5 × 11 in) and the margins to 1 in top, 1 in bottom, 1.25 in "
+                             "left and 1.25 in right")
+    no_ai(monkeypatch)
+    task = DocumentTask(Session(out_root=tmp_path / "out", visual_check=False), render=False, mode="safe")
+    task.attach([*files, wide])
+    view = task.perform("recipe", recipe="page_setup", inputs=inputs)
+    view = task.perform("primary", token=view["token"])
+    assert view["stage"] == "done" and len(task.results) == 2
+    assert [e["name"] for e in view["left_untouched"]] == [wide.name]
+    for out in task.results.values():
+        pkg = DocxPackage.from_path(out)
+        for sp in DocxPackage.sect_prs(pkg.xml(pkg.main_part())):
+            assert sp.find(W + "pgSz").get(W + "w") == "12240" and sp.find(W + "pgMar").get(W + "left") == "1800"
+            assert sp.find(W + "pgMar").get(W + "header") == "720"
+    # margins alone go on every document, landscape pages included
+    margins_only = recipes.build("page_setup", {**inputs, "paper": "keep", "header_footer": ""},
+                                 recipes.Context([*files, wide]))
+    assert margins_only.left_out == {} and "size" not in margins_only.spec["ops"][0]["params"]
+    assert "header" not in margins_only.spec["ops"][0]["params"]["margins"]
+    # every document landscape: nothing to preview, each one's reason
+    alone = recipes.build("page_setup", inputs, recipes.Context([wide]))
+    assert alone.gated and alone.outcome is None and list(alone.left_out) == [str(wide.resolve())]
+    for value, said in (("one", "number of inches"), ("30", "more than 22 inches"), ("", "Type the top margin")):
+        with pytest.raises(recipes.RecipeError, match=said):
+            recipes.build("page_setup", {**inputs, "margin_top": value}, recipes.Context(files))
+
+
+def test_change_font_needs_no_template_and_sizes_by_each_documents_own_body_size(tmp_path):
+    nine, eleven, _ = font_fixtures(tmp_path)
+    keep = recipes.build("set_font", {"font": "Arial", "size": "keep"}, recipes.Context([nine, eleven]))
+    assert not keep.gated and keep.request == "Set the font to Arial"
+    assert all("size" not in o["params"] for o in keep.spec["ops"])
+    assert keep.spec["assumptions"][0] == "the font you chose is Arial"
+    sized = recipes.build("set_font", {"font": "Arial", "size": "10"}, recipes.Context([nine, eleven]))
+    assert sized.gated and sized.request == "Set the font to Arial 10 pt"
+    plan = sized.outcome
+    assert len(plan["layouts"]) == 2 and plan["assumptions"][0] == "the font you chose is Arial 10 pt"
+    assert sorted(o["params"]["size_from"][0] for layout in plan["layouts"]
+                  for o in layout["spec"]["ops"][:1]) == [9.0, 11.0]
+    one = recipes.build("set_font", {"font": "Arial", "size": "10"}, recipes.Context([eleven]))
+    assert [o["params"]["size_from"] for o in one.spec["ops"]] == [[11.0]] * 3
+    for font, said in (("", "Type the font"), ("Arial; Wingdings", "a font's name"), ("A" * 40, "longer than 31")):
+        with pytest.raises(recipes.RecipeError, match=said):
+            recipes.build("set_font", {"font": font, "size": "10"}, recipes.Context([eleven]))
+
+
+def test_reject_all_tracked_changes_takes_the_insertions_out_and_brings_the_deletions_back(tmp_path, monkeypatch):
+    files = two_specs(tmp_path)
+    built, _, errors = built_and_gated("accept_changes", {"action": "reject"}, files)
+    assert errors == [] and built.request == "Reject all tracked changes"
+    assert built.spec["ops"][0]["params"] == {"action": "reject"}
+    assert recipes.build("accept_changes", {}, recipes.Context(files)).request == "Accept all tracked changes"
+    _, copies = created(tmp_path, monkeypatch, files, "accept_changes", {"action": "reject"})
+    for pkg in copies.values():
+        body = shown_text(pkg, pkg.main_part())
+        assert "black steel Schedule 40" in body and "UL listed" not in body
+        assert next(pkg.xml(pkg.main_part()).iter(W + "ins"), None) is None
+
+
+def test_numbers_keep_their_units_on_one_line_and_only_unit_symbols_are_taken(tmp_path, monkeypatch):
+    doc = simple_doc(tmp_path / "21 13 13.docx", ["SECTION 21 13 13", "WET-PIPE SPRINKLER SYSTEMS",
+                                                  "Test the piping at 200 psi for 2 hours.",
+                                                  "Coordinate with Section 21 05 00."])
+    _, copies = created(tmp_path, monkeypatch, [doc], "nonbreaking_spaces", {"units": "psi, gpm"})
+    body = shown_text(copies[doc.name], copies[doc.name].main_part())
+    assert "200 psi" in body and "21 13 13" in body and "21 05 00" in body
+    built = recipes.build("nonbreaking_spaces", {"units": " psi, gpm,, °F , psi"}, recipes.Context([doc]))
+    assert built.spec["ops"][0]["params"]["units"] == ["psi", "gpm", "°F"]
+    assert built.request == "Keep numbers with psi, gpm and °F, and the parts of section numbers (21 13 13), on one line"
+    for inputs, said in (({"units": "psi!"}, "not a unit symbol"), ({"units": "", "section_numbers": False},
+                                                                    "at least one unit")):
+        with pytest.raises(recipes.RecipeError, match=said):
+            recipes.build("nonbreaking_spaces", inputs, recipes.Context([doc]))
+
+
+def test_spaces_quotes_and_dashes_are_cleaned_as_chosen(tmp_path, monkeypatch):
+    doc = simple_doc(tmp_path / "21 13 13.docx", ["SECTION 21 13 13", "WET-PIPE SPRINKLER SYSTEMS",
+                                                  "The Owner’s  “insurer” -- FM Global.  "])
+    _, copies = created(tmp_path, monkeypatch, [doc], "clean_spaces", {})
+    assert "The Owner’s “insurer” -- FM Global." in shown_text(copies[doc.name], "word/document.xml")
+    _, copies = created(tmp_path / "2", monkeypatch, [doc], "quotes_dashes", {"quotes": "straight", "dash": "en"})
+    assert "The Owner's  \"insurer\" – FM Global." in shown_text(copies[doc.name], "word/document.xml")
+    with pytest.raises(recipes.RecipeError, match="at least one change"):
+        recipes.build("quotes_dashes", {"quotes": "keep"}, recipes.Context([doc]))
+
+
+def test_fields_freeze_as_plain_text_and_page_numbers_never_do(tmp_path, monkeypatch):
+    files = two_specs(tmp_path)
+    built, _, errors = built_and_gated("freeze_fields", {"which": "references"}, files)
+    assert errors == [] and built.spec["ops"][0]["params"]["types"] == ["REF", "NOTEREF"]
+    _, copies = created(tmp_path, monkeypatch, files, "freeze_fields", {})
+    for pkg in copies.values():
+        codes = " ".join(t.text or "" for part in pkg.text_parts() for t in pkg.xml(part).iter(W + "instrText"))
+        assert "PAGE" in codes and "REF" not in codes
+
+
+def test_author_and_company_are_the_users_words_and_author_names_can_be_cleared(tmp_path, monkeypatch):
+    files = two_specs(tmp_path)
+    inputs = {"author": "A. Designer", "company": "ACME Engineering", "subject": ""}
+    built, _, errors = built_and_gated("author_company", inputs, files)
+    assert errors == [] and built.sources == ["A. Designer", "ACME Engineering"]
+    assert built.spec["ops"][0]["params"] == {"set": {"author": "A. Designer", "company": "ACME Engineering"}}
+    assert built.request == "Set Author to “A. Designer” and Company to “ACME Engineering”"
+    _, copies = created(tmp_path, monkeypatch, files, "author_company", inputs)
+    for pkg in copies.values():
+        assert b"A. Designer" in pkg.read("docProps/core.xml") and b"ACME Engineering" in pkg.read("docProps/app.xml")
+    cleared = recipes.build("author_company", {"company": "ACME", "clear_authors": True}, recipes.Context(files))
+    assert cleared.spec["ops"][0]["params"]["clear"] == ["author", "last_modified_by"]
+    assert cleared.request == "Set Company to “ACME” and clear the author names"
+    for inputs, said in (({"author": "A", "clear_authors": True}, "not both"), ({}, "Type an author")):
+        with pytest.raises(recipes.RecipeError, match=said):
+            recipes.build("author_company", inputs, recipes.Context(files))
+
+
+def test_the_proofing_language_changes_every_language_or_only_other_english(tmp_path):
+    files = two_specs(tmp_path)
+    built = recipes.build("proofing_language", {"language": "en-US", "only": "english"}, recipes.Context(files))
+    params = built.spec["ops"][0]["params"]
+    assert params["language"] == "en-US" and "en-GB" in params["replace_only"] and "en-US" not in params["replace_only"]
+    every = recipes.build("proofing_language", {}, recipes.Context(files))
+    assert every.spec["ops"][0]["params"] == {"language": "en-US"}
+    with pytest.raises(recipes.RecipeError, match="choose one"):
+        recipes.build("proofing_language", {"language": "fr-CA", "only": "english"}, recipes.Context(files))
+
+
+def test_links_and_unused_styles_follow_the_form(tmp_path):
+    files = two_specs(tmp_path)
+    links = recipes.build("remove_hyperlinks", {"which": "all", "keep_style": True}, recipes.Context(files))
+    assert links.spec["ops"][0]["params"] == {"which": "all", "keep_style": True}
+    styles = recipes.build("remove_unused_styles", {"keep": "CMT, SpecifierNote, CMT"}, recipes.Context(files))
+    assert styles.spec["ops"][0]["params"] == {"which": "custom", "keep": ["CMT", "SpecifierNote"]}
+    assert styles.request == "Remove the unused styles, keeping “CMT” and “SpecifierNote”"
+
+
+def test_the_safe_mode_note_folds_and_the_window_remembers_it(tmp_path, monkeypatch):
+    """The note above Safe mode's buttons (what Safe mode is, and Default mode with an API key for more): Hide folds it
+    to one line and "What is Safe mode?" opens it; the choice is kept in settings.json and carried by every view."""
+    from fastapi.testclient import TestClient
+    from spec_surgeon.web.server import TOKEN_HEADER, WindowState, create_app
+    from test_web_server import TOKEN, FakeUpdates
+    monkeypatch.setenv("SPEC_SURGEON_CONFIG_DIR", str(tmp_path / "config"))
+    task = DocumentTask(Session(out_root=tmp_path / "out", visual_check=False), render=False, mode="safe")
+    state = WindowState(task, Settings(), token=TOKEN, updates=FakeUpdates(), version="1.6.0")
+    client = TestClient(create_app(state), headers={TOKEN_HEADER: TOKEN})
+    assert Settings().safe_note_hidden is False
+    assert client.get("/api/state").json()["safe_note_hidden"] is False
+    assert client.get("/api/settings").json()["safe_note_hidden"] is False
+    assert client.post("/api/settings", json={"safe_note_hidden": True}).json()["safe_note_hidden"] is True
+    assert load_settings().safe_note_hidden is True and client.get("/api/state").json()["safe_note_hidden"] is True
+    assert client.post("/api/settings", json={"safe_note_hidden": "yes"}).status_code == 400
+    assert client.post("/api/settings", json={"safe_note_hidden": False}).json()["safe_note_hidden"] is False
+    assert load_settings().safe_note_hidden is False

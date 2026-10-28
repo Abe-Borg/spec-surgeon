@@ -17,6 +17,21 @@ them was built; `git log --all -- 'docs/PLAN-*'` finds them, with their findings
 | S4 — what a run left open | Over test-set-2 (13 specifications, eight owners): the reference rules find no section number in seven of them (VA, Wisconsin, Port of Portland, Michigan layouts); a chain preview repeats the spec's summary and assumptions for each step; after an outcome-planner question the next reply still goes to that planner, not the assistant (seen again over test-set-3) | Reference rules for those layouts; a chain preview that says its summary once; the reply after an outcome-planner question goes back to the assistant |
 | Font button: documents built alike at two body sizes | **Match font to template** plans per body size (one layout per size, `recipes._font_layouts`), and a layout routes by structure pattern (`layouts.route`): two documents of one pattern whose body sizes differ cannot take two sizes in one press, so the size most of them have wins and the rest wait under Left untouched with the reason, to be pressed alone | A layout that names its documents beside its patterns (`validate_layout_plan`, `route`, the `applies_to` pin and the approval token), so one press covers them — only if the owner's runs meet the case |
 
+### Safe mode, the second round of buttons (M1–M3)
+
+The owner's go-ahead of 2026-10-28 built the Safe mode proposal's first round (twelve buttons, Reject beside Accept,
+and the note above the buttons). These three were proposed with it and need their forms designed before they are
+built; each is an operation the engine already has and verifies, so each is a recipe in `recipes.py`, its form, its
+sentence and its tests, never a new operation. Every rule of the first round holds: built in code from the form, the
+one gate, no AI call, every placed word typed or read from an attached file, a capability and a tour step for any new
+control, the trust surfaces in the same change.
+
+| Item | Operation | What to design |
+| --- | --- | --- |
+| M1 — Fill in project information | `fill_variables` | The form lists the placeholders found across the attached documents (`{{NAME}}` markers and yellow highlights), a box for each, as the template button lists a prepared template's `typed_slots`; that needs a reading step over the documents (not the template) carried by the view, like `template_kind`. Or an attached table (CSV or Excel: the names column and this project's column, chosen in the form). A placeholder with no value refuses the document (`unknown: refuse`), never left half-filled. Typed values are the sources (`compiler.placed_words` already traces `fill_variables` values) |
+| M2 — Remove specifier notes | `remove_notes` | Notes found by what the owner's masters use: the note style picked from the paragraph styles found in the documents (a field like `roles`, over the documents' styles), the opening words (Retain, Delete, Revise, Coordinate, Verify, Insert …) as a pattern the app builds from escaped literals (`ops/patterns.compile_pattern`), their colour, or Hidden. The preset words are checked on the owner's masters first, so no requirement that starts with one of them is taken; the preview's text changes and the verifier's `remove_notes` kind are the proof |
+| M3 — Make section numbers agree | `make_values_agree` | The SECTION line is the truth (`REFERENCE_FILLS["SECTION_NUMBER"]`); the places are the headers, the footers, the END OF SECTION line and the file name, each with a fixed pattern the app writes. Waits on S4: the reference rules miss the section number in some layouts, and a button that cannot read the truth sets those documents aside |
+
 ### Word as the judge of tracked changes (W1–W4)
 
 Real Word checks the revisions the engine writes and the redlines it reads, as Build-a-Spec does (its own
@@ -133,6 +148,19 @@ specifications, Windows and Word, and only the owner can do them. Record what a 
   `settings.json`; the process killed mid-session and the next start restoring the conversation and its copies from
   the scratch folder, then sweeping it at that window's clean close; a copy left open in Word at the close and the
   remainder swept at the next start.
+- **Safe mode's third set and the note (built 2026-10-28):** a real specification folder with Word rendering through
+  each new button: *Change font* (Arial 10 pt, then Keep each document's sizes: headings and notes keep theirs); *Page
+  size and margins* over a folder with a landscape schedule (that document waits under Left untouched with the
+  reason, the others take Letter and 1 in margins; Keep each document's own paper takes the margins on every one);
+  *Change the issue stamp* (ISSUED FOR BID and ISSUED FOR PERMIT to ISSUED FOR CONSTRUCTION with a date, on covers,
+  headers and footers); *Add END OF SECTION where missing* over MasterSpec and office masters (a missing line added
+  like the SECTION line, an "END OF SECTION" without its number corrected, a document whose SECTION line is not
+  found waiting with the reason); *Keep numbers with their units*, *Clean up spaces*, *Standardize quotes and dashes*,
+  *Remove hyperlinks*, *Freeze fields as plain text* (a table of contents sets its document aside), *Remove unused
+  styles*, *Accept or reject all tracked changes* with Reject, *Set author and company* (and Clear the author names),
+  *Set proofing language*. The copies open in Word without a repair prompt and read as asked. The note: it reads
+  well at 1280 px wide, **Hide** folds it and it stays folded after a restart, **What is Safe mode?** opens it, **Add
+  a Claude API key** opens Settings, **Switch to Default mode** switches.
 - **Safe mode:** a real mixed batch (several projects, good and badly built files) through each button with Word
   rendering. Match body formatting to template over office masters, MasterSpec ("1.01", "PART 1 –") and
   Heading-styled files. Record the Left untouched reasons. The copies open in Word without a repair prompt. Then
