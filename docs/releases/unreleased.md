@@ -82,3 +82,16 @@ Changes since v1.12.0.
   those distances. Before, the page-layout check always measured the headers and footers against the template's
   distances, so every such copy was held although it was exactly as asked, and the app spent its calls repairing
   correct copies. A copy whose distances moved anyway, though the request kept them, still fails the check.
+
+## The stress test's follow-ups: parts no check reads, page counts, refused calls
+
+- In Obliterate mode, a custom method's copy that changes a part of the Word file no check reads (a chart, an embedded
+  file, stored data behind a content control, the theme) fails a check of its own, **UNREAD**, naming those parts, and
+  is delivered marked UNVERIFIED. Before, such a copy passed every check although nothing had looked at what those
+  parts now hold. Claude hears the failure and may keep it with a reason you read beside each copy, as with any other
+  failed check in that mode. Safe and Default mode are unchanged: a custom method there may not touch those parts.
+- Claude's visual check is told how many pages each sample has and which of them it is shown, so it no longer says a
+  page "was not rendered" when it was rendered and simply not shown to it.
+- A call Anthropic refuses for its key or its permission (an "unauthorized" answer) no longer counts its largest
+  possible cost as spent: no model ran, and nothing is billed. Before, a few such answers could show several dollars
+  spent and trip the spending check. Every other failed call still keeps its estimate.
