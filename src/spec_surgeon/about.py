@@ -91,6 +91,8 @@ THIRD_PARTY: List[Tuple[str, str, str]] = [
     ("React", "MIT", "https://github.com/facebook/react/blob/main/LICENSE"),
     ("Tailwind CSS", "MIT", "https://github.com/tailwindlabs/tailwindcss/blob/main/LICENSE"),
     ("lxml", "BSD-3-Clause", "https://github.com/lxml/lxml/blob/master/LICENSE.txt"),
+    ("regex (bounded pattern searches)", "Apache-2.0; the parts derived from CPython's re under the CNRI Python license",
+     "https://github.com/mrabarnett/mrab-regex/blob/hg/LICENSE.txt"),
     ("PyMuPDF and MuPDF (Artifex Software)", AGPL_SPDX, "https://github.com/pymupdf/PyMuPDF/blob/main/COPYING"),
     ("Anthropic Python SDK", "MIT", "https://github.com/anthropics/anthropic-sdk-python/blob/main/LICENSE"),
     ("pywin32", "PSF-style license", "https://github.com/mhammond/pywin32"),

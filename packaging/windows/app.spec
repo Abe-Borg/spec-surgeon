@@ -53,6 +53,7 @@ datas += pdf_datas
 binaries = list(pdf_binaries)
 hiddenimports = pdf_imports + collect_submodules("anthropic")
 hiddenimports += ["pythoncom", "pywintypes", "win32com.client", "win32cred", "win32gui", "win32timezone",
+                  "regex", "regex._regex", "regex._regex_core",       # bounded pattern searches (ops/patterns.py)
                   "spec_surgeon.sandbox_runner", "spec_surgeon.analysis_runner",
                   "spec_surgeon.web.server", "spec_surgeon.web.shell", "spec_surgeon.web.updates",
                   "spec_surgeon.web.watch"]

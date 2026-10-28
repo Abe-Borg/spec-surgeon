@@ -18,7 +18,6 @@ The verifier derives all of it again (verify/textops.py, kind ``agreed_values``)
 """
 from __future__ import annotations
 
-import re
 from pathlib import PureWindowsPath
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -27,12 +26,16 @@ from ..package import DocxPackage
 from . import prose, register
 from .base import JobException, Op, PlanFragment
 from .naming import OUTPUT_NAME_TOUCH, check_name, with_suffix
+from .patterns import compile_pattern
 from .replace_table import default_author, tracked_of
 from .selectors import scope_parts
 from .slots import field_runs, value_tokens
 from .textedit import Edit, RunText, apply_part_edits, edits_to_data, nearest_p, plan_paragraph, shown
 
 WHERE = ("document", "headers", "footers", "filename")
+# what each place's pattern is searched on (the words of a refusal for a pattern that runs past its deadline)
+PLACE_TEXT = {"document": "a body paragraph's text", "headers": "a header paragraph's text",
+              "footers": "a footer paragraph's text", "filename": "the file name"}
 
 
 def agree(a: str, b: str) -> bool:
@@ -64,10 +67,7 @@ def compile_places(raw: Any) -> Dict[str, Tuple[str, Any, bool]]:
     for name, place in raw.items():
         if not isinstance(place, dict) or set(place) - {"in", "pattern", "required"} or place.get("in") not in WHERE:
             raise JobException(f"place {name!r} must be {{in: {'|'.join(WHERE)}, pattern, required?}}", "bad-params")
-        try:
-            rx = re.compile(place.get("pattern") or "")
-        except re.error as e:
-            raise JobException(f"place {name!r}: bad pattern ({e})", "bad-params")
+        rx = compile_pattern(place.get("pattern") or "", where=PLACE_TEXT[place["in"]], label=f"place {name!r}")
         if not rx.groupindex:
             raise JobException(f"place {name!r}: the pattern names no value (use (?P<number>…) / (?P<title>…))",
                                "bad-params")
@@ -242,8 +242,8 @@ class MakeValuesAgree(Op):
         values = [str(v) for v in params["values"]] if isinstance(params.get("values"), list) else []
         if not values and truth is not None and isinstance(places[truth], dict):
             try:
-                values = sorted(re.compile(places[truth].get("pattern") or "").groupindex)
-            except (re.error, TypeError):
+                values = sorted(compile_pattern(places[truth].get("pattern") or "", where="a place").groupindex)
+            except JobException:
                 values = []
         has_name = any(isinstance(p, dict) and p.get("in") == "filename" for p in places.values())
         if bool(params.get("tracked", True)):

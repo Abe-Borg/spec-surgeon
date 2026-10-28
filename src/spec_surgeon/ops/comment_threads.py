@@ -38,7 +38,6 @@ from __future__ import annotations
 
 import copy
 import posixpath
-import re
 from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 
 from lxml import etree
@@ -47,6 +46,7 @@ from ..ooxml import XML_SPACE, block_full_text, block_struct_counts, paragraphs
 from ..package import W, DocxPackage, serialize_xml
 from . import prose, register
 from .base import BlockDiff, JobException, Op, PlanFragment
+from .patterns import compile_pattern
 from .comments import (EXTENDED_REL, MARK_TAGS, W14, W15, W16CEX, W16CID, Comment, CommentBook, in_text_box,
                        norm_author, reference_run)
 from .textedit import nearest_p
@@ -81,10 +81,7 @@ def read_which(params: Dict[str, Any]) -> Tuple[str, List[str], Optional[Any]]:
     if pattern is not None:
         if not isinstance(pattern, str) or not pattern:
             raise JobException("'text_regex' must be a pattern", "bad-params")
-        try:
-            rx = re.compile(pattern)
-        except re.error as e:
-            raise JobException(f"'text_regex' is not a pattern: {e}", "bad-params")
+        rx = compile_pattern(pattern, where="a comment's text")
     return which, list(authors or []), rx
 
 

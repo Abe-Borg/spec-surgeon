@@ -16,6 +16,7 @@ from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 from lxml import etree
 
 from .reader import W
+from .patterns import V_MAX_PATTERN_CHARS, v_compile, v_search
 from .props import Ctx, _v_inherit_ppr, _v_inherit_rpr, para_matches, sig
 from .template import _v_field_runs, display_of, fill_value, slots_of
 from .edits import (check_deleted_paragraph, check_edited_paragraph, part_revision_ids, ppr_norm, v_deletable,
@@ -72,7 +73,8 @@ def _v_flexible(find: str) -> str:
 def _v_rx(pair: Dict[str, Any]):
     src = pair["find"] if pair["regex"] else (_v_flexible(pair["find"]) if pair["flexible_whitespace"]
                                               else re.escape(pair["find"]))
-    return re.compile(src, 0 if pair["match_case"] else re.IGNORECASE)
+    return v_compile(src, 0 if pair["match_case"] else re.IGNORECASE, where="a paragraph's text",
+                     max_chars=V_MAX_PATTERN_CHARS if pair["regex"] else None)     # a literal find is as long as its words
 
 
 def _v_word(c: str) -> bool:
@@ -356,7 +358,8 @@ def _v_groups(text: str) -> List[Tuple[int, int, List[Tuple[int, int]], int]]:
 
 def _v_resolve(text: str, rules: Sequence[Dict[str, Any]]) -> List[Tuple[int, int]]:
     """The deletions every group's deciding rule asks for; ValueError where the op must refuse."""
-    rxs = [(re.compile(r["match"], 0 if r.get("match_case") else re.IGNORECASE), r["action"]) for r in rules]
+    rxs = [(v_compile(r["match"], 0 if r.get("match_case") else re.IGNORECASE, where="an option's text"), r["action"])
+           for r in rules]
     dels: List[Tuple[int, int]] = []
     for start, end, opts, depth in _v_groups(text):
         for rx, action in rxs:
@@ -402,7 +405,7 @@ def _resolved_options(ctx: Ctx, a: Dict[str, Any], errs: List[str]) -> str:
             where = f"resolved_options {part} block {bi}"
             try:
                 dels = _v_resolve(v_paragraph_text(p), rules)
-            except (ValueError, re.error) as e:
+            except ValueError as e:
                 errs.append(f"{where}: {e} — the op must refuse")
                 continue
             if not dels:
@@ -430,9 +433,9 @@ def _v_system(s: str) -> str:
 
 def _tagged_paragraphs(ctx: Ctx, a: Dict[str, Any], errs: List[str]) -> str:
     try:
-        rx = re.compile(a["tag_regex"])
-        sep = re.compile(a.get("tag_separator") or r"\s*[/,;]\s*")
-    except (KeyError, re.error) as e:
+        rx = v_compile(a["tag_regex"], where="a paragraph's text")
+        sep = v_compile(a.get("tag_separator") or r"\s*[/,;]\s*", where="a tag")
+    except (KeyError, ValueError) as e:
         errs.append(f"tagged_paragraphs: {e}")
         return "tagged_paragraphs: bad rule"
     keep = {_v_system(s) for s in a.get("keep") or []}
@@ -538,7 +541,7 @@ def _end_of_section(ctx: Ctx, a: Dict[str, Any], errs: List[str]) -> str:
     main = ctx.src.main_part()
     try:
         number = usable_text(fill_value(ctx.src, "number", a.get("number") or {}))
-    except (ValueError, KeyError, re.error) as e:
+    except (ValueError, KeyError) as e:
         errs.append(f"end_of_section: the number cannot be extracted here ({e})")
         return "end_of_section: no number"
     line = (a.get("text") or "").replace("{number}", number)
@@ -548,7 +551,7 @@ def _end_of_section(ctx: Ctx, a: Dict[str, Any], errs: List[str]) -> str:
     body = sv.root.find(W + "body")
     kids = [c for c in body if isinstance(c.tag, str) and c.tag != W + "sectPr"]
     last = next((c for c in reversed(kids) if not _v_empty_p(c)), None)
-    detect = re.compile(a.get("detect_regex") or r"(?i)^\s*END\s+OF\s+SECTION\b")
+    detect = v_compile(a.get("detect_regex") or r"(?i)^\s*END\s+OF\s+SECTION\b", where="a body paragraph's text")
     tracked, author = bool(a.get("tracked", True)), a.get("author")
     old_ids = part_revision_ids(sv.root)
     if last is None:
@@ -588,8 +591,9 @@ def _end_of_section(ctx: Ctx, a: Dict[str, Any], errs: List[str]) -> str:
         if v_paragraph_text(new) != line:
             errs.append(f"{where}: reads {v_paragraph_text(new)!r}, expected {line!r}")
         if a.get("formatting") == "copy":
-            hits = [p for p in sv.pars if p.getparent() is body and re.search(a.get("copy_from_regex") or "(?!)",
-                                                                             v_paragraph_text(p))]
+            hits = [p for p in sv.pars if p.getparent() is body and v_search(a.get("copy_from_regex") or "(?!)",
+                                                                            v_paragraph_text(p),
+                                                                            where="a body paragraph's text")]
             if len(hits) != 1:
                 errs.append(f"{where}: copy_from_regex matches {len(hits)} paragraph(s) here — the op must refuse")
                 return "end_of_section: insert"
@@ -675,7 +679,7 @@ def _output_name(ctx: Ctx, a: Dict[str, Any], errs: List[str]) -> str:
     for k, rule in (a.get("values") or {}).items():
         try:
             got[k] = _v_transformed(fill_value(ctx.src, k, rule), (a.get("transforms") or {}).get(k, "as_is"))
-        except (ValueError, KeyError, re.error) as e:
+        except (ValueError, KeyError) as e:
             errs.append(f"output_name: {k} cannot be extracted here ({e})")
             return "output_name"
     pattern = a.get("pattern") or ""
@@ -711,8 +715,9 @@ def _v_agree(x: str, y: str) -> bool:
 
 def _agreed_values(ctx: Ctx, a: Dict[str, Any], errs: List[str]) -> str:
     try:
-        places = {k: (v["in"], re.compile(v["pattern"]), bool(v.get("required"))) for k, v in a["places"].items()}
-    except (KeyError, TypeError, re.error) as e:
+        places = {k: (v["in"], v_compile(v["pattern"], where="a place's text"), bool(v.get("required")))
+                  for k, v in a["places"].items()}
+    except (KeyError, TypeError, ValueError) as e:
         errs.append(f"agreed_values: {e}")
         return "agreed_values"
     truth, names = a.get("truth"), list(a.get("values") or [])

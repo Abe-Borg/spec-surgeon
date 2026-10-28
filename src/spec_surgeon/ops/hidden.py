@@ -50,13 +50,13 @@ Both ops list every removed piece as a flag (part, paragraph, the words) — the
 """
 from __future__ import annotations
 
-import re
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from ..ooxml import RevisionStamp, file_uses_date_utc, max_revision_id, paragraphs
 from ..package import DocxPackage, W
 from . import prose, register
 from .base import JobException, Op, PlanFragment
+from .patterns import compile_pattern
 from .deletion import last_section_keep
 from .fields import fields_of
 from .markup import Look, color_in, color_names, valid_color
@@ -630,10 +630,7 @@ def _rule(raw: Any, where: str, keys: Sequence[str]) -> Dict[str, Any]:
         out["style_in"] = list(v)
     if "text_regex" in raw:
         v = raw["text_regex"]
-        try:
-            re.compile(v)
-        except (re.error, TypeError) as e:
-            raise JobException(f"{where}: bad text_regex {v!r} ({e})", "bad-params")
+        compile_pattern(v, where="a paragraph's text", label=f"{where}: text_regex")
         if not v:
             raise JobException(f"{where}: text_regex is empty", "bad-params")
         out["text_regex"] = v
@@ -760,7 +757,8 @@ class RemoveNotes(_Removing):
     def _matches(rule, p, content, look, sheet, where) -> bool:
         if "style_in" in rule and sheet.paragraph_style_id(p) not in rule["style_in"]:
             return False
-        if "text_regex" in rule and re.search(rule["text_regex"], RunText(p).text) is None:
+        if "text_regex" in rule and compile_pattern(rule["text_regex"], where="a paragraph's text").search(
+                RunText(p).text) is None:
             return False
         if "color_in" in rule:
             wanted = color_names(rule["color_in"])

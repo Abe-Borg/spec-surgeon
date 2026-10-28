@@ -787,6 +787,12 @@ SELECTOR_GRAMMAR = {
     "styles": "'all' | 'all-paragraph-and-character' | {ids: [...]} | {types: [...]}",
     "symbol_runs": "never changed by font ops: a run whose explicit font (direct, character style or paragraph "
                    "style) is a symbol font, or that holds a w:sym",
+    "patterns": "every pattern (text_regex, after_heading_regex, start_regex/end_regex, first_row_regex, header_regex, "
+                "name_regex, a fill's pattern or anchor_regex, tag_regex, tag_separator, detect_regex, copy_from_regex, "
+                "a place's pattern, a rule's match, a find with regex true) is a Python regular expression of at most "
+                "1000 characters, searched with a two-second deadline: a pattern that takes more than two seconds on "
+                "one paragraph sets the file aside (regex-timeout) — keep patterns simple: anchored words and short "
+                "character classes, no nested repeats",
 }
 
 

@@ -147,6 +147,8 @@ def expected() -> dict:
         "obliterateCheckRounds": const("codegen.py", "UNGUARDED_CHECK_ROUNDS"),
         "analysisSeconds": const("resources.py", "DEFAULT_ANALYSIS_SECONDS"),
         "analysisMemoryMB": const("resources.py", "DEFAULT_ANALYSIS_MEMORY_MB"),
+        "regexTimeoutSeconds": const("ops/patterns.py", "REGEX_TIMEOUT_S"),
+        "maxPatternChars": const("ops/patterns.py", "MAX_PATTERN_CHARS"),
         "maxTableOrPictureMB": const("inputs.py", "MAX_BYTES") // MIB,
         "maxDocxMB": class_const("package_limits.py", "ArchiveLimits", "max_archive_bytes") // MIB,
         "wordTimeoutSeconds": int(const("render/word_worker.py", "DEFAULT_TIMEOUT")),
@@ -196,6 +198,9 @@ def test_secondary_sources_agree():
     assert re.search(r"export const BEAT_MS = 10_000;", beat) and f["pageBeatSeconds"] == 10
     assert f'os.environ.get("{f["noUpdateCheckEnv"]}")' in source("gui.py"), "gui.main's own check of the off switch"
     assert "MAX_ITER = DEFAULT_MAX_ATTEMPTS" in source("codegen.py"), "a custom method's attempts"
+    # the checker's own deadline and length limit, written independently, are the same numbers
+    assert const("verify/patterns.py", "V_REGEX_TIMEOUT_S") == f["regexTimeoutSeconds"]
+    assert const("verify/patterns.py", "V_MAX_PATTERN_CHARS") == f["maxPatternChars"]
     vp = re.search(r'"pages": \{"type": "array", "items": \{"type": "integer", "minimum": 1\}, "maxItems": (\d+)\}',
                    source("compiler.py"))
     assert vp and int(vp.group(1)) == f["viewPagesPerCall"], "view_pages' schema says the same page count"
@@ -265,7 +270,7 @@ def test_the_ledger_covers_the_facts_and_the_rule():
     assert "The trust surfaces are a contract" in claude
     for key in ("DEFAULT_SPENDING_LIMIT_USD", "AUTO_STEPS", "CHECK_INTERVAL", "SANDBOX_TIMEOUT", "DEFAULT_MEMORY_MB",
                 "MAX_CASES", "STOPPED_OUTPUT_RATE", "RETRY_DELAYS", "CONVERSATION_EFFORT", "RECOVERY_EFFORT",
-                "CODEGEN_EFFORT", "UNGUARDED_CHECK_ROUNDS", "STREAMED_TOOLS"):
+                "CODEGEN_EFFORT", "UNGUARDED_CHECK_ROUNDS", "STREAMED_TOOLS", "REGEX_TIMEOUT_S", "MAX_PATTERN_CHARS"):
         assert key in ledger, f"the ledger names no source for {key}"
 
 

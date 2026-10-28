@@ -35,9 +35,12 @@ from ..ooxml import paragraphs
 from ..package import CT_PART, REL, DocxPackage
 from . import prose, register
 from .base import JobException, Op, PlanFragment
+from .patterns import compile_pattern
 from .images import CONTENT_TYPES, FITS, check_unchanged, file_md5, fitted, image_params
 from .replace_table import resolve_scope
 from .selectors import scope_parts
+
+NAME_TEXT = "a picture's name or description"   # what name_regex is searched on
 
 W_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
 R_NS = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
@@ -63,10 +66,7 @@ def match_rule(raw: Any) -> Dict[str, Any]:
         if k == "md5" and isinstance(v, str) and re.fullmatch(r"[0-9a-fA-F]{32}", v):
             return {"how": "md5", "md5": v.lower()}
         if k == "name_regex" and isinstance(v, str) and v:
-            try:
-                re.compile(v)
-            except re.error as e:
-                raise JobException(f"swap_image.match.name_regex: bad pattern ({e})", "bad-params")
+            compile_pattern(v, where=NAME_TEXT, label="swap_image.match.name_regex")
             return {"how": "name", "name_regex": v}
     raise JobException("'match' must be {'image': '<the old picture file>'}, {'md5': '<32 hex digits>'}, "
                        "{'name_regex': '<regex on the picture's name/description>'} or 'all'", "bad-params")
@@ -271,7 +271,7 @@ class SwapImage(Op):
         if set(scope) - {"document", "headers", "footers"}:
             raise JobException("swap_image's scope is document, headers and/or footers", "bad-params")
         parts = scope_parts(pkg, scope)
-        name_rx = re.compile(match["name_regex"]) if match["how"] == "name" else None
+        name_rx = compile_pattern(match["name_regex"], where=NAME_TEXT) if match["how"] == "name" else None
         md5_of: Dict[str, str] = {}
 
         def media_md5(target: Optional[str]) -> Optional[str]:

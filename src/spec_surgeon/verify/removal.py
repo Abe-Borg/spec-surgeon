@@ -37,10 +37,10 @@ residual's.
 """
 from __future__ import annotations
 
-import re
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from .reader import W
+from .patterns import v_search
 from .props import Ctx, Styles, _pstyle
 from .edits import (V_CONTAINERS, V_HIDING, V_REVISION_TAGS, Item, check_deleted_paragraph, part_revision_ids,
                     v_deletable, v_items, v_paragraph_text)
@@ -254,7 +254,7 @@ def _v_demote_hidden(p, styles: Styles, args) -> List[Any]:
 def _v_note_rule(rule: Dict[str, Any], p, content: List[Any], styles: Styles) -> bool:
     if "style_in" in rule and (_pstyle(p) or styles.default.get("paragraph")) not in rule["style_in"]:
         return False
-    if "text_regex" in rule and re.search(rule["text_regex"], v_paragraph_text(p)) is None:
+    if "text_regex" in rule and v_search(rule["text_regex"], v_paragraph_text(p), where="a paragraph's text") is None:
         return False
     if "color_in" in rule:
         wanted = v_color_names(rule["color_in"])
@@ -460,7 +460,7 @@ def _v_removed(ctx: Ctx, a: Dict[str, Any], errs: List[str], kind: str, choose, 
         except _VRefuse as e:
             errs.append(f"{kind}: {part}: {e} — the op must refuse")
             continue
-        except re.error as e:
+        except ValueError as e:
             errs.append(f"{kind}: {part}: bad rule ({e})")
             continue
         if not _v_same(dec, expected.get(part)):

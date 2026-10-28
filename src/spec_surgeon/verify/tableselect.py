@@ -18,6 +18,9 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from .reader import W
 from .textcheck import blocks
+from .patterns import v_compile, v_search
+
+_V_TABLE_TEXT = {"first_row_regex": "a table's first row", "text_regex": "a table paragraph's text"}
 
 _V_KEYS = {"index_range", "style_in", "first_row_regex", "text_regex", "nested"}
 
@@ -71,7 +74,7 @@ def v_check(pred: Any) -> None:
         raise ValueError(f"bad style_in {s!r} (the op must refuse)")
     for key in ("first_row_regex", "text_regex"):
         if key in pred:
-            re.compile(pred[key])                  # re.error is a ValueError
+            v_compile(pred[key], where=_V_TABLE_TEXT[key])        # a ValueError where the op must refuse
     if "nested" in pred and not isinstance(pred["nested"], bool):
         raise ValueError("bad nested (the op must refuse)")
 
@@ -94,7 +97,8 @@ class VTables:
         return "\t".join(" ".join(self.text[p] for p in tc.iter(W + "p") if _v_up(p, W + "tc") is tc) for tc in cells)
 
     def any_paragraph(self, tbl, pattern: str) -> bool:
-        return any(re.search(pattern, self.text[p]) for p in tbl.iter(W + "p") if _v_up(p, W + "tbl") is tbl)
+        rx = v_compile(pattern, where=_V_TABLE_TEXT["text_regex"])
+        return any(rx.search(self.text[p]) for p in tbl.iter(W + "p") if _v_up(p, W + "tbl") is tbl)
 
     def matches(self, pred: Any, k: int, styles) -> bool:
         if pred in (None, "all"):
@@ -106,7 +110,8 @@ class VTables:
             return False
         if "nested" in pred and (_v_up(tbl, W + "tbl") is not None) != pred["nested"]:
             return False
-        if "first_row_regex" in pred and re.search(pred["first_row_regex"], self.first_row(tbl)) is None:
+        if "first_row_regex" in pred and v_search(pred["first_row_regex"], self.first_row(tbl),
+                                                  where=_V_TABLE_TEXT["first_row_regex"]) is None:
             return False
         if "text_regex" in pred and not self.any_paragraph(tbl, pred["text_regex"]):
             return False

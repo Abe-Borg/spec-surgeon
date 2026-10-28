@@ -338,6 +338,15 @@ How each is labelled:
 - **Custom method:** up to 50 submissions (`codegen.MAX_ITER`), each sandbox run 60 s (`SANDBOX_TIMEOUT`) and 2,048 MB
   (`process_limits.DEFAULT_MEMORY_MB`).
 - **Analysis:** 120 s and 1,024 MB per run (`DEFAULT_ANALYSIS_SECONDS`, `DEFAULT_ANALYSIS_MEMORY_MB`).
+- **Text patterns:** every pattern a request or the model writes (a selector's `text_regex`, `after_heading_regex`
+  and `between_paragraphs`, a table's `first_row_regex`, `text_regex` and `header_regex`, a fill's `pattern` and
+  `anchor_regex`, a picture's `name_regex`, a comment or note filter, a tag, option, end-line or place pattern, a
+  find with `regex` true) is at most 1,000 characters (`ops.patterns.MAX_PATTERN_CHARS`) and is searched through
+  the `regex` module with 2 s on each text (`ops.patterns.REGEX_TIMEOUT_S`): past it the file is set aside with
+  the code `regex-timeout` before anything is changed. The checker searches with its own twin
+  (`verify.patterns.V_REGEX_TIMEOUT_S`, `V_MAX_PATTERN_CHARS`, the same numbers): a pattern that runs past the
+  deadline there is a failed check with that reason, never an exception out of the suite. Python's own `re` is
+  kept for the app's constant patterns only.
 - **Retries:** 2 re-sends after 5 s and 20 s; a provider's retry-after is honoured up to 60 s (`RETRIES`,
   `RETRY_DELAYS`, `RETRY_AFTER_CAP`).
 - **Stop:**
@@ -462,6 +471,7 @@ Lv1 marks a claim in "Why trust it?"; D marks one in the dossier (section in bra
 | T23 | Read tools take a file's label, never a path; only attached documents, the template and attached pictures/tables can be read | D(blast radius) | `compiler._Batch.pkg`, `inputs.read_input_file` | manual |
 | T24 | Model-written analysis runs in a separate process for at most 120 s and 1,024 MB, with no file, network or process access | D(blast radius) | `investigation.run_analysis`, `analysis_runner.py`, `resources` | facts |
 | T25 | A custom method is formatting only (except under an outcome plan, where it may make that plan's changes and must also pass the outcome check), runs in a separate process for at most 60 s and 2,048 MB, writes only in its own folder, and must pass the checker; up to 50 tries (Obliterate lifts "formatting only", gives the method the files you attached, and sends a result whose only failures are its checks back to Claude up to 3 times to fix them or keep each with a reason — the package-integrity checks V1, V4, V5a, V5c and V9 cannot be kept with a reason and go back each round, `codegen.NEVER_KEPT_CHECKS` —; after those rounds the latest method is used, and its copies are delivered marked UNVERIFIED with those failures listed: T56; the process, its limits and its folder hold) | D(origins, blast radius, runtime B7, B8) | `codegen.SANDBOX_TIMEOUT`, `MAX_ITER`, `process_limits.DEFAULT_MEMORY_MB`, `hard_limits`, `catalog.CUSTOM_TRANSFORM_LIMITS`, `goals.verify_goal` | facts |
+| T25a | A text pattern in a plan is at most 1,000 characters and has 2 s on each text it is searched on, in the engine and in the checker alike; past the deadline the file is set aside (`regex-timeout`) or, in the checker, the check fails with that reason | D(runtime B5) | `ops.patterns.compile_pattern` (`REGEX_TIMEOUT_S`, `MAX_PATTERN_CHARS`), `verify.patterns.VPattern` (`V_REGEX_TIMEOUT_S`, `V_MAX_PATTERN_CHARS`), `report.FAILURE_EXPLANATIONS["regex-timeout"]` | facts (`regexTimeoutSeconds`, `maxPatternChars`) + `tests/test_patterns.py` |
 | T26a | Documents and the key go only to `api.anthropic.com`, unless `ANTHROPIC_BASE_URL` (read by the SDK, never set by the window) names another address | Lv1, D(engine, boundary, runtime A5) | `llm.client` (`anthropic.Anthropic()` with no address) | facts (`apiAddressEnv`: the SDK honours it) |
 | T26 | The model has no web search, no web fetch, no code execution on Anthropic's side, and no access to your file system or network | Lv1, D(blast radius) | tool lists; `llm.tool_uses` | manual |
 | T27 | The window's server listens on 127.0.0.1 only and refuses a request without the launch token | D(security) | `web/shell.serve`, `server.require_token` | facts (`loopback`, `tokenHeader`) + existing: `tests/test_web_server.py` |
