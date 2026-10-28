@@ -56,6 +56,7 @@ from .ops import JobException
 from .package import DocxPackage
 from .verify import run_suite, VerificationRecord, CheckResult, GEOM_TOL_PT
 from .verify import geometry as geom
+from .report import words_missing_sentence
 from . import render as render_mod
 
 
@@ -1101,16 +1102,22 @@ def compare_pair(pair: RenderPair, refs: GeometryReferences, backend: str,
     expected_pages = plan.get("geometry_pages_expected_to_change", [])
     removed_reference = refs.removed_hf_pdfs.get(pair.source)
     removal = ({"removed_hf_pdf": removed_reference, "removed_hf_source": pair.source} if removed_reference else {})
-    g = geom.compare_pdfs(sp, op, expected_pages, **removal)
+    # with the plan and the source, the comparison also counts the words shown over the whole document (V6's warning,
+    # ``geom.shown_words``: a copy that hides text without moving a word the page-for-page comparison sees)
+    g = geom.compare_pdfs(sp, op, expected_pages, plan=plan, source_docx=pair.source, **removal)
     look_pages = sorted({1} | {p.page for p in g.pages if p.max_dy > GEOM_TOL_PT or p.words_only_in_out or p.words_only_in_ref})
     pngs = geom.rasterize(op, pages_dir, look_pages[:6]) if pages_dir is not None else []
+    data = {"renderer": backend, "source_pdf": str(sp), "output_pdf": str(op), "pages": [str(p) for p in pngs],
+            **g.shown_words_data()}
+    missing = words_missing_sentence(data)
     v6 = CheckResult(
         "V6", "Automated render comparison", "PASS",
         f"renderer {backend}; pages {g.ref_pages}→{g.out_pages}; "
         + (f"rasterized pages {look_pages[:6]} → {pages_dir.name}/; " if pages_dir is not None
            else f"pages to look at {look_pages[:6]}; ")
-        + "page-count delta is not evidence of body change (XML checks are character truth)",
-        {"renderer": backend, "source_pdf": str(sp), "output_pdf": str(op), "pages": [str(p) for p in pngs]})
+        + "page-count delta is not evidence of body change (XML checks are character truth)"
+        + (f"; {missing}" if missing else ""),
+        data)
     tg = None
     tref = plan.get("geometry_template")
     top = _template_op_params(plan)

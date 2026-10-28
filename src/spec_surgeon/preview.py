@@ -219,12 +219,14 @@ class SampleView:
     left_later: List[str] = field(default_factory=list)   # a chain's sample: its later steps' wording left elsewhere
     plan: Optional[Dict[str, Any]] = None        # the plan the verdict is of (V6/V7 read its geometry reference); not saved
     geometry: Optional[Dict[str, str]] = None    # the page-layout verdict: status PASS | FAIL | NA, and a note in plain words
+    render_warnings: List[str] = field(default_factory=list)   # V6's warning: words the original's pages show, the copy's not
 
     def to_dict(self):
         return {"source": str(self.source), "output": str(self.output) if self.output else None, "passed": self.passed,
                 "checks": self.checks, "images": [str(i) for i in self.images], "exception": self.exception,
                 "look_pages": self.look_pages, "pages_before": self.pages_before, "pages_after": self.pages_after,
                 "geometry": self.geometry,
+                **({"render_warnings": self.render_warnings} if self.render_warnings else {}),
                 **({"stages": self.stages} if self.stages else {}),
                 **({"outcomes": self.outcomes} if self.outcomes else {}),
                 **({"left_later": self.left_later} if self.left_later else {})}
@@ -283,6 +285,16 @@ def geometry_note(plan: Dict[str, Any], v7: Any) -> str:
     if plan.get("mode") in ("content", "untracked") and plan.get("diffs"):
         return "Text reflows after a wording change; the page layout is recorded, not asserted."
     return "Page layout not asserted here: " + diag.snip(v7.summary, 400)
+
+
+def render_word_warnings(pv: Any) -> List[str]:
+    """Each sample's V6 warning (``batch.compare_pair`` over its rendered pages: words the original's pages show that
+    the copy's do not and the plan does not remove), labelled as the preview text labels the sample. What the chat
+    says in the app's words before approval, and what Claude's visual check is told to look for."""
+    samples = getattr(pv, "samples", None) or []
+    labels = sample_labels(samples)
+    return [f"{labels[str(Path(s.source))]}: {w}" for s in samples
+            for w in (getattr(s, "render_warnings", None) or [])]
 
 
 def sample_refused(sv: Any) -> bool:
@@ -524,6 +536,7 @@ def _sample_geometry(samples: List[SampleView], out_dir: Path, backend: Optional
     were rendered and why the layout check waits. A comparison the preview cannot make is a warning beside the
     plan, never a failed sample: the run makes it again, and the sample's note says the pages were rendered."""
     from .batch import RenderPair, compare_pair, geometry_references
+    from .report import words_missing_sentence
     pairs: List[Tuple[SampleView, RenderPair]] = []
     for s in samples:
         if s.geometry is not None or s.exception is not None or not s.output:
@@ -562,6 +575,12 @@ def _sample_geometry(samples: List[SampleView], out_dir: Path, backend: Optional
         s.geometry = {"status": v7.status, "note": geometry_note(pair.plan, v7)}
         if v7.status == "FAIL":
             s.passed = False
+        # V6's warning, from the record: words the original's pages show that the copy's do not — beside the sample
+        # (the page's warnings), on the sample (the chat, the visual check), never a failed sample
+        missing = words_missing_sentence(v6)
+        if missing:
+            s.render_warnings.append(missing)
+            warn(f"{name}: {missing}")
         diag.event("preview.geometry", sample=str(s.source), v6=v6.status, v7=v7.status, summary=v7.summary)
         detail(f"sample {name}: V6 {v6.status} — {v6.summary}; V7 {v7.status} — {v7.summary}")
 
