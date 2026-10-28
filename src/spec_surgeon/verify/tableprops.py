@@ -521,8 +521,9 @@ from .props import KIND_CONTRACTS, KIND_EXAMPLES  # noqa: E402
 KIND_CONTRACTS["table_props"] = (
     'Borders, cell margins, width, repeated header rows and row splitting of tables (set_table_props). Keys: '
     '"select": {"scope": a part kind or a list (document | headers | footers | footnotes | endnotes | comments; '
-    'default ["document"]), "tables": "all" or an object with any of index_range ([first, past-the-last] over the '
-    'part\'s tables in document order, nested tables counted where they occur), style_in ([table style ids]), '
+    'default ["document"]), "tables": "all" or an object with any of index_range ([first, last], both inclusive, '
+    'over the part\'s tables in document order, nested tables counted where they occur), style_in ([table style '
+    'ids]), '
     'first_row_regex, text_regex (Python regexes over the first row\'s / the table\'s text), nested (boolean)}; '
     '"parts": what the scope resolves to; "params": the user\'s own words, read with the verifier\'s defaults — '
     '"borders": "none" or {side: {"style" (default single), "size": eighths of a point 2–96 (default 4), "space": '
