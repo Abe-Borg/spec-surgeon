@@ -100,24 +100,29 @@ def serve(state: WindowState, port: int, *, dev: bool = False):
 
 
 def unsaved_copies_question(count: int) -> str:
-    """What the close asks when edited copies or clean PDFs were never saved: closing deletes them with the scratch
+    """What the close asks when edited copies or clean PDFs are not saved as they are now (never saved with Export,
+    changed since they were, their saved file changed since, or gone): closing deletes them with the scratch
     folder."""
     files = ("1 file made in this window (an edited copy or a clean PDF) has" if count == 1
              else f"{count} files made in this window (edited copies or clean PDFs) have")
     them = "it" if count == 1 else "them"
-    return (f"{files} not been saved. Closing deletes {them} with the window's scratch folder.\n\n"
+    return (f"{files} not been saved as {'it is' if count == 1 else 'they are'} now (never saved with Export, or "
+            f"the copy or its saved file changed since). Closing deletes {them} with the window's scratch folder.\n\n"
             f"OK closes anyway. Cancel goes back, so you can save {them} with Export → Save the copies…")
 
 
 def on_closing(state: WindowState) -> bool:
-    """The window's X. With edited copies never saved by Export, one native question first: OK closes and lets the
-    scratch folder (the copies in it) be deleted (``close_confirmed``), Cancel keeps the window open — the only time
-    a close is refused. With nothing unsaved, nothing is asked and nothing is recorded, so copies a run still
-    finishing delivers after this are kept for the next start (``gui.main``).
+    """The window's X. With edited copies not saved as they are now (never saved by Export, changed since, their
+    saved file changed since, or gone: ``DocumentTask.export_states``, every copy and saved file read again here),
+    one native question
+    first: OK closes and lets the scratch folder (the copies in it) be deleted (``close_confirmed``), Cancel keeps
+    the window open — the only time a close is refused. With nothing unsaved, nothing is asked and nothing is
+    recorded, so copies a run still finishing delivers after this are kept for the next start (``gui.main``).
     While work runs the running AI step is cut off, as Stop now does (its progress is saved), and a download is
     cancelled. True: pywebview closes the window."""
     try:
-        unsaved = len(state.settings_task.unsaved_copies())      # the user's own task's, never the tour's practice
+        # the user's own task's, never the tour's practice; every copy's bytes read again, not the last fingerprint
+        unsaved = len(state.settings_task.unsaved_copies(fresh=True))
     except Exception:  # noqa: BLE001 — a count that cannot be taken never deletes a copy
         unsaved = -1
     if unsaved:

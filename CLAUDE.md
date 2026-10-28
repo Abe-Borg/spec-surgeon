@@ -90,7 +90,9 @@ Delivered copies are the working set the next request builds on, except Safe mod
 result is the PDFs (`DocumentTask.pdfs`, `_end_export`): no working copy, history line or undo point. The window
 works in a scratch folder (`scratch.py`: one per window under `data_dir()\scratch`, locked while it runs, holding
 every session folder, dropped file and the journal; deleted at a clean close after one question when a copy or a
-PDF was never saved, swept at the next start, a crashed window's taken over and restored), and writes a copy or a
+PDF is not saved as it is now — `DocumentTask.export_states`: a copy is saved while a file with its current bytes
+sits where Export put it, its destination recorded with the md5 of the bytes written — swept at the next start, a
+crashed window's taken over and restored), and writes a copy or a
 clean PDF where the user chose only through **Export → Save the copies…** (`DocumentTask.export` →
 `guard.write_new`, never over an input, never into the scratch tree; the engine and the verifier are untouched).
 In Safe mode, **Discard preview**

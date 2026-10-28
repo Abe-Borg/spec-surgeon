@@ -4,7 +4,7 @@
  *
  * Pure, so `node --test` can pin them.
  */
-import type { Attachment, Plan, Sample, View } from "../types.ts";
+import type { Attachment, Plan, Result, Sample, View } from "../types.ts";
 
 /** The parent folder of a path, with either separator; "" when there is none. */
 export function parentFolder(path: string): string {
@@ -42,18 +42,63 @@ export function exportTip(view: Pick<View, "export"> & Partial<Pick<View, "tutor
   return `${head} ${count}, and only a saved copy survives closing the window.`;
 }
 
-/** The line under "Your edited copies": where they were saved, or that they are not saved yet. */
-export function copiesNote(view: Pick<View, "results">): string {
+/** A copy's saved state, as the server reports it (`lib/workbench.ts` reads nothing else of a result). */
+export type SavedState = Pick<Result, "output" | "saved_to" | "changed_since_saved" | "saved_file_changed">;
+
+/** A copy is saved while a file with its current bytes sits where Export put it: `saved_to` names that file,
+ *  `changed_since_saved` says the copy's bytes moved since (edited in Word from the window's link), and
+ *  `saved_file_changed` says the saved file no longer holds the bytes Export wrote. */
+export function isSaved(result: SavedState): boolean {
+  return !!result.saved_to && !result.changed_since_saved && !result.saved_file_changed;
+}
+
+/** The file a copy's link opens (`POST /api/open`): the file Export saved while it still holds the copy's current
+ *  bytes, else the working copy in the window's scratch folder — the one with the newer content, or the only one. */
+export function openTarget(result: SavedState): string {
+  return isSaved(result) ? (result.saved_to ?? "") : result.output;
+}
+
+/** The hover text of a copy's link: which file opens, and why. */
+export function copyTip(result: SavedState): string {
+  if (isSaved(result)) return `Opens the saved file: ${result.saved_to}`;
+  if (result.saved_to && result.changed_since_saved) {
+    return `Opens the working copy, which changed since it was saved to ${result.saved_to} (Export saves it again): ${result.output}`;
+  }
+  if (result.saved_to) {
+    return `Opens the working copy; the file saved to ${result.saved_to} no longer holds it (changed or replaced since Export, which saves this copy again, beside it): ${result.output}`;
+  }
+  return `Opens the working copy, kept in the window's scratch folder until it closes (Export saves it): ${result.output}`;
+}
+
+/** The hover text of the CHANGED badge beside a copy saved before and edited since. */
+export function changedTip(result: SavedState): string {
+  return `Changed since it was saved to ${result.saved_to}. Export saves it again, beside the file saved before.`;
+}
+
+/** The hover text of the NOT SAVED badge beside a copy whose saved file no longer holds it. */
+export function notSavedTip(result: SavedState): string {
+  return `The file saved to ${result.saved_to} no longer holds this copy (changed or replaced since Export). Export saves it again, beside that file.`;
+}
+
+/** The line under "Your edited copies": where they were saved, or that they are not saved yet (a copy changed since it
+ *  was saved, or whose saved file is gone, is not saved as it is now). */
+export function copiesNote(view: { results: SavedState[] }): string {
   const results = view.results ?? [];
-  const saved = results.filter((r) => !!r.saved_to);
+  const saved = results.filter(isSaved);
   if (results.length === 0) return "";
   if (saved.length === results.length) {
     const folder = parentFolder(saved[0].saved_to ?? "");
     return folder ? `Saved to ${folder}.` : "Saved.";
   }
   const left = results.length - saved.length;
+  const changed = results.filter((r) => !!r.saved_to && r.changed_since_saved).length;
+  const replaced = results.filter((r) => !!r.saved_to && !r.changed_since_saved && r.saved_file_changed).length;
   const count = saved.length === 0 ? "Not saved yet" : `${left} of ${results.length} not saved yet`;
-  return `${count}: Export, in the top bar, saves them to a folder you choose. Until then they live only in this window's scratch folder, which goes when the window closes.`;
+  const whys: string[] = [];
+  if (changed > 0) whys.push(`${changed} changed since ${changed === 1 ? "it was" : "they were"} saved`);
+  if (replaced > 0) whys.push(`${replaced} whose saved file changed since`);
+  const why = whys.length > 0 ? ` (${whys.join(", ")})` : "";
+  return `${count}${why}: Export, in the top bar, saves them to a folder you choose. Until then they live only in this window's scratch folder, which goes when the window closes.`;
 }
 
 /** The folder of the clean PDFs: the parent of the first one, or "" with none. */

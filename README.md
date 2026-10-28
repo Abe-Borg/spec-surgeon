@@ -163,9 +163,12 @@ Keep chatting: the next thing you ask for is made on the copies the last run cre
 are, and **Start over from the originals** is one tap away. The copies live in the window's scratch folder until
 you save them: **Export**, in the top bar, writes them to a folder you choose (a file already there with the same
 content counts as saved; a different file under a copy's name is left alone and the copy is numbered beside it; a
-folder where a copy would land on one of your attached files is refused). Closing the window deletes its scratch
-folder, after one question if a copy was never saved, so every start is a clean one; a window that never closed is
-restored at the next start instead, once.
+folder where a copy would land on one of your attached files is refused). A copy is saved while a file with its
+content sits where Export put it: clicking a copy opens that saved file, and a copy you then change in Word through
+the window's scratch folder reads **CHANGED** and counts as unsaved again until the next Export (which writes it
+beside the file saved before). Closing the window deletes its scratch folder, after one question if a copy is not
+saved as it is now, so every start is a clean one; a window that never closed is restored at the next start instead,
+once.
 
 ![The plan in the conversation and before/after pages, with one action](docs/conversation-preview.png)
 

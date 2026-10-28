@@ -596,7 +596,7 @@ function Dossier() {
           word="Copies only"
           claim="The window never writes to a file you attached. Every run delivers into the window’s scratch folder, and Export writes the copies where you choose, never over an input."
           not={[
-            "That copies are kept: the scratch folder is deleted when the window closes, after one question if a copy was never saved.",
+            "That copies are kept: the scratch folder is deleted when the window closes, after one question if a copy is not saved as it is now (never saved with Export, or the copy or its saved file changed since).",
             "That the folder is private: the scratch folder is under the app’s local data, and the saved copies are wherever you chose.",
           ]}
         />
@@ -690,7 +690,7 @@ function Dossier() {
             ],
             [
               "What is kept, and for how long",
-              `The window’s scratch folder (copies, previews, page pictures, the conversation’s journal and records with page images, copies of files you dropped on the window) is deleted when the window closes — after one question if a copy was never saved — and swept at the next start; the folder of a window that never closed is restored first. What you save with Export stays where you put it, and saved bundles are never deleted. The repair memory keeps up to ${grouped(F.repairMemoryCases)} cases, your requests and wording included, with no button to clear it; the render cache ${F.renderCacheGB} GiB. All of it but the saved copies is in the app’s folders under your Windows profile.`,
+              `The window’s scratch folder (copies, previews, page pictures, the conversation’s journal and records with page images, copies of files you dropped on the window) is deleted when the window closes — after one question if a copy is not saved as it is now — and swept at the next start; the folder of a window that never closed is restored first. What you save with Export stays where you put it, and saved bundles are never deleted. The repair memory keeps up to ${grouped(F.repairMemoryCases)} cases, your requests and wording included, with no button to clear it; the render cache ${F.renderCacheGB} GiB. All of it but the saved copies is in the app’s folders under your Windows profile.`,
             ],
             [
               "Diagnostic bundles",

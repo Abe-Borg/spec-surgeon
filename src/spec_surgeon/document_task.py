@@ -257,6 +257,11 @@ def triage(path: Path, *, template: bool = False) -> Attachment:
                       reason=found.reason, pattern_id=getattr(found, "pattern_id", "") or "")
 
 
+def _md5(data: bytes) -> str:
+    """The fingerprint Export records of the bytes it wrote (``exported``), compared with a copy's bytes since."""
+    return hashlib.md5(data).hexdigest()
+
+
 def _same_file_key(path) -> str:
     """One spelling of a path for comparing files: resolved when the file system can, the text otherwise."""
     try:
@@ -286,10 +291,13 @@ class DocumentTask:
         # Save clean PDFs: original → the PDF of its clean copy, the last run's; never the working set (``_end_export``)
         self.pdfs: Dict[str, str] = {}
         self._pdf_info: Optional[Dict[str, Any]] = None   # whether this computer can make PDFs (``pdf_info``)
-        # Export → Save the copies…: copy or PDF path → where it was saved, and the folder of the last export. A copy
-        # or a clean PDF is kept nowhere but the window's scratch folder until it is in here (``unsaved_copies``).
-        self.exported: Dict[str, str] = {}
+        # Export → Save the copies…: copy or PDF path → ``{"to": where it was saved, "md5": of the bytes written}``,
+        # and the folder of the last export. A copy or a clean PDF is saved only while a file with its current bytes
+        # sits where Export put it (``export_states``, ``unsaved_copies``): until then it is kept nowhere but the
+        # window's scratch folder.
+        self.exported: Dict[str, Dict[str, str]] = {}
         self.export_folder = ""
+        self._digests: Dict[str, tuple] = {}   # copy path → (size, mtime_ns, md5): the last fingerprint taken
         self.attachments: List[Attachment] = []
         self.stage = "empty"
         self.problem = ""
@@ -2072,6 +2080,7 @@ class DocumentTask:
         can_start_over = bool(self.working or self.history or self.todo or self.focus)
         if can_start_over and resting and START_OVER not in chips:
             chips.append(START_OVER)
+        states = self.export_states()
         return {"stage": self.stage, "mode": self.mode, "messages": list(self.messages),
                 "left_untouched": [{k: e[k] for k in ("path", "name", "reason")} for e in self.left_untouched]
                 if self.stage != "preview" else [],
@@ -2101,8 +2110,10 @@ class DocumentTask:
                 "pdfs": dict(self.pdfs), "pdf_unverified": self._pdf_marks(),
                 "export": s.export if self.stage == "preview" else "",
                 "unverified": {k: list(v) for k, v in self.unverified.items()},
-                "exported": dict(self.exported), "export_folder": self.export_folder,
-                "unsaved": self.unsaved_copies(), "copies": len(self.working) + len(self.pdfs),
+                "exported": {k: dict(v) for k, v in self.exported.items()}, "export_folder": self.export_folder,
+                "export_state": states,
+                "unsaved": [path for path, state in states.items() if state != "saved"],
+                "copies": len(self.working) + len(self.pdfs),
                 "action": labels.get(self.stage, ""), "token": self.action_token(),
                 "blocked_reason": s.run_blocked_reason() if self.stage == "preview" else "",
                 "budget_paused": self.stage == "budget", "pause_reason": self.pause_reason(),
@@ -2110,12 +2121,52 @@ class DocumentTask:
                 "blocking": blocking}
 
     # ---- Export: the one place a copy is written where the user chose ----
-    def unsaved_copies(self) -> List[str]:
-        """The working copies and the last run's clean PDFs Export has not saved (their paths): what closing the
-        window would delete. Read over copies of the dicts, so the close question can be asked while a job is still
-        running."""
-        return [path for path in [*dict(self.working).values(), *dict(self.pdfs).values()]
-                if path not in self.exported]
+    def _digest(self, path: str, *, fresh: bool = False) -> Optional[str]:
+        """The md5 of a file's bytes as they are now (a copy's, or the file Export saved it as); None when the file
+        cannot be read. Taken again whenever the file's size or mtime moved since the last fingerprint, and always
+        with ``fresh`` (the close question): a file rewritten to the same size and time is caught where it
+        matters."""
+        try:
+            st = os.stat(path)
+            cached = self._digests.get(path)
+            if not fresh and cached and cached[0] == st.st_size and cached[1] == st.st_mtime_ns:
+                return cached[2]
+            md5 = _md5(Path(path).read_bytes())
+        except OSError:
+            self._digests.pop(path, None)
+            return None
+        self._digests[path] = (st.st_size, st.st_mtime_ns, md5)
+        return md5
+
+    def export_states(self, *, fresh: bool = False) -> Dict[str, str]:
+        """Each working copy and clean PDF (its path) with whether it is saved: ``saved`` when a file with its
+        current bytes sits where Export put it (the copy's bytes, the saved file's bytes and the fingerprint Export
+        recorded all agree); ``changed`` when the copy's bytes moved since (a copy opened from the window and edited
+        in Word) or cannot be read; ``replaced`` when the copy is as it was but the saved file no longer holds its
+        bytes (written over, truncated or edited since Export); ``gone`` when the saved file is no longer there;
+        ``unsaved`` when Export never saved it. Only ``saved`` survives the close. Read over copies of the dicts, so
+        the close question can be asked while a job is still running; ``fresh`` reads every copy and every saved
+        file again."""
+        states: Dict[str, str] = {}
+        for path in [*dict(self.working).values(), *dict(self.pdfs).values()]:
+            entry = self.exported.get(path)
+            if not entry:
+                states[path] = "unsaved"
+            elif not Path(entry["to"]).is_file():
+                states[path] = "gone"
+            elif not entry["md5"] or self._digest(path, fresh=fresh) != entry["md5"]:
+                states[path] = "changed"
+            elif self._digest(entry["to"], fresh=fresh) != entry["md5"]:
+                states[path] = "replaced"
+            else:
+                states[path] = "saved"
+        return states
+
+    def unsaved_copies(self, *, fresh: bool = False) -> List[str]:
+        """The working copies and the last run's clean PDFs that are not saved as they are now (their paths): never
+        saved by Export, changed since, their saved file changed since, or gone — what closing the window would
+        delete (``export_states``)."""
+        return [path for path, state in self.export_states(fresh=fresh).items() if state != "saved"]
 
     def export(self, folder) -> Dict[str, Any]:
         """Export → Save the copies…: every copy the next request builds on (the working set, one per attached
@@ -2125,7 +2176,10 @@ class DocumentTask:
         inputs (an attached file, a working copy) refuses the export, and so does a folder inside the app's scratch
         tree (the window's own scratch folder or any other: a copy saved there would go with it); a file already
         there with the same bytes is that copy, saved (nothing written); one with other bytes is left alone and the
-        copy is numbered beside it. Returns ``{"folder", "saved", "already"}``."""
+        copy is numbered beside it (so a copy changed since it was saved lands beside the file saved before, which
+        is the user's and never written over). Each copy's destination is recorded with the md5 of the bytes
+        written: the copy stays saved while its bytes are those (``export_states``). Returns ``{"folder", "saved",
+        "already"}``."""
         from . import guard
         from .settings import scratch_root
         folder = Path(folder)
@@ -2184,7 +2238,8 @@ class DocumentTask:
                     raise ValueError(f"{dest.name} could not be written to {folder} ({exc}); "
                                      f"{saved} cop{'y was' if saved == 1 else 'ies were'} saved before it.") from exc
                 saved += 1
-            self.exported[current] = str(dest)
+            self.exported[current] = {"to": str(dest), "md5": _md5(data)}
+            self._digest(current, fresh=True)      # the fingerprint of what was just read, for the next view
         self.export_folder = str(folder)
         docx = sum(1 for current, *_ in plan if Path(current).suffix.lower() != ".pdf")
         pdfs = len(plan) - docx
@@ -2290,6 +2345,32 @@ class DocumentTask:
                                      "request": e.get("request", "")} for e in p["left_untouched"]],
                  "todo_added": list(p.get("todo_added", []))} for p in points]
 
+    @staticmethod
+    def _restored_exported(exported) -> Dict[str, Dict[str, str]]:
+        """What Export saved where, from the journal: ``{copy: {"to", "md5"}}``. A journal from before the
+        fingerprint kept the destination alone (``{copy: "C:/Saved/x.docx"}``): that copy was saved, its hash
+        unknown, so the hash is taken from the saved file while it is still there (a saved file changed since, in
+        Word, then reads as a copy changed since it was saved: asked about at the close, never deleted unasked); a
+        saved file that is gone leaves the hash empty, and the copy is unsaved again either way. A malformed entry
+        is dropped."""
+        out: Dict[str, Dict[str, str]] = {}
+        if not isinstance(exported, dict):
+            return out
+        for copy, entry in exported.items():
+            if isinstance(entry, str):
+                entry = {"to": entry, "md5": ""}
+            if not (isinstance(copy, str) and isinstance(entry, dict) and isinstance(entry.get("to"), str)
+                    and isinstance(entry.get("md5", ""), str)):
+                continue
+            to, md5 = entry["to"], entry.get("md5", "")
+            if not md5:
+                try:
+                    md5 = _md5(Path(to).read_bytes())
+                except OSError:
+                    md5 = ""
+            out[copy] = {"to": to, "md5": md5}
+        return out
+
     def restore(self):
         if not self.journal or not self.journal.is_file():
             return False
@@ -2366,9 +2447,7 @@ class DocumentTask:
                          "change starts from your originals.")
         self._restore_todo(data)
         self.undo_points = self._restored_undo(data.get("undo", [])) if self.working or self.history else []
-        exported = data.get("exported", {})
-        self.exported = ({k: v for k, v in exported.items() if isinstance(k, str) and isinstance(v, str)}
-                         if isinstance(exported, dict) else {})
+        self.exported = self._restored_exported(data.get("exported", {}))
         self.export_folder = data.get("export_folder") if isinstance(data.get("export_folder"), str) else ""
         self._sync()
         self._resume_recovery = data.get("recovery")
