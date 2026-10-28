@@ -2136,6 +2136,44 @@ def _drop_members(data: bytes, names) -> bytes:
     return out.getvalue()
 
 
+def _rezip_stored(data: bytes) -> bytes:
+    """``data`` with every member stored (no compression), so its headers can be patched byte by byte."""
+    zin = zipfile.ZipFile(io.BytesIO(data))
+    out = io.BytesIO()
+    with zipfile.ZipFile(out, "w") as zout:
+        for info in zin.infolist():
+            zi = zipfile.ZipInfo(info.filename, date_time=info.date_time)
+            zi.compress_type = zipfile.ZIP_STORED
+            zout.writestr(zi, zin.read(info.filename))
+    return out.getvalue()
+
+
+def _patch_zip_headers(data: bytes, local: int, central: int, fn) -> bytes:
+    """Every local file header (``PK\x03\x04``, the 2-byte field at ``local``) and central directory entry
+    (``PK\x01\x02``, the field at ``central``) with its field replaced by ``fn(value)`` (fixture surgery on a stored
+    zip, whose payloads are text and never carry the signatures)."""
+    out = bytearray(data)
+    for sig, at in ((b"PK\x03\x04", local), (b"PK\x01\x02", central)):
+        i = out.find(sig)
+        while i >= 0:
+            value, = struct.unpack_from("<H", out, i + at)
+            struct.pack_into("<H", out, i + at, fn(value))
+            i = out.find(sig, i + 4)
+    return bytes(out)
+
+
+def flag_encrypted(data: bytes) -> bytes:
+    """``data`` with the encryption flag bit set on every member, as a password-protected zip carries it: Python's
+    ``zipfile`` raises ``RuntimeError`` when a member is read without a password."""
+    return _patch_zip_headers(_rezip_stored(data), 6, 8, lambda flags: flags | 0x0001)
+
+
+def recompress(data: bytes, method: int = 96) -> bytes:
+    """``data`` with every member's compression method set to ``method`` (96 is JPEG, which ``zipfile`` does not
+    implement: ``NotImplementedError`` when a member is read); the payloads stay stored, so only the method is odd."""
+    return _patch_zip_headers(_rezip_stored(data), 8, 10, lambda _method: method)
+
+
 def _xml_text(s: str) -> str:
     return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 

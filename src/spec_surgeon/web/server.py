@@ -9,6 +9,7 @@ The server binds 127.0.0.1 and refuses every ``/api`` request without the launch
 """
 from __future__ import annotations
 
+import errno
 import json
 import os
 import queue
@@ -482,6 +483,36 @@ class WindowState:
             self.settings_task.save()
 
 
+NOT_AN_OBJECT = "The request body must be a JSON object."
+
+
+async def json_object(request: Request) -> Dict[str, Any]:
+    """The request's body as the JSON object every route reads its fields from. ``ValueError`` (with the sentence the
+    page shows) for a body that is not JSON, or whose root is not an object: ``null``, a list, a string, a number, a
+    boolean or JSON cut short all used to escape as a 500 the moment a route called ``.get`` on them."""
+    try:
+        body = await request.json()
+    except ValueError:                      # json.JSONDecodeError: no body, or a body cut short
+        raise ValueError(NOT_AN_OBJECT) from None
+    if not isinstance(body, dict):
+        raise ValueError(NOT_AN_OBJECT)
+    return body
+
+
+def upload_failure(name: str, exc: OSError) -> str:
+    """One sentence for a dropped file whose bytes could not be saved under the scratch folder: the file, what the OS
+    said in plain words (``diagnostics.os_error_hint``: Windows' 206 and ENAMETOOLONG for a name too long, a full
+    disk, a denied folder) and what to do. The name is never shortened for the user: the attached file's name is the
+    copy's planned name."""
+    hint = diag.os_error_hint(exc)
+    too_long = exc.errno == errno.ENAMETOOLONG or getattr(exc, "winerror", None) in (206, 3)
+    if too_long:
+        return (f"{name} could not be saved for attaching: {hint or 'the path is too long'}. Give the file a shorter "
+                f"name and attach it again.")
+    said = hint or (exc.strerror or str(exc)).rstrip(".") or type(exc).__name__
+    return f"{name} could not be saved for attaching: {said}. Check the file and attach it again."
+
+
 def _no_update() -> Dict[str, Any]:
     return {"state": "none", "version": "", "notes": "", "progress": 0, "error": "", "text": "", "manual_result": "",
             "install_log": ""}
@@ -572,8 +603,13 @@ def create_app(state: WindowState, *, dev: bool = False) -> FastAPI:
     async def attach(request: Request):
         if state.busy:
             return busy_error()
-        body = await request.json()
-        paths = [str(p) for p in (body.get("paths") or [])]
+        try:
+            body = await json_object(request)
+        except ValueError as e:
+            return error(str(e))
+        paths = body.get("paths") or []
+        if not isinstance(paths, list) or not all(isinstance(p, str) for p in paths):
+            return error("paths must list the files to attach, by path.")
         try:
             state.task.attach(paths, template=bool(body.get("template")))
         except (OSError, ValueError) as e:
@@ -609,21 +645,27 @@ def create_app(state: WindowState, *, dev: bool = False) -> FastAPI:
     @app.post("/api/upload")
     async def upload(files: List[UploadFile] = File(...), template: str = Form("false")):
         """A dropped file's bytes go under the scratch folder's ``attachments/<stamp>/`` and are attached from there:
-        kept only while the window is open, as everything in the scratch folder is."""
+        kept only while the window is open, as everything in the scratch folder is. A file the folder cannot take
+        under its own name (a name too long for the path, Windows' 260 characters first of all) is a 400 naming the
+        file and the remedy (``upload_failure``), never a 500 and never a shortened name; nothing is attached then."""
         if state.busy:
             return busy_error()
         folder = Path(state.task.session.out_root) / "attachments" / time.strftime("%Y%m%d-%H%M%S")
-        folder.mkdir(parents=True, exist_ok=True)
         saved: List[str] = []
-        for f in files:
-            name = Path(f.filename or "document.docx").name
-            target = folder / name
-            n = 1
-            while target.exists():
-                target = folder / f"{Path(name).stem} ({n}){Path(name).suffix}"
-                n += 1
-            target.write_bytes(await f.read())
-            saved.append(str(target))
+        name = ""
+        try:
+            folder.mkdir(parents=True, exist_ok=True)
+            for f in files:
+                name = Path(f.filename or "document.docx").name
+                target = folder / name
+                n = 1
+                while target.exists():
+                    target = folder / f"{Path(name).stem} ({n}){Path(name).suffix}"
+                    n += 1
+                target.write_bytes(await f.read())
+                saved.append(str(target))
+        except OSError as e:
+            return error(upload_failure(name or "The file", e))
         try:
             state.task.attach(saved, template=str(template).lower() in ("1", "true", "yes"))
         except (OSError, ValueError) as e:
@@ -632,7 +674,10 @@ def create_app(state: WindowState, *, dev: bool = False) -> FastAPI:
 
     @app.post("/api/pick")
     async def pick(request: Request):
-        body = await request.json()
+        try:
+            body = await json_object(request)
+        except ValueError as e:
+            return error(str(e))
         kind = str(body.get("kind") or "documents")
         paths = state.shell.pick_files(kind)
         if paths is None:
@@ -643,13 +688,19 @@ def create_app(state: WindowState, *, dev: bool = False) -> FastAPI:
     async def remove(request: Request):
         if state.busy:
             return busy_error()
-        body = await request.json()
+        try:
+            body = await json_object(request)
+        except ValueError as e:
+            return error(str(e))
         state.task.remove(str(body.get("path") or ""), template=bool(body.get("template")))
         return state.view()
 
     @app.post("/api/send")
     async def send(request: Request):
-        body = await request.json()
+        try:
+            body = await json_object(request)
+        except ValueError as e:
+            return error(str(e))
         text = str(body.get("text") or "").strip()
         if not text:
             return error("Type what you'd like to do with these documents.")
@@ -657,7 +708,10 @@ def create_app(state: WindowState, *, dev: bool = False) -> FastAPI:
 
     @app.post("/api/choose")
     async def choose(request: Request):
-        body = await request.json()
+        try:
+            body = await json_object(request)
+        except ValueError as e:
+            return error(str(e))
         wording = body.get("wording")
         if wording is not None and not isinstance(wording, str):
             return error("wording must be text.")
@@ -665,7 +719,10 @@ def create_app(state: WindowState, *, dev: bool = False) -> FastAPI:
 
     @app.post("/api/primary")
     async def primary(request: Request):
-        body = await request.json()
+        try:
+            body = await json_object(request)
+        except ValueError as e:
+            return error(str(e))
         hold = body.get("hold") or []
         if not isinstance(hold, list) or not all(isinstance(p, str) for p in hold):
             return error("hold must list the documents to set aside, by path.")
@@ -677,16 +734,22 @@ def create_app(state: WindowState, *, dev: bool = False) -> FastAPI:
 
     @app.post("/api/recipe")
     async def recipe(request: Request):
-        body = await request.json()
-        inputs = body.get("inputs") if isinstance(body, dict) else None
+        try:
+            body = await json_object(request)
+        except ValueError as e:
+            return error(str(e))
+        inputs = body.get("inputs")
         if inputs is not None and not isinstance(inputs, dict):
             return error("The button's form could not be read.")
         return stream("recipe", recipe=str(body.get("recipe") or ""), inputs=inputs or {})
 
     @app.post("/api/occurrences")
     async def occurrences(request: Request):
-        body = await request.json()
-        keys = body.get("skip") if isinstance(body, dict) else None
+        try:
+            body = await json_object(request)
+        except ValueError as e:
+            return error(str(e))
+        keys = body.get("skip")
         if not isinstance(keys, list) or not all(isinstance(k, str) for k in keys):
             return error("The unticked occurrences could not be read.")
         return stream("occurrences", skip=list(keys))
@@ -695,7 +758,10 @@ def create_app(state: WindowState, *, dev: bool = False) -> FastAPI:
     async def set_mode(request: Request):
         if state.busy:
             return busy_error()
-        body = await request.json()
+        try:
+            body = await json_object(request)
+        except ValueError as e:
+            return error(str(e))
         try:
             state.task.set_mode(str(body.get("mode") or ""), acknowledged=body.get("acknowledged") is True)
         except ValueError as e:
@@ -707,8 +773,11 @@ def create_app(state: WindowState, *, dev: bool = False) -> FastAPI:
     async def hand_off(request: Request):
         if state.busy:
             return busy_error()
-        body = await request.json()
-        paths = body.get("paths") if isinstance(body, dict) else None
+        try:
+            body = await json_object(request)
+        except ValueError as e:
+            return error(str(e))
+        paths = body.get("paths")
         if not isinstance(paths, list) or not paths or not all(isinstance(p, str) for p in paths):
             return error("Name the documents to hand over, by path.")
         try:
@@ -753,7 +822,10 @@ def create_app(state: WindowState, *, dev: bool = False) -> FastAPI:
     async def put_back(request: Request):
         if state.busy:
             return busy_error()
-        body = await request.json()
+        try:
+            body = await json_object(request)
+        except ValueError as e:
+            return error(str(e))
         try:
             state.task.put_back(str(body.get("path") or ""))
         except ValueError as exc:
@@ -860,7 +932,10 @@ def create_app(state: WindowState, *, dev: bool = False) -> FastAPI:
 
     @app.post("/api/open")
     async def open_result(request: Request):
-        body = await request.json()
+        try:
+            body = await json_object(request)
+        except ValueError as e:
+            return error(str(e))
         path = Path(str(body.get("path") or ""))
         if not path.exists():
             return error("That copy was moved or deleted. Continue the conversation to create a new result.", 404)
@@ -887,7 +962,10 @@ def create_app(state: WindowState, *, dev: bool = False) -> FastAPI:
 
     @app.post("/api/settings")
     async def set_settings(request: Request):
-        body = await request.json()
+        try:
+            body = await json_object(request)
+        except ValueError as e:
+            return error(str(e))
         if "theme" in body:
             if body["theme"] not in THEMES:
                 return error("There is no such colour scheme.")

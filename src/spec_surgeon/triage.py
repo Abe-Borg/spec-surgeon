@@ -4,8 +4,9 @@ The moment a file is attached the app must know whether the engine can work with
 about it, before any plan and before any model call. ``triage_file`` answers with one of three states:
 
 * ``refused`` — the engine will not take the file: not a file, not a .docx (.docm, .doc), Word's ``~$`` lock file, a
-  package that does not open, a part with an XML ``<!DOCTYPE`` (``DocxPackage.check_no_doctype``), or a body without
-  a paragraph. ``reason`` is one sentence: the file and what to do.
+  package that does not open (a password-protected document and one without ``[Content_Types].xml`` included: Word
+  itself refuses or repairs those), a part with an XML ``<!DOCTYPE`` (``DocxPackage.check_no_doctype``), or a body
+  without a paragraph. ``reason`` is one sentence: the file and what to do.
 * ``note``    — the file opens and will be worked on; ``notes`` lists what the user should know, one plain sentence
   each (an empty body, protection, compatibility mode, Normal-only styling, typed numbers, fragmented runs, text-box
   headers, pending revisions, comments, irregular spacing). ``ok`` — none of the above.
@@ -24,7 +25,7 @@ from typing import Any, Dict, Iterable, List, Optional
 from lxml import etree
 
 from .fingerprint import fingerprint
-from .package import W, DocxPackage, UnsupportedFormat, XmlDoctype
+from .package import CT_PART, W, DocxPackage, UnsupportedFormat, XmlDoctype
 from .package_limits import ArchiveLimitError
 
 STATES = ("ok", "note", "refused")
@@ -43,8 +44,10 @@ NOTE_COMMENTS = "The file has comments."
 NOTE_SPACING = "Spacing is irregular: non-breaking or doubled spaces."
 
 # What stops a package from opening: not a zip, Strict Open XML, a missing member or element, an archive over its
-# limits, an unreadable path, unparsable XML, a malformed relationship.
-_OPEN_ERRORS = (zipfile.BadZipFile, UnsupportedFormat, KeyError, ValueError, OSError, etree.LxmlError, AttributeError)
+# limits, an unreadable path, unparsable XML, a malformed relationship, a member ``zipfile`` will not read (RuntimeError
+# for an encrypted one, NotImplementedError for a compression method it does not implement).
+_OPEN_ERRORS = (zipfile.BadZipFile, UnsupportedFormat, KeyError, ValueError, OSError, etree.LxmlError, AttributeError,
+                RuntimeError, NotImplementedError)
 
 
 def revisions_note(count: int) -> str:
@@ -117,6 +120,7 @@ def triage_file(path) -> Triage:
                               f"in Word.")
     try:
         pkg = DocxPackage.from_path(path)
+        pkg.read(CT_PART)                               # KeyError without the manifest Word writes in every package
         main = pkg.main_part()
         doc = pkg.xml(main)
         details = fingerprint(pkg)
@@ -133,6 +137,9 @@ def triage_file(path) -> Triage:
         return _refusal(path, f"{name} is larger than this app opens ({exc}); split the document or save a smaller "
                               f"copy in Word.", facts={"error": str(exc)})
     except _OPEN_ERRORS as exc:
+        if isinstance(exc, RuntimeError) and "password" in str(exc):    # zipfile: an encrypted member, no password
+            return _refusal(path, f"{name} is password-protected; remove the password in Word and save it again as "
+                                  f".docx.", facts={"error": f"{type(exc).__name__}: {exc}"[:300]})
         return _refusal(path, f"{name} cannot be opened as a Word package; open it in Word and save it again as "
                               f".docx.", facts={"error": f"{type(exc).__name__}: {exc}"[:300]})
 
