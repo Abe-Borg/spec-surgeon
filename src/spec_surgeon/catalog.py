@@ -254,6 +254,8 @@ COMMON_ASSUMPTIONS: Dict[str, List[str]] = {
         "document has, else single-line borders around and between every cell; header_rows repeat at the top of each "
         "page",
         "the cells' paragraphs take the document's default paragraph style, one paragraph per cell",
+        "every column is at least 0.1 inch wide: more equal columns than the anchor's text width holds at that width "
+        "set the file aside (the refusal says how many fit), and a given width below 0.1 inch is refused",
         "tracked unless asked otherwise (rows and text inserted)",
     ],
     # built-in batch 6 (table grid and cells, docs/BUILTIN_OPS_BATCH6_DESIGN.md §7)
@@ -352,6 +354,10 @@ COMMON_ASSUMPTIONS: Dict[str, List[str]] = {
     "set_page_setup": [
         "margins are in twips (1440 = 1 inch); header/footer distances unchanged unless given",
         "the header's and footer's distance from the page edge are margins.header and margins.footer (twips)",
+        "Word's own bounds are refused, not guessed: a page side is 0.1 to 22 inches (144 to 31680 twips), and once "
+        "the size and margins asked are set each chosen section keeps at least half an inch of text width (the page "
+        "less its side margins and gutter) and of text height (less its top and bottom margins), with the header and "
+        "footer distances within the page; a negative top or bottom margin is Word's 'exactly' margin",
         "different_first_page true gives the section's first page its own first-page header/footer (none of its own: "
         "it shows the previous section's, or a blank one — flagged); false shows the ordinary ones there; a section "
         "already as asked is left alone",

@@ -29,6 +29,7 @@ from spec_surgeon.ops import set_tab_stops as tabs_module
 from spec_surgeon.ops.base import verify_family
 from spec_surgeon.ops.selectors import resolve_sections
 from spec_surgeon.package import DocxPackage, W
+from spec_surgeon.report import FAILURE_EXPLANATIONS
 from spec_surgeon.verify import props as vprops
 from spec_surgeon.verify import run_suite
 from spec_surgeon.verify.reader import STYLES_REL, VPackage
@@ -622,8 +623,10 @@ def test_worked_examples_plan_and_verify(name, data, sections):
 def test_catalog_says_how_the_op_reads():
     words = " ".join(COMMON_ASSUMPTIONS["set_page_setup"])
     for needle in ("twips", "margins.header and margins.footer", "different_first_page", "landscape",
-                   "margins as they are", "containing", "with_tables", "index_range", "allow_missing"):
+                   "margins as they are", "containing", "with_tables", "index_range", "allow_missing",
+                   "0.1 to 22 inches", "half an inch of text width", "'exactly' margin"):
         assert needle in words, needle
+    assert "a page side outside 0.1 to 22 inches" in FAILURE_EXPLANATIONS["bad-params"][1]
     assert "containing" in SELECTOR_GRAMMAR["sections"]
     cat = op_catalog(examples=False)
     assert "different_first_page" in cat["ops"]["set_page_setup"]["params"]["properties"]
@@ -714,3 +717,140 @@ def test_recovery_says_different_first_page_has_no_final_check():
                           "params": {"different_first_page": True}})
     _, notes = recovery._goals(spec)
     assert any("different-first-page" in n for n in notes)
+
+
+# ---- 7. Word's bounds (stress-test finding F4) -----------------------------------------------------------------------
+# A page Word would not lay out — a side outside 0.1 to 22 inches, margins leaving less than half an inch of text, a
+# header off the page — passed every check and rendered blank. The op refuses it at plan time, naming the section and
+# the value; the verifier does not change (a refusal, not a check). The schedule's page is 12240 by 15840 twips with
+# margins of 1800 at the sides, 1440 top and bottom, the header and footer 720 from the edge and no gutter.
+
+def _refused_setup(sections, data: bytes = SCHEDULE, **params) -> JobException:
+    with pytest.raises(JobException) as e:
+        get_op("set_page_setup").plan(DocxPackage(data), {"sections": sections}, params)
+    assert e.value.code == "bad-params", e.value.reason
+    return e.value
+
+
+def test_the_stress_test_extremes_are_refused_naming_the_section_and_the_value():
+    """F4's three deliveries: a zero-width page and margins of ten thousand million twips (and insert_table's hundred
+    columns, in tests/test_table_structure.py)."""
+    e = _refused_setup("all", size={"w": 0, "h": 15840})
+    assert e.reason == "size.w must be from 144 to 31680 twips (0.1 to 22 inches, Word's range), got 0"
+    e = _refused_setup("all", margins={k: 10_000_000_000 for k in ("top", "right", "bottom", "left")})
+    assert e.reason.startswith("section 0: a page 12240 twips (8.5 inches) wide less a left margin of 10000000000, a "
+                               "right margin of 10000000000 and a gutter of 0 leaves -19999987760 twips (")
+    assert e.reason.endswith("for the text; Word keeps at least 720 (half an inch) — widen the page or narrow the "
+                             "margins")
+    assert e.details == {"section": 0, "text_width": 12240 - 20_000_000_000}
+
+
+@pytest.mark.parametrize("key", ["w", "h"])
+def test_a_page_side_is_within_words_range(key):
+    other = {"w": "h", "h": "w"}[key]
+    for bad in (143, 31681):
+        e = _refused_setup([1], size={key: bad, other: 15840})
+        assert e.reason == f"size.{key} must be from 144 to 31680 twips (0.1 to 22 inches, Word's range), got {bad}"
+    # 144 is inside the range: it is the text area left inside the margins that refuses a 0.1-inch side
+    e = _refused_setup([1], size={key: 144, other: 15840})
+    assert e.reason.startswith(f"section 1: a page 144 twips (0.1 inch) {'wide' if key == 'w' else 'tall'} less a ")
+    # 22 inches a side is inside the range and keeps its text area: it plans and verifies
+    plan, _, out, rec = _run(SCHEDULE, _spec(_setup([1], size={key: 31680, other: 15840})))
+    assert rec.passed, rec.to_markdown()
+    assert _secs(out)[1].find(W + "pgSz").get(W + key) == "31680"
+
+
+def test_margins_keep_half_an_inch_of_text_width_and_height():
+    """719 twips of text refused, 720 accepted, in each dimension; the gutter counts against the width; a negative
+    top or bottom margin (Word's "exactly" margin) counts by its size and is still accepted."""
+    plan, _, out, rec = _run(SCHEDULE, _spec(_setup([1], margins={"left": 5760, "right": 5760})))
+    assert rec.passed, rec.to_markdown()
+    assert _secs(out)[1].find(W + "pgMar").get(W + "left") == "5760"
+    e = _refused_setup([1], margins={"left": 5761, "right": 5760})
+    assert e.reason == ("section 1: a page 12240 twips (8.5 inches) wide less a left margin of 5761, a right margin of "
+                        "5760 and a gutter of 0 leaves 719 twips (0.499 inch) for the text; Word keeps at least 720 "
+                        "(half an inch) — widen the page or narrow the margins")
+    assert e.details == {"section": 1, "text_width": 719}
+    plan, _, _, rec = _run(SCHEDULE, _spec(_setup([1], margins={"left": 5000, "right": 5000, "gutter": 1520})))
+    assert rec.passed, rec.to_markdown()
+    e = _refused_setup([1], margins={"left": 5000, "right": 5000, "gutter": 1521})
+    assert "a gutter of 1521 leaves 719 twips" in e.reason and e.details["text_width"] == 719
+    plan, _, _, rec = _run(SCHEDULE, _spec(_setup([1], margins={"top": 7560, "bottom": 7560})))
+    assert rec.passed, rec.to_markdown()
+    e = _refused_setup([1], margins={"top": 7561, "bottom": 7560})
+    assert e.reason == ("section 1: a page 15840 twips (11 inches) tall less a top margin of 7561 and a bottom margin "
+                        "of 7560 leaves 719 twips (0.499 inch) for the text; Word keeps at least 720 (half an inch) — "
+                        "make the page taller or the margins smaller")
+    assert e.details == {"section": 1, "text_height": 719}
+    plan, _, out, rec = _run(SCHEDULE, _spec(_setup([1], margins={"top": -7560, "bottom": 7560})))
+    assert rec.passed, rec.to_markdown()
+    assert _secs(out)[1].find(W + "pgMar").get(W + "top") == "-7560"
+    e = _refused_setup([1], margins={"top": -7561, "bottom": 7560})
+    assert "a top margin of -7561 and a bottom margin of 7560 leaves 719 twips" in e.reason
+    # the margins given with a size in the same op: the text area is the one they leave together
+    plan, _, _, rec = _run(SCHEDULE, _spec(_setup([1], size={"w": 2000, "h": 15840},
+                                                  margins={"left": 640, "right": 640})))
+    assert rec.passed, rec.to_markdown()
+    e = _refused_setup([1], size={"w": 2000, "h": 15840}, margins={"left": 641, "right": 640})
+    assert e.reason.startswith("section 1: a page 2000 twips (1.389 inches) wide less a left margin of 641, a right "
+                               "margin of 640 and a gutter of 0 leaves 719 twips")
+    # the section's own margins stay out of the text the op does not touch: a side margin only is judged by width
+    # and by the height the section already has (fine here); a section the op does not choose is not judged at all
+    plan, _, _, rec = _run(SCHEDULE, _spec(_setup([2], margins={"left": 1440})))
+    assert rec.passed, rec.to_markdown()
+
+
+def test_an_orientation_swap_is_judged_on_the_page_it_makes():
+    """A portrait page whose top and bottom margins leave 720 twips once it is 12240 tall turns landscape; one twip
+    more and the swap is refused — the source's own margins, this op's page."""
+    def tall_margins(twips: int):
+        def edit(secs):
+            for k in ("top", "bottom"):
+                secs[1].find(W + "pgMar").set(W + k, str(twips))
+        return edit
+    data = _mutate_sections(SCHEDULE, tall_margins(5760))               # 15840 - 11520 = 4320 portrait; 720 landscape
+    plan, _, out, rec = _run(data, _spec(_setup([1], orientation="landscape")))
+    assert rec.passed, rec.to_markdown()
+    assert _secs(out)[1].find(W + "pgSz").get(W + "h") == "12240"
+    data = _mutate_sections(SCHEDULE, tall_margins(5761))
+    e = _refused_setup([1], data, orientation="landscape")
+    assert e.reason.startswith("section 1: a page 12240 twips (8.5 inches) tall less a top margin of 5761 and a bottom "
+                               "margin of 5761 leaves 718 twips")
+    plan, _, _, rec = _run(data, _spec(_setup([1], orientation="portrait")))     # already portrait: as it was
+    assert rec.passed, rec.to_markdown()
+
+
+def test_a_header_or_footer_distance_off_the_page_is_refused():
+    plan, _, out, rec = _run(SCHEDULE, _spec(_setup([1], margins={"header": 15839, "footer": 15839})))
+    assert rec.passed, rec.to_markdown()
+    assert _secs(out)[1].find(W + "pgMar").get(W + "footer") == "15839"
+    e = _refused_setup([1], margins={"header": 15840})
+    assert e.reason == ("section 1: the header 15840 twips (11 inches) from the page edge lies off a page 15840 twips "
+                        "(11 inches) tall")
+    assert e.details == {"section": 1, "header": 15840}
+    e = _refused_setup([1], margins={"footer": 20000})
+    assert e.reason.startswith("section 1: the footer 20000 twips (13.889 inches) from the page edge lies off")
+    # a page made shorter than the header distance the section keeps
+
+    def low_header(secs):
+        for k, v in (("top", "100"), ("bottom", "100"), ("header", "3000")):
+            secs[1].find(W + "pgMar").set(W + k, v)
+    data = _mutate_sections(SCHEDULE, low_header)
+    plan, _, _, rec = _run(data, _spec(_setup([1], size={"w": 12240, "h": 3001})))
+    assert rec.passed, rec.to_markdown()
+    e = _refused_setup([1], data, size={"w": 12240, "h": 3000})
+    assert e.reason == ("section 1: the header 3000 twips (2.083 inches) from the page edge lies off a page 3000 twips "
+                        "(2.083 inches) tall")
+
+
+def test_a_section_whose_geometry_cannot_be_read_is_not_judged():
+    """A section without a page size takes margins as before (no w:pgSz: nothing to measure the text area against);
+    a size on a section without margins is the existing structure refusal, not a bound."""
+    def no_size(secs):
+        secs[1].remove(secs[1].find(W + "pgSz"))
+    data = _mutate_sections(SCHEDULE, no_size)
+    plan, _, _, rec = _run(data, _spec(_setup([1], margins={"left": 9000, "right": 9000})))
+    assert rec.passed, rec.to_markdown()
+    e = _refused_setup([1], data, size={"w": 12240, "h": 15840}, margins={"left": 5761, "right": 5760})
+    assert "leaves 719 twips" in e.reason                              # the size given, the margins are measured
+

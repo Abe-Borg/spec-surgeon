@@ -746,6 +746,39 @@ def test_a_section_without_its_size_needs_widths(src):
     assert rec.passed and any("wider than the text" in f for f in plan.flags)
 
 
+def test_a_column_is_at_least_a_tenth_of_an_inch(src):
+    """Stress-test finding F4: a table of 100 equal columns across the page passed every check and rendered without
+    its text; Word's own dialogs refuse a column narrower than 0.1 inch. The most that fit in the NOTES anchor's text
+    width (8640 twips) are accepted at exactly 144 twips each, one more is refused naming the count and the width,
+    and a given width below 0.1 inch is refused; the verifier does not change."""
+    width = _width(src, False)
+    most = width // 144
+    assert (width, most) == (8640, 60)
+    plan, out, rec = run(src, "insert_table", {"paragraphs": NOTES}, {"rows": [[f"c{k}" for k in range(most)]]})
+    assert rec.passed, rec.to_markdown()
+    new = next(p for p in DocxPackage(out).xml(MAIN).iter(W + "p") if text_of(p) == "1.2 NOTES").getnext()
+    assert min(int(g.get(W + "w")) for g in new.iter(W + "gridCol")) == 144
+    e = refused(src, "insert_table", {"paragraphs": NOTES}, {"rows": [[f"c{k}" for k in range(most + 1)]]},
+                "bad-params")
+    assert e.reason.endswith(": 61 equal columns across its text width of 6 inches (8640 twips) leave each column "
+                             "0.098 inch wide; a column is at least 0.1 inch (144 twips), so at most 60 fit — give "
+                             "fewer columns or column_widths")
+    assert e.details == {"where": f"{MAIN} paragraph {e.reason.split(' paragraph ')[1].split(':')[0]}",
+                         "columns": 61, "text_width": 8640}
+    e = refused(src, "insert_table", {"paragraphs": NOTES}, {"rows": [[f"c{k}" for k in range(100)]]}, "bad-params")
+    assert "100 equal columns" in e.reason and e.details["columns"] == 100
+    plan, out, rec = run(src, "insert_table", {"paragraphs": NOTES}, {"rows": [["a", "b"]], "column_widths": [0.1, 3]})
+    assert rec.passed, rec.to_markdown()
+    new = next(p for p in DocxPackage(out).xml(MAIN).iter(W + "p") if text_of(p) == "1.2 NOTES").getnext()
+    assert [g.get(W + "w") for g in new.iter(W + "gridCol")] == ["144", "4320"]
+    e = refused(src, "insert_table", {"paragraphs": NOTES}, {"rows": [["a", "b"]], "column_widths": [3, 0.0999]},
+                "bad-params")
+    assert e.reason == ("column_widths: column 2 of 2 would be 0.0999 inch wide; a column is at least 0.1 inch "
+                        "(144 twips)")
+    assert any("at least 0.1 inch wide" in a for a in COMMON_ASSUMPTIONS["insert_table"])
+    assert "a table column narrower than 0.1 inch" in FAILURE_EXPLANATIONS["bad-params"][1]
+
+
 # ---- a wrong output is caught ---------------------------------------------------------------------------------------
 
 def test_wrong_outputs_of_a_deletion_are_caught(src):

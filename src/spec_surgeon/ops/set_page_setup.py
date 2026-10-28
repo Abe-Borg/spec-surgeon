@@ -39,6 +39,15 @@ value that is the schema's default is an absent attribute or element) and left a
 Each is an ``exact`` element spec (the element's attributes exactly, no children) or ``absent`` in ``section_props``.
 Columns narrower than half an inch are flagged; an even- or odd-page start is noted (Word may add a blank page).
 
+Word's own bounds, refused at plan time (``bad-params``; a page Word would not lay out renders blank or loses its
+text, and the verifier cannot see that): a page width or height outside 0.1 to 22 inches (``MIN_PAGE_TWIPS`` 144 to
+``MAX_TWIPS`` 31680); and, in each chosen section once this op's own size and margins are set (``text_area``: the
+section's own values where the op gives none), a text width (the page less the left and right margins and the
+gutter) or a text height (the page less the top and bottom margins, a negative one — Word's "exactly" margin — by its
+size) below half an inch (``MIN_TEXT_TWIPS`` 720), or a header or footer distance at or beyond the page's height. The
+refusal names the section and the values. The header, footer and gutter distances have no other bound than being
+non-negative; top and bottom may be negative.
+
 V10 (``section_props``): one assertion carries the user's own ``select`` and parameters, the sections the plan chose
 and each changed section's element specs; the verifier re-derives the choice and every change from the SOURCE.
 """
@@ -69,6 +78,8 @@ VERTICAL = ("top", "center", "both", "bottom")
 COLUMN_KEYS = ("count", "space", "separator")
 LINE_KEYS = ("count_by", "start", "restart", "distance")
 MAX_TWIPS = 31680                                       # 22 inches, Word's largest page side
+MIN_PAGE_TWIPS = 144                                    # 0.1 inch, Word's smallest page side
+MIN_TEXT_TWIPS = 720                                    # half an inch: the least text width and height Word lays out
 START_WORDS = {"next_page": "a new page", "continuous": "the same page (continuous)",
                "even_page": "the next even-numbered page", "odd_page": "the next odd-numbered page"}
 VERTICAL_WORDS = {"top": "the top of the page", "center": "the centre of the page",
@@ -244,20 +255,68 @@ def layout_specs(sp: Any, params: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
     return out
 
 
+def effective_twips(sp: Any, elements: Dict[str, Dict[str, str]], name: str, key: str) -> Optional[int]:
+    """Section ``sp``'s ``w:<name>/@w:<key>`` (twips) once this op's own elements are set: the value the op writes,
+    else the section's own; None when neither reads as a whole number."""
+    el = sp.find(W + name)
+    v = elements.get(name, {}).get(key, el.get(W + key) if el is not None else None)
+    return int(v) if v is not None and str(v).lstrip("-").isdigit() else None
+
+
+def text_area(sp: Any, elements: Dict[str, Dict[str, str]]) -> Tuple[Optional[int], Optional[int]]:
+    """(text width, text height) in twips of section ``sp`` once this op's own size and margins (``elements``) are
+    set: the page width less the left and right margins and the gutter; the page height less the top and bottom
+    margins, a negative one (Word's "exactly" margin) by its size. None where a value cannot be read."""
+    w, h = effective_twips(sp, elements, "pgSz", "w"), effective_twips(sp, elements, "pgSz", "h")
+    left, right = effective_twips(sp, elements, "pgMar", "left"), effective_twips(sp, elements, "pgMar", "right")
+    top, bottom = effective_twips(sp, elements, "pgMar", "top"), effective_twips(sp, elements, "pgMar", "bottom")
+    gutter = effective_twips(sp, elements, "pgMar", "gutter") or 0
+    width = None if None in (w, left, right) else w - left - right - gutter
+    height = None if None in (h, top, bottom) else h - abs(top) - abs(bottom)
+    return width, height
+
+
 def column_width(sp: Any, elements: Dict[str, Dict[str, str]], cols: Dict[str, Any]) -> Optional[int]:
     """Each column's width (twips) in section ``sp`` once this op's own size and margins (``elements``) are set; None
     when the page size or margins cannot be read."""
-    def read(name: str, key: str) -> Optional[int]:
-        el = sp.find(W + name)
-        v = elements.get(name, {}).get(key, el.get(W + key) if el is not None else None)
-        return int(v) if v is not None and str(v).lstrip("-").isdigit() else None
-    w, left, right = read("pgSz", "w"), read("pgMar", "left"), read("pgMar", "right")
-    if None in (w, left, right):
+    text, _ = text_area(sp, elements)
+    if text is None:
         return None
     own = w_attrs(sp.find(W + "cols")).get("space", "720")
     space = cols.get("space", int(own) if own.isdigit() else 720)
-    text = w - left - right - (read("pgMar", "gutter") or 0)
     return (text - (cols["count"] - 1) * space) // cols["count"]
+
+
+def check_page(i: int, sp: Any, elements: Dict[str, Dict[str, str]]) -> None:
+    """Word's bounds on section ``i``'s page once this op's own size and margins (``elements``) are set (module
+    docstring): at least half an inch of text width and of text height, and the header and footer within the page —
+    ``bad-params`` otherwise, naming the section and the values. A value that cannot be read is not judged."""
+    def twips(name: str, key: str) -> Optional[int]:
+        return effective_twips(sp, elements, name, key)
+
+    def words(v: Optional[int]) -> str:
+        return f"{v} twips ({prose.inches(v)})"
+
+    w, h = twips("pgSz", "w"), twips("pgSz", "h")
+    width, height = text_area(sp, elements)
+    if width is not None and width < MIN_TEXT_TWIPS:
+        raise JobException(
+            f"section {i}: a page {words(w)} wide less a left margin of {twips('pgMar', 'left')}, a right margin of "
+            f"{twips('pgMar', 'right')} and a gutter of {twips('pgMar', 'gutter') or 0} leaves {words(width)} for "
+            f"the text; Word keeps at least {MIN_TEXT_TWIPS} (half an inch) — widen the page or narrow the margins",
+            "bad-params", {"section": i, "text_width": width})
+    if height is not None and height < MIN_TEXT_TWIPS:
+        raise JobException(
+            f"section {i}: a page {words(h)} tall less a top margin of {twips('pgMar', 'top')} and a bottom margin of "
+            f"{twips('pgMar', 'bottom')} leaves {words(height)} for the text; Word keeps at least {MIN_TEXT_TWIPS} "
+            f"(half an inch) — make the page taller or the margins smaller", "bad-params",
+            {"section": i, "text_height": height})
+    for kind in ("header", "footer"):
+        v = twips("pgMar", kind)
+        if v is not None and h is not None and v >= h:
+            raise JobException(
+                f"section {i}: the {kind} {words(v)} from the page edge lies off a page {words(h)} tall",
+                "bad-params", {"section": i, kind: v})
 
 
 def _nth(n: int) -> str:
@@ -308,8 +367,9 @@ class SetPageSetup(Op):
     params_schema = {"type": "object", "properties": {
         "margins": {"type": "object",
                     "description": "top/right/bottom/left/header/footer/gutter in twips (1440 = 1 in); "
-                                   "header/footer = the header's/footer's distance from the page edge"},
-        "size": {"type": "object", "description": "{w, h} in twips (12240 x 15840 = US Letter)"},
+                                   "header/footer = the header's/footer's distance from the page edge; the page "
+                                   "must keep at least 720 twips of text width and height inside them"},
+        "size": {"type": "object", "description": "{w, h} in twips (12240 x 15840 = US Letter; each 144 to 31680)"},
         "orientation": {"type": "string", "enum": ["portrait", "landscape"],
                         "description": "swaps width and height where they disagree; margins are not rotated"},
         "different_first_page": {"type": "boolean",
@@ -395,6 +455,10 @@ class SetPageSetup(Op):
                     raise JobException(f"{name}.{k} must be an integer number of twips", "bad-params")
         if size and set(size) != {"w", "h"}:
             raise JobException("size needs both w and h", "bad-params")
+        for k, v in size.items():
+            if not MIN_PAGE_TWIPS <= v <= MAX_TWIPS:
+                raise JobException(f"size.{k} must be from {MIN_PAGE_TWIPS} to {MAX_TWIPS} twips (0.1 to 22 inches, "
+                                   f"Word's range), got {v}", "bad-params")
         if orient not in (None, "portrait", "landscape"):
             raise JobException("orientation must be 'portrait' or 'landscape'", "bad-params")
         if first is not None and not isinstance(first, bool):
@@ -449,6 +513,8 @@ class SetPageSetup(Op):
                     pg_set["orient"] = orient
                 pg_set["w"], pg_set["h"] = str(w), str(h)
                 elements["pgSz"] = pg_set
+            if elements:
+                check_page(i, sp, elements)
             if first is not None:
                 # V10 reads every selected section's titlePg in the OUTPUT, an already-as-asked one included: another
                 # op flipping it (the templating op following its template) is a plan-time conflict
