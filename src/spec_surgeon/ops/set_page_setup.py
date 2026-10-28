@@ -45,8 +45,10 @@ text, and the verifier cannot see that): a page width or height outside 0.1 to 2
 section's own values where the op gives none), a text width (the page less the left and right margins and the
 gutter) or a text height (the page less the top and bottom margins, a negative one — Word's "exactly" margin — by its
 size) below half an inch (``MIN_TEXT_TWIPS`` 720), or a header or footer distance at or beyond the page's height. The
-refusal names the section and the values. The header, footer and gutter distances have no other bound than being
-non-negative; top and bottom may be negative.
+gutter counts against the height instead when the document's settings put it at the top (``gutter_at_top``:
+``w:gutterAtTop`` on, unless ``w:mirrorMargins`` or a book fold holds it on the inside edge, as Word's Page Setup
+dialog does). The refusal names the section and the values. The header, footer and gutter distances have no other
+bound than being non-negative; top and bottom may be negative.
 
 V10 (``section_props``): one assertion carries the user's own ``select`` and parameters, the sections the plan chose
 and each changed section's element specs; the verifier re-derives the choice and every change from the SOURCE.
@@ -263,23 +265,34 @@ def effective_twips(sp: Any, elements: Dict[str, Dict[str, str]], name: str, key
     return int(v) if v is not None and str(v).lstrip("-").isdigit() else None
 
 
-def text_area(sp: Any, elements: Dict[str, Dict[str, str]]) -> Tuple[Optional[int], Optional[int]]:
+def gutter_at_top(pkg: DocxPackage) -> bool:
+    """Whether the document's gutter sits at the top of the page (``w:gutterAtTop`` in the settings) rather than at
+    the side: mirrored margins and a book fold keep it on the inside edge whatever that flag says (Word's Page Setup
+    dialog fixes the gutter position for those layouts)."""
+    return pkg.settings_flag("gutterAtTop") and not any(
+        pkg.settings_flag(n) for n in ("mirrorMargins", "bookFoldPrinting", "bookFoldRevPrinting"))
+
+
+def text_area(sp: Any, elements: Dict[str, Dict[str, str]],
+              gutter_top: bool = False) -> Tuple[Optional[int], Optional[int]]:
     """(text width, text height) in twips of section ``sp`` once this op's own size and margins (``elements``) are
-    set: the page width less the left and right margins and the gutter; the page height less the top and bottom
-    margins, a negative one (Word's "exactly" margin) by its size. None where a value cannot be read."""
+    set: the page width less the left and right margins; the page height less the top and bottom margins, a
+    negative one (Word's "exactly" margin) by its size; the gutter off the width, or off the height when the document
+    puts it at the top (``gutter_top``). None where a value cannot be read."""
     w, h = effective_twips(sp, elements, "pgSz", "w"), effective_twips(sp, elements, "pgSz", "h")
     left, right = effective_twips(sp, elements, "pgMar", "left"), effective_twips(sp, elements, "pgMar", "right")
     top, bottom = effective_twips(sp, elements, "pgMar", "top"), effective_twips(sp, elements, "pgMar", "bottom")
     gutter = effective_twips(sp, elements, "pgMar", "gutter") or 0
-    width = None if None in (w, left, right) else w - left - right - gutter
-    height = None if None in (h, top, bottom) else h - abs(top) - abs(bottom)
+    width = None if None in (w, left, right) else w - left - right - (0 if gutter_top else gutter)
+    height = None if None in (h, top, bottom) else h - abs(top) - abs(bottom) - (gutter if gutter_top else 0)
     return width, height
 
 
-def column_width(sp: Any, elements: Dict[str, Dict[str, str]], cols: Dict[str, Any]) -> Optional[int]:
+def column_width(sp: Any, elements: Dict[str, Dict[str, str]], cols: Dict[str, Any],
+                 gutter_top: bool = False) -> Optional[int]:
     """Each column's width (twips) in section ``sp`` once this op's own size and margins (``elements``) are set; None
     when the page size or margins cannot be read."""
-    text, _ = text_area(sp, elements)
+    text, _ = text_area(sp, elements, gutter_top)
     if text is None:
         return None
     own = w_attrs(sp.find(W + "cols")).get("space", "720")
@@ -287,10 +300,11 @@ def column_width(sp: Any, elements: Dict[str, Dict[str, str]], cols: Dict[str, A
     return (text - (cols["count"] - 1) * space) // cols["count"]
 
 
-def check_page(i: int, sp: Any, elements: Dict[str, Dict[str, str]]) -> None:
+def check_page(i: int, sp: Any, elements: Dict[str, Dict[str, str]], gutter_top: bool = False) -> None:
     """Word's bounds on section ``i``'s page once this op's own size and margins (``elements``) are set (module
-    docstring): at least half an inch of text width and of text height, and the header and footer within the page —
-    ``bad-params`` otherwise, naming the section and the values. A value that cannot be read is not judged."""
+    docstring): at least half an inch of text width and of text height (the gutter off whichever the document puts it
+    on, ``gutter_top``), and the header and footer within the page — ``bad-params`` otherwise, naming the section and
+    the values. A value that cannot be read is not judged."""
     def twips(name: str, key: str) -> Optional[int]:
         return effective_twips(sp, elements, name, key)
 
@@ -298,19 +312,22 @@ def check_page(i: int, sp: Any, elements: Dict[str, Dict[str, str]]) -> None:
         return f"{v} twips ({prose.inches(v)})"
 
     w, h = twips("pgSz", "w"), twips("pgSz", "h")
-    width, height = text_area(sp, elements)
+    width, height = text_area(sp, elements, gutter_top)
+    gutter = f"a gutter of {twips('pgMar', 'gutter') or 0}"
+    left, right = f"a left margin of {twips('pgMar', 'left')}", f"a right margin of {twips('pgMar', 'right')}"
+    top, bottom = f"a top margin of {twips('pgMar', 'top')}", f"a bottom margin of {twips('pgMar', 'bottom')}"
     if width is not None and width < MIN_TEXT_TWIPS:
+        sides = f"{left} and {right}" if gutter_top else f"{left}, {right} and {gutter}"
         raise JobException(
-            f"section {i}: a page {words(w)} wide less a left margin of {twips('pgMar', 'left')}, a right margin of "
-            f"{twips('pgMar', 'right')} and a gutter of {twips('pgMar', 'gutter') or 0} leaves {words(width)} for "
-            f"the text; Word keeps at least {MIN_TEXT_TWIPS} (half an inch) — widen the page or narrow the margins",
+            f"section {i}: a page {words(w)} wide less {sides} leaves {words(width)} for the text; Word keeps at "
+            f"least {MIN_TEXT_TWIPS} (half an inch) — widen the page or narrow the margins",
             "bad-params", {"section": i, "text_width": width})
     if height is not None and height < MIN_TEXT_TWIPS:
+        ends = f"{top}, {bottom} and {gutter} at the top" if gutter_top else f"{top} and {bottom}"
         raise JobException(
-            f"section {i}: a page {words(h)} tall less a top margin of {twips('pgMar', 'top')} and a bottom margin of "
-            f"{twips('pgMar', 'bottom')} leaves {words(height)} for the text; Word keeps at least {MIN_TEXT_TWIPS} "
-            f"(half an inch) — make the page taller or the margins smaller", "bad-params",
-            {"section": i, "text_height": height})
+            f"section {i}: a page {words(h)} tall less {ends} leaves {words(height)} for the text; Word keeps at "
+            f"least {MIN_TEXT_TWIPS} (half an inch) — make the page taller or the margins smaller",
+            "bad-params", {"section": i, "text_height": height})
     for kind in ("header", "footer"):
         v = twips("pgMar", kind)
         if v is not None and h is not None and v >= h:
@@ -486,6 +503,7 @@ class SetPageSetup(Op):
             frag.flags.append(f"the content selection chose every section of this file ({len(secs)}): the change applies "
                               f"to the whole document, not to a part of it — check that the pattern does not match "
                               f"ordinary text")
+        gutter_top = gutter_at_top(pkg)
         per_section: Dict[int, Dict[str, Dict[str, str]]] = {}
         asserted: Dict[str, Dict[str, Dict[str, Any]]] = {}     # section_props element specs per changed section
         titles: Dict[int, bool] = {}
@@ -514,7 +532,7 @@ class SetPageSetup(Op):
                 pg_set["w"], pg_set["h"] = str(w), str(h)
                 elements["pgSz"] = pg_set
             if elements:
-                check_page(i, sp, elements)
+                check_page(i, sp, elements, gutter_top)
             if first is not None:
                 # V10 reads every selected section's titlePg in the OUTPUT, an already-as-asked one included: another
                 # op flipping it (the templating op following its template) is a plan-time conflict
@@ -532,7 +550,7 @@ class SetPageSetup(Op):
                 asserted[str(i)].update(copy.deepcopy(lay))
             if lay:
                 layouts[i] = lay
-                width = column_width(sp, elements, params["columns"]) if "cols" in lay else None
+                width = column_width(sp, elements, params["columns"], gutter_top) if "cols" in lay else None
                 if width is not None and params["columns"]["count"] > 1 and width < 720:
                     frag.flags.append(f"section {i}: {params['columns']['count']} columns leave each column "
                                       f"{prose.inches(max(width, 0))} wide — less than half an inch")

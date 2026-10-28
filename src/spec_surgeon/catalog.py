@@ -355,9 +355,10 @@ COMMON_ASSUMPTIONS: Dict[str, List[str]] = {
         "margins are in twips (1440 = 1 inch); header/footer distances unchanged unless given",
         "the header's and footer's distance from the page edge are margins.header and margins.footer (twips)",
         "Word's own bounds are refused, not guessed: a page side is 0.1 to 22 inches (144 to 31680 twips), and once "
-        "the size and margins asked are set each chosen section keeps at least half an inch of text width (the page "
-        "less its side margins and gutter) and of text height (less its top and bottom margins), with the header and "
-        "footer distances within the page; a negative top or bottom margin is Word's 'exactly' margin",
+        "the size and margins asked are set each chosen section keeps at least half an inch of text width and of "
+        "text height inside its margins (the gutter off the side, or off the top when the document's settings put it "
+        "there), with the header and footer distances within the page; a negative top or bottom margin is Word's "
+        "'exactly' margin",
         "different_first_page true gives the section's first page its own first-page header/footer (none of its own: "
         "it shows the previous section's, or a blank one — flagged); false shows the ordinary ones there; a section "
         "already as asked is left alone",

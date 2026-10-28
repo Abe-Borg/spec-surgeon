@@ -23,6 +23,7 @@ from spec_surgeon.catalog import COMMON_ASSUMPTIONS, SELECTOR_GRAMMAR, op_catalo
 from spec_surgeon.editspec import apply_spec, load_spec, plan_spec, validate_spec
 from spec_surgeon.ooxml import SECTPR_ORDER, insert_in_order
 from spec_surgeon.ops import OPS, JobException, get_op, merge_fragments
+from spec_surgeon.ops.docprops import SETTINGS_ORDER
 from spec_surgeon.ops import selectors as selectors_module
 from spec_surgeon.ops import set_page_setup as page_module
 from spec_surgeon.ops import set_tab_stops as tabs_module
@@ -841,6 +842,48 @@ def test_a_header_or_footer_distance_off_the_page_is_refused():
     e = _refused_setup([1], data, size={"w": 12240, "h": 3000})
     assert e.reason == ("section 1: the header 3000 twips (2.083 inches) from the page edge lies off a page 3000 twips "
                         "(2.083 inches) tall")
+
+
+def _with_settings(data: bytes, *names: str) -> bytes:
+    """``data`` with the on/off settings ``names`` (``<w:gutterAtTop/>``, …) added to its settings part, in schema
+    order."""
+    work = DocxPackage(data).copy()
+    part = work.settings_part()
+    root = work.xml(part)
+    for name in names:
+        insert_in_order(root, etree.Element(W + name), [n[len(W):] for n in SETTINGS_ORDER])
+    work.write_xml(part, root)
+    return work.output_bytes()
+
+
+def test_a_gutter_at_the_top_counts_against_the_height_not_the_width():
+    """w:gutterAtTop: the gutter takes vertical space, so side margins leaving 720 twips beside a 1440 gutter pass and
+    top and bottom margins leaving 720 are refused by the gutter; mirrored margins or a book fold put the gutter back
+    on the inside edge whatever the flag says. The columns flag reads the same text width."""
+    top = _with_settings(SCHEDULE, "gutterAtTop")
+    assert page_module.gutter_at_top(DocxPackage(top)) and not page_module.gutter_at_top(DocxPackage(SCHEDULE))
+    plan, _, _, rec = _run(top, _spec(_setup([1], margins={"left": 5760, "right": 5760, "gutter": 1440})))
+    assert rec.passed, rec.to_markdown()
+    e = _refused_setup([1], top, margins={"left": 5761, "right": 5760, "gutter": 1440})
+    assert e.reason.startswith("section 1: a page 12240 twips (8.5 inches) wide less a left margin of 5761 and a right "
+                               "margin of 5760 leaves 719 twips")
+    plan, _, _, rec = _run(top, _spec(_setup([1], margins={"top": 7200, "bottom": 7200, "gutter": 720})))
+    assert rec.passed, rec.to_markdown()
+    e = _refused_setup([1], top, margins={"top": 7200, "bottom": 7200, "gutter": 721})
+    assert e.reason.startswith("section 1: a page 15840 twips (11 inches) tall less a top margin of 7200, a bottom "
+                               "margin of 7200 and a gutter of 721 at the top leaves 719 twips")
+    assert e.details == {"section": 1, "text_height": 719}
+    for layout in ("mirrorMargins", "bookFoldPrinting", "bookFoldRevPrinting"):
+        side = _with_settings(SCHEDULE, "gutterAtTop", layout)
+        assert not page_module.gutter_at_top(DocxPackage(side))
+        e = _refused_setup([1], side, margins={"left": 5760, "right": 5760, "gutter": 1440})
+        assert "a right margin of 5760 and a gutter of 1440 leaves -720 twips" in e.reason
+        plan, _, _, rec = _run(side, _spec(_setup([1], margins={"top": 7200, "bottom": 7200, "gutter": 721})))
+        assert rec.passed, rec.to_markdown()
+    plan, _, _, rec = _run(SCHEDULE, _spec(_setup([1], margins={"gutter": 1440}, columns={"count": 12, "space": 0})))
+    assert rec.passed and any("12 columns leave each column 0.417 inch wide" in f for f in plan.flags)
+    plan, _, _, rec = _run(top, _spec(_setup([1], margins={"gutter": 1440}, columns={"count": 12, "space": 0})))
+    assert rec.passed and not plan.flags                                 # 8640 / 12 = 720: the gutter is above
 
 
 def test_a_section_whose_geometry_cannot_be_read_is_not_judged():
