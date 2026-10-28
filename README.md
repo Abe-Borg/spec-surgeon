@@ -390,8 +390,8 @@ recorded for the requests that follow.
   synthetic fixtures (including a family of deliberately dirty files) and in CI; the live Claude path, Word
   rendering and the first real batches are the user's to run. Expect fixes from the first real runs of every operation.
 - Safe mode's buttons do only what each says. A document a button cannot change exactly is left untouched with the
-  reason; no AI looks at it there, and it can be handed to Default mode. Text boxes, shapes and the other objects
-  out of reach stay out of reach in every mode.
+  reason; no AI looks at it there, and it can be handed to Default mode. Text boxes as objects, shapes and the other
+  objects out of reach stay out of reach in every mode.
 - A PASS is the engine's proof of the predicted change, not acceptance of the result. Look at the before/after
   pages. Claude's visual check is advisory and can be wrong both ways.
 - A clean PDF is checked as a file (it opens, has pages and carries no notes) and is made from a checked clean copy;
@@ -404,10 +404,12 @@ recorded for the requests that follow.
   from Word there.
 - Operations that touch the same part of a file are never ordered by guess inside one specification: the window
   composes them into ordered steps in the order they were listed, each step planned and verified on the one before
-  it. Edits inside text boxes, finding text across tabs or line breaks, tracked cell-level table changes, tracked
-  numbering changes, run and table-cell borders, and tab stops in styles are not supported. Shapes, SmartArt, charts,
-  equations, embedded objects, data-bound content controls and the theme are out of reach by decision: an edit that
-  would touch one is refused with a reason, to be made in Word.
+  it. Text boxes as objects (adding, moving or sizing one, or its formatting) are not supported; the words inside one
+  are changed by Default's term replacement, while Safe mode's **Find and replace** button (and a table of pairs in
+  Default) sets a file aside for an occurrence in a text box. Finding text across tabs or line breaks, tracked
+  cell-level table changes, tracked numbering changes, run and table-cell borders, and tab stops in styles are not
+  supported. Shapes, SmartArt, charts, equations, embedded objects, data-bound content controls and the theme are out
+  of reach by decision: an edit that would touch one is refused with a reason, to be made in Word.
 - Column deletion, cell merges, cell properties, section breaks and picture sizes are never tracked (Word does not
   track them as such); inserted fields carry no result until Word updates them (page numbers at once, other fields
   when the file opens).

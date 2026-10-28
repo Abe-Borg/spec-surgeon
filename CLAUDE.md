@@ -39,7 +39,9 @@ files go to clients, so the one failure that matters is content lost or invented
    engine executes; nothing runs that was not planned, previewed and approved as that spec.
 
 Out of reach by decision (refused with a code, "change this one in Word"): shapes, SmartArt, charts, equations,
-embedded objects, data-bound content controls and the theme.
+embedded objects, data-bound content controls and the theme, and text boxes as objects (adding, moving, sizing or
+formatting one). The words inside a text box are `replace_text`'s to change (a nested paragraph is a paragraph of its
+own) and set a file aside under `replace_table` (Word keeps two copies of a text box; the code `textbox`).
 
 ## Modes
 
@@ -233,7 +235,8 @@ real-file run, which the user performs.
 
 Standing decisions from the earlier rounds (their plans are in the git history):
 
-- Text boxes are not pursued. No raw-XML operation, catch-all deletion operation or `force` flag is added.
+- Text boxes as objects are not pursued (the words inside one: "Out of reach by decision", above). No raw-XML
+  operation, catch-all deletion operation or `force` flag is added.
 - In Safe and Default, a custom method may do more kinds of formatting, never more kinds of change: a family is added
   only behind a V10 kind that proves the content it touches is the source's, and the sandbox's limits stay as they are.
 - Capitals are a display property (`w:caps`) unless the user gives capitalised wording; nothing retypes a file's letters
