@@ -182,7 +182,6 @@ def test_the_real_soffice_renders_twice_on_one_kept_profile(tmp_path):
 def test_a_timed_out_soffice_run_takes_its_whole_process_tree_with_it(tmp_path):
     """``soffice`` is a launcher whose child does the work; killing the launcher alone on a timeout left the child
     alive on the profile, where every later request on that profile was handed to it and lost."""
-    import os
     import stat
     import textwrap
     pidfile = tmp_path / "child.pid"
@@ -198,13 +197,27 @@ def test_a_timed_out_soffice_run_takes_its_whole_process_tree_with_it(tmp_path):
         libreoffice._convert_batch(str(launcher), [tmp_path / "A.docx"], tmp_path / "out", tmp_path / "profile", 1)
     child = int(pidfile.read_text().strip())
     for _ in range(50):                                    # the kill is delivered; the child is reaped by init
-        try:
-            os.kill(child, 0)
-        except ProcessLookupError:
+        if _killed(child):
             break
         time.sleep(0.1)
     else:
         raise AssertionError(f"the launcher's child {child} survived the timeout")
+
+
+def _killed(pid: int) -> bool:
+    """Gone, or a zombie: ``kill(pid, 0)`` still succeeds on a killed process whose PID 1 does not reap orphans
+    (a plain container), so on Linux the state in ``/proc/<pid>/stat`` decides; where ``/proc`` is absent (macOS)
+    the ``kill`` answer stands."""
+    import os
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return True
+    try:
+        stat_line = Path(f"/proc/{pid}/stat").read_text()
+    except OSError:
+        return False
+    return stat_line.rpartition(")")[2].split()[0] == "Z"     # the field after the parenthesised command name
 
 
 def test_a_retired_profile_is_never_leased_again_in_this_process(tmp_path, monkeypatch):
