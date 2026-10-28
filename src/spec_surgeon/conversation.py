@@ -304,7 +304,7 @@ class Conversation:
                  max_context_tokens: int = DEFAULT_CONTEXT_TOKENS, analysis_limits=None,
                  continuous_recovery: bool = False, word_sources=None, input_files: Sequence[Path] = (),
                  history: Sequence[str] = (), fresh: Sequence[str] = (), context: str = "",
-                 todo: Sequence[str] = (), unguarded: bool = False):
+                 todo: Sequence[str] = (), earlier: Sequence[str] = (), unguarded: bool = False):
         if mode not in ("chat", "compile"):
             raise ValueError(f"unknown conversation mode {mode!r}")
         self.max_calls = positive_integer("max_calls", MAX_CALLS_PER_TURN if max_calls is None else max_calls)
@@ -338,6 +338,9 @@ class Conversation:
         self.fresh: List[str] = list(fresh)
         self.context = str(context or "")          # the app's account of how these documents come to be planned
         self.todo = [str(t) for t in todo if str(t).strip()]   # the user's to-do list (not in THE BATCH), one line each
+        # the exchanges the window finished with an answer before this request (what was asked, the answer's first
+        # sentence), one line each: context the request may refer to, answered already
+        self.earlier = [str(e) for e in earlier if str(e).strip()]
         # the documents the user set aside during this conversation (``set_aside``, resolved paths, in order): they
         # left ``files`` at once, and no later submission plans them; with the reason given for each
         self.set_aside: List[str] = []
@@ -388,7 +391,7 @@ class Conversation:
         self.messages = compiler.build_messages(self.request, self.batch, self.answers,
                                                 prior_failures=self.prior_failures or None, history=self.history or None,
                                                 fresh=self.fresh or None, context=self.context or None,
-                                                todo=self.todo or None)
+                                                todo=self.todo or None, earlier=self.earlier or None)
         self.entries.append(Entry("user", self.request))
         self.exchange.append({"turn": 0, "role": "user", "content": self.messages[0]["content"],
                               "files": [str(f) for f in self.files],

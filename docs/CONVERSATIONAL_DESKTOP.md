@@ -367,6 +367,17 @@ your edit, which is then the approved wording instead of the draft (one line of 
 offered wording passes; `conversation.edited_wording`). Claude is told the exact words you approved. A reply
 that asks nothing (an answer, an apology, a list of findings) stays in the chat alone; the card never repeats it.
 
+**When a request ends.** A request is finished when the conversation about it created copies, when its preview was
+discarded, or when the assistant's reply ends the exchange with an answer and nothing pending: no plan, no question, no
+suggested reply, no custom method being prepared ("Which of these carry a Subject property? Do not make an edit."
+answered in words). The answer stays in the chat as it is, no button follows it, and your next message is a new
+request, whatever happened in between — a document put back from the to-do list, one attached, a mode change — never
+a revision of the question it answered. The assistant is told the last five such exchanges with each new request (what
+you asked, and the first sentence of its answer), so it can refer back without answering them again
+(`DocumentTask.exchanges`, kept in the saved conversation). While a question or a preview is pending, a follow-up is
+a revision of the open request in the same conversation, as before; so are the assistant's words after the gate
+refused its plan, which is still to be made.
+
 The assistant goes ahead on sensible defaults and says what it assumed; it asks at most three questions per
 turn, each with the answer it recommends, and offers short replies you can tap. A tapped reply is your decision
 and is sent as your reply, but it is never approved wording: words that go into a document are always ones you
@@ -527,8 +538,9 @@ what it does. Its label says what it does:
 - **Create edited copies**: approve the displayed plan and preview. The engine applies the specification to
   every document you did not set aside with the red X, verifies each one independently, and delivers only the
   files that pass every check. "(N set aside)" on the label counts the documents that go on the to-do list.
-- **Continue**: the documents or the plan changed; the documents are checked against the request again before
-  anything can be approved.
+- **Continue**: the documents or the plan changed while a request was open; the documents are checked against the
+  request again before anything can be approved. A request the assistant answered without a plan is not open (above),
+  so no Continue follows the answer.
 - **Save N ready copies**: during recovery, save the copies that are already verified while a question about
   other files is still open.
 - **Continue** after a pause: the request reached your spending check, the price table cannot estimate the model

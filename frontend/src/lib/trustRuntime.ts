@@ -134,6 +134,7 @@ export const RUNTIME_CARDS: RuntimeCard[] = [
       "per action (the preview, and when needed a custom method or an outcome plan; their own cards follow).",
     sent:
       `To the Anthropic API (${F.anthropicHost}, unless ${F.apiAddressEnv} is set): your request and earlier answers, what the copies already carry, ` +
+      "the last few requests Claude answered without a plan (your words and the first sentence of each answer), " +
       "the file names (and the names on your to-do list, with why each waits), the full path of an attached template, " +
       "picture or table, a profile of each kind of document " +
       "(styles, headings, header and footer text, sample paragraphs), an overview of every document (its section " +

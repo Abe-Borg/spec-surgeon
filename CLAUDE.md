@@ -81,6 +81,13 @@ button lives in the chat pane;
 each preview carries a checkmark and an X: X'd documents are `hold` on the primary action (`Session.run(only=)` keeps
 every approved pin), wait on `DocumentTask.todo`, and the reply `WORK_TODO` begins a pass over them alone (`focus`, one
 request at a time); `applied` keeps the changes each copy carries, so the history the model hears is per document.
+A request ends with copies, with a discarded preview, or with a reply that is an answer and nothing pending (words
+alone: no question, choice, suggested reply, plan, refused plan or custom method — `DocumentTask._answered`): the
+decisions are cleared, the conversation ends, and the exchange (the user's words, the answer's first sentence) is kept
+in `DocumentTask.exchanges` (journalled, the last `EXCHANGES_KEPT`) and told to the model with the next request
+(`Session.compile(earlier=)` → `build_messages` `EARLIER IN THIS CONVERSATION`), so a put-back, an attach or a mode
+change revives nothing stale and the next message is a fresh REQUEST; a follow-up while something is pending stays a
+revision (`conversation_matches`). `start_todo` still reuses the to-do entries' decisions.
 Documents the user leaves out of a request (`submit_editspec.leave_out` → `Session.left_out`) are not planned,
 previewed or run (`planned_files`) and wait under Left untouched; a file the plan refuses does too, at any step of a
 chain (`planner.plan_batch_chain` plans every step on every file; `preview.refusals`), and the preview of the others
