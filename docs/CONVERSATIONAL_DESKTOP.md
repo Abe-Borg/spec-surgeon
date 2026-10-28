@@ -132,6 +132,16 @@ the overlapping operations in ordered steps. A document left out is listed besid
 (`Session.left_out_reasons`) and, after the run, under **Left untouched by the last button**, ready for Default mode.
 Every change is plain and no word is placed.
 
+**Match font to template** (`recipes._font_template`) sets the template's body font and size (the font most of its
+body text is in, `profile.body_text_fonts`) on the runs that name a font, every style and the document defaults —
+the size only on text in each document's OWN body size, the size most of that document's body text is in, so its
+headings, notes, tables and other sizes keep theirs. Documents of one body size share one spec; a batch of two or
+more body sizes is a layout plan with one layout per size (`recipes._font_layouts`), each passed through
+`compiler.compose_submission` on its own documents, all previewed and approved together. A layout covers structure
+patterns, so documents built alike (one pattern) whose body sizes differ take the size most of them have (the
+first attached decides a tie); the others are left out with the reason, to be pressed alone. A document with no
+measurable body size takes the font alone; one that cannot be read is set aside by the preview with its reason.
+
 Typing is not possible in Safe mode, and the server refuses a message there; the conversation and its question cards
 belong to Default mode.
 

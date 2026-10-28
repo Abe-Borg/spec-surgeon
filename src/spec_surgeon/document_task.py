@@ -1104,7 +1104,8 @@ class DocumentTask:
             # a button that plans per layout passed each layout through the gate itself (``body_match``)
             outcome, errors, nothing = built.outcome, [], built.outcome is None
         else:
-            outcome, errors = compiler.compose_submission(built.spec, ctx.batch(), [built.request, *built.sources])
+            outcome, errors = compiler.compose_submission(built.spec, ctx.batch(), [built.request, *built.sources],
+                                                          leave_out=list(built.left_out))
             nothing = bool(errors) and errors[0].startswith(compiler.PLANS_ON_NONE)
         if errors and not nothing:
             self._revision += 1

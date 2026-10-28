@@ -293,7 +293,7 @@ def font_ops(font: str, size: Optional[float], size_from: List[float], styles: L
     return ops
 
 
-def _reason(errors: List[str]) -> str:
+def gate_reason(errors: List[str]) -> str:
     """A gate's refusal as the sentence beside a document: the file's label, the op's number and the part's name
     dropped, the paragraph shown by its words."""
     import re
@@ -376,7 +376,7 @@ def build_layouts(roles: TemplateRoles, ctx, request: str, *, page: bool, font: 
                                                           [request], patterns=[pat["pattern_id"]],
                                                           leave_out=list(left))
         if errors:
-            why = _reason(errors)
+            why = gate_reason(errors)
             for p in chosen:
                 left[str(p.path.resolve())] = f"Not matched: {why}"
             continue

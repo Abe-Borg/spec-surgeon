@@ -138,7 +138,9 @@ jobs). Details: `docs/CONVERSATIONAL_DESKTOP.md`.
     `Session.outcome` auto-takes a custom transform only — and the documents the user left out of the request stay
     out of it, `Conversation.left_out`), `inventory.py` (the content digest that pins a file).
   - `recipes.py` — Safe mode's buttons: each a fixed EditSpec from its form (`build`), the header/footer template's kind
-    (`template_kind`); the page's copy of the list (`frontend/mock/recipes.json`) is pinned to `catalog()`. Find and
+    (`template_kind`); the font button groups the documents by their own body size, one spec per size as a layout
+    plan when there are two (`_font_layouts`; documents built alike take the size most of them have, the rest are
+    left out with why); the page's copy of the list (`frontend/mock/recipes.json`) is pinned to `catalog()`. Find and
     replace, occurrence by occurrence (backlog F1): `replace_table` lists every occurrence it finds in its
     `replaced_text` assertion (and in a refusal's details), `planner.FilePlan.occurrences` exposes them, the window
     shows them per document (`DocumentTask._occurrences_view`, the page's `OccurrencesCard`), and an untick goes back
