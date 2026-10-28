@@ -693,3 +693,119 @@ def test_safe_mode_routes_discard_and_undo(tmp_path, monkeypatch):
     assert view["working"] == {"generation": 0, "from_originals": True, "can_start_over": False,
                                "undo": "", "undo_blocked": ""}
     assert view["results"] == [] and view["attachments"][0]["current"] == str(spec)
+
+
+# ---- every error is JSON (docs/WEB_API.md): the four 500s the QA pass of 2026-10-28 found -------------------------
+
+def _health(client):
+    assert client.get("/api/health").json()["ok"] is True
+    assert client.get("/api/state").json()["attachments"] == []
+
+
+def test_an_overlong_upload_name_is_a_400_naming_the_file_not_a_crash(tmp_path):
+    """A dropped file whose name the scratch folder cannot take (260 characters: Windows' MAX_PATH, ENAMETOOLONG
+    elsewhere) used to raise out of the route before its error boundary and land as a text/plain 500. Now one readable
+    sentence names the file and says to shorten the name; the name itself is never shortened for the user (it would be
+    the copy's planned name), nothing is attached, and the window goes on."""
+    state, client = window(tmp_path)
+    name = "x" * 260 + ".docx"
+    r = client.post("/api/upload", files=[("files", (name, document(tmp_path / "Spec.docx").read_bytes(),
+                                                     "application/octet-stream"))], data={"template": "false"})
+    assert r.status_code == 400 and r.headers["content-type"].startswith("application/json")
+    message = r.json()["error"]
+    assert name in message and message.endswith("attach it again.") and "\n" not in message
+    if sys.platform != "win32":
+        assert "the path is too long" in message and "shorter name" in message
+    _health(client)
+
+
+def _probe_uploads(client, name: str, data: bytes):
+    """The probe dropped as a document, then as the template: a refused document is attached greyed out with its
+    reason (the view, 200), a refused template is a 400 with the same sentence; never a 500. Both sentences, and the
+    attachments list emptied again."""
+    r = client.post("/api/upload", files=[("files", (name, data, "application/octet-stream"))],
+                    data={"template": "false"})
+    assert r.status_code == 200, r.text
+    attached = r.json()["attachments"]
+    assert [(a["name"], a["state"], a["kind"]) for a in attached] == [(name, "refused", "document")]
+    as_document = attached[0]["reason"]
+    assert client.post("/api/remove", json={"path": attached[0]["path"]}).json()["attachments"] == []
+    r = client.post("/api/upload", files=[("files", (name, data, "application/octet-stream"))],
+                    data={"template": "true"})
+    assert r.status_code == 400 and r.headers["content-type"].startswith("application/json"), r.text
+    as_template = r.json()["error"]
+    assert as_template.split(".docx", 1)[1] == as_document.split(".docx", 1)[1]   # the same sentence, the copy's name
+    return [as_document, as_template]
+
+
+def test_an_encrypted_or_oddly_compressed_docx_is_refused_with_a_sentence(tmp_path):
+    """``zipfile`` raises RuntimeError for an encrypted member and NotImplementedError for a compression method it
+    does not implement; neither was among triage's open errors, so the exception rose through ``attach`` to the route
+    and out as a 500. Both are refusals now (a password-protected document says what to do about the password), as a
+    document, as the template, and through ``/api/attach``; the window still answers after each."""
+    from make_fixtures import build, flag_encrypted, recompress
+    state, client = window(tmp_path)
+    clean = build("21 13 13", "WET-PIPE SPRINKLER SYSTEMS")
+    for message in _probe_uploads(client, "locked.docx", flag_encrypted(clean)):
+        assert message.startswith("locked") and message.endswith(
+            ".docx is password-protected; remove the password in Word and save it again as .docx.")
+    for message in _probe_uploads(client, "odd.docx", recompress(clean, 96)):
+        assert message.startswith("odd") and message.endswith(
+            ".docx cannot be opened as a Word package; open it in Word and save it again as .docx.")
+    _health(client)
+    on_disk = tmp_path / "locked.docx"
+    on_disk.write_bytes(flag_encrypted(clean))
+    r = client.post("/api/attach", json={"paths": [str(on_disk)], "template": True})
+    assert r.status_code == 400 and r.json()["error"].startswith("locked.docx is password-protected")
+    view = client.post("/api/attach", json={"paths": [str(on_disk)]}).json()
+    assert [a["state"] for a in view["attachments"]] == ["refused"]
+    assert view["attachments"][0]["reason"].startswith("locked.docx is password-protected")
+    client.post("/api/remove", json={"path": view["attachments"][0]["path"]})
+    _health(client)
+
+
+def test_a_docx_without_its_content_types_manifest_is_refused_at_intake(tmp_path):
+    """A package with ``[Content_Types].xml`` deleted used to attach with ordinary notes and preview as PASS (the
+    verifier is right: a defect in both source and output is not new) and was only withheld at a rendered run, when
+    LibreOffice could not load it. Triage refuses it on arrival, with the sentence every unopenable package gets."""
+    from make_fixtures import _drop_members, build
+    state, client = window(tmp_path)
+    hollow = _drop_members(build("21 13 13", "WET-PIPE SPRINKLER SYSTEMS"), ["[Content_Types].xml"])
+    for message in _probe_uploads(client, "no-manifest.docx", hollow):
+        assert message.startswith("no-manifest") and message.endswith(
+            ".docx cannot be opened as a Word package; open it in Word and save it again as .docx.")
+    _health(client)
+
+
+JSON_ROUTES = ["/api/attach", "/api/pick", "/api/remove", "/api/send", "/api/choose", "/api/primary", "/api/recipe",
+               "/api/occurrences", "/api/mode", "/api/handoff", "/api/put-back", "/api/open", "/api/settings"]
+BAD_BODIES = ["null", "[]", "[1]", '"hello"', "42", "true", '{"x":', ""]
+
+
+@pytest.mark.parametrize("route", JSON_ROUTES)
+@pytest.mark.parametrize("body", BAD_BODIES)
+def test_a_body_that_is_not_a_json_object_is_a_400_on_every_json_route(tmp_path, route, body):
+    """Every JSON route read its fields with ``body.get`` straight off ``request.json()``: ``null``, a list, a string,
+    a number, a boolean, JSON cut short or no body at all raised (AttributeError, JSONDecodeError) and escaped as a
+    text/plain 500. Now ``json_object`` answers each with the same 400 sentence."""
+    state, client = window(tmp_path)
+    r = client.post(route, content=body, headers={"content-type": "application/json"})
+    assert r.status_code == 400, (route, body, r.status_code, r.text)
+    assert r.json()["error"] == "The request body must be a JSON object."
+    _health(client)
+
+
+def test_attach_refuses_paths_that_are_not_a_list_of_strings(tmp_path):
+    """``{"paths": 42}`` iterated an int (TypeError, a 500); a list with a number in it would have been str()'d into a
+    file name. Both are a 400 now, and the tolerant routes keep reading a bad body as an empty one."""
+    state, client = window(tmp_path)
+    for paths in (42, "C:/spec.docx", {"a": 1}, [1], ["ok.docx", None]):
+        r = client.post("/api/attach", json={"paths": paths})
+        assert r.status_code == 400 and r.json()["error"] == "paths must list the files to attach, by path.", paths
+    assert client.post("/api/attach", json={}).status_code == 200                # nothing to attach: the view
+    assert client.post("/api/attach-folder", content="[1]",
+                       headers={"content-type": "application/json"}).status_code == 501   # a bad body is {}: no dialog
+    r = client.post("/api/diagnostics", content="[1]", headers={"content-type": "application/json"})
+    assert r.status_code == 200 and r.json() == {"ok": True, "taken": 0}
+    assert client.post("/api/diagnostics", content='{"x":', headers={"content-type": "application/json"}).status_code == 400
+    _health(client)

@@ -257,7 +257,7 @@ def test_no_model_call_and_no_verifier_import(files, monkeypatch):
     monkeypatch.setattr(llm, "call", boom)
     assert [t.state for t in triage_files(files.values())].count("refused") == 0
     source = Path(triage_module.__file__).read_text(encoding="utf-8")
-    assert len(source.splitlines()) < 200
+    assert len(source.splitlines()) < 210          # small: a refusal is a sentence and a fact, never a rule
     forbidden = ("verify", "llm", "compiler", "conversation", "codegen", "advisor", "preview", "gui", "ops",
                  "editspec", "document_task", "vision")
     for node in ast.walk(ast.parse(source)):
@@ -314,3 +314,37 @@ def test_a_strict_open_xml_file_is_set_aside_with_a_plain_message(tmp_path):
     assert b.files[0].status == "EXCEPTION" and b.files[0].exception["code"] == "unsupported-format"
     assert explain_failure("unsupported-format", "x")[0] == "Strict Open XML Document"
     assert DocxPackage(build("21 00 22", "QUEBEC")).main_part() == "word/document.xml"      # transitional: as before
+
+
+def test_a_package_without_its_content_types_manifest_cannot_be_opened(tmp_path):
+    """Word writes ``[Content_Types].xml`` in every package and repairs or refuses one without it. The package opens
+    as a zip and its main part is found through the relationships, so nothing else would refuse it: triage does, on
+    arrival, with the sentence every unopenable package gets, and the fact says which member is missing."""
+    path = tmp_path / "no-manifest.docx"
+    path.write_bytes(_drop_members(CLEAN_BYTES, ["[Content_Types].xml"]))
+    found = _refused(path)
+    assert found.reason == f"{path.name} cannot be opened as a Word package; open it in Word and save it again as .docx."
+    assert found.facts["error"].startswith("KeyError") and "[Content_Types].xml" in found.facts["error"]
+    assert found.facts.keys() == {"error"}
+
+
+def test_a_password_protected_package_is_refused_with_the_password_remedy(tmp_path):
+    """``zipfile`` raises RuntimeError, not a zip error, for a member whose encryption flag is set and no password is
+    given: the refusal names the password and what to do about it."""
+    from make_fixtures import flag_encrypted
+    path = tmp_path / "locked.docx"
+    path.write_bytes(flag_encrypted(CLEAN_BYTES))
+    found = _refused(path)
+    assert found.reason == f"{path.name} is password-protected; remove the password in Word and save it again as .docx."
+    assert found.facts["error"].startswith("RuntimeError") and "encrypted" in found.facts["error"]
+
+
+def test_a_compression_method_zipfile_does_not_implement_cannot_be_opened(tmp_path):
+    """``zipfile`` raises NotImplementedError for a member compressed with a method it does not implement (96, JPEG,
+    here; Word writes only stored and deflated members): the ordinary unopenable-package refusal."""
+    from make_fixtures import recompress
+    path = tmp_path / "odd.docx"
+    path.write_bytes(recompress(CLEAN_BYTES, 96))
+    found = _refused(path)
+    assert "cannot be opened as a Word package" in found.reason and "save it again as .docx" in found.reason
+    assert found.facts["error"].startswith("NotImplementedError")

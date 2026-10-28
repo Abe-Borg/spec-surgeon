@@ -206,9 +206,9 @@ explicitly injected clients are retained. Both key replacement and removal refus
 | --- | --- | --- | --- |
 | POST | `/api/settings/remove-key` | | the settings; 409 while work runs; 400 for external-only credentials or secure-store deletion failure |
 | GET | `/api/state` | | the view |
-| POST | `/api/attach` | `{"paths": [..], "template": false}` | the view (400 with `{"error"}` for a refused file) |
+| POST | `/api/attach` | `{"paths": [..], "template": false}` | the view; a document triage refuses is in it, `state` `refused` with its `reason` (400 with `{"error"}` for a file that is not a Word document, picture or table, a refused template, or a `paths` that is not a list of paths) |
 | POST | `/api/attach-folder` | `{"folder": "…"}`, optional: without it the native folder dialog asks | **Add a folder of documents**: the folder's own `.docx` files attached as if picked one by one (sorted by name, Word's `~$` lock files skipped, subfolders not entered — the `app` message says how many Word documents the subfolders hold, to add those folders too); each file is triaged as any attachment; the view. `{"cancelled": true}` when the dialog was dismissed; 400 with `{"error"}` for a folder with no Word documents of its own, or one of the app's own folders (the scratch tree, the run root, the config folder); 409 while work runs; 501 without a dialog and a folder |
-| POST | `/api/upload` | multipart `files[]`, `template` field | copies the bytes under the scratch folder's `attachments/<stamp>/` (deleted with it when the window closes) and attaches them; the view |
+| POST | `/api/upload` | multipart `files[]`, `template` field | copies the bytes under the scratch folder's `attachments/<stamp>/` (deleted with it when the window closes) and attaches them as `/api/attach` does; the view. 400 with `{"error"}` naming the file when the folder cannot take its name (too long for the path: Windows' 260 characters; the sentence says to shorten the name, the app never shortens it, since the attached name is the copy's planned name), nothing attached then |
 | POST | `/api/pick` | `{"kind": "documents | template | references"}` | opens the NATIVE file dialog through the shell (pywebview); `{"paths": [...]}` — 501 when no shell |
 | POST | `/api/remove` | `{"path": "...", "template": false}` | the view |
 | POST | `/api/send` | `{"text": "...", "chip"?: true}` — `chip` marks one of the model's suggested replies the user tapped: their decision, never approved wording | SSE stream (below) |
@@ -244,7 +244,13 @@ explicitly injected clients are retained. Both key replacement and removal refus
 | POST | `/api/diagnostics/bundle` | | writes `spec-surgeon-diagnostics-<time>.zip` under the app's data folder and shows it in the file manager; `{"path", "name", "files", "skipped"}` (500 with `{"error"}` when it cannot be written) |
 | POST | `/api/quit` | | the shell closes the window (409 while busy) |
 
-Every error is JSON `{"error": "one sentence for the user"}` with 400/404/409/500.
+Every error is JSON `{"error": "one sentence for the user"}` with 400/404/409/500. A route that reads a JSON body
+answers 400 `The request body must be a JSON object.` when the body is not one (`null`, a list, a string, a number, a
+boolean, JSON cut short, no body) — `server.json_object`, used by `/api/attach`, `/api/pick`, `/api/remove`,
+`/api/send`, `/api/choose`, `/api/primary`, `/api/recipe`, `/api/occurrences`, `/api/mode`, `/api/handoff`,
+`/api/put-back`, `/api/open` and `/api/settings`. The routes whose body is optional read a bad one as `{}`:
+`/api/attach-folder`, `/api/export`, the tour's routes, and `/api/diagnostics` (400 for a body that is not JSON, a
+non-object taken as no reports). No route answers a text/plain 500.
 
 ## The page's reports (`/api/diagnostics`)
 
