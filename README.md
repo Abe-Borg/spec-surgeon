@@ -130,11 +130,12 @@ it was, and once you have finished it the chip stops inviting. Help → How to u
    stands; the assistant names it in its next reply and says what would let it take part. In a plan done in steps
    (the template's headers and footers, then the fonts), a sample the later step refuses is listed there too.
    Each preview carries a green checkmark (looks good) and a red X (needs more work: set it aside for after the
-   others). To leave documents out of a request altogether, say so ("leave out 20, and 23 for now"): the plan covers
-   the others, the ones you named stay exactly as they are under **Left untouched**, and your next request covers
-   them again unless you leave them out again. To park documents for later instead, say that ("set 20 aside for
-   later, I'm waiting on the owner"): they go on your to-do list at once, with your reason, and stay out of every
-   request until you work on them or put them back.
+   others). To leave documents out of a request altogether, say so ("leave out 20, and 23 for now"), or keep the
+   request to the ones you mean ("only 23", "just the Michigan one"): the plan covers those, every other document
+   stays exactly as it is under **Left untouched**, and your next request covers them all again unless you leave
+   them out again. To park documents for later instead, say that ("set 20 aside for later, I'm waiting on the
+   owner"): they go on your to-do list at once, with your reason, and stay out of every request until you work on
+   them or put them back.
 6. **Create edited copies.** One button, in the conversation above the box you type in, approves the displayed plan.
    The engine applies it to every file you did not set aside, verifies each one independently, and lists the copies
    under **Your edited copies**; click one to open it in Word. Originals are never written. A file that fails a

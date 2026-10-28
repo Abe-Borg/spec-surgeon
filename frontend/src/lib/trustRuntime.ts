@@ -170,8 +170,8 @@ export const RUNTIME_CARDS: RuntimeCard[] = [
     runs:
       "Every attached file is planned from its original: the engine works out exactly what will change, or sets the " +
       "file aside with a reason under Left untouched (when you create the others' copies, it goes on your to-do list " +
-      "with that reason). A document you asked to leave out of the request is not " +
-      `planned, and is named there too. Representative samples (${F.sampleFiles} files, or every file in a smaller batch; ` +
+      "with that reason). A document you asked to leave out of the request, by name or by keeping the request to " +
+      `others (“only this one”), is not planned, and is named there too. Representative samples (${F.sampleFiles} files, or every file in a smaller batch; ` +
       "at least one per layout, so more when there are more layouts) are edited in memory and checked by the independent checker, their rendered pages compared as the run compares them (a layout that moved fails the sample; a sample says when that check waits for the run). Their before and after " +
       `pages are rendered by Microsoft Word (new, invisible instances, up to ${F.wordInstances} side by side, never the Word you have open) or, without ` +
       `Word, LibreOffice. From ${F.planProcessMinFiles} files the plans, and from ${F.processMinFiles} samples the samples, are worked out side by ` +

@@ -406,7 +406,7 @@ function Workflows() {
         tagline="Left out with a reason, never delivered half-right."
         steps={[
           "When it arrives: a refused file is greyed out with the reason and the fix.",
-          "When you ask: a document you leave out of a request (“leave out 20”) is not planned or changed, and is listed under Left untouched; the next request covers it again.",
+          "When you ask: a document you leave out of a request (“leave out 20”), or every other one when you keep a request to one (“only 23”), is not planned or changed, and is listed under Left untouched; the next request covers it again.",
           "For later: a document you set aside (“set 20 aside for later”) goes on your to-do list at once, with your reason, and stays out of every request until you work on it or put it back.",
           "At plan time: a file whose result cannot be predicted is listed under Left untouched before anything runs, and the preview of the others stands; the assistant says why in its next reply. When you create the others’ copies, it goes on your to-do list with that reason.",
           "At delivery: a copy that fails a check is never delivered. Spec Surgeon looks at it again on its own and comes back with a question or a new plan, never a method for you to choose. A failed copy nothing will check again goes on your to-do list.",

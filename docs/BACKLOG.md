@@ -137,6 +137,11 @@ specifications, Windows and Word, and only the owner can do them. Record what a 
   you left it, run two buttons and Undo twice (the next button builds on the right copies each time, and every copy
   is still in its session folder under the scratch folder), and Undo after a crash's restore.
 - **Default mode:** a choice's drafted wording edited before it is picked, and the copy carrying the edit.
+- **A request kept to one document** (built 2026-10-27): over a real batch, "only 23" (and "just the Michigan one",
+  "in 21 and 22, …") plans, previews and runs those documents alone, every other one under Left untouched and
+  unchanged; a follow-up "now make its title bold too" keeps to them; a later request about the whole set covers
+  every document, and the assistant says which documents already carry the earlier change instead of calling the
+  others newly attached.
 - **The outcome planner with documents left out** (P2, built 2026-10-27): over test-set-3 again, leave out several
   documents and let a failed preview send the request to the outcome planner. The left-out documents stay under
   Left untouched, the plan is offered as **Use these outcomes and continue** with its words beneath it and runs

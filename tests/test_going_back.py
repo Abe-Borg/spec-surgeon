@@ -190,6 +190,30 @@ def test_undo_restores_what_the_run_before_left_untouched(tmp_path, files):
     assert task.view()["left_untouched"] == left
 
 
+def test_undo_keeps_which_documents_arrived_after_the_changes(tmp_path, files):
+    # From review (Codex on #125): a document attached after the first run got its copy from the second; undoing
+    # that run makes it an original again, attached after the change still made, not one an earlier run left out.
+    # One attached after the undone run stays so too, and a restart in between changes neither.
+    late, later = tmp_path / "21 13 19.docx", tmp_path / "21 13 39.docx"
+    late.write_bytes(build("21 13 19", "PREACTION SPRINKLER SYSTEMS"))
+    later.write_bytes(build("21 13 39", "FOAM-WATER SPRINKLER SYSTEMS"))
+    journal = tmp_path / "conversation.json"
+    task = safe_task(tmp_path, journal=journal)
+    task.attach(files)
+    press(task, "remove_highlight")
+    task.attach([late])
+    assert task._fresh_documents() == [late.name]
+    press(task, "title_property", TITLE)
+    assert str(late) in task.working and task.fresh == []
+    task.attach([later])
+    restored = safe_task(tmp_path, journal=journal)
+    assert restored.restore()
+    for t in (task, restored):
+        t.undo()
+        assert str(late) not in t.working and t._fresh_documents() == [late.name, later.name]
+        assert t._history_in_scope() == list(t.history)                # the copies all carry it; the late ones are told apart
+
+
 def test_undo_waits_for_a_preview_to_be_discarded(tmp_path, files):
     task = safe_task(tmp_path)
     task.attach(files)

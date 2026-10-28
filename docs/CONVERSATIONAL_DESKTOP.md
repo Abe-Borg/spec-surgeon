@@ -434,8 +434,9 @@ set these documents aside, and is shown the plan you saw. Tell it what should be
 **Continue** to plan them again as before. The pass ends when their copies are created; the other copies stay
 as they are and the whole set is the working set again. A document you set aside once more goes back on the
 list. Documents set aside from different requests are worked on one request at a time, the oldest first; the
-others wait and are offered again. The assistant always hears what each copy carries: a change that some copies
-got and others did not is named per document, never claimed for all. Documents on the to-do list are tagged **To do** and are out of every plan until you work on them;
+others wait and are offered again. The assistant always hears what each document carries: a change that some
+documents got and others did not (left out, set aside or refused) is named per document, never claimed for all, and
+only a document attached beside the copies since the last run is named as one that arrived after the changes. Documents on the to-do list are tagged **To do** and are out of every plan until you work on them;
 removing one drops it from the list, and **Start over from the originals** clears the list. Setting every
 document aside creates nothing and begins the pass at once. The list and the pass are kept in the saved
 conversation.
@@ -511,9 +512,11 @@ the top bar saves them to a folder you choose ("Export: saving the copies", belo
 A file can be left out at four points, each time with one sentence that names the file and the reason:
 
 - At attach time, when triage refuses it (above).
-- When you ask: "leave out 20", "not 23 for now". The plan, its preview and its copies cover the other documents;
-  the ones you named are not planned or changed, are listed under **Left untouched** ("You asked to leave it out of
-  this request"), and come back with the next request unless you leave them out again. "Set 20 aside for later"
+- When you ask: "leave out 20", "not 23 for now"; or keep a request to some documents ("only 23", "just the
+  Michigan one"), which leaves out every other one. The plan, its preview and its copies cover the documents the
+  request keeps; the ones left out are not planned or changed, are listed under **Left untouched** ("You asked to
+  leave it out of this request"), and come back with the next request unless you leave them out again (a follow-up
+  plainly about the same documents, "now make its title bold too", keeps to them again). "Set 20 aside for later"
   puts it on the to-do list instead (above), out of every request until you come back to it.
 - At plan time, when the operation cannot predict its result on that file, or when no layout covers its
   structure; in a plan done in steps, at whichever step cannot predict its result (every step is planned on every
