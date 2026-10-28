@@ -6,7 +6,7 @@
  *
  * Pure, so `node --test` can pin every rule.
  */
-import type { FindReplacePair, Recipe, RecipeField, RecipeInputs, View } from "../types.ts";
+import type { FindReplacePair, Recipe, RecipeField, RecipeInputs, TemplateInfo, View } from "../types.ts";
 import { kindTag } from "./workbench.ts";
 
 export interface Availability {
@@ -58,6 +58,25 @@ export function availability(recipe: Recipe, view: Attached): Availability {
     };
   }
   return { ready: true, reason: "" };
+}
+
+const quoted = (names: string[]) => {
+  const q = names.map((n) => `“${n}”`);
+  return q.length <= 2 ? q.join(" and ") : `${q.slice(0, -1).join(", ")} and ${q[q.length - 1]}`;
+};
+
+/**
+ * Which of a prepared template's placeholders each document fills with its own section number or title
+ * (`recipes.slot_role`), in one sentence, so the form says what it will not ask for; "" when none is.
+ */
+export function filledFromEachDocument(template?: Pick<TemplateInfo, "slot_roles">): string {
+  const roles = template?.slot_roles ?? {};
+  const of = (role: string) => Object.keys(roles).filter((slot) => roles[slot] === role);
+  const parts = [
+    of("number").length ? `section number at ${quoted(of("number"))}` : "",
+    of("title").length ? `title at ${quoted(of("title"))}` : "",
+  ].filter(Boolean);
+  return parts.length ? `Each document fills in its own ${parts.join(", and its own ")}.` : "";
 }
 
 /** The form a button opens with: each field's default, the first attached picture as the new one. */

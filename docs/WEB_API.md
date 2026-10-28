@@ -68,7 +68,8 @@ that ends a job is authoritative.
   "discard": "preview | request | ",
   "mode": "safe | default | obliterate",
   "modes": ["safe", "default"],
-  "template": {"kind": "none | prepared | reference | unusable", "typed_slots": ["ISSUED FOR PERMIT"], "reason": "",
+  "template": {"kind": "none | prepared | reference | unusable", "typed_slots": ["ISSUED FOR PERMIT"],
+               "slot_roles": {"XX XX XX": "number", "SECTION_TITLE": "title"}, "reason": "",
                "body": {"roles": {"part": "PRT", "article": "ART"}, "styles": [{"id": "PRT", "name": "PRT"}],
                         "labels": {"part": "PART"}, "order": ["section_id", "part"], "page": "8.5 × 11 in portrait, margins 1 in",
                         "font": "Arial 10 pt", "problems": []}},
@@ -100,7 +101,8 @@ Rules the page relies on:
   `approve` or `none` (no conversation to continue), `send` and `choose` end in `error`, and the page shows the
   buttons (`GET /api/recipes`) in place of the composer. `template` says what kind of header/footer template the
   attached template is (`recipes.template_kind`): a prepared template's `typed_slots` are the values its form asks
-  for; `body` is what *Match body formatting to template* reads from it (`template_roles.detect`: the detected style
+  for, and `slot_roles` the placeholders each document fills itself with its own section number or title
+  (`recipes.slot_role`), which the form names; `body` is what *Match body formatting to template* reads from it (`template_roles.detect`: the detected style
   per role, the template's paragraph styles for the form's `roles` field, the page and font in words, and `problems`
   — non-empty, the button cannot be pressed, the first one says why). `left_untouched` lists what the last Safe-mode button's run gave no copy, with the engine's reason, until the
   next button or a hand-off; it is empty while a preview waits.

@@ -11,6 +11,7 @@ import {
   availability,
   clearForm,
   fieldShown,
+  filledFromEachDocument,
   grouped,
   initialInputs,
   leaveForm,
@@ -135,6 +136,16 @@ test("a form keeps what was typed when attachments change, and never keeps a fil
   const later = view([file("a.docx", "document")], { kind: "prepared", typed_slots: ["DATE", "PHASE"], reason: "" });
   assert.deepEqual(refreshInputs(HEADERS, { slots: { "ISSUED FOR PERMIT": "BID", DATE: "2026" } }, later),
     { slots: { DATE: "2026", PHASE: "" } });
+});
+
+test("the form names the placeholders each document fills itself, so it never asks for them", () => {
+  assert.equal(filledFromEachDocument({ slot_roles: { "00 00 00": "number", "Specification Name": "title" } }),
+    "Each document fills in its own section number at “00 00 00”, and its own title at “Specification Name”.");
+  assert.equal(filledFromEachDocument({ slot_roles: { "XX XX XX": "number", SECTION_NUMBER: "number", NUMBER: "number" } }),
+    "Each document fills in its own section number at “XX XX XX”, “SECTION_NUMBER” and “NUMBER”.");
+  assert.equal(filledFromEachDocument({ slot_roles: { TITLE: "title" } }), "Each document fills in its own title at “TITLE”.");
+  assert.equal(filledFromEachDocument({ slot_roles: {} }), "");
+  assert.equal(filledFromEachDocument(undefined), "");
 });
 
 const BODY = recipe({
