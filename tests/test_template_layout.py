@@ -9,6 +9,7 @@ from __future__ import annotations
 import copy
 import hashlib
 import io
+import shutil
 import zipfile
 from pathlib import Path
 
@@ -53,7 +54,8 @@ def made(src: bytes, prm: dict):
     rec = run_suite(src, out, plan, "src.docx", "out.docx")
     assert rec.passed, rec.to_markdown()
     n = len(sect_prs(VPackage(out).xml("word/document.xml")))
-    ref, smap = template_reference(plan, out, template_section_map(prm["template_sections"], n), KINDS)
+    ref, smap = template_reference(plan, out, template_section_map(prm["template_sections"], n),
+                                   prm.get("kinds", KINDS))
     return plan, out, ref, smap
 
 
@@ -165,11 +167,11 @@ def test_reference_slots_show_the_documents_own_values(tmp_path):
 
 
 def test_a_reference_that_cannot_be_made_raises(template, tmp_path):
-    """No template part in the plan, a template changed since planning, a map that does not cover the output's
+    """No template in the plan, a template changed since planning, a map that does not cover the output's
     sections: ValueError (V7 then fails for want of its reference)."""
     src = build("21 05 00", "COMMON WORK RESULTS FOR FIRE SUPPRESSION")
     plan, out, _, _ = made(src, params(template))
-    with pytest.raises(ValueError, match="names no template part"):
+    with pytest.raises(ValueError, match="names no template"):
         template_reference({"property_assertions": []}, out, [0, 1], KINDS)
     with pytest.raises(ValueError, match=r"2 section\(s\), the map 1"):
         template_reference(plan, out, [0], KINDS)
@@ -182,3 +184,57 @@ def test_a_reference_that_cannot_be_made_raises(template, tmp_path):
     with pytest.raises(ValueError, match="changed since the plan was made"):
         template_reference(moved, out, [0, 1], KINDS)
     assert hashlib.md5(template.read_bytes()).hexdigest() == plan["property_assertions"][1]["template_md5"]
+
+
+def footer_only_template(path: Path) -> Path:
+    """A template with a footer and no header at all."""
+    from docx import Document
+    from make_fixtures import _page_field
+    doc = Document()
+    f = doc.sections[0].footer
+    f.is_linked_to_previous = False
+    p = f.paragraphs[0]
+    p.add_run("{{SECTION_NUMBER}} - ")
+    _page_field(p)
+    doc.add_paragraph("PART 1 - GENERAL")
+    buf = io.BytesIO()
+    doc.save(buf)
+    path.write_bytes(buf.getvalue())
+    return path
+
+
+def test_a_template_that_shows_none_of_the_kinds_is_a_blank_reference(tmp_path):
+    """Codex review on #144: headers from a template that has none — the op copies no part (the plan has no
+    template_parts) and removes the document's headers. The reference is the template the plan names, its sections
+    referencing no header: blank, as the copy's are."""
+    tpl = footer_only_template(tmp_path / "footer only.docx")
+    plan, out, ref, smap = made(build("21 13 13", "SPRINKLERS"),
+                                {"template": str(tpl), "template_sections": {"all": 0}, "kinds": ["header"],
+                                 "slot_fills": {}})
+    assert not [a for a in plan["property_assertions"] if a["kind"] == "template_parts"]
+    rpkg = VPackage(ref)
+    assert smap == [0, 0]
+    for sp in sect_prs(rpkg.xml("word/document.xml")):
+        assert sp.find(W + "headerReference") is None and sp.find(W + "footerReference") is None
+    assert not [k for k in _refs_shown(VPackage(out))[1] if k[0] == "header"]
+
+
+@pytest.mark.skipif(shutil.which("soffice") is None, reason="LibreOffice not installed")
+def test_a_blank_reference_passes_v7_rendered(tmp_path):
+    """The same request run with LibreOffice: the copy's headers are gone, as the template's are, and V7 passes on
+    every page (blank against blank) instead of failing for want of a reference."""
+    from spec_surgeon.batch import run_batch
+    tpl = footer_only_template(tmp_path / "footer only.docx")
+    src = tmp_path / "in"
+    src.mkdir()
+    (src / "a.docx").write_bytes(build("21 13 13", "SPRINKLERS"))
+    spec = {"request": "the template's headers", "summary": "s", "assumptions": [], "questions": [],
+            "applies_to": {"or": "all"}, "mode": "formatting",
+            "ops": [{"op": OP, "select": {"sections": "all"},
+                     "params": {"template": str(tpl), "template_sections": {"all": 0}, "kinds": ["header"],
+                                "slot_fills": {}}}],
+            "review": {"sample_files": 1, "geometry_reference": "template"}}
+    batch = run_batch([str(src)], "edit-spec", {}, tmp_path / "run", workers=1, renderer="libreoffice", spec=spec)
+    rec = batch.files[0].record
+    assert rec.passed and rec.get("V7").status == "PASS", rec.to_markdown()
+    assert all(p["anchors"] == 0 and not p["problems"] for p in rec.get("V7").data["pages"])

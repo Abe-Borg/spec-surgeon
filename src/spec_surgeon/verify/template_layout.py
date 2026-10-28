@@ -27,9 +27,11 @@ reference is therefore the template package with:
   - nothing else: colour and shading move no word, and the properties the op pins resolve in the copy as they do in
     the template (V10's ``template_parts`` proves that).
 
-Every other member is the template's, byte for byte. A plan that names no template part, a template file that changed
-since planning (md5) or a slot this reading cannot place raises ``ValueError``: V7 then fails for want of its
-reference and says so (``batch.geometry_check``)."""
+Every other member is the template's, byte for byte. A template whose mapped sections show none of the templated kinds
+gives no part to copy (the plan has no ``template_parts``): the reference is then that template's blank regions. A
+plan that names no template, a template file that changed since planning (the md5 a copied part records) or a slot
+this reading cannot place raises ``ValueError``: V7 then fails for want of its reference and says so
+(``batch.geometry_check``)."""
 from __future__ import annotations
 
 import copy
@@ -200,9 +202,11 @@ def template_reference(plan: Dict[str, Any], output: bytes, section_map: Sequenc
     template's (``geometry.template_section_map`` of the op's ``template_sections``), with the templated ``kinds``,
     and the map of the output's sections to the reference's: ``(bytes, [reference section of output section k])``."""
     parts = [a for a in plan.get("property_assertions", []) or [] if a.get("kind") == "template_parts"]
-    if not parts:
-        raise ValueError("the plan names no template part")
-    template = parts[0]["template"]
+    # a template whose mapped sections show none of the templated kinds has no part to copy: the reference is then
+    # the template's blank regions, from the template the plan names
+    template = parts[0]["template"] if parts else plan.get("geometry_template")
+    if not template:
+        raise ValueError("the plan names no template")
     data = Path(template).read_bytes()
     if any(a.get("template_md5") != hashlib.md5(data).hexdigest() for a in parts):
         raise ValueError(f"the template {Path(template).name} changed since the plan was made")
