@@ -392,9 +392,12 @@ them (checks V6 and V7, `batch.compare_pair` over the same references: the sourc
 and footers rendered alone, the independent header/footer-removal reference), so a sample's **Checked** covers its
 page layout: a layout that moved is a sample that did not pass, and the plan goes the way a failed check sends it.
 The card says in one line what the layout check found, or why it is not asserted (no layout reference by design, a
-wording change that reflows the text), or that it waits for the run: no pages were rendered, or the plan is done
-in steps and only its last step's pages are rendered (a step whose reference is its own input is checked step by
-step when the copies are created). If no renderer can provide usable page evidence, a card
+wording change that reflows the text), or that it waits for the run and why: no pages were rendered; the pages
+were rendered but the preview could not check them (a custom method's trial, whose plan the preview does not hold;
+a layout reference that could not be rendered or compared — the pictures and page counts on the card stand, and
+the line says the pages were rendered); or the plan is done in steps and only its last step's pages are rendered
+(a step whose reference is its own input is checked step by step when the copies are created). If no renderer can
+provide usable page evidence, a card
 says that page appearance was not checked and asks you to check the edited copies in Word.
 
 **Find and replace, occurrence by occurrence.** A plan with a find-and-replace (`replace_table`: Safe mode's button,

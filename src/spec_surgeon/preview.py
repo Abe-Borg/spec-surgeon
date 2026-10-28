@@ -245,6 +245,14 @@ class SampleView:
 
 GEOMETRY_AT_RUN = {"status": "NA", "at": "run",
                    "note": "Page layout is checked when the copies are created; no pages were rendered here."}
+# the sample's pages WERE rendered (the before/after pictures and page counts are real) but the preview could not
+# make the layout check on them; the status and the ``at`` marker are the same, the note says what did happen
+GEOMETRY_RENDERED_AT_RUN = {"status": "NA", "at": "run",
+                            "note": "Pages were rendered here; the page layout is checked when the copies are "
+                                    "created, because the preview does not hold this sample's plan."}
+GEOMETRY_RENDERED_NOT_COMPARED = {"status": "NA", "at": "run",
+                                  "note": "Pages were rendered here; the page layout is checked when the copies are "
+                                          "created, because the layout reference could not be rendered or compared."}
 GEOMETRY_AT_RUN_STEPS = {"status": "NA", "at": "run",
                          "note": "Page layout of a plan done in steps is checked step by step when the copies are "
                                  "created; the preview renders the last step's pages only."}
@@ -510,16 +518,21 @@ def _sample_geometry(samples: List[SampleView], out_dir: Path, backend: Optional
                      warn, detail, block) -> None:
     """V6 and V7 on the samples that rendered, with the run's own code (``batch.compare_pair`` over the references
     ``batch.geometry_references`` renders), so a sample's verdict here is the one the run will give: a layout that
-    moved fails the sample. A sample without a render, or whose plan the preview does not hold (a chain's step whose
-    reference is its own input; a custom method's trial), says the layout is checked at the run. A comparison the
-    preview cannot make is a warning beside the plan, never a failed sample: the run makes it again."""
+    moved fails the sample. A sample without a render says the layout is checked at the run and that no pages were
+    rendered here; one whose pages were rendered but whose plan the preview does not hold (a custom method's trial;
+    a chain's step whose reference is its own input is told apart earlier, ``GEOMETRY_AT_RUN_STEPS``) says its pages
+    were rendered and why the layout check waits. A comparison the preview cannot make is a warning beside the
+    plan, never a failed sample: the run makes it again, and the sample's note says the pages were rendered."""
     from .batch import RenderPair, compare_pair, geometry_references
     pairs: List[Tuple[SampleView, RenderPair]] = []
     for s in samples:
         if s.geometry is not None or s.exception is not None or not s.output:
             continue
-        if s.plan is None or not s.source_pdf or not s.output_pdf or not backend:
+        if not s.source_pdf or not s.output_pdf or not backend:
             s.geometry = dict(GEOMETRY_AT_RUN)
+            continue
+        if s.plan is None:
+            s.geometry = dict(GEOMETRY_RENDERED_AT_RUN)
             continue
         pairs.append((s, RenderPair(Path(s.source), Path(s.output), s.plan, Path(s.source_pdf), Path(s.output_pdf),
                                     Path(s.output).name)))
@@ -533,7 +546,7 @@ def _sample_geometry(samples: List[SampleView], out_dir: Path, backend: Optional
              f"when the copies are created")
         block(traceback.format_exc())
         for s, _pair in pairs:
-            s.geometry = dict(GEOMETRY_AT_RUN)
+            s.geometry = dict(GEOMETRY_RENDERED_NOT_COMPARED)
         return
     for s, pair in pairs:
         name = labels[str(Path(s.source))]
@@ -543,7 +556,7 @@ def _sample_geometry(samples: List[SampleView], out_dir: Path, backend: Optional
             warn(f"{name}: the rendered pages could not be compared ({type(e).__name__}: {e}); the layout is "
                  f"checked when the copies are created")
             block(traceback.format_exc())
-            s.geometry = dict(GEOMETRY_AT_RUN)
+            s.geometry = dict(GEOMETRY_RENDERED_NOT_COMPARED)
             continue
         s.checks["V6"], s.checks["V7"] = v6.status, v7.status
         s.geometry = {"status": v7.status, "note": geometry_note(pair.plan, v7)}
