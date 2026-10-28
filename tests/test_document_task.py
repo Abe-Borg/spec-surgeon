@@ -1070,3 +1070,73 @@ def test_two_attached_documents_of_one_name_are_named_with_their_folders(tmp_pat
     assert "“test-set-1”" in said and "“template”" in said and "attach it as the template" in said
     task.attach([document(tmp_path / "other.docx")], template=True)       # the template itself is not a document
     assert sum("are named" in m["text"] for m in task.messages) == 1
+
+
+def test_continue_after_the_spending_check_takes_the_custom_method_up_where_it_stopped(tmp_path, monkeypatch):
+    """Live QA finding F09: a writer paused at the spending check went on from its brief alone in a new folder and
+    repeated its inspections. Now it continues from its checkpoint, in its own folder, with what it has read."""
+    from test_codegen import GOOD_OP, UNASSERTED_OP
+    from spec_surgeon.gui import TransformFailed
+    request = "Set the header distance to 900 twips."
+    source = document(tmp_path / "Spec.docx")
+    fake = FakeClient(resp(tool("submit_editspec", {"spec": {"request": request, "summary": "Move header",
+        "unsupported": "Use a custom method", "proposal": request},
+        "custom_transform": "possible", "custom_transform_reason": "Formatting only"})),
+        resp(tool("show_xml", {"file": source.name, "start": 0, "count": 2}, "x1")),
+        resp(tool("submit_op", {"source": UNASSERTED_OP, "params": {"twips": 900}}, "a1")),
+        resp(tool("submit_op", {"source": GOOD_OP, "params": {"twips": 900}}, "a2")))
+    task = task_for(tmp_path, fake)
+    task.attach([source])
+    check_after(task, monkeypatch, 3)       # the plan, one inspection, one failed attempt, then the check stops it
+    with pytest.raises(TransformFailed):    # a pause, never a failure for the outcome investigation to take up
+        task.perform("send", text=request)
+    pending = task.session.pending_custom_transform
+    assert task.stage == "budget" and task.pause_reason() == "limit" and pending["attempts"] == 1
+    writer = Path(pending["paused"])
+    assert writer == Path(pending["out"]) / "codegen" and writer.is_dir()
+    paused = json.loads((writer / "history.json").read_text(encoding="utf-8"))
+    assert paused["budget_stop"] is True and paused["calls"] == 2 and len(paused["attempts"]) == 1
+    view = task.perform("primary", token=task.action_token())
+    assert view["stage"] == "preview" and task.session.generated.passed and task.session.pending_custom_transform is None
+    said = [m["text"] for m in task.messages]
+    assert any(t.startswith("Continuing: this request may spend up to $") for t in said)
+    assert "The custom method continues where it stopped, with everything it had looked at." in said
+    # one writer folder, its history whole; the request after the pause carries the inspection, its answer and the
+    # failed attempt's verdict
+    assert sorted(p.name for p in Path(pending["out"]).glob("codegen*")) == ["codegen"]
+    resumed = fake.requests[3]["messages"]
+    assert len(resumed) == 5 and resumed[1]["content"][0]["name"] == "show_xml"
+    assert resumed[2]["content"][0]["tool_use_id"] == "x1" and "<w:p" in resumed[2]["content"][0]["content"]
+    assert resumed[4]["content"][0]["tool_use_id"] == "a1" and "V10 FAIL" in resumed[4]["content"][0]["content"]
+    assert fake.requests[3]["system"] == fake.requests[2]["system"]
+    history = json.loads((writer / "history.json").read_text(encoding="utf-8"))
+    assert history["passed"] is True and history["calls"] == 3 and history["budget_stop"] is False
+    assert [a["attempt"] for a in history["attempts"]] == [1, 2] and len(task.session.generated.attempts) == 2
+    assert len(fake.requests) == task._budget.calls == 4
+    task.perform("primary", token=view["token"])
+    assert Document(task.results[str(source)]).sections[0].header_distance.twips == 900
+
+
+def test_a_failed_custom_method_attempt_starts_the_next_afresh(tmp_path, monkeypatch):
+    """A writer that failed (not a pause) is a spent attempt: the next one starts from the brief in codegen-02."""
+    from test_codegen import GOOD_OP
+    from spec_surgeon.gui import TransformFailed
+    request = "Set the header distance to 900 twips."
+    source = document(tmp_path / "Spec.docx")
+    fake = FakeClient(resp(tool("submit_editspec", {"spec": {"request": request, "summary": "Move header",
+        "unsupported": "Use a custom method", "proposal": request},
+        "custom_transform": "possible", "custom_transform_reason": "Formatting only"})),
+        resp(tool("show_xml", {"file": source.name, "start": 0, "count": 2}, "x1")),
+        raise_on_enter(api_error("Overloaded", 529, "req_1")),
+        resp(tool("submit_op", {"source": GOOD_OP, "params": {"twips": 900}}, "a1")))
+    task = task_for(tmp_path, fake)
+    task.attach([source])
+    with pytest.raises(TransformFailed, match="Overloaded"):
+        task.perform("send", text=request)
+    pending = task.session.pending_custom_transform
+    assert pending["attempts"] == 1 and pending["paused"] is None and task.stage != "budget"
+    view = task.perform("primary", token=task.action_token())
+    assert view["stage"] == "preview" and task.session.generated.passed and pending["attempts"] == 2
+    assert sorted(p.name for p in Path(pending["out"]).glob("codegen*")) == ["codegen", "codegen-02"]
+    assert len(fake.requests[3]["messages"]) == 1                       # the brief alone: nothing carried over
+    assert len(fake.requests) == 4

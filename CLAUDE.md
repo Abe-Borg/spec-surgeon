@@ -130,7 +130,9 @@ jobs). Details: `docs/CONVERSATIONAL_DESKTOP.md`.
     Fast mode (`speed="fast"`, Settings → Fast responses, `llm.set_fast_mode`) is the user's choice, off by default:
     it changes speed and price (`FAST_PRICES`), never the model, effort or prompt; a fast call the fast capacity
     cannot take is re-sent at standard speed. `compiler.compose_submission` is the one gate a submission passes.
-  - `preview.py`, `codegen.py` + `sandbox_runner.py` (custom transforms), `goals.py`, `goal_contracts.py`,
+  - `preview.py`, `codegen.py` + `sandbox_runner.py` (custom transforms; a writer the spending check pauses stops with
+    `GeneratedOp.budget_stop` and its state on disk, and `generate_op(resume_from=)` continues it from its checkpoint
+    in the same folder — `Session._generate_custom` keeps the folder in `pending["paused"]`), `goals.py`, `goal_contracts.py`,
     `goal_operations.py` (reviewed outcome contracts; a target with `all: true` is bound once, by count), `recovery*.py` (one checkpoint per model call, at the turn's end), `continuous_recovery.py`, `campaign_planner.py`
     (bounded investigation of set-aside files: the outcome plan is a choice the user picks, its words beneath it —
     `Session.outcome` auto-takes a custom transform only — and the documents the user left out of the request stay

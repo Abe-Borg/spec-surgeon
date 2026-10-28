@@ -581,7 +581,12 @@ class Session:
         from .codegen import generate_op, pick_samples
         from .preview import approval_inputs, _approval_token_from_inputs, explain_approval_change
         request, proposal, files, brief, out = (pending[k] for k in ("request", "proposal", "files", "brief", "out"))
-        pending["attempts"] = pending.get("attempts", 0) + 1
+        # A writer the spending check paused (``GeneratedOp.budget_stop``) goes on in its own folder from its checkpoint
+        # once the user says Continue (``pending["paused"]``: that folder); a writer that failed is a spent attempt, and
+        # the next starts afresh in the next folder (codegen, codegen-02, …)
+        paused = pending.get("paused")
+        if paused is None:
+            pending["attempts"] = pending.get("attempts", 0) + 1
         attempt = pending["attempts"]
         samples = pick_samples(files)
         # The files as they are BEFORE the transform is written and tried on them (several calls to Claude). Its token
@@ -591,16 +596,22 @@ class Session:
         # ``_prove``'s trials leaves its token stale.
         before = approval_inputs({}, files)
         log(f"Writing a one-off transform, tested on {[s.name for s in samples]}…")
-        writer_dir = out / ("codegen" if attempt == 1 else f"codegen-{attempt:02d}")
+        writer_dir = (Path(paused) if paused is not None else
+                      out / ("codegen" if attempt == 1 else f"codegen-{attempt:02d}"))
+        if paused is not None:
+            log("Continuing the method where it stopped…")
         # Obliterate: the method may use the files the user attached (a template, a picture, a table)
         g = generate_op(request, proposal or "", samples, writer_dir, client=self.client, log=log, brief=brief,
                         approved_words=list(self.conversation.sources if self.conversation else [request]),
                         unguarded=self.unguarded, template=self.template if self.unguarded else None,
-                        input_files=list(self.inputs or []) if self.unguarded else [])
+                        input_files=list(self.inputs or []) if self.unguarded else [],
+                        resume_from=writer_dir if paused is not None else None)
+        pending["paused"] = str(writer_dir) if g.budget_stop else None
         if not g.passed:
             raise TransformFailed("; ".join(g.errors or [f"attempt {a['attempt']}: {'; '.join(a['problems'][:2])}"
                 for a in g.attempts[-1:]]) or "no transform was submitted",
-                recoverable=bool(g.attempts) and not any("error" in e for e in g.transcript))
+                # a pause at the spending check is the user's to answer, never a failure to investigate
+                recoverable=bool(g.attempts) and not g.budget_stop and not any("error" in e for e in g.transcript))
         intent = "\n".join([f"A ONE-OFF CUSTOM TRANSFORM ({g.name}) for: {request}", f"WHAT IT SHOULD DO: {proposal}"]
                            + ([f"THE CONVERSATION:\n{brief}"] if brief else []))
         key = self._generated_key(g)
