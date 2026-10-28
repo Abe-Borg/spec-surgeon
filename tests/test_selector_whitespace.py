@@ -52,14 +52,32 @@ def test_quantified_flexible_selector_plans_and_is_independently_verified():
 
 @pytest.mark.parametrize("selector", [
     {"text_regex": "("},
+    {"text_regex": "(?# a )b"},
+    {"after_heading_regex": "(?# a )b"},
+    {"between_paragraphs": {"start_regex": "start", "end_regex": "(?# a )b"}},
+])
+def test_matching_options_compile_errors_are_plan_time_refusals(selector):
+    """A pattern the whitespace rewrite breaks (a comment group, whose first ``)`` now closes the ``(?:\\s+)`` the
+    rewrite put inside it) is refused when the selector is checked, not deep in a match."""
+    with pytest.raises(JobException) as exception:
+        check_paragraph_selector({**selector, "flexible_whitespace": True})
+    assert exception.value.code == "bad-params"
+
+
+@pytest.mark.parametrize("selector", [
     {"text_regex": "(?<=a )b"},
     {"after_heading_regex": "(?<=a )b"},
     {"between_paragraphs": {"start_regex": "start", "end_regex": "(?<=a )b"}},
 ])
-def test_matching_options_compile_errors_are_plan_time_refusals(selector):
-    with pytest.raises(JobException) as exception:
-        check_paragraph_selector({**selector, "flexible_whitespace": True})
-    assert exception.value.code == "bad-params"
+def test_a_lookbehind_the_rewrite_widens_still_compiles(selector):
+    """``re`` refused ``(?<=a(?:\\s+))b`` as a variable-width lookbehind; the ``regex`` module every selector now runs
+    on supports one, so the pattern plans — and matches any run of whitespace, as flexible_whitespace promises — on
+    both sides."""
+    check_paragraph_selector({**selector, "flexible_whitespace": True})
+    options = {"flexible_whitespace": True}
+    assert _selector_regex("(?<=a )b", options).search("a \t b") is not None
+    assert _v_selector_regex("(?<=a )b", options).search("a \t b") is not None
+    assert _selector_regex("(?<=a )b", options).search("ab") is None
 
 
 @pytest.mark.parametrize("case_insensitive,flexible,expected", [(True, True, 1), (False, True, 0), (True, False, 0)])

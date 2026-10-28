@@ -52,7 +52,9 @@ the user reads, `Conversation.shown_text`, never to nothing; Claude may write wo
 `compiler.UNGUARDED_RULES` rewrites the prompt's rules it lifts), a custom method's formatting-only limits
 (`codegen` skips `hard_limits`; `UNGUARDED_LIMITS`; the writer gets the `GOAL_FROM` helpers and the user's attachments
 as `pkg.inputs`, pinned in `GeneratedOp.attachments`, and its failed checks go back to it `UNGUARDED_CHECK_ROUNDS`
-times, to fix or to keep with a reason in `GeneratedOp.accepted_failures`; `NEVER_KEPT_CHECKS` can never be kept), and
+times, to fix or to keep with a reason in `GeneratedOp.accepted_failures`; `NEVER_KEPT_CHECKS` can never be kept; after the
+rounds the latest method is used and never called passed: `codegen.samples_verdict` words the note, the message and the
+plan's details), and
 the holding back of a copy that fails a check (`deliver_unverified`: delivered to `outputs/` marked UNVERIFIED, its
 failed checks in `FileResult.unverified`/`ChainFile.unverified`, no recovery; the mark stays on every later copy built
 on it, `DocumentTask._mark_unverified`, in every mode). The verifier still runs on every copy
@@ -115,13 +117,19 @@ jobs). Details: `docs/CONVERSATIONAL_DESKTOP.md`.
   - `ops/` — the operation library: `base.py` (`Op`, `PlanFragment`, `merge_fragments`, `JobException`),
     `selectors.py`, `table_select.py`, `prose.py` (the words of `describe()`), one module per op, shared cores
     (`textedit.py`, `slots.py`, `effective.py`, `lists.py`, `style_import.py`, `images.py`, `hf_common.py`),
-    `elsewhere.py` (flags naming where a change kept to one place leaves the same words, and a fill in another case than the template; `plan_spec` runs it).
+    `elsewhere.py` (flags naming where a change kept to one place leaves the same words, and a fill in another case than the template; `plan_spec` runs it),
+    `patterns.py` (`compile_pattern`: the one way a user- or model-written pattern is compiled under `ops/` — the
+    `regex` module in its `V0` (`re`) behaviour, `REGEX_TIMEOUT_S` = 2 s on each text searched, `MAX_PATTERN_CHARS` =
+    1000; past the deadline `JobException("regex-timeout")`, the file set aside — stress-test finding F8; the app's
+    own constant patterns and the ones it builds from escaped literals stay on `re`).
   - `verify/` — the INDEPENDENT verifier: `suite.py` (V1–V10 as a `VerificationRecord`), `props.py` (V10 dispatch, the
     residual identity check; each op family's kinds live in their own module, imported at its end; `KIND_CONTRACTS`
     and `KIND_EXAMPLES`, the plain-English contract and worked assertion of each kind, filled by the kind's module
     at import — the verifier's own words, which the custom-method writer reads through `describe_assertion_kind`;
     a kind whose module writes none gets that module's docstring, so every kind has one), `reader.py`,
-    `textcheck.py`, `edits.py`, `xsd.py`, `geometry.py`, `explain.py`.
+    `textcheck.py`, `edits.py`, `xsd.py`, `geometry.py`, `explain.py`, `patterns.py` (the verifier's own bounded
+    patterns, `v_compile`/`v_search`, the same deadline and length limit written independently: a pattern past its
+    deadline is a `ValueError`, a failed check with that reason, never an exception out of the suite).
   - `editspec.py` — load, validate, plan, merge, apply; composition (`stage_cuts`, `compose_chain`, `plan_chain`).
   - `batch.py` (per-file pipeline, guarded delivery, records; `worker_plan`/`map_files`: three or more files go to
     spawned worker processes, each file whole in one, in the packaged app too — a test's patches never reach one,
@@ -223,7 +231,9 @@ journal and the newest session folders' records (all in the window's scratch fol
    `describe(select, params)` returns one or two sentences built with `ops/prose.py` (inches and points, quoted exact
    text, no identifiers, no JSON): the line that records the change in the history the model hears.
 2. `plan()` fills the fragment analytically from the source: `intended_parts`, `diffs`, members, `rev_delta`,
-   `property_assertions`, and honest `touches` (what it changes and what it reads).
+   `property_assertions`, and honest `touches` (what it changes and what it reads). A pattern the user or the model
+   writes is compiled through `ops/patterns.compile_pattern` (never `re`), and in the verifier through
+   `verify/patterns.v_compile`.
 3. Write the V10 assertion kind in `verify/` first, with its own selection and an "exactly this change" check.
 4. `apply()` mutates the working copy through the overlay (`write_xml`, `remove_member`, `add_member`, `edit_rels`).
 5. A fixture, an end-to-end test (plan → merge → apply → `run_suite`, `record.passed`), and a planted-defect test for

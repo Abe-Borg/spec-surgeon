@@ -25,7 +25,6 @@ cells (``w:tc`` children of the ``w:tr``). A row or cell wrapped in a content co
 """
 from __future__ import annotations
 
-import re
 from typing import Any, List, Optional, Sequence, Set, Tuple
 
 from lxml import etree
@@ -33,7 +32,11 @@ from lxml import etree
 from ..ooxml import block_full_text
 from ..package import W
 from .base import JobException, Touch
+from .patterns import compile_pattern
 from .selectors import StyleSheet
+
+# what each table pattern is searched on (the words of a refusal for a pattern that runs past its deadline)
+TABLE_TEXT = {"first_row_regex": "a table's first row", "text_regex": "a table paragraph's text"}
 
 TABLE_KEYS = ("index_range", "style_in", "first_row_regex", "text_regex", "nested")
 TEXT_BOX = W + "txbxContent"
@@ -63,10 +66,7 @@ def check_table_selector(pred: Any) -> None:
         if key in pred:
             if not isinstance(pred[key], str):
                 raise JobException(f"tables.{key} must be a regular expression (text)", "bad-params")
-            try:
-                re.compile(pred[key])
-            except re.error as e:
-                raise JobException(f"tables.{key} is not a valid regular expression: {e}", "bad-params")
+            compile_pattern(pred[key], where=TABLE_TEXT[key], label=f"tables.{key}")
     if "nested" in pred and not isinstance(pred["nested"], bool):
         raise JobException("tables.nested must be true or false", "bad-params")
 
@@ -178,10 +178,11 @@ def table_selected(pred: Any, tbl, ordinal: int, sheet: StyleSheet) -> bool:
         return False
     if "nested" in pred and is_nested(tbl) != pred["nested"]:
         return False
-    if "first_row_regex" in pred and not re.search(pred["first_row_regex"], first_row_text(tbl)):
+    if "first_row_regex" in pred and not compile_pattern(pred["first_row_regex"],
+                                                         where=TABLE_TEXT["first_row_regex"]).search(first_row_text(tbl)):
         return False
-    if "text_regex" in pred and not any(re.search(pred["text_regex"], block_full_text(p))
-                                        for p in table_paragraphs(tbl)):
+    if "text_regex" in pred and not any(compile_pattern(pred["text_regex"], where=TABLE_TEXT["text_regex"])
+                                        .search(block_full_text(p)) for p in table_paragraphs(tbl)):
         return False
     return True
 

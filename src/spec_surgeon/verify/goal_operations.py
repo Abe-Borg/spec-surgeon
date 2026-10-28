@@ -13,6 +13,7 @@ from pathlib import Path
 
 from .props import Ctx, Styles, PartView, para_matches, _residual_styles, _strip_table_props, KINDS
 from .reader import STYLES_REL, VPackage, W
+from .patterns import v_compile
 from .clearing import v_cleared_sets, v_decide
 from .styleowned import v_style_owned_decision, v_style_ownership
 from .restyle import v_resolve_style, _v_pairs, _v_map, _v_holders, _v_rstyle, _v_tblstyle
@@ -54,7 +55,7 @@ def paragraph_selector(value):
         if key in value:
             if not isinstance(value[key], str):
                 raise ValueError("paragraph regex must be literal text")
-            re.compile(value[key])
+            v_compile(value[key], where="a paragraph's text")
     for key in ("in_table", "is_empty", "has_bold", "is_all_caps"):
         if key in value and type(value[key]) is not bool:
             raise ValueError(key + " must be boolean")
@@ -72,9 +73,9 @@ def paragraph_selector(value):
             raise ValueError("between_paragraphs needs start_regex")
         if "every" in b and type(b["every"]) is not bool:
             raise ValueError("every must be boolean")
-        re.compile(b["start_regex"])
+        v_compile(b["start_regex"], where="a paragraph's text")
         if b.get("end_regex") is not None:
-            re.compile(b["end_regex"])
+            v_compile(b["end_regex"], where="a paragraph's text")
         if "include_bounds" in b and type(b["include_bounds"]) is not bool:
             raise ValueError("include_bounds must be boolean")
 

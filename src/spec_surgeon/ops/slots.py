@@ -65,6 +65,9 @@ from lxml import etree
 from ..package import W, DocxPackage
 from ..ooxml import clone_run_shell, paragraphs, set_text
 from .base import JobException
+from .patterns import compile_pattern
+
+SOURCE_TEXT = "a source paragraph's text"   # what a fill's pattern or anchor is searched on
 from .hf_common import KINDS, TYPES, effective_refs
 
 BRACES = re.compile(r"\{\{([A-Za-z0-9_]+)\}\}")
@@ -569,10 +572,10 @@ def fill_reads(pkg: DocxPackage, rule: Dict[str, Any]) -> List[Tuple[str, int]]:
     if kind not in ("regex", "paragraph_after"):
         return []
     try:
-        rx = re.compile(rule["pattern"] if kind == "regex" else rule["anchor_regex"],
-                        re.IGNORECASE if rule.get("case_insensitive", False) else 0)
+        rx = compile_pattern(rule["pattern"] if kind == "regex" else rule["anchor_regex"],
+                             re.IGNORECASE if rule.get("case_insensitive", False) else 0, where=SOURCE_TEXT)
         parts = _source_parts(pkg, rule.get("source", "document"), rule.get("section"))
-    except (JobException, KeyError, re.error):
+    except (JobException, KeyError):
         return []
     out = []
     for part in parts:
@@ -640,15 +643,9 @@ def _validate_rule_syntax(name: str, rule: Dict[str, Any]) -> None:
                 or not isinstance(rule.get("source_md5"), str)):
             raise JobException(f"slot {name!r}: binding requires exact value, part, paragraph and source_md5", "bad-params")
     elif kind == "regex":
-        try:
-            re.compile(rule["pattern"])
-        except (KeyError, TypeError, re.error) as e:
-            raise JobException(f"slot {name!r}: bad or missing 'pattern' ({e})", "bad-params")
+        compile_pattern(rule.get("pattern"), where=SOURCE_TEXT, label=f"slot {name!r}: 'pattern'")
     elif kind == "paragraph_after":
-        try:
-            re.compile(rule["anchor_regex"])
-        except (KeyError, TypeError, re.error) as e:
-            raise JobException(f"slot {name!r}: bad or missing 'anchor_regex' ({e})", "bad-params")
+        compile_pattern(rule.get("anchor_regex"), where=SOURCE_TEXT, label=f"slot {name!r}: 'anchor_regex'")
     else:
         raise JobException(f"slot {name!r}: rule must be literal | regex | paragraph_after | first_match, got {kind!r}",
                            "bad-params")
@@ -695,7 +692,8 @@ def extract_fill(pkg: DocxPackage, name: str, rule: Dict[str, Any]) -> str:
     if kind == "literal":
         value = rule["value"]
     elif kind == "regex":
-        rx = re.compile(rule["pattern"], re.IGNORECASE if rule.get("case_insensitive", False) else 0)
+        rx = compile_pattern(rule["pattern"], re.IGNORECASE if rule.get("case_insensitive", False) else 0,
+                             where=SOURCE_TEXT)
         pars = _source_paragraphs(pkg, rule.get("source", "document"), rule.get("section"))
         values = []
         for p in pars:
@@ -718,7 +716,8 @@ def extract_fill(pkg: DocxPackage, name: str, rule: Dict[str, Any]) -> str:
                                    {"slot": name, "values": sorted(set(values))})
             value = values[0]
     elif kind == "paragraph_after":
-        rx = re.compile(rule["anchor_regex"], re.IGNORECASE if rule.get("case_insensitive", False) else 0)
+        rx = compile_pattern(rule["anchor_regex"], re.IGNORECASE if rule.get("case_insensitive", False) else 0,
+                             where=SOURCE_TEXT)
         pars = _source_paragraphs(pkg, rule.get("source", "document"), rule.get("section"))
         texts = [display_text(p) for p in pars]
         hits = [i for i, t in enumerate(texts) if _fill_match(rx, t, flex_ws) is not None]

@@ -183,7 +183,10 @@ export const RUNTIME_CARDS: RuntimeCard[] = [
     bounds:
       `Word has ${F.wordTimeoutSeconds} s per file, LibreOffice ${F.libreOfficeTimeoutSeconds} s per batch. A render ` +
       `that fails is reported and the preview stands without that page. At most ${F.maxProcessWorkers} worker processes, ` +
-      "one per core, ending with the work. Nothing is written to your files.",
+      `one per core, ending with the work. A text pattern in the plan (a selector's text_regex, a fill's pattern …) ` +
+      `is at most ${grouped(F.maxPatternChars)} characters and has ${F.regexTimeoutSeconds} s on each text it is searched on; past that ` +
+      "the file is set aside with the reason (in the checker, a failed check), never searched on without a limit. " +
+      "Nothing is written to your files.",
   },
   {
     covers: ["B6"],
@@ -217,7 +220,9 @@ export const RUNTIME_CARDS: RuntimeCard[] = [
       "(its own card) it is offered whenever any method could make the change, may change anything Word stores, " +
       "and may use the template, pictures and tables you attached; a result whose only failures are its checks goes " +
       `back to Claude up to ${F.obliterateCheckRounds} times to fix them or keep each with a reason you read beside ` +
-      "every copy, then the latest is used with its failures listed.",
+      "every copy (the package-integrity checks V1, V4, V5a, V5c and V9 cannot be kept with a reason: they go back " +
+      "each round); after those rounds the latest method is used, and its copies are delivered marked UNVERIFIED " +
+      "with those failures listed.",
     sent: "To the Anthropic API: the request, the sample files' XML and text that its tools read, and each failure's " +
       "reason; in Obliterate mode also what its tools read of the files you attached.",
     ai: codegenModel,
