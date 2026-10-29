@@ -251,7 +251,9 @@ class WindowState:
             self._transition = True
         try:
             keep = self.settings_task
-            task = self.tutorial.begin(render=keep.render, spending_limit=keep.spending_limit, request_id=request_id)
+            # the practice folder goes in this window's scratch folder (the user's own task's out_root)
+            task = self.tutorial.begin(render=keep.render, scratch=Path(keep.session.out_root),
+                                       spending_limit=keep.spending_limit, request_id=request_id)
             if self.original_task is None:
                 self.original_task = self.task
             self.task = task

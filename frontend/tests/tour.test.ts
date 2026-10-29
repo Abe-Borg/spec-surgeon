@@ -20,12 +20,15 @@ import { END_USER_CAPABILITIES } from "../src/lib/capabilities.ts";
 import {
   TOUR,
   TOUR_COMPLETION_VERSION,
+  TOUR_FIND_FORM,
   TOUR_FORM,
   TOUR_HOLD,
   TOUR_VERSION,
   anchorSelector,
   capabilityCoverage,
   chapterIndex,
+  preparedInputs,
+  preparedRecipe,
   stepNeedsMet,
 } from "../src/lib/tour.ts";
 import { TRUST_FACTS } from "../src/lib/trustFacts.ts";
@@ -148,18 +151,49 @@ test("every chapter's scenario is one the server builds, and the dev mock builds
   assert.match(mock, /case "POST \/api\/tutorial\/restore"/);
 });
 
-test("the Safe-mode form the tour prepares is the button, slot and value the server's chapter ran", () => {
+test("the Safe-mode forms the tour prepares are the buttons and values the server's chapters ran", () => {
   assert.equal(TOUR_FORM.recipe, pyString("BUTTON_RECIPE"));
   assert.equal(TOUR_FORM.value, pyString("STAMP_VALUE"));
   assert.match(tutorialPy, new RegExp(`BUTTON_INPUTS[^\\n]*\\{"slots": \\{"${TOUR_FORM.slot}": STAMP_VALUE\\}\\}`));
-  const prepared = steps.filter(({ step }) => step.prepare === "safe-form");
-  assert.equal(prepared.length, 1);
-  assert.equal(prepared[0].step.anchor, "safe-form");
-  assert.equal(prepared[0].chapter.scenario, "start");
-  // App opens that form with the tour's value in the slot.
+  assert.equal(TOUR_FIND_FORM.recipe, pyString("FIND_RECIPE"));
+  assert.match(
+    tutorialPy,
+    new RegExp(`FIND_INPUTS[^\\n]*\\{"pairs": \\[\\{"find": "${TOUR_FIND_FORM.find}", "replace": "${TOUR_FIND_FORM.replace}"\\}\\]\\}`),
+  );
+  const prepared = (kind: string) => steps.filter(({ step }) => step.prepare === kind);
+  assert.equal(prepared("safe-form").length, 1);
+  assert.equal(prepared("safe-form")[0].step.anchor, "safe-form");
+  assert.equal(prepared("safe-form")[0].chapter.scenario, "start");
+  // The find chapter opens Find and replace, so the panel shows the button its previews and occurrences came from.
+  assert.equal(prepared("find-form").length, 1);
+  assert.equal(prepared("find-form")[0].chapter.scenario, "find");
+  assert.equal(prepared("find-form")[0].chapter.steps[0], prepared("find-form")[0].step);
+  assert.equal(preparedRecipe("safe-form"), TOUR_FORM.recipe);
+  assert.equal(preparedRecipe("find-form"), TOUR_FIND_FORM.recipe);
+  // Over the inputs each button opens with: the template's slot filled, the one pair typed, everything else kept.
+  assert.deepEqual(preparedInputs("safe-form", { slots: { OTHER: "" }, tracked: false }), {
+    slots: { OTHER: "", [TOUR_FORM.slot]: TOUR_FORM.value },
+    tracked: false,
+  });
+  assert.deepEqual(preparedInputs("find-form", { pairs: [{ find: "", replace: "" }], match_case: true }), {
+    pairs: [{ find: TOUR_FIND_FORM.find, replace: TOUR_FIND_FORM.replace }],
+    match_case: true,
+  });
+  // App opens the step's form with those values.
   const app = read("../src/App.tsx");
-  assert.match(app, /step\.prepare !== "safe-form"/);
-  assert.match(app, /\[TOUR_FORM\.slot\]: TOUR_FORM\.value/);
+  assert.match(app, /recipes\.find\(\(r\) => r\.id === preparedRecipe\(prepare\)\)/);
+  assert.match(app, /inputs: preparedInputs\(prepare, opened\.inputs\)/);
+});
+
+test("the tour opens on Safe mode's buttons with the user's form set aside, and puts that form back when it ends", () => {
+  const app = read("../src/App.tsx");
+  // Every way in sets the user's form aside first: the panel shows the buttons the Safe-mode chapters point at.
+  assert.match(app, /if \(tour\.active \|\| tourFormRef\.current\) return;\s*tourFormRef\.current = safeFormRef\.current;\s*setSafeForm\(EMPTY_SAFE_FORM\);/);
+  assert.match(app, /const onStartTour = \(\) => \{\s*setFormAsideForTour\(\);\s*tour\.start\(\);/);
+  assert.match(app, /setFormAsideForTour\(\);\s*tour\.startAtChapter\(chapter\);/);
+  assert.doesNotMatch(app, /onStartTour=\{tour\.start\}/);
+  // The end puts it back once (the buttons after a reload mid-tour, which had none to keep).
+  assert.match(app, /const form = tourFormRef\.current;\s*tourFormRef\.current = null;\s*setSafeForm\(form \?\? EMPTY_SAFE_FORM\);/);
 });
 
 test("a step's needs are read off the view, and unmet on an empty one", () => {

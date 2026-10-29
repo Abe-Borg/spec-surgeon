@@ -317,7 +317,7 @@ export default function TourOverlay({ tour, view, busy }: Props) {
     <ModalShell title="End the guided tour?" onClose={tour.cancelEnd} marker={TOUR_DIALOG}>
       <p className="text-sm leading-relaxed text-ink-dim">
         Your own conversation comes back exactly as it was before the tour, the same documents, messages and copies,
-        and the practice workspace is discarded. Help → Tour starts it again at any time.
+        and the practice workspace is discarded. Tour in the top bar starts it again at any time.
       </p>
       <div className="mt-4 flex justify-end gap-2">
         <button type="button" className={quietBtn} onClick={tour.cancelEnd}>
