@@ -31,6 +31,7 @@ export const END_USER_CAPABILITIES = [
   "documents.add",
   "documents.folder",
   "documents.remove",
+  "documents.remove-all",
   "documents.template",
   "documents.references",
   // Safe mode
@@ -42,6 +43,7 @@ export const END_USER_CAPABILITIES = [
   "preview.pages",
   "preview.marks",
   "preview.occurrences",
+  "preview.occurrences-all",
   "preview.left-untouched",
   "action.primary",
   "action.include-all",
@@ -52,6 +54,7 @@ export const END_USER_CAPABILITIES = [
   "results.folder",
   "results.start-over",
   "results.undo",
+  "results.done",
   "results.hand-off",
   "todo.card",
   "todo.put-back",

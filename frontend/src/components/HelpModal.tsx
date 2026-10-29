@@ -122,7 +122,8 @@ function HowToUse({ onStartTourAt }: { onStartTourAt: (chapter: string) => void 
                 wanted? <Tag>Discard preview</Tag> withdraws it and nothing is created. After the copies are created,{" "}
                 <Tag>Try these in Default mode</Tag> puts those documents on your to-do list in Default mode. Press
                 another button to change the copies further, or <Tag>Undo the last button</Tag> to go back to the
-                copies from before it; nothing is deleted.
+                copies from before it; nothing is deleted. <Tag>What you've done so far</Tag>, under the copies, lists
+                every button you ran, oldest first, and a button you already ran carries a checkmark.
               </>
             ),
           },
@@ -199,7 +200,8 @@ function HowToUse({ onStartTourAt }: { onStartTourAt: (chapter: string) => void 
             t: "Keep going",
             d: (
               <>
-                Ask for the next change and it is made on those copies. <Tag>Undo the last change</Tag> goes back to
+                Ask for the next change and it is made on those copies; <Tag>What you've done so far</Tag>, under
+                them, lists every request they carry. <Tag>Undo the last change</Tag> goes back to
                 the copies from before it, one run at a time, and nothing is deleted;{" "}
                 <Tag>Start over from the originals</Tag> is one tap away, and <Tag>New conversation</Tag> in the top bar
                 starts an empty one. The copies live in the
@@ -408,6 +410,7 @@ function Workflows() {
           "The copies live in the window’s scratch folder until you save them: Export, in the top bar, writes them to a folder you choose.",
           "Start over from the originals — a reply you can tap, or the link under the copies — goes back to your files.",
           "Undo the last button (Safe mode) or Undo the last change (Default and Obliterate) goes back one run at a time: the next button or request builds on the copies from before it, and the copies the undone run made stay in the scratch folder until the window closes.",
+          "What you've done so far, under the copies, lists each button or request the copies carry since the originals, oldest first, with how many of the documents carry it and why any other does not. Undo takes the newest off and Start over clears it; in Safe mode a button you already ran carries a checkmark.",
           "Changed your mind before the copies exist? Discard preview withdraws a waiting preview in every mode, and in Default and Obliterate Drop this request ends a request that is still open (the assistant's question, a pause at the spending check, a reply waiting to continue). Nothing is created, and your next message starts a new request; the assistant is told the last one was withdrawn.",
           "A document attached after a run is an original beside the copies, and gets only the next change.",
         ]}

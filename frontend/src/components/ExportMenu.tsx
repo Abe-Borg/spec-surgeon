@@ -10,9 +10,11 @@ interface Props {
   view: View;
   busy: boolean;
   onExport: (kind: ExportKind) => void;
+  /** The top bar has given way to fewer words: "Export · 3" for "Export · 3 unsaved" (Header.tsx, GIVE_WAY). */
+  short?: boolean;
 }
 
-export default function ExportMenu({ view, busy, onExport }: Props) {
+export default function ExportMenu({ view, busy, onExport, short = false }: Props) {
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
   const firstRef = useRef<HTMLButtonElement>(null);
@@ -50,11 +52,12 @@ export default function ExportMenu({ view, busy, onExport }: Props) {
           disabled={!!blocked}
           aria-haspopup="menu"
           aria-expanded={open}
+          aria-label={exportLabel(view)}
           data-tour="header-export"
           data-capability="header.export"
           className="flex items-center gap-1 rounded-lg border border-edge bg-raised px-3 py-1.5 text-xs whitespace-nowrap text-ink transition-colors hover:border-accent hover:text-accent disabled:pointer-events-none disabled:opacity-40"
         >
-          {exportLabel(view)}
+          {exportLabel(view, short)}
           <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
             <path d="M6 9l6 6 6-6" />
           </svg>

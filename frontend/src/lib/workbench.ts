@@ -4,7 +4,7 @@
  *
  * Pure, so `node --test` can pin them.
  */
-import type { Attachment, ExportKind, Plan, Result, Sample, View } from "../types.ts";
+import type { Attachment, DoneStep, ExportKind, Plan, Result, Sample, View } from "../types.ts";
 
 /** The parent folder of a path, with either separator; "" when there is none. */
 export function parentFolder(path: string): string {
@@ -20,10 +20,13 @@ export function runFolder(view: Pick<View, "results">): string {
   return first ? parentFolder(first) : "";
 }
 
-/** The Export button's label: "Export", with the count of edited copies not saved yet when there are any. */
-export function exportLabel(view: Pick<View, "export">): string {
+/**
+ * The Export button's label: "Export", with the count of edited copies not saved yet when there are any
+ * ("Export · 2 unsaved"; in the top bar's fewer words, "Export · 2").
+ */
+export function exportLabel(view: Pick<View, "export">, short = false): string {
   const unsaved = view.export?.unsaved ?? 0;
-  return unsaved > 0 ? `Export · ${unsaved} unsaved` : "Export";
+  return unsaved > 0 ? `Export · ${unsaved}${short ? "" : " unsaved"}` : "Export";
 }
 
 /** Why the Export button cannot open its menu now, or "" when it can: the tour, work running, or no copies yet. */
@@ -272,4 +275,46 @@ export function undoLink(view: Pick<View, "mode" | "working">, busy: boolean): U
     disabled: false,
     tip: `Goes back to the copies from before “${undo}”. Nothing is deleted: the copies it made stay where they were saved.`,
   };
+}
+
+/** What you've done so far (docs/WEB_API.md, `working.done`): each run the copies carry, oldest first; none from an
+ *  older server. */
+export function doneSteps(view: Pick<View, "working">): DoneStep[] {
+  const done = view.working?.done;
+  return Array.isArray(done) ? done : [];
+}
+
+/** The card's subtitle: what the list is, and what takes a line off it (Undo only while there is one to undo). */
+export function doneSubtitle(view: Pick<View, "mode">, undo: UndoLink | null): string {
+  return (
+    (view.mode === "safe" ? "Every button you ran since the originals, oldest first." : "Every change you made since the originals, oldest first.") +
+    (undo ? ` ${undo.label} takes the newest off; Start over clears the list.` : " Start over clears the list.")
+  );
+}
+
+/** The line under a run: how many of the documents attached now carry it and, by why, the others (three names each,
+ *  then a count). */
+export function doneCoverage(step: DoneStep): string {
+  const head =
+    step.of > 0 && step.documents === step.of
+      ? step.of === 1 ? "1 document" : `All ${step.of} documents`
+      : step.documents === 0
+        ? "None of the documents attached now"
+        : `${step.documents} of ${step.of} documents`;
+  const byWhy = new Map<string, string[]>();
+  for (const other of step.not ?? []) byWhy.set(other.why, [...(byWhy.get(other.why) ?? []), other.name]);
+  const others = [...byWhy].map(([why, names]) =>
+    `${names.length > 3 ? `${names.slice(0, 3).join(", ")} and ${names.length - 3} more` : names.join(", ")} (${why})`,
+  );
+  return others.length ? `${head} · not ${others.join("; ")}` : head;
+}
+
+/** How many runs of the working set a Safe-mode button made: its tile carries a checkmark while any does. */
+export function timesRun(view: Pick<View, "working">, recipeId: string): number {
+  return doneSteps(view).filter((step) => step.recipe === recipeId).length;
+}
+
+/** The checkmark's words, for its hover text and a screen reader. */
+export function ranLabel(times: number): string {
+  return `You ran it ${times === 1 ? "once" : `${times} times`} on these copies (What you've done so far).`;
 }

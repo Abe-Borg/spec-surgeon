@@ -50,7 +50,8 @@ that ends a job is authoritative.
                    "items": [{"key": "…", "part": "word/document.xml", "paragraph": 11, "start": 30, "end": 38, "where": "the body",
                               "heading": "2.01", "before": "H. See the", "match": "2022 CBC", "after": "portal.",
                               "find": "2022 CBC", "replace": "2025 CBC", "skipped": false, "op_index": 0}]}],
-  "warnings": ["…"], "blocking": false,
+  "warnings": ["…"], "worth_knowing": [{"name": "21 13 13.docx", "text": "“WET-PIPE SPRINKLER SYSTEMS” also occurs in the body (1×); …"}],
+  "blocking": false,
   "results": [{"source": "…", "output": "…", "name": "21 13 13.docx", "unverified": [], "saved_to": "",
                "changed_since_saved": false, "saved_file_changed": false}],
   "pdf": {"available": true, "renderer": "Microsoft Word | LibreOffice", "reason": ""},
@@ -169,7 +170,15 @@ Rules the page relies on:
   older server sends no `occurrences`.
 - `samples` are the pages of the plan waiting for the user (stages `preview` and `question`), less any document
   whose copy a partial save already delivered; every other stage sends none, so a finished run takes its
-  pages along. The visual check's findings in `warnings`, and `blocking`, follow the same rule.
+  pages along. The visual check's findings in `warnings`, and `blocking`, follow the same rule. The page lists
+  `warnings` only when `blocking` is true (under **Please check**); otherwise they are kept for diagnostics and
+  not shown.
+- `worth_knowing` is the part of `warnings` worth reading before the copies are made, listed under **Worth knowing**
+  (hidden while `blocking`, when **Please check** lists them with the rest): the same words a change leaves
+  elsewhere and a header/footer fill in another case than the template (C3, C4; at most six of each kind, then a
+  count of the rest), a layout no attached document has, and an input that changed while the preview was made.
+  `name` is the document's file name, `""` for a note about the whole plan. They follow the rule of `samples`. An
+  older server sends no `worth_knowing`.
 - `action.kind`: `approve` → the one button "Create edited copies" (or "I reviewed the flagged pages — create
   copies" when `blocking`), `continue` → "Continue" (stage `resume`: a request is open and the documents or the plan
   changed, or work stopped; never after an answer that ended the request), `save` → "Save N ready copies", `none` →
@@ -233,6 +242,14 @@ Rules the page relies on:
   it." while a conversation's request is open); "" when it can. The page shows **Undo the last button** (Safe mode) or
   **Undo the last change** (Default, Obliterate) beside Start over while `undo` is set, disabled with `undo_blocked`
   as its reason.
+- `working.done` is **What you've done so far** (`DocumentTask.runs`, `_done_view`), in every mode: one entry per run
+  that delivered copies, oldest first, `{"request", "recipe", "documents", "of", "not"}` — the button's sentence or
+  the request the user typed; the Safe-mode button pressed (a recipe id, `""` for a request); how many of the
+  documents attached now carry it, of how many; and each other document attached now as `{"name", "why"}`, `why`
+  one of `left untouched` (the run left it as it was), `set aside` (it waited on the to-do list then) or `attached
+  later` (attached after the run, or removed and attached again). `POST /api/undo` takes the newest off; Start over
+  and removing the last working copy clear it; the journal keeps it. The page lists it under the copies, the newest
+  marked LATEST, and gives a Safe-mode button a checkmark while an entry names it.
 - `discard` is what `POST /api/discard` would withdraw now: `preview` (a preview waiting for approval, in every
   mode), `request` (Default and Obliterate: a request still open with nothing to approve — Claude's question, a reply
   to continue, a custom method being written, a pause at the spending check), or `""` (nothing, work runs, or recovery
@@ -271,6 +288,7 @@ explicitly injected clients are retained. Both key replacement and removal refus
 | POST | `/api/upload` | multipart `files[]`, `template` field | copies the bytes under the scratch folder's `attachments/<stamp>/` (deleted with it when the window closes) and attaches them as `/api/attach` does; the view. 400 with `{"error"}` naming the file when the folder cannot take its name (too long for the path: Windows' 260 characters; the sentence says to shorten the name, the app never shortens it, since the attached name is the copy's planned name), nothing attached then |
 | POST | `/api/pick` | `{"kind": "documents | template | references"}` | opens the NATIVE file dialog through the shell (pywebview); `{"paths": [...]}` — 501 when no shell |
 | POST | `/api/remove` | `{"path": "...", "template": false}` | the view |
+| POST | `/api/remove-documents` | | **Remove all documents** (`DocumentTask.remove_documents`): every Word document, a refused one too, taken out as `/api/remove` takes one; the template and the pictures and tables stay; one `app` message says how many; the view. 409 while work runs |
 | POST | `/api/send` | `{"text": "...", "chip"?: true}` — `chip` marks one of the model's suggested replies the user tapped: their decision, never approved wording | SSE stream (below) |
 | POST | `/api/choose` | `{"choice_id": "c1", "wording": "…"}` — `wording` only for an `editable` choice (one drafted wording): the user's edit, approved instead of the draft (400 when it is not text; an edit that breaks the wording rule ends the job in `error`) | SSE stream |
 | POST | `/api/primary` | `{"token": "...", "hold"?: ["<sample source path>", …]}` — `hold` names the previewed documents marked with the red X: set aside on the to-do list, the others run; a path that is not one of the plan's documents is refused (400 for a malformed list, the job's `error` for an unknown path) | SSE stream |
@@ -342,7 +360,7 @@ Any report is a sign of life: a showing page (`visible`) that sends nothing for 
 | `text_delta` | `text` | a chunk of the assistant's reply as it is written: the model's plain text, then the `message` of its question or submission (read from the tool call's input as it streams, nothing else of it), a paragraph apart, as the reply joins them |
 | `message` | `message` | a complete message object (assistant or app) to append; the streaming bubble is finalized with it, and the page carries the reply on from the words already shown |
 | `plan` | `plan` | the plan became available (before previews render); the page drops the pages of the plan before it |
-| `samples` | `samples`, `occurrences`, `warnings`, `blocking` | previews are in (`occurrences` as the view carries them; absent from an older server) |
+| `samples` | `samples`, `occurrences`, `warnings`, `worth_knowing`, `blocking` | previews are in (`occurrences` and `worth_knowing` as the view carries them; absent from an older server) |
 | `results` | `results` | copies were written |
 | `question` | `questions`, `choices`, `chips` | the model needs the user |
 | `cost` | `cost` | the running spend |

@@ -2,7 +2,7 @@ import { memo, useEffect, useRef } from "react";
 import type { Attachment, View } from "../types";
 import type { Mark, Reviews } from "../lib/review";
 import type { Unticks } from "../lib/occurrences";
-import { changedTip, copiesNote, copyTip, isSaved, notSavedTip, openTarget, planHasContent, runFolder, undoLink } from "../lib/workbench";
+import { changedTip, copiesNote, copyTip, doneCoverage, doneSteps, doneSubtitle, isSaved, notSavedTip, openTarget, planHasContent, runFolder, undoLink } from "../lib/workbench";
 import { unverifiedLine } from "../lib/modes";
 import DocumentsTray from "./DocumentsTray";
 import Markdown from "./Markdown";
@@ -28,11 +28,15 @@ interface Props {
   /** The ticks differ from the previewed plan's: Update the preview is due. */
   unticksPending: boolean;
   onToggleUntick: (key: string) => void;
+  /** Tick or untick many occurrences at once (the select-all boxes). */
+  onSetTicks: (keys: string[], ticked: boolean) => void;
   onUpdateOccurrences: () => void;
   onAdd: (kind: "documents" | "template" | "references") => void;
   /** Add a folder of documents (the native folder dialog). */
   onAddFolder: () => void;
   onRemove: (attachment: Attachment) => void;
+  /** Remove all documents: every Word document out of this conversation (the template and pictures stay). */
+  onRemoveAll: () => void;
   onOpen: (path: string) => void;
   onStartOver: () => void;
   /** Undo the last button (Safe) or change (Default, Obliterate): the working set back to the copies from before it. */
@@ -104,10 +108,12 @@ function Workbench({
   canUntick,
   unticksPending,
   onToggleUntick,
+  onSetTicks,
   onUpdateOccurrences,
   onAdd,
   onAddFolder,
   onRemove,
+  onRemoveAll,
   onOpen,
   onStartOver,
   onUndo,
@@ -123,6 +129,7 @@ function Workbench({
   const folder = runFolder(view);
   const setAside = view.plan?.set_aside ?? [];
   const todo = view.todo ?? [];
+  const done = doneSteps(view);
   const scrollRef = useRef<HTMLElement>(null);
   const previewsRef = useRef<HTMLDivElement>(null);
   const resultsRef = useRef<HTMLDivElement>(null);
@@ -157,6 +164,8 @@ function Workbench({
           onAdd={onAdd}
           onAddFolder={onAddFolder}
           onRemove={onRemove}
+          onRemoveAll={onRemoveAll}
+          hasCopies={(view.working?.generation ?? 0) > 0}
         />
 
         {view.samples.length === 0 && view.results.length === 0 && (busy || !hasPlan) && (
@@ -196,27 +205,46 @@ function Workbench({
             canUntick={canUntick}
             pending={unticksPending}
             onToggle={onToggleUntick}
+            onSetTicks={onSetTicks}
             onUpdate={onUpdateOccurrences}
           />
         )}
 
-        {view.warnings.length > 0 && (
+        {/* The advisory findings stay in the view, the preview's records and the logs, never on the page; a blocking
+            visual finding shows them, since the button then says the flagged pages were reviewed. */}
+        {view.blocking && view.warnings.length > 0 && (
           <PaperCard
-            title={view.blocking ? "Please check" : "About these checks"}
-            subtitle={
-              view.blocking
-                ? "A visual finding is marked as blocking. Look at the flagged pages before creating copies."
-                : "Findings from the automated checks and the visual check of the rendered pages; advisory."
-            }
-            tone={view.blocking ? "error" : "muted"}
+            title="Please check"
+            subtitle="A visual finding is marked as blocking. Look at the flagged pages before creating copies."
+            tone="error"
           >
             <ul className="space-y-1.5">
               {view.warnings.map((warning, index) => (
                 <li key={`${index}-${warning}`} className="flex gap-2 text-[0.9rem] leading-relaxed text-paper-ink">
-                  <span aria-hidden className={view.blocking ? "text-err" : "text-paper-dim"}>
+                  <span aria-hidden className="text-err">
                     •
                   </span>
                   <Markdown text={warning} paper inline />
+                </li>
+              ))}
+            </ul>
+          </PaperCard>
+        )}
+
+        {/* The notes worth reading before the copies are made, as Left untouched lists its documents; under Please
+            check they are among the warnings already. */}
+        {!view.blocking && view.worth_knowing.length > 0 && (
+          <PaperCard
+            title="Worth knowing"
+            subtitle="Notes on this change to read before you create the copies."
+          >
+            <ul className="divide-y divide-paper-edge">
+              {view.worth_knowing.map((note, index) => (
+                <li key={`${index}-${note.name}-${note.text}`} className="py-2 first:pt-0 last:pb-0">
+                  {note.name && <p className="text-sm font-medium text-paper-ink">{note.name}</p>}
+                  <p className="text-[12px] leading-relaxed text-paper-dim">
+                    <Markdown text={note.text} paper inline />
+                  </p>
                 </li>
               ))}
             </ul>
@@ -372,6 +400,36 @@ function Workbench({
           </div>
         )}
 
+
+        {done.length > 0 && (
+          <div data-tour="done-list" data-capability="results.done">
+          <PaperCard title="What you've done so far" subtitle={doneSubtitle(view, undo)}>
+            <ol className="divide-y divide-paper-edge">
+              {done.map((step, i) => (
+                <li key={i} className="flex items-start gap-3 py-2 first:pt-0 last:pb-0">
+                  <span
+                    aria-hidden
+                    className="mt-0.5 flex h-5 w-5 flex-none items-center justify-center rounded-full border border-ok/50 bg-ok/10 text-[10.5px] font-semibold text-ok"
+                  >
+                    {i + 1}
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <p className="line-clamp-3 text-sm break-words text-paper-ink" title={step.request}>
+                      {step.request}
+                    </p>
+                    <p className="mt-0.5 text-xs leading-snug text-paper-dim">{doneCoverage(step)}</p>
+                  </div>
+                  {i === done.length - 1 && (
+                    <span className="mt-0.5 flex-none rounded-full border border-paper-edge px-2 py-0.5 text-[10px] font-semibold tracking-wide text-paper-dim">
+                      LATEST
+                    </span>
+                  )}
+                </li>
+              ))}
+            </ol>
+          </PaperCard>
+          </div>
+        )}
 
         {todo.length > 0 && (
           <div data-tour="todo-list">

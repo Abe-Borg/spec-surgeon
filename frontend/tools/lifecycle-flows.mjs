@@ -68,6 +68,24 @@ try {
   assert.ok(state.attachments.some((a) => a.kind === "document"), "Start over keeps the attached originals");
   console.log("PASS Start over clears the staged form and results, keeps originals and uses Safe-mode copy");
 
+  await load("safe-done");
+  const done = page.getByRole("region", { name: "What you've done so far" }).getByRole("listitem");
+  await done.first().waitFor();
+  assert.equal(await done.count(), 1);
+  await page.getByRole("button", { name: /^Remove all comments/ }).click();
+  await page.getByRole("button", { name: "Preview", exact: true }).click();
+  await create.click();
+  await done.nth(1).waitFor({ timeout: 20000 });
+  assert.match(await done.nth(1).innerText(), /Remove all comments[\s\S]*LATEST/);
+  await page.getByRole("button", { name: "All buttons", exact: true }).click();
+  await page.getByRole("img", { name: "You ran it once on these copies (What you've done so far)." }).first().waitFor();
+  assert.equal(await page.getByRole("img", { name: /^You ran it once/ }).count(), 2, "both buttons carry their checkmark");
+  await page.getByRole("button", { name: "Undo the last button", exact: true }).click();
+  await page.getByText("Undid “Remove all comments”.", { exact: false }).waitFor();
+  assert.equal(await done.count(), 1);
+  assert.equal(await page.getByRole("img", { name: /^You ran it once/ }).count(), 1, "Undo takes the checkmark off");
+  console.log("PASS What you've done so far lists each button, marks it, and Undo takes the newest off");
+
   assert.deepEqual(errors, []);
   console.log("PASS no lifecycle browser errors");
 } finally {

@@ -85,6 +85,17 @@ Obliterate, below under "The conversation"):
   over and removing the last working copy clear the points; a run whose approval took none (it resumed after a
   restart) clears them too, so no undo reaches past a step it did not record.
 
+**What you've done so far** (`DocumentTask.runs`, `_done_view`; the view's `working.done`), under the copies, lists
+every run that delivered copies since the originals, oldest first, in every mode: the button's sentence (your line in
+the chat), the newest marked LATEST, and under each how many of the documents attached now carry it and why any other
+does not — **left untouched** (the run left it as it was: a button could not change it, or it was outside the run),
+**set aside** (it waited on the to-do list then), **attached later** (attached after the run, or removed and attached
+again, which makes it an original). A button whose run the list names carries a checkmark on its tile, its hover text
+saying how many times, so a batch of buttons pressed one after another never has to be remembered and a button is not
+pressed twice by mistake. Undo the last button takes the newest off (each undo point keeps the list as it was before
+its run), Start over and removing the last working copy clear it, and the journal keeps it (`runs`); a journal from
+before it, or one whose list cannot be read, shows none rather than refusing the conversation.
+
 Tracked changes are off in Safe mode unless the form's *Show my changes as tracked changes in Word* is ticked (find
 and replace, the issue stamp, END OF SECTION, numbers kept with their units, remove hidden text, remove empty
 paragraphs, clean up spaces, standardize quotes and dashes); every other button's change is plain formatting or never
@@ -236,9 +247,8 @@ planned under one set of rules is never created under the other (Continue plans 
 ## The top bar
 
 The top bar follows Build-a-Spec's. Beside the title, a quiet line says what the conversation works on ("3
-documents · 1 template · 1 picture · building on your copies"; files triage refused are not counted). It shows from
-1280 px wide and shortens with an ellipsis before anything else gives way. Then the in-app guide, one dialog with a
-tab strip:
+documents · 1 template · 1 picture · building on your copies"; files triage refused are not counted) while the bar has
+room for it, ending in an ellipsis past 22rem. Then the in-app guide, one dialog with a tab strip:
 
 - **How to use** — the modes (Obliterate's entry says it is hidden and how to show it), what each lets you control and what it costs, Safe mode in four steps, a Default
   first pass in eight steps, what a refused file means, and how spending, Stop now and the pause work.
@@ -264,7 +274,17 @@ tab strip:
 Before the guide's tabs, **Tour** starts the guided tour (below). On the right: the estimated spending of the
 conversation, the connection pill (it opens Settings),
 **New conversation** and the gear. An update set aside with the banner's **Not now** stays in the top bar as a pill
-("v1.7.0 available — install") from 1280 px wide; below that, About offers it.
+("v1.7.0 available — install"), and About offers it too.
+
+The bar is one line. When it holds more than the window's width (at 1280 px with copies to save, a request running,
+Obliterate shown or an update waiting), it gives way one step at a time until everything fits, measured on the page
+rather than guessed from the width (`frontend/src/lib/useFit.ts`; the steps are `GIVE_WAY` in
+`frontend/src/components/Header.tsx`): the context line goes, the spacing tightens, "this conversation" leaves the
+spending pill, the connection pill says **Key**, **No AI** or **Credentials** (**Add your API key** stays whole), the
+help topics take one word each (**Guide**, **Workflows**, **Mechanics**, **Trust**, **About**, the full name on hover),
+**New conversation** and **Export · 3 unsaved** become **New** and **Export · 3**, the dividers go, "this request"
+leaves the request's spending, the spacing tightens again, and last the update pill (About still offers it). The title, every topic, the mode
+switch and every button always stay, and a wider window gets the words back.
 
 ## The guided tour
 
@@ -322,7 +342,9 @@ you had picked them one by one (`DocumentTask.attach_folder`): its subfolders ar
 many documents they hold so you can add those folders too; Word's `~$` lock files are skipped, the app's own folders
 are refused as a source, and nothing about the folder is remembered. Files from different folders can be used
 together, including files with the same name. Each file has
-a remove button. **Add a template (optional)** attaches one reference document; it is never part of the batch,
+a remove button; with two or more documents listed, **Remove all documents** takes every Word document out at once
+after one confirmation (`DocumentTask.remove_documents`, each as its ✕ would), leaving the template and the pictures
+and tables. **Add a template (optional)** attaches one reference document; it is never part of the batch,
 and if one of the documents is a copy of the template the window says so and asks you to remove one of them.
 
 **Add a picture or table (optional)**, or dropping one, attaches a file for the edit to use: a picture
@@ -369,9 +391,10 @@ overview is computed whenever a batch is, so a request after a run reads the cop
 
 A change kept to one place says where the same words remain: a replacement whose words also occur outside its scope or
 selection (and no other replacement of the plan changes them), or a literal header/footer fill of the section number or
-title that differs from the document's own (C3). The preview shows these notes beside the pages (`Preview.warnings`)
-and lists them for every file in the text the assistant reads (`WORDING LEFT ELSEWHERE`), which then offers to change
-them too; nothing changes unasked. The check's findings describe the file, not the edit: a file with any of them
+title that differs from the document's own (C3). The window lists these notes under **Worth knowing**, beside the
+pages, each under its document's name as **Left untouched** lists its documents (`Preview.worth_knowing`), and the text the
+assistant reads lists them for every file (`WORDING LEFT ELSEWHERE`), which then offers to change them too; nothing
+changes unasked. The check's findings describe the file, not the edit: a file with any of them
 is edited like any other, and a file with none can still be set aside at plan time.
 
 Adding or removing a document after a plan exists voids that plan. The conversation says so, and the button
@@ -421,6 +444,9 @@ refused its plan, which is still to be made.
   hears, the copies and Left untouched list shown, the ✗ entries that run added); it waits while a preview is open
   ("Discard the preview first") or a request is ("Drop the request that is open first, or finish it"). In
   Obliterate mode a copy's UNVERIFIED mark goes back with the copy it belongs to. No file is written or deleted.
+- **What you've done so far**, under the copies, lists each request the copies carry, as in Safe mode (above): the
+  request's first words as you typed them, how many documents carry it and why any other does not. Undo the last
+  change takes the newest off.
 
 The assistant goes ahead on sensible defaults and says what it assumed; it asks at most three questions per
 turn, each with the answer it recommends, and offers short replies you can tap. A tapped reply is your decision
@@ -483,14 +509,13 @@ samples are checked by the plan the method predicted (its trials are verified wi
 rendered and compared before any is delivered, as a plan's are: a sample whose layout check fails is said in the chat
 before the button and, outside Obliterate, makes Create unavailable; in Obliterate its copies are delivered marked
 UNVERIFIED with that check beside them. If no renderer can
-provide usable page evidence, a card
-says that page appearance was not checked and asks you to check the edited copies in Word.
+provide usable page evidence, each preview
+says that page appearance was not checked for its document and asks you to open the edited copy in Word.
 
 The same comparison counts the words shown on every page of the original and of the copy, less what the plan
 removes (a replaced or deleted wording, a removed header's text, a removed watermark), so a word that moved to another
-page cancels out. A word the original's pages show that the copy's pages do not is a warning beside the sample ("N
-word(s) shown in the original's pages are not shown in the copy's: …"), said in the chat in the app's words before
-you approve, given to Claude's visual check so it looks for those words on the pages, and carried in each copy's
+page cancels out. A word the original's pages show that the copy's pages do not is a warning ("N word(s) shown in
+the original's pages are not shown in the copy's: …"), said in the chat in the app's words before you approve, given to Claude's visual check so it looks for those words on the pages, and carried in each copy's
 record and in `BATCH_REPORT.md`. It is never a failed check: a layout change (a font, the margins) reflows words
 across pages, and when the page counts differ the header and footer words — which repeat once per page — are
 recorded, not compared. What it catches is text a copy hides without moving a line: a shape drawn over it, white on
@@ -499,7 +524,9 @@ white, a size of nothing, spacing that pushes a line off the page.
 **Find and replace, occurrence by occurrence.** A plan with a find-and-replace (`replace_table`: Safe mode's button,
 or a conversation's) lists every occurrence it found under the previews, in every document of the plan — not the
 sampled ones only — with the part it sits in, its paragraph, the article it sits under where the structure analysis
-reads one, and the words around it. Each has a checkbox. Untick an occurrence to leave it as it is (a historical
+reads one, and the words around it. Each has a checkbox; the box above the list ticks or unticks every occurrence at
+once (mixed while only some are ticked), and with several documents a box beside each name does the same for that
+document's, so a long list can be unticked whole and the few to replace ticked back. Untick an occurrence to leave it as it is (a historical
 reference, a line that should keep the old wording) and press **Update the preview**: the window writes the unticked
 occurrences into the plan (`replace_table.params.skip`, each by its file, part, paragraph and place in the text), the
 plan passes the gate again with exactly those as the ones you unticked (a request can never write `skip` on its own),
@@ -515,8 +542,7 @@ screen; a new plan starts them over.
 The pages are those of the plan in front of you, and nothing older. Sending a message or picking a choice takes
 the plan and its pages off the window while the reply is worked out, and a new plan's pages replace them; once
 copies are created, their pages leave with the plan. During recovery, a document whose copy you already saved
-drops out of the previews, and its findings out of **About these checks**, while the conversation goes on about
-the rest.
+drops out of the previews, and its visual findings with it, while the conversation goes on about the rest.
 
 ## The green checkmark, the red X and the to-do list
 
@@ -570,9 +596,15 @@ wait on the list and why (it cannot read, plan or bring them back), and a pass o
 waited. **Put back** takes a document off the list without a pass: it is among the documents the next request
 works on, as it is (during a pass it joins them when the pass ends). Nothing on the list is ever changed.
 
-Claude's visual check of the rendered pages is advisory. Its findings appear under **About these checks** with
-their file and page. A finding it marks as blocking changes that card's title to **Please check** and the
-button to **I reviewed the flagged pages — create copies**; that is a separate, explicit decision on the
+Claude's visual check of the rendered pages is advisory. Its findings, and the other advisory notes of the checks
+(the renderer used, page counts that changed, the words the copy's pages do not show), are not listed in the window
+(the owner's decision, 2026-10-29): they are kept in the preview's records (`PREVIEW.md`, `preview.json`,
+`visual_review.json`) and its log, which a diagnostic bundle carries. The window lists only the notes worth reading
+before the copies are made, under **Worth knowing** beside the pages, by document: the same words a change leaves
+elsewhere and a fill shown in another case than the template (above), a layout of the plan that no attached
+document has, and a file that changed while the preview was being made (make the preview again). A finding the
+visual check marks as blocking shows every note under **Please check** instead, with their file and page, and changes
+the button to **I reviewed the flagged pages — create copies**; that is a separate, explicit decision on the
 displayed preview.
 
 Rendering. Word renders a batch in up to three private, invisible instances side by side (one per two cores, one

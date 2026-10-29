@@ -109,12 +109,13 @@ export const RUNTIME_CARDS: RuntimeCard[] = [
       "for. A dropped copy stays in the scratch folder until the window closes; the file you dropped is untouched.",
   },
   {
-    covers: ["A4"],
-    title: "Removing an attachment",
-    you: "The ✕ beside a file.",
+    covers: ["A4", "A38"],
+    title: "Removing an attachment, or all the documents",
+    you: "The ✕ beside a file, or Remove all documents (with two or more listed) and then Remove all to confirm.",
     runs:
       "The file leaves this conversation; any plan is void and is checked again with the next request. If it was " +
-      "the last file with an edited copy, the next change starts from your originals.",
+      "the last file with an edited copy, the next change starts from your originals. Remove all documents takes " +
+      "every Word document out at once, each as its ✕ would; the template and the pictures and tables stay.",
     sent: "Nothing.",
     ai: NONE,
     bounds: "The file itself is not deleted or changed, and neither is a copy made of it earlier.",
@@ -175,8 +176,8 @@ export const RUNTIME_CARDS: RuntimeCard[] = [
       `others (“only this one”), is not planned, and is named there too. Representative samples (${F.sampleFiles} files, or every file in a smaller batch; ` +
       "at least one per layout, so more when there are more layouts) are edited in memory and checked by the independent checker, their rendered pages compared as the run compares them (a layout that moved fails the sample; a sample says when that check waits for the run). " +
       "The same comparison counts the words shown on every page of the original and of the copy, less what the plan " +
-      "removes: a word the original's pages show that the copy's pages do not is named beside the sample, in the " +
-      "chat and in Claude's visual check — a warning, never a failed check, because a layout change moves words " +
+      "removes: a word the original's pages show that the copy's pages do not is named in the chat and in " +
+      "Claude's visual check — a warning, never a failed check, because a layout change moves words " +
       "between pages and header and footer words repeat once per page. Their before and after " +
       `pages are rendered by Microsoft Word (new, invisible instances, up to ${F.wordInstances} side by side, never the Word you have open) or, without ` +
       `Word, LibreOffice. From ${F.planProcessMinFiles} files the plans, and from ${F.processMinFiles} samples the samples, are worked out side by ` +
@@ -201,8 +202,9 @@ export const RUNTIME_CARDS: RuntimeCard[] = [
     runs:
       `One call shows Claude up to ${F.visualPagesPerSample} pages of each sample, before and after, with your ` +
       "request and the plan, and tells it how many pages each sample has, so it says a page it was not shown was " +
-      "not shown. Its findings appear beside the pages, by file and page. A finding Claude marks as " +
-      "blocking changes the button to “I reviewed the flagged pages — create copies”.",
+      "not shown. Its findings are kept in the preview's records, by file and page, and are not listed in the " +
+      "window. A finding Claude marks as blocking lists them beside the pages and changes the button to " +
+      "“I reviewed the flagged pages — create copies”.",
     sent:
       `To the Anthropic API: the page images (at most ${F.pageImageLongEdgePx} pixels on the long side), the sample ` +
       "names and their page counts, your request, the plan's summary and assumptions, and a summary of the " +
@@ -318,7 +320,10 @@ export const RUNTIME_CARDS: RuntimeCard[] = [
       "while a preview waits) withdraws it: nothing is created, and the window shows the copies it showed before. " +
       "Each button's form keeps what you typed until Clear form, New conversation or Start over. Undo the last " +
       "button makes the copies from before that button the ones the next button builds on again (your originals, " +
-      "when it was the first), and takes off the to-do list the documents its ✗ put there. In Default and " +
+      "when it was the first), and takes off the to-do list the documents its ✗ put there. Under the copies, What " +
+      "you've done so far lists each run they carry since the originals (the button's sentence or your request, " +
+      "and which documents carry it), kept in the saved conversation; Undo takes the newest off, Start over clears " +
+      "it, and a button you already ran carries a checkmark. In Default and " +
       "Obliterate the same two work on a conversation: Discard preview, or Drop this request while a question, a " +
       "pause or a reply to continue is open, ends the request with nothing created (no AI call; the next request is " +
       "told it was withdrawn, and a pass over the to-do list puts its documents back on the list), and Undo the " +
@@ -337,7 +342,9 @@ export const RUNTIME_CARDS: RuntimeCard[] = [
   {
     covers: ["A35"],
     title: "Find and replace, occurrence by occurrence",
-    you: "Untick an occurrence in the list under the previews, then Update the preview.",
+    you:
+      "Untick an occurrence in the list under the previews (or every one at once with the box above the list), then " +
+      "Update the preview.",
     runs:
       "The list shows every occurrence a find-and-replace plan found, in every document of the plan, with the words " +
       "around it. Update the preview writes the unticked occurrences into the plan (each by its file, paragraph and " +

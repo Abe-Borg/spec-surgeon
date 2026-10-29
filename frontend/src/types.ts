@@ -222,6 +222,14 @@ export interface OccurrenceDoc {
   items: OccurrenceItem[];
 }
 
+/** A note worth reading before the copies are made, listed under Worth knowing: the same words a change leaves
+ *  elsewhere, a fill shown in another case than the template, an input that changed under the preview. */
+export interface PreviewNote {
+  /** The document it is about; "" for a note about the whole plan. */
+  name: string;
+  text: string;
+}
+
 export interface Result {
   source: string;
   output: string;
@@ -322,6 +330,21 @@ export interface Working {
   undo?: string;
   /** Why it cannot be undone now (a preview waits, a request is open); "" when it can. */
   undo_blocked?: string;
+  /** What you've done so far: each run that delivered copies, oldest first. Absent from an older server. */
+  done?: DoneStep[];
+}
+
+/** One run the copies carry (docs/WEB_API.md, `working.done`). */
+export interface DoneStep {
+  /** The button's sentence, or the request the user typed. */
+  request: string;
+  /** The Safe-mode button pressed (a recipe id); "" for a request. */
+  recipe: string;
+  /** How many of the documents attached now carry it, of how many. */
+  documents: number;
+  of: number;
+  /** Each other document attached now, and why it does not carry it ("left untouched", "set aside", "attached later"). */
+  not: { name: string; why: string }[];
 }
 
 export type Discard = "" | "preview" | "request";
@@ -380,7 +403,11 @@ export interface View {
   /** The find-and-replace occurrences of the waiting plan, per document (every document, not the sampled ones only);
    *  empty when no plan waits or it has no find-and-replace. Absent from an older server. */
   occurrences: OccurrenceDoc[];
+  /** Every note of the checks; kept for diagnostics, listed on the page only under Please check (`blocking`). */
   warnings: string[];
+  /** The notes worth reading before the copies are made: the one part of `warnings` the page lists, under Worth
+   *  knowing. Absent from an older server. */
+  worth_knowing: PreviewNote[];
   blocking: boolean;
   results: Result[];
   /** Whether Export → PDF (Clean) can run on this computer. */
@@ -438,7 +465,7 @@ export type JobEvent =
   | { type: "text_delta"; text: string }
   | { type: "message"; message: Message }
   | { type: "plan"; plan: Plan }
-  | { type: "samples"; samples: Sample[]; occurrences?: OccurrenceDoc[]; warnings: string[]; blocking: boolean }
+  | { type: "samples"; samples: Sample[]; occurrences?: OccurrenceDoc[]; warnings: string[]; worth_knowing?: PreviewNote[]; blocking: boolean }
   | { type: "results"; results: Result[] }
   | { type: "question"; questions: string[]; choices: Choice[]; chips: string[] }
   | { type: "cost"; cost: Cost }

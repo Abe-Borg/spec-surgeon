@@ -1,4 +1,4 @@
-import { Fragment, memo, useEffect, useMemo, type Dispatch, type SetStateAction } from "react";
+import { Fragment, memo, useEffect, useMemo, type Dispatch, type ReactNode, type SetStateAction } from "react";
 import type { FindReplacePair, Recipe, RecipeField, RecipeInputs, View } from "../types";
 import {
   availability,
@@ -17,6 +17,7 @@ import {
   type SafeFormState,
 } from "../lib/recipes";
 import { SWITCH_TO_DEFAULT, safeNoteWords } from "../lib/safeNote";
+import { ranLabel, timesRun } from "../lib/workbench";
 import { TOUR_HOLD } from "../lib/tour";
 import { primaryBtn } from "./ModalShell";
 import SafeNote from "./SafeNote";
@@ -24,7 +25,7 @@ import Tip from "./Tip";
 
 interface Props {
   recipes: Recipe[];
-  view: Pick<View, "attachments" | "template" | "stage">;
+  view: Pick<View, "attachments" | "template" | "stage" | "working">;
   busy: boolean;
   /** Previews the button's change: a job with no AI call (docs/WEB_API.md, `POST /api/recipe`). */
   onPreview: (recipe: Recipe, inputs: RecipeInputs) => void;
@@ -313,6 +314,57 @@ function FieldInput({
   }
 }
 
+/** One of Safe mode's buttons: a tile that fills its column, the accent and an arrow on hover. */
+const tileClass =
+  "group/tile flex h-full min-h-11 w-full items-center gap-2 rounded-xl border border-edge bg-raised px-3.5 py-2 " +
+  "text-left text-[13px] leading-snug font-medium text-ink shadow-sm transition-[color,background-color,border-color,box-shadow,transform] " +
+  "duration-150 ease-[var(--ease-glide)] hover:-translate-y-px hover:border-accent hover:bg-accent/10 hover:text-ink " +
+  "hover:shadow-md focus-visible:border-accent focus-visible:outline-2 focus-visible:outline-offset-2 " +
+  "focus-visible:outline-accent active:translate-y-0 disabled:pointer-events-none disabled:opacity-40 disabled:shadow-none";
+
+function Chevron() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2"
+      strokeLinecap="round" strokeLinejoin="round" aria-hidden
+      className="flex-none -translate-x-1 text-accent opacity-0 transition-[opacity,transform] duration-150 group-hover/tile:translate-x-0 group-hover/tile:opacity-100 group-focus-visible/tile:translate-x-0 group-focus-visible/tile:opacity-100">
+      <path d="M9 6l6 6-6 6" />
+    </svg>
+  );
+}
+
+/** Each group's mark beside its name; a group the server adds later gets the plain one. */
+const GROUP_ICONS: Record<string, ReactNode> = {
+  "Headers & footers": (
+    <>
+      <rect x="5" y="3" width="14" height="18" rx="2" />
+      <path d="M8 7h8M8 17h8" />
+    </>
+  ),
+  "Fonts & formatting": <path d="M5 7V5h14v2M12 5v14M9 19h6" />,
+  Text: <path d="M4 6h16M4 10h16M4 14h10M4 18h7" />,
+  "Clean up": (
+    <>
+      <path d="M11 3l1.7 4.3L17 9l-4.3 1.7L11 15l-1.7-4.3L5 9l4.3-1.7z" />
+      <path d="M18 14l.9 2.1L21 17l-2.1.9L18 20l-.9-2.1L15 17l2.1-.9z" />
+    </>
+  ),
+  "Files & properties": (
+    <>
+      <path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z" />
+      <path d="M14 3v5h5M9 13h6M9 17h4" />
+    </>
+  ),
+};
+
+function GroupIcon({ group }: { group: string }) {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
+      strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      {GROUP_ICONS[group] ?? <rect x="5" y="5" width="14" height="14" rx="3" />}
+    </svg>
+  );
+}
+
 /**
  * Safe mode's buttons, where the composer is in Default mode: each common change in a group, a short form for the
  * one chosen, and Preview. No AI call is made: the server builds the change from the form (recipes.py) and the
@@ -424,7 +476,7 @@ function SafePanel({
 
   const tail = safeNoteWords(keyReady).tail;
   return (
-    <div className="flex flex-col gap-3">
+    <div className="flex flex-col gap-7 pb-3">
       <SafeNote
         keyReady={keyReady}
         hidden={noteHidden}
@@ -434,31 +486,49 @@ function SafePanel({
         onDefaultMode={onDefaultMode}
         onAddKey={onAddKey}
       />
-      <div className="flex flex-col gap-3" aria-label="Safe mode's buttons" data-tour="safe-buttons" data-capability="safe.buttons">
+      <div className="flex flex-col gap-6" aria-label="Safe mode's buttons" data-tour="safe-buttons" data-capability="safe.buttons">
         {groups.map(({ group, recipes: items }) => (
-          <div key={group}>
-            <p className="mb-1.5 text-[11px] font-medium tracking-wide text-ink-faint uppercase">{group}</p>
-            <div className="flex flex-wrap gap-1.5">
+          <section key={group} aria-label={group}>
+            <div className="mb-2.5 flex items-center gap-2.5">
+              <span className="flex h-6 w-6 flex-none items-center justify-center rounded-md bg-accent/15 text-accent">
+                <GroupIcon group={group} />
+              </span>
+              <h3 className="text-[11.5px] font-semibold tracking-wider text-ink-dim uppercase">{group}</h3>
+              <span aria-hidden className="h-px min-w-0 flex-1 bg-edge" />
+            </div>
+            <div className="grid grid-cols-[repeat(auto-fill,minmax(12.5rem,1fr))] gap-2">
               {items.map((recipe) => {
                 const ready = availability(recipe, view);
+                const ran = timesRun(view, recipe.id);
                 return (
-                  <Tip key={recipe.id} tip={busy ? "Wait for the current work to finish" : ready.reason || recipe.summary}>
-                    <button
-                      type="button"
-                      disabled={busy || !ready.ready}
-                      onClick={() => open(recipe)}
-                      className="rounded-lg border border-edge bg-raised px-2.5 py-1 text-xs text-ink transition-colors hover:border-accent hover:text-accent disabled:pointer-events-none disabled:opacity-40"
-                    >
-                      {recipe.label}
+                  <Tip
+                    key={recipe.id}
+                    tip={busy ? "Wait for the current work to finish" : `${ready.reason || recipe.summary}${ran ? ` ${ranLabel(ran)}` : ""}`}
+                    className="h-full"
+                  >
+                    <button type="button" disabled={busy || !ready.ready} onClick={() => open(recipe)} className={tileClass}>
+                      <span className="min-w-0 flex-1">{recipe.label}</span>
+                      {ran > 0 && (
+                        <span
+                          role="img"
+                          aria-label={ranLabel(ran)}
+                          className="flex h-[18px] w-[18px] flex-none items-center justify-center rounded-full border border-ok/50 bg-ok/10 text-ok"
+                        >
+                          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                            <path d="M20 6 9 17l-5-5" />
+                          </svg>
+                        </span>
+                      )}
+                      <Chevron />
                     </button>
                   </Tip>
                 );
               })}
             </div>
-          </div>
+          </section>
         ))}
       </div>
-      <p className="flex flex-wrap items-baseline gap-x-2 gap-y-1 border-t border-edge pt-2.5 text-[12.5px] text-ink-faint">
+      <p className="flex flex-wrap items-baseline gap-x-2 gap-y-1 border-t border-edge pt-4 text-[12.5px] text-ink-faint">
         <span>{tail}</span>
         <Tip tip={tourActive ? TOUR_HOLD : busy ? "Wait for the current work to finish" : "The buttons give way to the message box"}>
           <button

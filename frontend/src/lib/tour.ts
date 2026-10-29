@@ -17,7 +17,7 @@ import { TRUST_FACTS as F } from "./trustFacts.ts";
  * Bump whenever chapter or step ORDER changes: the resume record (lib/tourStorage.ts) keeps numeric indexes, and a
  * stale one would land a reload on another chapter than the one it was left at. A bump discards it.
  */
-export const TOUR_VERSION = 3;
+export const TOUR_VERSION = 4;
 
 /** The version a finished tour is recorded as (settings.json `tutorial_version`); bump it when the tour changes
  *  enough that someone who finished the old one should be invited again. */
@@ -43,7 +43,7 @@ export type TourMode = "optional" | "explanatory";
 
 /** What the view must hold for a step's control to be on screen; unmet, the step keeps its words beside the
  *  workbench and says the control is not available, never a pretend one. */
-export type TourNeeds = "samples" | "set-aside" | "action" | "results" | "left-untouched" | "todo" | "question" | "occurrences";
+export type TourNeeds = "samples" | "set-aside" | "action" | "results" | "done" | "left-untouched" | "todo" | "question" | "occurrences";
 
 export interface TourStep {
   id: string;
@@ -92,7 +92,7 @@ export const TOUR: readonly TourChapter[] = [
         placement: "bottom",
         title: "The top bar",
         body:
-          "Beside the title, a quiet line says what the conversation works on: how many documents, a template, a picture, whether the next request builds on copies. Then the guide: How to use, Workflows, How it works, Why trust it and About, one dialog with a tab strip, and Tour, which starts this tour again at any time.",
+          "Beside the title, when the window has room, a quiet line says what the conversation works on: how many documents, a template, a picture, whether the next request builds on copies. Then the guide: How to use, Workflows, How it works, Why trust it and About, one dialog with a tab strip, and Tour, which starts this tour again at any time. On a narrower window the bar says the same in fewer words; hover one for the rest.",
       },
       {
         id: "modes",
@@ -180,13 +180,13 @@ export const TOUR: readonly TourChapter[] = [
       },
       {
         id: "remove",
-        capabilities: ["documents.remove"],
+        capabilities: ["documents.remove", "documents.remove-all"],
         mode: "explanatory",
         anchor: "tray-documents",
         placement: "left",
         title: "Removing, and what a change to the list does",
         body:
-          "The ✕ beside a file takes it out of this conversation; the file itself is not touched. Adding or removing a document after a plan exists voids that plan: the conversation says so and the button reads Continue until the documents have been checked against your request again. Each section of this list folds to one line once a plan exists; click its title to open it.",
+          "The ✕ beside a file takes it out of this conversation; the file itself is not touched. With two or more documents listed, Remove all documents takes every one out at once, after you confirm; the template and the pictures and tables stay. Adding or removing a document after a plan exists voids that plan: the conversation says so and the button reads Continue until the documents have been checked against your request again. Each section of this list folds to one line once a plan exists; click its title to open it.",
       },
     ],
   },
@@ -296,6 +296,17 @@ export const TOUR: readonly TourChapter[] = [
           "These copies were really made from the practice documents by the same engine that edits yours: each from its original, each checked by an independent checker that shares no code with the editing, and delivered only because it passed. Click one to open it in Word; the folder button opens the run's folder. Originals are never written. A copy that fails a check is moved aside and never delivered. The tour marked one document with the red X before creating these, so it got no copy.",
       },
       {
+        id: "done-list",
+        capabilities: ["results.done"],
+        mode: "explanatory",
+        anchor: "done-list",
+        needs: "done",
+        placement: "left",
+        title: "What you've done so far",
+        body:
+          "Each button you ran since the originals is listed here, oldest first, in the words of your line in the chat (in Default and Obliterate, each request). Under each, how many of the documents attached now carry it, and why any other does not: left untouched, set aside on your to-do list, or attached later. Undo the last button takes the newest off; Start over clears the list. In Safe mode a button you already ran carries a checkmark, so there is nothing to remember. The list is kept in the saved conversation.",
+      },
+      {
         id: "export",
         capabilities: ["header.export", "header.export-kinds"],
         mode: "explanatory",
@@ -348,14 +359,14 @@ export const TOUR: readonly TourChapter[] = [
     steps: [
       {
         id: "occurrences",
-        capabilities: ["preview.occurrences"],
+        capabilities: ["preview.occurrences", "preview.occurrences-all"],
         mode: "explanatory",
         anchor: "occurrences",
         needs: "occurrences",
         placement: "left",
         title: "Every occurrence, with a checkbox",
         body:
-          "The Find and replace button lists every occurrence it found, in every document of the plan, with the words around it and the article it sits under. Untick one to leave it as it is: a historical reference, a line that should keep the old wording. Update the preview makes the plan and the pages again with the unticked ones left out, and Create edited copies waits until you do. The checker confirms that each unticked occurrence was left untouched and that nothing else was skipped. Here one occurrence in the second document is already unticked. A document the plan set aside lists what it found too, so the occurrence its reason names can be unticked and the document then goes ahead.",
+          "The Find and replace button lists every occurrence it found, in every document of the plan, with the words around it. Untick one to leave it as it is: a historical reference, a line that should keep the old wording. The box above the list ticks or unticks them all at once (and the box beside a document's name, that document's). Update the preview makes the plan and pages again with the unticked ones left out, and Create edited copies waits until you do. The checker confirms each unticked occurrence was left untouched. Here one in the second document is already unticked. A document the plan set aside lists what it found too, so the occurrence its reason names can be unticked.",
       },
     ],
   },
@@ -578,6 +589,8 @@ export function stepNeedsMet(step: Pick<TourStep, "needs">, view: View): boolean
       return view.action.kind !== "none" && !!view.action.token;
     case "results":
       return view.results.length > 0;
+    case "done":
+      return (view.working?.done ?? []).length > 0;
     case "left-untouched":
       return (view.left_untouched ?? []).length > 0;
     case "todo":
