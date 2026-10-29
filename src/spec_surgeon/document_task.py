@@ -80,6 +80,9 @@ RECOVERY_ATTEMPTS = 8            # candidate attempts per problem group (docs/RE
 # (``answer_line``)
 EXCHANGES_KEPT = 5
 ANSWER_LINE = 240
+# What you've done so far (``runs``, the view's ``working.done``): why a document attached now got no copy from a run —
+# the run left it as it was, it waited on the to-do list then, or it was attached after the run
+RUN_UNTOUCHED, RUN_SET_ASIDE, RUN_ATTACHED_LATER = "left untouched", "set aside", "attached later"
 
 # What the window says while the model uses a tool: one plain sentence per tool, never the tool's name.
 TOOL_ACTIVITY = {
@@ -307,6 +310,26 @@ def _same_file_key(path) -> str:
         return str(Path(path))
 
 
+def _run_copy(run: Dict[str, Any]) -> Dict[str, Any]:
+    return {"request": run["request"], "recipe": run["recipe"], "documents": list(run["documents"]),
+            "not": dict(run["not"])}
+
+
+def _restored_runs(runs) -> Optional[List[Dict[str, Any]]]:
+    """The runs a journal kept (``DocumentTask.runs``), in the shape ``_advance_generation`` wrote them; None when
+    anything else is there."""
+    text = lambda value: isinstance(value, str)  # noqa: E731
+    if not isinstance(runs, list) or not all(
+            isinstance(r, dict) and text(r.get("request")) and text(r.get("recipe", ""))
+            and isinstance(r.get("documents"), list) and all(map(text, r["documents"]))
+            and isinstance(r.get("not", {}), dict)
+            and all(text(k) and v in (RUN_UNTOUCHED, RUN_SET_ASIDE) for k, v in r.get("not", {}).items())
+            for r in runs):
+        return None
+    return [_run_copy({"request": r["request"], "recipe": r.get("recipe", ""), "documents": r["documents"],
+                       "not": r.get("not", {})}) for r in runs]
+
+
 class DocumentTask:
     def __init__(self, session=None, *, journal=None, render=True, mode="default", obliterate_allowed=False,
                  spending_limit=None):
@@ -368,6 +391,12 @@ class DocumentTask:
         # taken at the approval that is running, kept by ``_advance_generation`` once that run delivers
         self.undo_points: List[Dict[str, Any]] = []
         self._pending_undo: Optional[Dict[str, Any]] = None
+        # What you've done so far: one entry per run that delivered copies, oldest first — the request (a button's
+        # sentence, or the user's words), the Safe-mode button pressed ("" for a request), the attached originals whose
+        # copies it delivered, and why each other document then attached got none (``_done_view``). Undo takes the
+        # newest off, Start over clears it; it is kept in the journal
+        self.runs: List[Dict[str, Any]] = []
+        self._button = ""                      # the Safe-mode button whose preview waits (a recipe id)
         self._template_kind: Optional[tuple] = None    # (the template's path, size, mtime, recipes.template_kind)
         self._binned: List[str] = []        # documents of this request that could not take the change, on the list
         self._parked = ("", 0)              # (conversation id, how many of its set-aside documents were taken)
@@ -667,6 +696,10 @@ class DocumentTask:
         self.applied.pop(str(path), None)
         self.fresh = [k for k in self.fresh if k != str(path)]
         self.todo.pop(str(path), None)
+        for run in [*self.runs, *(r for point in self.undo_points for r in point.get("runs", []))]:
+            # attached again later, it is an original that carries none of the runs
+            run["documents"] = [d for d in run["documents"] if d != str(path)]
+            run["not"].pop(str(path), None)
         for shown in [*self.undo_points, self._before_button or {}]:
             # attached again later, it is an original: no undo or discard puts an old copy back in its place, or
             # shows one as its result
@@ -692,7 +725,7 @@ class DocumentTask:
             # the last working copy left with its original: the attached documents are originals again, and the
             # changes the history lists are in none of them
             self.history, self.generation, self.results, self.applied, self.fresh = [], 0, {}, {}, []
-            self.unverified = {}
+            self.unverified, self.runs = {}, []
             self.undo_points, self._before_button = [], None
             self.stage = "resume" if self.decisions else "empty"
             self.say("No edited copy is attached any more, so the next change starts from your originals.")
@@ -825,6 +858,15 @@ class DocumentTask:
                 self.working[key] = copy_path
         if not moved:
             return
+        request = self.decisions[0] if self.decisions else ""
+        # a button's run only when the plan that ran is a button's (``Session.model_free``): the same words typed as a
+        # request after its preview was discarded are the conversation's plan
+        button, self._button = self._button if self.session.model_free else "", ""
+        attached = [str(a.path) for a in self.attachments if not a.template and not a.reference and not a.refused]
+        self.runs.append({"request": request, "recipe": button,
+                          "documents": list(moved),
+                          "not": {k: RUN_SET_ASIDE if k in self.todo else RUN_UNTOUCHED
+                                  for k in attached if k not in moved}})
         point, self._pending_undo = self._pending_undo, None
         if point is None:
             # a run whose approval took no point (it resumed after a restart): nothing before it can be gone back to
@@ -862,7 +904,7 @@ class DocumentTask:
         if not self.working and not self.history and not self.todo and not self.focus:
             return
         self.working, self.generation, self.history, self.decisions = {}, 0, [], []
-        self.results, self.unverified = {}, {}
+        self.results, self.unverified, self.runs = {}, {}, []
         self.applied, self.todo, self.focus, self._binned, self.fresh = {}, {}, None, [], []
         self.left_untouched = []
         self.undo_points, self._pending_undo, self._before_button = [], None, None
@@ -881,11 +923,27 @@ class DocumentTask:
                                         "left_untouched": self.left_untouched}
         return {"request": self.decisions[0] if self.decisions else "",
                 "working": dict(self.working), "generation": self.generation, "history": list(self.history),
+                "runs": [_run_copy(r) for r in self.runs],
                 "applied": {k: list(v) for k, v in self.applied.items()}, "fresh": list(self.fresh),
                 "results": dict(shown["results"]),
                 "unverified": {k: list(v) for k, v in shown["unverified"].items()},
                 "left_untouched": [dict(e) for e in shown["left_untouched"]],
                 "todo_before": list(self.todo)}
+
+    def _done_view(self) -> List[Dict[str, Any]]:
+        """What you've done so far, as the window shows it under the copies: each run that delivered copies, oldest
+        first, with its request and the button pressed, and over the documents attached now how many carry it and why
+        each other one does not (``RUN_UNTOUCHED``, ``RUN_SET_ASIDE``, ``RUN_ATTACHED_LATER``). A document removed and
+        attached again is an original: it carries none (``remove``)."""
+        attached = [str(a.path) for a in self.attachments if not a.template and not a.reference and not a.refused]
+        out: List[Dict[str, Any]] = []
+        for run in self.runs:
+            carrying = [k for k in attached if k in run["documents"] and k in self.working]
+            out.append({"request": run["request"], "recipe": run["recipe"], "documents": len(carrying),
+                        "of": len(attached),
+                        "not": [{"name": Path(k).name, "why": run["not"].get(k, RUN_ATTACHED_LATER)}
+                                for k in attached if k not in carrying]})
+        return out
 
     def _undo_blocked(self) -> str:
         """Why the last change cannot be undone now; '' when it can."""
@@ -941,6 +999,7 @@ class DocumentTask:
                                  "aside for later.")
             raise ValueError("There is no preview to discard." if self.mode == "safe" else
                              "There is nothing to discard: no preview or request is waiting.")
+        self._button = ""                      # its preview is withdrawn: no later run is that button's
         if self.mode != "safe":
             self._discard_request(kind)
             return
@@ -1000,6 +1059,8 @@ class DocumentTask:
         self.working, self.generation = working, point["generation"]
         self.history = list(point["history"])
         self.applied = {k: list(v) for k, v in point["applied"].items() if k in working}
+        # a point from before the list kept none: the newest run is the one undone
+        self.runs = [_run_copy(r) for r in point["runs"]] if "runs" in point else self.runs[:-1]
         # the documents attached before the undone run, and since it, arrived after the changes still made; a point
         # from before ``fresh`` counts every original among the copies so
         before = point.get("fresh")
@@ -1286,6 +1347,7 @@ class DocumentTask:
         self.results = {}
         self.say(built.request, "user")
         self.decisions = [built.request]
+        self._button = recipe.id
         self.word_sources.extend(w for w in built.sources if w not in self.word_sources)
         self.left_untouched = []
         if outcome is None:
@@ -2282,7 +2344,8 @@ class DocumentTask:
                             "can_start_over": can_start_over,
                             "undo": (self.undo_points[-1].get("request") or "the last change") if self.undo_points
                             else "",
-                            "undo_blocked": self._undo_blocked() if self.undo_points else ""},
+                            "undo_blocked": self._undo_blocked() if self.undo_points else "",
+                            "done": self._done_view()},
                 "todo": [{"path": path, "name": entry["name"], "why": entry.get("why", WHY_HELD),
                           "reason": entry.get("reason") or HELD_REASON} for path, entry in self.todo.items()],
                 "focus": list(self.focus["documents"]) if self.focus else [],
@@ -2565,7 +2628,7 @@ class DocumentTask:
             "pending_layouts": [str(x) for x in self.session.pending_layout_recovery],
             "working": dict(self.working), "generation": self.generation, "history": list(self.history),
             "applied": self.applied, "fresh": self.fresh, "todo": self.todo, "focus": self.focus,
-            "undo": self.undo_points,
+            "undo": self.undo_points, "runs": self.runs,
             "exported": self.exported, "export_folder": self.export_folder,
             "budget": self._budget.to_dict(), "request": self._request_budget.to_dict(), "in_progress": in_progress})
 
@@ -2635,10 +2698,12 @@ class DocumentTask:
                 and texts(p.get("fresh", []))
                 and paths(p.get("pdfs", {}))           # the PDFs of the retired Save clean PDFs: read, then dropped
                 and isinstance(p.get("left_untouched"), list) and all(map(entry, p["left_untouched"]))
+                and ("runs" not in p or _restored_runs(p["runs"]) is not None)
                 for p in points):
             return []
         return [{"request": p.get("request", ""), "working": dict(p["working"]), "generation": p["generation"],
                  "history": list(p["history"]), "applied": {k: list(v) for k, v in p["applied"].items()},
+                 **({"runs": _restored_runs(p["runs"])} if "runs" in p else {}),
                  **({"fresh": list(p["fresh"])} if "fresh" in p else {}),
                  "results": dict(p["results"]), "unverified": {k: list(v) for k, v in p["unverified"].items()},
                  "left_untouched": [{"path": e["path"], "name": e.get("name") or Path(e["path"]).name,
@@ -2755,6 +2820,9 @@ class DocumentTask:
                          "change starts from your originals.")
         self._restore_todo(data)
         self.undo_points = self._restored_undo(data.get("undo", [])) if self.working or self.history else []
+        # a list that cannot be read is shown as none rather than refusing the conversation (it is an account, not
+        # what the next request builds on); a journal from before it kept none
+        self.runs = (_restored_runs(data.get("runs", [])) or []) if self.working else []
         self.exported = self._restored_exported(data.get("exported", {}))
         self.export_folder = data.get("export_folder") if isinstance(data.get("export_folder"), str) else ""
         self._sync()

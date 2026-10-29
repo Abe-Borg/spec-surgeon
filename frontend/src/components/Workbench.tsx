@@ -2,7 +2,7 @@ import { memo, useEffect, useRef } from "react";
 import type { Attachment, View } from "../types";
 import type { Mark, Reviews } from "../lib/review";
 import type { Unticks } from "../lib/occurrences";
-import { changedTip, copiesNote, copyTip, isSaved, notSavedTip, openTarget, planHasContent, runFolder, undoLink } from "../lib/workbench";
+import { changedTip, copiesNote, copyTip, doneCoverage, doneSteps, doneSubtitle, isSaved, notSavedTip, openTarget, planHasContent, runFolder, undoLink } from "../lib/workbench";
 import { unverifiedLine } from "../lib/modes";
 import DocumentsTray from "./DocumentsTray";
 import Markdown from "./Markdown";
@@ -126,6 +126,7 @@ function Workbench({
   const folder = runFolder(view);
   const setAside = view.plan?.set_aside ?? [];
   const todo = view.todo ?? [];
+  const done = doneSteps(view);
   const scrollRef = useRef<HTMLElement>(null);
   const previewsRef = useRef<HTMLDivElement>(null);
   const resultsRef = useRef<HTMLDivElement>(null);
@@ -394,6 +395,36 @@ function Workbench({
           </div>
         )}
 
+
+        {done.length > 0 && (
+          <div data-tour="done-list" data-capability="results.done">
+          <PaperCard title="What you've done so far" subtitle={doneSubtitle(view, undo)}>
+            <ol className="divide-y divide-paper-edge">
+              {done.map((step, i) => (
+                <li key={i} className="flex items-start gap-3 py-2 first:pt-0 last:pb-0">
+                  <span
+                    aria-hidden
+                    className="mt-0.5 flex h-5 w-5 flex-none items-center justify-center rounded-full border border-ok/50 bg-ok/10 text-[10.5px] font-semibold text-ok"
+                  >
+                    {i + 1}
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <p className="line-clamp-3 text-sm break-words text-paper-ink" title={step.request}>
+                      {step.request}
+                    </p>
+                    <p className="mt-0.5 text-xs leading-snug text-paper-dim">{doneCoverage(step)}</p>
+                  </div>
+                  {i === done.length - 1 && (
+                    <span className="mt-0.5 flex-none rounded-full border border-paper-edge px-2 py-0.5 text-[10px] font-semibold tracking-wide text-paper-dim">
+                      LATEST
+                    </span>
+                  )}
+                </li>
+              ))}
+            </ol>
+          </PaperCard>
+          </div>
+        )}
 
         {todo.length > 0 && (
           <div data-tour="todo-list">

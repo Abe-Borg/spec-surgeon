@@ -176,6 +176,7 @@ test("a step's needs are read off the view, and unmet on an empty one", () => {
     action: { label: "Create", token: "t", kind: "approve", can_hold: true },
     occurrences: [{ source: "a", name: "a", status: "planned", reason: "", items: [] }],
     results: [{ source: "a", output: "c", name: "a" }],
+    working: { ...EMPTY_VIEW.working, generation: 1, done: [{ request: "r", recipe: "", documents: 1, of: 1, not: [] }] },
     todo: [{ path: "d", name: "d", why: "held", reason: "x" }],
     stage: "question",
     questions: ["Which?"],

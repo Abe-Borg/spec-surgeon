@@ -85,7 +85,10 @@ says what will change, the previews show it), and those sentences record each co
 button lives in the chat pane;
 each preview carries a checkmark and an X: X'd documents are `hold` on the primary action (`Session.run(only=)` keeps
 every approved pin), wait on `DocumentTask.todo`, and the reply `WORK_TODO` begins a pass over them alone (`focus`, one
-request at a time); `applied` keeps the changes each copy carries, so the history the model hears is per document.
+request at a time); `applied` keeps the changes each copy carries, so the history the model hears is per document; `runs` keeps each run
+that delivered copies (its request, the Safe-mode button, the documents it delivered and why the others got none), which
+the window lists under the copies as **What you've done so far** in every mode (`DocumentTask._done_view`, the view's
+`working.done`; a Safe-mode button it names carries a checkmark), Undo taking the newest off.
 A request ends with copies, with a discarded preview or dropped request, or with a reply that is an answer and nothing pending (words
 alone: no question, choice, suggested reply, plan, refused plan or custom method — `DocumentTask._answered`): the
 decisions are cleared, the conversation ends, and the exchange (the user's words, the answer's first sentence) is kept

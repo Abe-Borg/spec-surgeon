@@ -296,6 +296,12 @@ this request** ends a request still open at a question, a pause or a reply to co
 next message starts a new request (the assistant is told the last one was withdrawn). **Undo the last change** goes
 back before the last run that made copies, one run at a time.
 
+Under the copies, **What you've done so far** lists every button you ran since the originals, oldest first, in the
+words of your line in the chat, with how many of the documents attached now carry each one and why any other does not
+(left untouched, set aside on the to-do list, or attached later). **Undo the last button** takes the newest off, Start
+over clears the list, and a button you already ran carries a checkmark, so the steps of a long batch never need
+remembering. In Default and Obliterate mode the list names each request the same way.
+
 Besides Word documents you can attach pictures and tables for the edit to use, such as a new logo to swap in or
 insert, a schedule to place as a table, or a spreadsheet of project values to fill in; Claude is told about them and can read the tables, and nothing
 beside your documents is ever looked for.

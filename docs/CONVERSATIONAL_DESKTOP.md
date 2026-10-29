@@ -85,6 +85,17 @@ Obliterate, below under "The conversation"):
   over and removing the last working copy clear the points; a run whose approval took none (it resumed after a
   restart) clears them too, so no undo reaches past a step it did not record.
 
+**What you've done so far** (`DocumentTask.runs`, `_done_view`; the view's `working.done`), under the copies, lists
+every run that delivered copies since the originals, oldest first, in every mode: the button's sentence (your line in
+the chat), the newest marked LATEST, and under each how many of the documents attached now carry it and why any other
+does not — **left untouched** (the run left it as it was: a button could not change it, or it was outside the run),
+**set aside** (it waited on the to-do list then), **attached later** (attached after the run, or removed and attached
+again, which makes it an original). A button whose run the list names carries a checkmark on its tile, its hover text
+saying how many times, so a batch of buttons pressed one after another never has to be remembered and a button is not
+pressed twice by mistake. Undo the last button takes the newest off (each undo point keeps the list as it was before
+its run), Start over and removing the last working copy clear it, and the journal keeps it (`runs`); a journal from
+before it, or one whose list cannot be read, shows none rather than refusing the conversation.
+
 Tracked changes are off in Safe mode unless the form's *Show my changes as tracked changes in Word* is ticked (find
 and replace, the issue stamp, END OF SECTION, numbers kept with their units, remove hidden text, remove empty
 paragraphs, clean up spaces, standardize quotes and dashes); every other button's change is plain formatting or never
@@ -431,6 +442,9 @@ refused its plan, which is still to be made.
   hears, the copies and Left untouched list shown, the ✗ entries that run added); it waits while a preview is open
   ("Discard the preview first") or a request is ("Drop the request that is open first, or finish it"). In
   Obliterate mode a copy's UNVERIFIED mark goes back with the copy it belongs to. No file is written or deleted.
+- **What you've done so far**, under the copies, lists each request the copies carry, as in Safe mode (above): the
+  request's first words as you typed them, how many documents carry it and why any other does not. Undo the last
+  change takes the newest off.
 
 The assistant goes ahead on sensible defaults and says what it assumed; it asks at most three questions per
 turn, each with the answer it recommends, and offers short replies you can tap. A tapped reply is your decision
