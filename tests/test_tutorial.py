@@ -217,8 +217,11 @@ def test_the_tour_sets_the_users_task_aside_and_restore_returns_the_same_object(
     kept = load_settings()
     assert kept.mode == "default" and kept.theme == "linen"
     assert journal.read_bytes() == journal_before
+    # the practice copies are in this window's scratch folder (the user's task's out_root), never beside it
+    practice_root = tutorial.practice_root(original.session.out_root)
+    assert practice_root == tmp_path / "out" / tutorial.PRACTICE_FOLDER
     practice = Path(ended[-1]["state"]["results"][0]["output"])
-    assert practice.is_relative_to(tutorial.practice_root()) and tutorial.practice_root().exists()
+    assert practice.is_relative_to(practice_root) and practice_root.exists()
     # the conversation is a recording: a message is refused before anything could reach Claude
     refused = frames(client.post("/api/send", json={"text": "make it bold"}))
     assert refused[-1]["type"] == "error" and "recording" in refused[-1]["message"]
@@ -229,10 +232,24 @@ def test_the_tour_sets_the_users_task_aside_and_restore_returns_the_same_object(
     assert not restored["tutorial"]["active"] and restored["tutorial"]["id"] is None
     for key in ("stage", "mode", "messages", "attachments", "plan", "samples", "action", "working", "todo"):
         assert restored[key] == before[key], key
-    assert not tutorial.practice_root().exists()
+    assert not practice_root.exists() and (tmp_path / "out").is_dir()
     assert journal.read_bytes() == journal_before
     # with no tour running, restore is nothing to do
     assert client.post("/api/tutorial/restore", json={}).status_code == 200
+
+
+def test_each_windows_tour_keeps_its_practice_folder_in_its_own_scratch_folder(tmp_path):
+    """Two windows, two scratch folders: one window's tour starting or ending never removes the other's practice
+    copies (the practice folder used to be one shared folder under the app's data folder)."""
+    first, second = tutorial.Tutorial(), tutorial.Tutorial()
+    one, two = tmp_path / "scratch-1", tmp_path / "scratch-2"
+    first.begin(render=False, scratch=one)
+    second.begin(render=False, scratch=two)
+    assert first.folder.is_relative_to(one / tutorial.PRACTICE_FOLDER)
+    assert second.folder.is_relative_to(two / tutorial.PRACTICE_FOLDER)
+    assert first.end() and not (one / tutorial.PRACTICE_FOLDER).exists()
+    assert (two / tutorial.PRACTICE_FOLDER).is_dir() and second.task.attachments[0].path.is_file()
+    assert second.end() and not (two / tutorial.PRACTICE_FOLDER).exists()
 
 
 def test_a_setting_changed_during_the_tour_reaches_the_users_waiting_task(tmp_path):

@@ -9,7 +9,7 @@
  * is not on screen says so beside the workbench, and a step whose subject spends money is marked optional. Every
  * number a step quotes comes from lib/trustFacts.ts.
  */
-import type { View } from "../types.ts";
+import type { RecipeInputs, View } from "../types.ts";
 import type { EndUserCapabilityId } from "./capabilities.ts";
 import { TRUST_FACTS as F } from "./trustFacts.ts";
 
@@ -17,11 +17,11 @@ import { TRUST_FACTS as F } from "./trustFacts.ts";
  * Bump whenever chapter or step ORDER changes: the resume record (lib/tourStorage.ts) keeps numeric indexes, and a
  * stale one would land a reload on another chapter than the one it was left at. A bump discards it.
  */
-export const TOUR_VERSION = 5;
+export const TOUR_VERSION = 6;
 
 /** The version a finished tour is recorded as (settings.json `tutorial_version`); bump it when the tour changes
  *  enough that someone who finished the old one should be invited again. */
-export const TOUR_COMPLETION_VERSION = 2;
+export const TOUR_COMPLETION_VERSION = 3;
 
 /** The chapter states the server builds (src/spec_surgeon/tutorial.py SCENARIOS; tests/tour.test.ts pins the two). */
 export type TourScenario = "start" | "button" | "copies" | "find" | "conversation" | "question" | "plan" | "todo";
@@ -33,6 +33,29 @@ export const TOUR_FORM = {
   slot: "ISSUED FOR PERMIT",
   value: "ISSUED FOR CONSTRUCTION 2026-03-01",
 } as const;
+
+/** The form the find-and-replace chapter opens, so the panel shows the button its previews came from: the pair the
+ *  server's `find` state was built with (tutorial.FIND_INPUTS; the test pins it). */
+export const TOUR_FIND_FORM = {
+  recipe: "find_replace",
+  find: "FM Global",
+  replace: "FM Approvals",
+} as const;
+
+/** A step's page-side preparation: the Safe-mode form it opens (the template button's, or Find and replace's). */
+export type TourPrepare = "safe-form" | "find-form";
+
+/** The button a prepared form belongs to. */
+export function preparedRecipe(prepare: TourPrepare): string {
+  return prepare === "safe-form" ? TOUR_FORM.recipe : TOUR_FIND_FORM.recipe;
+}
+
+/** The values a prepared form opens with, over the inputs its button opens with: the server chapter's own. */
+export function preparedInputs(prepare: TourPrepare, inputs: RecipeInputs): RecipeInputs {
+  if (prepare === "find-form") return { ...inputs, pairs: [{ find: TOUR_FIND_FORM.find, replace: TOUR_FIND_FORM.replace }] };
+  const slots = { ...((inputs.slots as Record<string, string> | undefined) ?? {}), [TOUR_FORM.slot]: TOUR_FORM.value };
+  return { ...inputs, slots };
+}
 
 /** What a held conversation control says while the tour runs (the composer, the choices, the chips, Continue). */
 export const TOUR_HOLD = "Held still during the tour: its conversation is a recording, and nothing here is sent.";
@@ -52,8 +75,8 @@ export interface TourStep {
   /** A `data-tour` value in the page. */
   anchor: string;
   needs?: TourNeeds;
-  /** The page opens the Safe-mode form (TOUR_FORM) when this step is entered. */
-  prepare?: "safe-form";
+  /** The page opens this Safe-mode form (TOUR_FORM or TOUR_FIND_FORM) when this step is entered. */
+  prepare?: TourPrepare;
   title: string;
   body: string;
   placement?: "top" | "bottom" | "left" | "right";
@@ -112,7 +135,7 @@ export const TOUR: readonly TourChapter[] = [
         placement: "bottom",
         title: "Spending, context and the connection",
         body:
-          `The pill estimates this conversation's spending as it accrues, from a built-in price table, never a bill. While work runs in Default mode a red Stop appears beside it: the kill switch, which cuts off the running AI step at once and starts no other. Once the assistant has worked, a pill counts the context its conversation holds against the model's context window: a measurement, not spending. The last pill says whether an API key is available; in Safe mode it says no AI is used. Your spending check (Settings) pauses a request before it could spend more than $${F.spendingCheckDefaultUsd} until you continue.`,
+          `The pill estimates this conversation's spending as it accrues, from a built-in price table, never a bill. While work runs in Default mode a red Stop appears beside it: the kill switch, which cuts off the running AI step at once and starts no other. Once the assistant has worked, a pill counts the context its conversation holds against the model's context window (the exact count on hover; faint once the request ends): a measurement, not spending. The last pill says whether an API key is available; in Safe mode it says no AI is used. Your spending check (Settings) pauses a request before it could spend more than $${F.spendingCheckDefaultUsd} until you continue.`,
       },
       {
         id: "settings",
@@ -213,7 +236,7 @@ export const TOUR: readonly TourChapter[] = [
         placement: "right",
         title: "The common changes, one button each",
         body:
-          "Headers and footers from your template, a watermark, the logo; fonts, page size and margins; find and replace, the issue stamp, END OF SECTION, units kept on their line; accepting or rejecting tracked changes, removing comments, highlighting, hidden text, blank lines, links and unused styles, tidying spaces, quotes and fields; file names and properties, the proofing language and Track Changes. A button that cannot be used yet says why when the pointer rests on it, such as no template attached. No model is called by any of them.",
+          "Five groups. Headers & footers: from your template, removed, a watermark, the logo. Fonts & formatting: body formatting or fonts matched to your template, a font you choose, page size and margins. Text: find and replace, the issue stamp, END OF SECTION, numbers kept with their units. Clean up: tracked changes accepted or rejected, comments, highlighting, hidden text, empty paragraphs, spaces, quotes and dashes, hyperlinks, fields and unused styles. Files & properties: file names, the title, author and company, the proofing language, Track Changes. A button that cannot be used yet says why when the pointer rests on it, such as no template attached. No model is called by any of them.",
       },
       {
         id: "recipes",
@@ -252,7 +275,7 @@ export const TOUR: readonly TourChapter[] = [
         placement: "left",
         title: "Sample pages, before and after",
         body:
-          `The button's plan was built in code from the form, passed the same gate every plan passes, and was applied and checked in memory on sample documents; the sources were not touched. Each card says Checked when its sample passed every check, shows the page count before and after, and renders the pages side by side when Word or LibreOffice is on this computer (click a page to enlarge it: Fit, 100% and Ctrl+wheel). Up to ${F.sampleFiles} samples are shown, at least one per layout; without a renderer the card says the pages were not checked.`,
+          `The button's plan was built in code from the form, passed the same gate every plan passes, and was applied and checked in memory on sample documents; the sources were not touched. Each card says Checked when its sample passed every check, says what the page-layout check found, gives the page count before and after, and renders the pages side by side when Word or LibreOffice is on this computer (click a page to enlarge it: Fit, 100% and Ctrl+wheel). Up to ${F.sampleFiles} samples are shown, at least one per layout; without a renderer the card says the pages were not checked. Notes to read before creating the copies, when there are any, are listed under Worth knowing.`,
       },
       {
         id: "marks",
@@ -285,7 +308,7 @@ export const TOUR: readonly TourChapter[] = [
         placement: "top",
         title: "One button, tied to what is on screen",
         body:
-          "Create edited copies approves exactly the plan and pages shown: if a document or the plan changed since the preview, the click is refused until you have looked again, and a failed check blocks it with its reason. Discard preview withdraws a preview and creates nothing, in every mode; in Default and Obliterate the request ends with it, and Drop this request ends one still open at a question. The button's own sentence is your line in the chat above, and the changes it made join the history the next request hears. The tour leaves this preview as it is; the next chapter shows the copies it would make.",
+          "Create edited copies, with the number it makes, approves exactly the plan and pages shown: if a document or the plan changed since the preview, the click is refused until you have looked again, and a failed check blocks it with its reason. Discard preview withdraws a preview and creates nothing, in every mode; in Default and Obliterate the request ends with it, and Drop this request ends one still open at a question. The button's own sentence is your line in the chat above, and the changes it made join the history the next request hears. The tour leaves this preview as it is; the next chapter shows the copies it would make.",
       },
     ],
   },
@@ -303,7 +326,7 @@ export const TOUR: readonly TourChapter[] = [
         placement: "left",
         title: "Copies, checked word for word",
         body:
-          "These copies were really made from the practice documents by the same engine that edits yours: each from its original, each checked by an independent checker that shares no code with the editing, and delivered only because it passed. Click one to open it in Word; the folder button opens the run's folder. Originals are never written. A copy that fails a check is moved aside and never delivered. The tour marked one document with the red X before creating these, so it got no copy.",
+          "These copies were really made from the practice documents by the same engine that edits yours: each from its original, each checked by an independent checker that shares no code with the editing, and delivered only because it passed. Click one to open it in Word; the folder button opens the window's scratch folder, where copies wait until you save them. A copy saved with Export is marked SAVED, and CHANGED if you edit it in Word afterwards. Originals are never written. In Safe and Default a copy that fails a check is never delivered. The tour marked one document with the red X before creating these, so it got no copy.",
       },
       {
         id: "done-list",
@@ -314,7 +337,7 @@ export const TOUR: readonly TourChapter[] = [
         placement: "left",
         title: "What you've done so far",
         body:
-          "Each button you ran since the originals is listed here, oldest first, in the words of your line in the chat (in Default and Obliterate, each request). Under each, how many of the documents attached now carry it, and why any other does not: left untouched, set aside on your to-do list, or attached later. Undo the last button takes the newest off; Start over clears the list. In Safe mode a button you already ran carries a checkmark, so there is nothing to remember. The list is kept in the saved conversation.",
+          "Each button you ran since the originals is listed here, oldest first, in the words of your line in the chat (in Default and Obliterate, each request). Under each, how many of the documents attached now carry it, and why any other does not: left untouched, set aside on your to-do list, or attached later. Undo the last button takes the newest off; Start over clears the list. In Safe mode a button you already ran carries a checkmark, so there is nothing to remember. The list is kept with the conversation and comes back with it if the window closes unexpectedly.",
       },
       {
         id: "save-recipe",
@@ -347,7 +370,7 @@ export const TOUR: readonly TourChapter[] = [
         placement: "left",
         title: "The next change builds on these copies",
         body:
-          "After a run the copies are the working set: the next button or request is made on them, and your originals stay as they are. Start over from the originals goes back to your files; Undo the last button (Undo the last change in Default and Obliterate) goes back one run at a time, so the next button or request builds on the copies from before it. Neither writes or deletes a file: the copies an undone run made stay where they were saved.",
+          "After a run the copies are the working set: the next button or request is made on them, and your originals stay as they are. Start over from the originals goes back to your files; Undo the last button (Undo the last change in Default and Obliterate) goes back one run at a time, so the next button or request builds on the copies from before it. Neither writes or deletes a file: an undone run's copies stay in the scratch folder until the window closes, and any you exported stay where you saved them.",
       },
       {
         id: "hand-off",
@@ -384,10 +407,11 @@ export const TOUR: readonly TourChapter[] = [
         mode: "explanatory",
         anchor: "occurrences",
         needs: "occurrences",
+        prepare: "find-form",
         placement: "left",
         title: "Every occurrence, with a checkbox",
         body:
-          "The Find and replace button lists every occurrence it found, in every document of the plan, with the words around it. Untick one to leave it as it is: a historical reference, a line that should keep the old wording. The box above the list ticks or unticks them all at once (and the box beside a document's name, that document's). Update the preview makes the plan and pages again with the unticked ones left out, and Create edited copies waits until you do. The checker confirms each unticked occurrence was left untouched. Here one in the second document is already unticked. A document the plan set aside lists what it found too, so the occurrence its reason names can be unticked.",
+          "Here Find and replace ran with the pair in its form on the left. It lists every occurrence it found, in every document of the plan, with the words around it. Untick one to leave it as it is: a historical reference, a line that should keep the old wording. The box above the list ticks or unticks them all (the box beside a document's name, that document's). Update the preview makes the plan and pages again without the unticked ones, and Create edited copies waits until you do. The checker confirms each unticked occurrence was left untouched. One in the second document is already unticked. A document the plan set aside lists what it found too, so the occurrence its reason names can be unticked.",
       },
     ],
   },
@@ -416,6 +440,17 @@ export const TOUR: readonly TourChapter[] = [
         title: "Three ways in, and this tour",
         body:
           "An empty conversation offers three starter requests; clicking one puts its words in the box for you to edit and send. Above them sits the chip that opens this tour; once you have finished it, the chip invites you to take it again. Typing your own opening does the same job as a starter.",
+      },
+      {
+        id: "answers",
+        capabilities: ["chat.composer"],
+        mode: "optional",
+        anchor: "chat-pane",
+        placement: "right",
+        title: "A question gets an answer, and the request ends",
+        body:
+          "Not every message asks for a change. Ask what the documents say or what the app can do, and when the assistant's reply is only an answer, with nothing for you to decide and no plan, the request ends with it. Your next message starts a fresh request, and the assistant is told the earlier exchange, so you can build on it. A message that names some documents (“only 21 13 13”) keeps the request to those; the others wait under Left untouched until the next one.",
+        optionalReason: "A real answer needs your API key and spends on the model.",
       },
     ],
   },
@@ -476,6 +511,18 @@ export const TOUR: readonly TourChapter[] = [
           "When the plan is ready the assistant says in plain words what will change and where, and the window shows the before and after pages of sample documents; there is no separate card listing the changes. This plan is the worked example 'change every font to Arial', built in code for the tour and previewed by the ordinary path; in your own work Claude writes the plan from your words, the app validates it, and the preview follows. Changes that touch the same parts of a file become ordered steps inside one plan; you still press one button.",
       },
       {
+        id: "custom-method",
+        capabilities: ["preview.pages"],
+        mode: "optional",
+        anchor: "previews",
+        needs: "samples",
+        placement: "left",
+        title: "When Claude writes a custom method",
+        body:
+          "Most requests are planned with the app's built-in operations. When none fits, Claude may write a one-off custom method and try it on copies in a sandbox; the chat says so, and nothing is created until you approve its preview. In Default mode a custom method changes formatting only: no text, no new parts, no tracked changes. Before the button, the chat and each sample list the words its copies add and remove, as the independent checker read them, or say that no words change. Every copy is still checked before it is delivered.",
+        optionalReason: "Writing a custom method calls the model; this plan uses built-in operations.",
+      },
+      {
         id: "left-out",
         capabilities: ["preview.left-untouched"],
         mode: "explanatory",
@@ -524,7 +571,7 @@ export const TOUR: readonly TourChapter[] = [
         placement: "left",
         title: "The same list beside the copies",
         body:
-          "Every document on the list says why it is there: the red X, your word to the assistant, a plan that could not be applied to it, or a copy that could not be made. Put back takes one off without a pass: it is among the documents the next request works on, as it is. Start over from the originals clears the list. The list is kept in the saved conversation.",
+          "Every document on the list says why it is there: the red X, your word to the assistant, a plan that could not be applied to it, a preview that did not pass its checks while the others did, or a copy that could not be made. Put back takes one off without a pass: it is among the documents the next request works on, as it is. Start over from the originals clears the list. The list is kept with the conversation and comes back with it if the window closes unexpectedly.",
       },
       {
         id: "building-on",
@@ -535,7 +582,7 @@ export const TOUR: readonly TourChapter[] = [
         placement: "left",
         title: "Each request builds on the last",
         body:
-          "Your next request is made on these copies, and the assistant is told what each copy already carries, so it plans only what is new; a change some copies got and others did not is named per document. Each run's copies go into their own timestamped folder under the app's local data, so earlier copies remain. Start over from the originals is one tap away.",
+          "Your next request is made on these copies, and the assistant is told what each copy already carries, so it plans only what is new; a change some copies got and others did not is named per document. Undo the last change goes back one request at a time, and Start over from the originals all the way. Every run's copies stay in the window's scratch folder until it closes; Export saves the ones you keep.",
       },
     ],
   },
@@ -590,7 +637,7 @@ export const TOUR: readonly TourChapter[] = [
         placement: "bottom",
         title: "Your conversation comes back",
         body:
-          "There is one ending, and this is it: your own conversation returns exactly as it was before the tour, the same documents, messages and copies, and the practice workspace is discarded. Finish now, press End on any step, or press New conversation, which ends the tour first; every one of them puts your conversation back. New conversation then archives it and starts an empty one. Help → Tour starts this tour again at any time, at any chapter.",
+          "There is one ending, and this is it: your own conversation returns exactly as it was before the tour, the same documents, messages, copies and Safe-mode form, and the practice workspace is discarded. Finish now, press End on any step, or press New conversation, which ends the tour first; every one of them puts your conversation back. New conversation then starts an empty one; copies not saved with Export stay in the scratch folder until the window closes. Tour in the top bar starts this tour again at any time, and Help → How to use at any chapter.",
         continueLabel: "Finish and return to my conversation",
       },
     ],

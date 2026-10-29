@@ -316,12 +316,16 @@ specifications, Windows and Word, and only the owner can do them. Record what a 
   table rows, table grid and cells, sections, fields and comments, moving) over real specifications, opened in Word;
   "shade every other row of the equipment schedules light grey" and "make the list numbers Arial 10 where the list
   text is Arial", offered as custom methods, pass and look as asked in Word.
-- **The guided tour in the installed app, with Word** (built 2026-10-27): take it end to end in WebView2 — the
-  Safe-mode chapters' preview and copies render through Word, the practice folder under `%LOCALAPPDATA%\Spec
-  Surgeon\tutorial\` appears at the start and is gone at the end, the conversation that was open comes back exactly
-  as it was (its journal untouched, its mode and folders unchanged), a reload mid-tour resumes at the same step, New
-  conversation during a tour ends it first, and after Finish the chip reads "Take the guided tour again" across a
-  restart. Record a chapter whose card sits badly at 1280 px wide as a new item above.
+- **The guided tour in the installed app, with Word** (built 2026-10-27, brought up to date 2026-10-29): take it end
+  to end in WebView2 with a Safe-mode form open and a document attached beforehand — the tour opens on the buttons,
+  the Safe-mode chapters' preview and copies render through Word, the find-and-replace chapter shows the Find and
+  replace form with "FM Global" → "FM Approvals", the practice folder appears as `tutorial\` inside the window's
+  scratch folder (`%LOCALAPPDATA%\Spec Surgeon\scratch\<start>-<pid>\`) and is gone at the end, the conversation that was
+  open comes back exactly as it was (its journal untouched, its mode and folders unchanged, the same Safe-mode form
+  open with what was typed in it), a reload mid-tour resumes at the same step, New conversation during a tour ends it
+  first, and after Finish the chip reads "Take the guided tour again" across a restart (someone who finished the
+  earlier tour is invited again once). Two windows each running a tour keep their own practice copies. Record a
+  chapter whose card sits badly at 1280 px wide as a new item above.
 - **The top bar at 1280 px wide (built 2026-10-29):** in the installed app (WebView2, Segoe UI) at 1280 px, the title,
   the help topics, the mode switch and the right-hand buttons never overlap and the gear stays inside the window: with
   documents attached, after a run with copies unsaved, in Safe mode before and after a button, while a Default request
