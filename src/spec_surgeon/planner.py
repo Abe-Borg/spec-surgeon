@@ -48,18 +48,29 @@ def replaced_after(stages: Sequence[Dict[str, Any]], n: int) -> List[str]:
             if op.get("op") == "replace_text" and (op.get("params") or {}).get("find")]
 
 
-def left_elsewhere_warnings(bp: "BatchPlan") -> List[str]:
-    """What the window shows beside the previews: each file where a change kept to one place leaves the same words
-    elsewhere (C3), and each file whose header/footer fill will show in another case than the template (C4), in the
-    flags' own plain words; the assistant has every file in the plan's text."""
-    out: List[str] = []
+def _left_elsewhere(bp: "BatchPlan") -> List[Tuple[str, str]]:
+    """(file name, what) for each file where a change kept to one place leaves the same words elsewhere (C3), and each
+    file whose header/footer fill will show in another case than the template (C4), in the flags' own plain words; a
+    count of the rest has no file name. The assistant has every file in the plan's text."""
+    out: List[Tuple[str, str]] = []
     for notes, more in ((bp.left_elsewhere(), "place(s) like these keep the old words"),
                         (bp.case_notes(), "file(s) like these show a fill in another case than the template")):
-        out += [f"{name}: {what}" for name, what in notes[:LEFT_WARNINGS]]
+        out += notes[:LEFT_WARNINGS]
         if len(notes) > LEFT_WARNINGS:
-            out.append(f"{len(notes) - LEFT_WARNINGS} more {more}; ask in the chat to see them all or to change "
-                       f"them too.")
+            out.append(("", f"{len(notes) - LEFT_WARNINGS} more {more}; ask in the chat to see them all or to change "
+                            f"them too."))
     return out
+
+
+def left_elsewhere_warnings(bp: "BatchPlan") -> List[str]:
+    """The C3/C4 notes as the preview's warnings: "<file>: <what>", kept in its records and log."""
+    return [f"{name}: {what}" if name else what for name, what in _left_elsewhere(bp)]
+
+
+def left_elsewhere_notes(bp: "BatchPlan") -> List[Dict[str, str]]:
+    """The same notes as the window lists them under Worth knowing (``Preview.notes``): the file's name, and the note
+    with its first letter capitalised."""
+    return [{"name": name, "text": what[:1].upper() + what[1:]} for name, what in _left_elsewhere(bp)]
 
 
 def _names(parts: Sequence[str], n: int = 6) -> str:

@@ -6,7 +6,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import type { JobEvent, Message, View } from "../src/types.ts";
-import { EMPTY_VIEW, INITIAL_STATE, normalizeView, reduce, type UiState } from "../src/lib/view.ts";
+import { EMPTY_VIEW, INITIAL_STATE, normalizeView, notesOf, reduce, type UiState } from "../src/lib/view.ts";
 
 const message = (id: string, role: Message["role"], text: string): Message => ({ id, role, text, at: 1 });
 
@@ -64,12 +64,15 @@ test("the primary action starts a job without a user bubble", () => {
 const PLAN = { groups: [{ id: "", label: "", count: 1, files: [], changes: [{ title: "Bold", summary: "Bold the title.", details: [] }], assumptions: [] }], targets: [], set_aside: [], stages: 1 };
 const SAMPLE = { source: "a", name: "a.docx", images: ["/api/image?path=a"], pages_before: 1, pages_after: 1, passed: true };
 
+const NOTE = { name: "a.docx", text: "“TITLE” also occurs in the body (1×); this change leaves it as it is." };
+
 test("a message sent over a preview takes the old plan and pages off the workbench at once", () => {
-  const before = loaded({ stage: "preview", plan: PLAN, samples: [SAMPLE], warnings: ["Advisory"], blocking: true });
+  const before = loaded({ stage: "preview", plan: PLAN, samples: [SAMPLE], warnings: ["Advisory"], notes: [NOTE], blocking: true });
   const state = reduce(before, { type: "job_started", userText: "Also make it italic" });
   assert.equal(state.view.plan, null);
   assert.deepEqual(state.view.samples, []);
   assert.deepEqual(state.view.warnings, []);
+  assert.deepEqual(state.view.notes, []);
   assert.equal(state.view.blocking, false);
 });
 
@@ -84,15 +87,28 @@ test("creating copies keeps the approved plan and pages on screen until the job'
 test("a new plan clears the pages of the plan before it; its own pages follow", () => {
   const next = { ...PLAN, stages: 2 };
   const fresh = { ...SAMPLE, source: "b", name: "b.docx" };
-  let state = reduce(loaded({ stage: "preview", plan: PLAN, samples: [SAMPLE], warnings: ["Old finding"], blocking: true }),
+  let state = reduce(loaded({ stage: "preview", plan: PLAN, samples: [SAMPLE], warnings: ["Old finding"], notes: [NOTE], blocking: true }),
     { type: "job_started", userText: null });
   state = run(state, { type: "plan", plan: next });
   assert.deepEqual(state.view.plan, next);
   assert.deepEqual(state.view.samples, []);
   assert.deepEqual(state.view.warnings, []);
+  assert.deepEqual(state.view.notes, []);
   assert.equal(state.view.blocking, false);
   state = run(state, { type: "samples", samples: [fresh], warnings: [], blocking: false });
   assert.deepEqual(state.view.samples, [fresh]);
+  assert.deepEqual(state.view.notes, []); // an older server's frame carries none
+  state = run(state, { type: "samples", samples: [fresh], warnings: ["x"], notes: [NOTE], blocking: false });
+  assert.deepEqual(state.view.notes, [NOTE]);
+});
+
+test("the Worth knowing notes keep their text and document name, and drop what is not a note", () => {
+  const plan = { name: "", text: "A file changed while this preview was being made." };
+  assert.deepEqual(notesOf([NOTE, plan, { text: "No name" }, { name: "b.docx" }, { name: "c", text: "" }, "loose", null, 3]),
+    [NOTE, plan, { name: "", text: "No name" }]);
+  assert.deepEqual(notesOf(undefined), []);
+  assert.deepEqual(notesOf({ text: "not a list" }), []);
+  assert.deepEqual(normalizeView({ notes: [NOTE, { bad: 1 }] }).notes, [NOTE]);
 });
 
 test("local user bubbles never reuse an id", () => {
@@ -257,6 +273,7 @@ test("normalizeView fills every list and block a server might leave out", () => 
   assert.equal(v.stage, "preview");
   assert.deepEqual(v.attachments, []);
   assert.deepEqual(v.messages, []);
+  assert.deepEqual(v.notes, []);
   assert.deepEqual(v.plan?.targets, []);
   assert.equal(v.plan?.stages, 1);
   assert.equal(v.cost.usd, 1);

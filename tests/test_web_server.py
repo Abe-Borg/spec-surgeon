@@ -101,10 +101,11 @@ def test_the_view_has_the_contracts_shape_and_uploads_attach_documents(tmp_path,
     state, client = window(tmp_path)
     view = client.get("/api/state").json()
     for key in ("version", "busy", "stage", "connection", "cost", "attachments", "messages", "plan", "questions",
-                "choices", "chips", "samples", "warnings", "blocking", "results", "action", "working", "budget",
-                "update"):
+                "choices", "chips", "samples", "warnings", "notes", "blocking", "results", "action", "working",
+                "budget", "update"):
         assert key in view, key
     assert view["stage"] == "empty" and view["plan"] is None and view["action"]["kind"] == "none"
+    assert view["notes"] == []
     assert view["update"]["state"] == "available" and view["version"] == "1.6.0"
     source = document(tmp_path / "Spec.docx")
     with open(source, "rb") as fh:

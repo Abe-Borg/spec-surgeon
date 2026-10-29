@@ -275,6 +275,7 @@ class LayoutPreview:
     token_inputs: Dict[str, Any] = field(default_factory=dict)
     renderer: Optional[str] = None
     warnings: List[str] = field(default_factory=list)
+    notes: List[Dict[str, str]] = field(default_factory=list)        # each layout's, as ``preview.Preview.notes``
     review: Any = None
     review_ack: str = ""
     log_path: Optional[Path] = None
@@ -330,8 +331,10 @@ def make_layout_preview(plan: Dict[str, Any], inputs: Sequence[str], out_dir: Pa
         for layout in plan["layouts"]:
             own = routing.files[layout["id"]]
             if not own:
-                result.warnings.append(f"No attached document has the layout “{layout.get('label') or layout['id']}”; "
-                                       f"that part of the plan changes nothing.")
+                none = (f"No attached document has the layout “{layout.get('label') or layout['id']}”; that part of "
+                        f"the plan changes nothing.")
+                result.warnings.append(none)
+                result.notes.append({"name": "", "text": none})
                 continue
             own_spec = layout_spec(plan, layout)
             if is_chain(own_spec):
@@ -343,6 +346,7 @@ def make_layout_preview(plan: Dict[str, Any], inputs: Sequence[str], out_dir: Pa
             result.previews.append((layout, pv))
             result.samples.extend(pv.samples)
             result.warnings.extend(pv.warnings)
+            result.notes.extend(pv.notes)
             result.input_snapshots.extend(pv.input_snapshots)
             result.renderer = result.renderer or pv.renderer
             result.log_path = result.log_path or pv.log_path
@@ -356,6 +360,7 @@ def make_layout_preview(plan: Dict[str, Any], inputs: Sequence[str], out_dir: Pa
         combined.seconds = time.perf_counter() - t0
         result.batch_plan = combined
         result.warnings = list(dict.fromkeys(result.warnings))
+        result.notes = list({(n["name"], n["text"]): n for n in result.notes}.values())
         out_dir.mkdir(parents=True, exist_ok=True)
         (out_dir / "layouts.json").write_text(json.dumps(result.to_dict(), indent=2, ensure_ascii=False, default=str),
                                               encoding="utf-8")

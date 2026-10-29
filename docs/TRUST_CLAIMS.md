@@ -61,9 +61,11 @@ copy (A32 now Export's clean kinds, A34, T1, T8, T59, B19, T31, 1e, 1f, 1g); Exp
 copies, those a run still in recovery delivered included (A34); Safe mode's Save clean PDFs button retired for it
 (A24's buttons); and the assistants told that Export makes the PDFs. Updated 2026-10-29: the window no longer lists
 the checks' advisory notes (the **About these checks** card, the owner's decision) — Claude's visual findings, the
-renderer's notes, the words a copy's pages do not show and the wording a change leaves elsewhere are kept in the
-preview's records and log, and the chat still says the words a copy's pages do not show; a blocking visual finding
-still lists them under **Please check** and changes the button (B5, T20, 1g).
+renderer's notes and the words a copy's pages do not show are kept in the preview's records and log, and the chat
+still says the words a copy's pages do not show; the notes worth reading before the copies are made (the wording a
+change leaves elsewhere, a fill in another case than the template, a layout no document has, an input that changed
+under the preview) are listed under **Worth knowing**, by document; a blocking visual finding still lists every note
+under **Please check** and changes the button (B5, T20, 1g).
 Paths are relative to `src/spec_surgeon/` unless they start with `frontend/`, `tests/` or `docs/`.
 
 **Verification column:**
@@ -331,7 +333,8 @@ How each is labelled:
 - Claude's visual findings are kept as warnings with file and page in the preview's records and log; the window lists
   them only under **Please check**, when one is blocking (`Workbench.tsx`).
 - Notes that a change kept to one place leaves the same words elsewhere, or that a header/footer fill will show in
-  another case than the template, are kept as warnings with the file, the same way; the plan writes them, not Claude
+  another case than the template, are listed under **Worth knowing** with the file (`Preview.notes`); the plan
+  writes them, not Claude
   (`ops/elsewhere.py`, `planner.left_elsewhere_warnings`, from #80 and C4). So is a deletion over someone's pending
   tracked changes, naming whose (re-audit, C6: `ops/deletion.pending_flag`).
 - A custom method's summary is Claude's own proposal text.

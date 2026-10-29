@@ -118,8 +118,9 @@ it was, and once you have finished it the chip stops inviting. Help → How to u
 5. **Look at the pages.** The chat says in plain words what will change. Beside it: rendered before/after pages for
    sample documents with their page counts, and **Left untouched**: any file the plan cannot cover, with the reason.
    When a change is kept to one place and the same words remain elsewhere (the footer renamed while the first page
-   keeps the old title, a header filled with a title the document does not have), the assistant's reply names the
-   document and where and offers to change those too, and never does it unasked. A header or
+   keeps the old title, a header filled with a title the document does not have), a note under **Worth knowing**,
+   beside the pages, names the document and where; Spec Surgeon offers to change those too when you reply, and
+   never does it unasked. A header or
    footer fill that will show in another case than the template's (a title typed "Identification for …" where the
    template shows "DOOR HARDWARE") is noted the same way; "show it in capitals like the template" makes it look so
    through formatting, without retyping a letter. Word has no title-case look, so when the template shows its title

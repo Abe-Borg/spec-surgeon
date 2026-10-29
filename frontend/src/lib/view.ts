@@ -18,9 +18,20 @@ import type {
   Choice,
   JobEvent,
   Message,
+  PreviewNote,
   Status,
   View,
 } from "../types.ts";
+
+/** The Worth knowing notes from the wire: each with its text, its document's name or "". */
+export function notesOf(value: unknown): PreviewNote[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((n) =>
+    n && typeof n === "object" && typeof n.text === "string" && n.text
+      ? [{ name: typeof n.name === "string" ? n.name : "", text: n.text }]
+      : [],
+  );
+}
 
 /** One step of a reply's making, oldest first: a plain sentence of model activity ("Reading the template's
  *  header"), or the words an earlier model call of the same turn wrote along the way. */
@@ -88,6 +99,7 @@ export const EMPTY_VIEW: View = {
   samples: [],
   occurrences: [],
   warnings: [],
+  notes: [],
   blocking: false,
   results: [],
   // an older server says nothing about PDFs: PDF (Clean) is not held back, the server answers at the choice
@@ -159,6 +171,7 @@ export function normalizeView(raw: unknown): View {
     samples: list(v.samples),
     occurrences: list(v.occurrences),
     warnings: list(v.warnings),
+    notes: notesOf(v.notes),
     blocking: v.blocking === true,
     results: list(v.results),
     pdf: obj(v.pdf, EMPTY_VIEW.pdf),
@@ -261,7 +274,7 @@ export function reduce(state: UiState, action: UiAction): UiState {
           questions: [],
           choices: [],
           chips: [],
-          ...(reply ? { plan: null, samples: [], warnings: [], blocking: false } : {}),
+          ...(reply ? { plan: null, samples: [], warnings: [], notes: [], blocking: false } : {}),
         },
       };
     }
@@ -335,7 +348,7 @@ function reduceEvent(state: UiState, event: JobEvent): UiState {
     }
     case "plan":
       // The pages on screen belong to the plan before this one; this plan's pages follow in `samples`.
-      return { ...state, view: { ...state.view, plan: event.plan, samples: [], occurrences: [], warnings: [], blocking: false } };
+      return { ...state, view: { ...state.view, plan: event.plan, samples: [], occurrences: [], warnings: [], notes: [], blocking: false } };
     case "samples":
       return {
         ...state,
@@ -344,6 +357,7 @@ function reduceEvent(state: UiState, event: JobEvent): UiState {
           samples: event.samples ?? [],
           occurrences: event.occurrences ?? [],
           warnings: event.warnings ?? [],
+          notes: notesOf(event.notes),
           blocking: event.blocking === true,
         },
       };

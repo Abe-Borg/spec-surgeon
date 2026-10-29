@@ -48,7 +48,7 @@ from . import diagnostics as diag
 from .editspec import apply_spec, plan_spec
 from .fingerprint import fingerprint
 from .package import DocxPackage
-from .planner import BatchPlan, left_elsewhere_warnings, left_notes, plan_batch, plan_batch_chain
+from .planner import BatchPlan, left_elsewhere_notes, left_elsewhere_warnings, left_notes, plan_batch, plan_batch_chain
 
 
 def key_templates(key: Any) -> List[Path]:
@@ -364,6 +364,9 @@ class Preview:
     token: str = ""
     renderer: Optional[str] = None
     warnings: List[str] = field(default_factory=list)
+    # the warnings worth reading before the copies are made, as the window lists them under Worth knowing: the same
+    # words left elsewhere (C3), a fill in another case than the template (C4), an input that changed under the preview
+    notes: List[Dict[str, str]] = field(default_factory=list)
     review: Any = None                            # vision.VisualReview — Claude's visual check (advisory)
     review_ack: str = ""                          # the token whose blocking findings the user acknowledged
     token_inputs: Dict[str, Any] = field(default_factory=dict)   # approval_inputs at preview time
@@ -923,6 +926,17 @@ def write_preview_files(pv: Any) -> None:
                                                  encoding="utf-8")
 
 
+INPUT_CHANGED = "An input changed while the preview was being prepared; press Preview again before Run."
+INPUT_CHANGED_NOTE = ("A file changed while this preview was being made: make the preview again before you create "
+                      "the copies.")
+
+
+def _input_changed(pv: Preview) -> None:
+    """An input that changed under the preview: its warning, and the note the window lists under Worth knowing."""
+    pv.warnings.append(INPUT_CHANGED)
+    pv.notes.append({"name": "", "text": INPUT_CHANGED_NOTE})
+
+
 def make_preview(spec: Dict[str, Any], inputs: Sequence[str], out_dir: Path, renderer: str = "auto",
                  do_render: bool = True) -> Preview:
     from .batch import check_inputs_outside, expand_inputs
@@ -1016,6 +1030,7 @@ def _make_preview(spec: Dict[str, Any], inputs: Sequence[str], out_dir: Path, re
         pv = Preview(out_dir=out_dir, batch_plan=bp, log_path=log.path, token=token, token_inputs=token_inputs,
                      input_snapshots=snapshots)
         pv.warnings += left_elsewhere_warnings(bp)     # the same words where this plan does not change them (C3)
+        pv.notes += left_elsewhere_notes(bp)
         input_changed = (changed_since_preview(spec, planned, token, token_inputs) is not None or
                          bool(changed_inputs(snapshots)) or
                          {str(f.source.resolve()) for f in bp.files} != set(token_inputs["files"]) or
@@ -1065,7 +1080,7 @@ def _make_preview(spec: Dict[str, Any], inputs: Sequence[str], out_dir: Path, re
         pv.renderer = render_samples(pv.samples, out_dir, renderer, do_render, pv.warnings, log=log)
         if input_changed or changed_since_preview(spec, planned, token, token_inputs) is not None or changed_inputs(snapshots):
             pv.token = ""  # an observed mismatch cannot become approved by restoring an earlier file later
-            pv.warnings.append("An input changed while the preview was being prepared; press Preview again before Run.")
+            _input_changed(pv)
         (out_dir / "spec.json").write_text(json.dumps(spec, indent=2, ensure_ascii=False), encoding="utf-8")
         write_preview_files(pv)
         log.detail(f"approval token {pv.token}")
@@ -1181,6 +1196,7 @@ def _make_chain_preview(chain: Dict[str, Any], inputs: Sequence[str], out_dir: P
             pv = ChainPreview(out_dir=out_dir, batch_plan=bp, chain=chain, log_path=log.path,
                               token=token, token_inputs=token_inputs, input_snapshots=snapshots)
             pv.warnings += left_elsewhere_warnings(bp)     # stage 1's, on every file, as far as they hold (C3)
+            pv.notes += left_elsewhere_notes(bp)
             input_changed = (changed_since_preview(key, files, token, token_inputs) is not None or
                              bool(changed_inputs(snapshots)) or
                              {str(f.source.resolve()) for f in bp.files} != set(token_inputs["files"]) or
@@ -1283,7 +1299,7 @@ def _make_chain_preview(chain: Dict[str, Any], inputs: Sequence[str], out_dir: P
             pv.renderer = render_samples(pv.samples, out_dir, renderer, do_render, pv.warnings, log=log)
             if input_changed or changed_since_preview(key, files, token, token_inputs) is not None or changed_inputs(snapshots):
                 pv.token = ""
-                pv.warnings.append("An input changed while the preview was being prepared; press Preview again before Run.")
+                _input_changed(pv)
             (out_dir / "chain.json").write_text(json.dumps(chain, indent=2, ensure_ascii=False), encoding="utf-8")
             write_preview_files(pv)
             log.detail(f"approval token {pv.token}")
