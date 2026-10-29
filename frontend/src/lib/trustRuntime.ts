@@ -175,8 +175,8 @@ export const RUNTIME_CARDS: RuntimeCard[] = [
       `others (“only this one”), is not planned, and is named there too. Representative samples (${F.sampleFiles} files, or every file in a smaller batch; ` +
       "at least one per layout, so more when there are more layouts) are edited in memory and checked by the independent checker, their rendered pages compared as the run compares them (a layout that moved fails the sample; a sample says when that check waits for the run). " +
       "The same comparison counts the words shown on every page of the original and of the copy, less what the plan " +
-      "removes: a word the original's pages show that the copy's pages do not is named beside the sample, in the " +
-      "chat and in Claude's visual check — a warning, never a failed check, because a layout change moves words " +
+      "removes: a word the original's pages show that the copy's pages do not is named in the chat and in " +
+      "Claude's visual check — a warning, never a failed check, because a layout change moves words " +
       "between pages and header and footer words repeat once per page. Their before and after " +
       `pages are rendered by Microsoft Word (new, invisible instances, up to ${F.wordInstances} side by side, never the Word you have open) or, without ` +
       `Word, LibreOffice. From ${F.planProcessMinFiles} files the plans, and from ${F.processMinFiles} samples the samples, are worked out side by ` +
@@ -201,8 +201,9 @@ export const RUNTIME_CARDS: RuntimeCard[] = [
     runs:
       `One call shows Claude up to ${F.visualPagesPerSample} pages of each sample, before and after, with your ` +
       "request and the plan, and tells it how many pages each sample has, so it says a page it was not shown was " +
-      "not shown. Its findings appear beside the pages, by file and page. A finding Claude marks as " +
-      "blocking changes the button to “I reviewed the flagged pages — create copies”.",
+      "not shown. Its findings are kept in the preview's records, by file and page, and are not listed in the " +
+      "window. A finding Claude marks as blocking lists them beside the pages and changes the button to " +
+      "“I reviewed the flagged pages — create copies”.",
     sent:
       `To the Anthropic API: the page images (at most ${F.pageImageLongEdgePx} pixels on the long side), the sample ` +
       "names and their page counts, your request, the plan's summary and assumptions, and a summary of the " +

@@ -824,6 +824,7 @@ def test_a_saved_copys_preview_leaves_while_the_rest_are_still_discussed(tmp_pat
     task._settle(lambda _: None)
     view = task.view()
     assert view["action"] == "Save 1 ready copy" and view["blocking"]
+    assert view["worth_knowing"] == []                     # recovery's own notes are not the preview's Worth knowing
     assert [Path(sv.source).name for sv in view["samples"]] == ["First.docx"]
     assert any("header overlaps" in w for w in view["warnings"])
     view = task.perform("primary", token=view["token"])

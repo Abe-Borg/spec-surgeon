@@ -287,6 +287,18 @@ def answer_line(text: str) -> str:
     return first
 
 
+def worth_knowing(preview) -> List[Dict[str, str]]:
+    """The notes the window lists under Worth knowing (``Preview.worth_knowing``), once each: the one part of a preview's
+    warnings it shows; the rest stay in the records and the log (none for a preview that keeps none)."""
+    seen, out = set(), []
+    for note in getattr(preview, "worth_knowing", None) or []:
+        key = (str(note.get("name") or ""), str(note.get("text") or ""))
+        if key[1] and key not in seen:
+            seen.add(key)
+            out.append({"name": key[0], "text": key[1]})
+    return out
+
+
 def _same_file_key(path) -> str:
     """One spelling of a path for comparing files: resolved when the file system can, the text otherwise."""
     try:
@@ -2176,6 +2188,7 @@ class DocumentTask:
                             for sv in samples],
                 "occurrences": self._occurrences_view(preview),
                 "warnings": list(dict.fromkeys(getattr(preview, "warnings", []) or [])),
+                "worth_knowing": worth_knowing(preview),
                 "blocking": any(f.get("severity") == "block"
                                 for f in self._undelivered_findings(getattr(preview, "review", None)))}
 
@@ -2286,7 +2299,8 @@ class DocumentTask:
                 "samples": samples, "set_aside": set_aside,
                 "samples_set_aside": self._samples_set_aside() if pages is not None else [],
                 "occurrences": self._occurrences_view(pages) if pages is not None else [],
-                "warnings": list(dict.fromkeys(warnings)), "results": dict(self.results),
+                "warnings": list(dict.fromkeys(warnings)), "worth_knowing": worth_knowing(pages),
+                "results": dict(self.results),
                 "unverified": {k: list(v) for k, v in self.unverified.items()},
                 "exported": {k: dict(v) for k, v in self.exported.items()}, "export_folder": self.export_folder,
                 "export_state": states,

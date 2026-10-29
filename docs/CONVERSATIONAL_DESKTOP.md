@@ -378,9 +378,10 @@ overview is computed whenever a batch is, so a request after a run reads the cop
 
 A change kept to one place says where the same words remain: a replacement whose words also occur outside its scope or
 selection (and no other replacement of the plan changes them), or a literal header/footer fill of the section number or
-title that differs from the document's own (C3). The preview shows these notes beside the pages (`Preview.warnings`)
-and lists them for every file in the text the assistant reads (`WORDING LEFT ELSEWHERE`), which then offers to change
-them too; nothing changes unasked. The check's findings describe the file, not the edit: a file with any of them
+title that differs from the document's own (C3). The window lists these notes under **Worth knowing**, beside the
+pages, each under its document's name as **Left untouched** lists its documents (`Preview.worth_knowing`), and the text the
+assistant reads lists them for every file (`WORDING LEFT ELSEWHERE`), which then offers to change them too; nothing
+changes unasked. The check's findings describe the file, not the edit: a file with any of them
 is edited like any other, and a file with none can still be set aside at plan time.
 
 Adding or removing a document after a plan exists voids that plan. The conversation says so, and the button
@@ -492,14 +493,13 @@ samples are checked by the plan the method predicted (its trials are verified wi
 rendered and compared before any is delivered, as a plan's are: a sample whose layout check fails is said in the chat
 before the button and, outside Obliterate, makes Create unavailable; in Obliterate its copies are delivered marked
 UNVERIFIED with that check beside them. If no renderer can
-provide usable page evidence, a card
-says that page appearance was not checked and asks you to check the edited copies in Word.
+provide usable page evidence, each preview
+says that page appearance was not checked for its document and asks you to open the edited copy in Word.
 
 The same comparison counts the words shown on every page of the original and of the copy, less what the plan
 removes (a replaced or deleted wording, a removed header's text, a removed watermark), so a word that moved to another
-page cancels out. A word the original's pages show that the copy's pages do not is a warning beside the sample ("N
-word(s) shown in the original's pages are not shown in the copy's: …"), said in the chat in the app's words before
-you approve, given to Claude's visual check so it looks for those words on the pages, and carried in each copy's
+page cancels out. A word the original's pages show that the copy's pages do not is a warning ("N word(s) shown in
+the original's pages are not shown in the copy's: …"), said in the chat in the app's words before you approve, given to Claude's visual check so it looks for those words on the pages, and carried in each copy's
 record and in `BATCH_REPORT.md`. It is never a failed check: a layout change (a font, the margins) reflows words
 across pages, and when the page counts differ the header and footer words — which repeat once per page — are
 recorded, not compared. What it catches is text a copy hides without moving a line: a shape drawn over it, white on
@@ -526,8 +526,7 @@ screen; a new plan starts them over.
 The pages are those of the plan in front of you, and nothing older. Sending a message or picking a choice takes
 the plan and its pages off the window while the reply is worked out, and a new plan's pages replace them; once
 copies are created, their pages leave with the plan. During recovery, a document whose copy you already saved
-drops out of the previews, and its findings out of **About these checks**, while the conversation goes on about
-the rest.
+drops out of the previews, and its visual findings with it, while the conversation goes on about the rest.
 
 ## The green checkmark, the red X and the to-do list
 
@@ -575,9 +574,15 @@ wait on the list and why (it cannot read, plan or bring them back), and a pass o
 waited. **Put back** takes a document off the list without a pass: it is among the documents the next request
 works on, as it is (during a pass it joins them when the pass ends). Nothing on the list is ever changed.
 
-Claude's visual check of the rendered pages is advisory. Its findings appear under **About these checks** with
-their file and page. A finding it marks as blocking changes that card's title to **Please check** and the
-button to **I reviewed the flagged pages — create copies**; that is a separate, explicit decision on the
+Claude's visual check of the rendered pages is advisory. Its findings, and the other advisory notes of the checks
+(the renderer used, page counts that changed, the words the copy's pages do not show), are not listed in the window
+(the owner's decision, 2026-10-29): they are kept in the preview's records (`PREVIEW.md`, `preview.json`,
+`visual_review.json`) and its log, which a diagnostic bundle carries. The window lists only the notes worth reading
+before the copies are made, under **Worth knowing** beside the pages, by document: the same words a change leaves
+elsewhere and a fill shown in another case than the template (above), a layout of the plan that no attached
+document has, and a file that changed while the preview was being made (make the preview again). A finding the
+visual check marks as blocking shows every note under **Please check** instead, with their file and page, and changes
+the button to **I reviewed the flagged pages — create copies**; that is a separate, explicit decision on the
 displayed preview.
 
 Rendering. Word renders a batch in up to three private, invisible instances side by side (one per two cores, one

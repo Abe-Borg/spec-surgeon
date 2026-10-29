@@ -204,23 +204,41 @@ function Workbench({
           />
         )}
 
-        {view.warnings.length > 0 && (
+        {/* The advisory findings stay in the view, the preview's records and the logs, never on the page; a blocking
+            visual finding shows them, since the button then says the flagged pages were reviewed. */}
+        {view.blocking && view.warnings.length > 0 && (
           <PaperCard
-            title={view.blocking ? "Please check" : "About these checks"}
-            subtitle={
-              view.blocking
-                ? "A visual finding is marked as blocking. Look at the flagged pages before creating copies."
-                : "Findings from the automated checks and the visual check of the rendered pages; advisory."
-            }
-            tone={view.blocking ? "error" : "muted"}
+            title="Please check"
+            subtitle="A visual finding is marked as blocking. Look at the flagged pages before creating copies."
+            tone="error"
           >
             <ul className="space-y-1.5">
               {view.warnings.map((warning, index) => (
                 <li key={`${index}-${warning}`} className="flex gap-2 text-[0.9rem] leading-relaxed text-paper-ink">
-                  <span aria-hidden className={view.blocking ? "text-err" : "text-paper-dim"}>
+                  <span aria-hidden className="text-err">
                     •
                   </span>
                   <Markdown text={warning} paper inline />
+                </li>
+              ))}
+            </ul>
+          </PaperCard>
+        )}
+
+        {/* The notes worth reading before the copies are made, as Left untouched lists its documents; under Please
+            check they are among the warnings already. */}
+        {!view.blocking && view.worth_knowing.length > 0 && (
+          <PaperCard
+            title="Worth knowing"
+            subtitle="Notes on this change to read before you create the copies."
+          >
+            <ul className="divide-y divide-paper-edge">
+              {view.worth_knowing.map((note, index) => (
+                <li key={`${index}-${note.name}-${note.text}`} className="py-2 first:pt-0 last:pb-0">
+                  {note.name && <p className="text-sm font-medium text-paper-ink">{note.name}</p>}
+                  <p className="text-[12px] leading-relaxed text-paper-dim">
+                    <Markdown text={note.text} paper inline />
+                  </p>
                 </li>
               ))}
             </ul>
