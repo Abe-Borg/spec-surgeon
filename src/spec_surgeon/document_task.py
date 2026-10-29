@@ -384,7 +384,7 @@ class DocumentTask:
         # copies it delivered, and why each other document then attached got none (``_done_view``). Undo takes the
         # newest off, Start over clears it; it is kept in the journal
         self.runs: List[Dict[str, Any]] = []
-        self._button: Optional[tuple] = None   # (recipe id, its sentence): the button whose preview may be approved
+        self._button = ""                      # the Safe-mode button whose preview waits (a recipe id)
         self._template_kind: Optional[tuple] = None    # (the template's path, size, mtime, recipes.template_kind)
         self._binned: List[str] = []        # documents of this request that could not take the change, on the list
         self._parked = ("", 0)              # (conversation id, how many of its set-aside documents were taken)
@@ -847,9 +847,11 @@ class DocumentTask:
         if not moved:
             return
         request = self.decisions[0] if self.decisions else ""
-        button, self._button = self._button, None
+        # a button's run only when the plan that ran is a button's (``Session.model_free``): the same words typed as a
+        # request after its preview was discarded are the conversation's plan
+        button, self._button = self._button if self.session.model_free else "", ""
         attached = [str(a.path) for a in self.attachments if not a.template and not a.reference and not a.refused]
-        self.runs.append({"request": request, "recipe": button[0] if button and button[1] == request else "",
+        self.runs.append({"request": request, "recipe": button,
                           "documents": list(moved),
                           "not": {k: RUN_SET_ASIDE if k in self.todo else RUN_UNTOUCHED
                                   for k in attached if k not in moved}})
@@ -985,6 +987,7 @@ class DocumentTask:
                                  "aside for later.")
             raise ValueError("There is no preview to discard." if self.mode == "safe" else
                              "There is nothing to discard: no preview or request is waiting.")
+        self._button = ""                      # its preview is withdrawn: no later run is that button's
         if self.mode != "safe":
             self._discard_request(kind)
             return
@@ -1332,7 +1335,7 @@ class DocumentTask:
         self.results = {}
         self.say(built.request, "user")
         self.decisions = [built.request]
-        self._button = (recipe.id, built.request)
+        self._button = recipe.id
         self.word_sources.extend(w for w in built.sources if w not in self.word_sources)
         self.left_untouched = []
         if outcome is None:

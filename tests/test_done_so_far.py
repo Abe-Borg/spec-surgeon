@@ -167,15 +167,17 @@ def test_a_conversation_s_requests_join_the_list_without_a_button(tmp_path, mode
 
 
 def test_a_button_discarded_before_a_request_is_not_named_on_the_request(tmp_path):
+    # From review (Codex on #156): the same words typed in Default mode after the button's preview was discarded are
+    # a request the model planned, not the button's run, and its tile gets no checkmark
     task = chat_task(tmp_path, plan())
     task.attach([document(tmp_path / "Spec.docx")])
     task.set_mode("safe")
     task.perform("recipe", recipe="remove_comments", inputs={})
     task.discard_preview()
     task.set_mode("default")
-    view = task.perform("send", text=REQUEST)
+    view = task.perform("send", text="Remove all comments")
     task.perform("primary", token=view["token"])
-    assert [(s["request"], s["recipe"]) for s in done(task)] == [(REQUEST, "")]
+    assert [(s["request"], s["recipe"]) for s in done(task)] == [("Remove all comments", "")]
 
 
 def test_a_safe_button_and_a_request_share_one_list(tmp_path):
