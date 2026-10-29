@@ -51,6 +51,12 @@ What happens then is what happens to a plan in Default mode, with no model anywh
   word it would place must be one you typed, and it is planned dry on the documents; overlapping operations are put
   in order as always.
 - The preview plans every document, checks the samples and renders their pages. Claude's visual check is not run.
+  A sample that fails a check while another passes does not hold the others back: its card stays, with its failed
+  checks and without the checkmark and the X, the chat says it once, it is listed under **Left untouched** ("Its
+  preview did not pass its checks, so no copy of it is made: …"), and **Create edited copies** makes the others'
+  copies and leaves it as it is (`Session.failed_samples`; the owner's run of 2026-10-28, where one sample of twelve
+  failed its page-layout check and Create was unavailable for all twelve). Only a preview none of whose samples
+  passed makes Create unavailable, with the reason beside it.
 - **Create edited copies** makes and checks every copy as always. A document the button could not change exactly is
   not handed to recovery (an AI step): it is listed under **Left untouched by the last button** beside the copies,
   with the engine's reason, and **Try these in Default mode** puts it on the to-do list and switches to Default
@@ -544,8 +550,10 @@ The red X is one way onto the list. The others:
   one request, and the next request covers it again. Setting aside every document ends the request; setting aside
   the documents of a pass over the list again ends that pass, and the others come back.
 - **The plan could not be applied to it.** A file listed under **Left untouched** because its result cannot be
-  predicted goes on the list, with that reason, when you create the others' copies. A click that is refused (a
-  file changed since the preview) moves nothing.
+  predicted goes on the list, with that reason, when you create the others' copies. So does a document whose
+  preview did not pass its checks while another's did ("Its preview did not pass its checks, so no copy of it is
+  made: …", why `failed`): it was never run. A click that is refused (a file changed since the preview) moves
+  nothing.
 - **Its copy could not be made.** A file whose copy failed and that nothing will check again goes on the list. While
   files are being checked again (below), **Set the rest aside for later** is offered as a reply once the ready copies
   are saved: what was not fixed, and the documents of layouts still waiting their turn, go on the list and the
@@ -581,7 +589,9 @@ what it does. Its label says what it does:
 
 - **Create edited copies**: approve the displayed plan and preview. The engine applies the specification to
   every document you did not set aside with the red X, verifies each one independently, and delivers only the
-  files that pass every check. "(N set aside)" on the label counts the documents that go on the to-do list.
+  files that pass every check. "(N set aside)" on the label counts the documents that go on the to-do list. A
+  document whose preview did not pass while another's did is not run (its card carries no marks); the sentence
+  beside the button says it gets no copy.
 - **Continue**: the documents or the plan changed while a request was open; the documents are checked against the
   request again before anything can be approved. A request the assistant answered without a plan is not open (above),
   so no Continue follows the answer.
@@ -606,7 +616,7 @@ folder inside the window's scratch folder (`%LOCALAPPDATA%\Spec Surgeon\scratch\
 is deleted when the window closes. **Your edited copies** lists them; click one to open it in Word, and **Export** in
 the top bar saves them to a folder you choose ("Export: saving the copies", below).
 
-A file can be left out at four points, each time with one sentence that names the file and the reason:
+A file can be left out at five points, each time with one sentence that names the file and the reason:
 
 - At attach time, when triage refuses it (above).
 - When you ask: "leave out 20", "not 23 for now"; or keep a request to some documents ("only 23", "just the
@@ -621,9 +631,16 @@ A file can be left out at four points, each time with one sentence that names th
   anything runs; no paid investigation
   precedes them. The preview of the other documents stands, and the assistant names each one with its reason in its
   next reply; **Create edited copies** leaves them as they are (they are not run, so no recovery follows for them)
-  and puts them on the to-do list with their reason. Only a plan that covers no file at all, a sample that fails its
-  check, or a preview whose every sample is refused
-  sends the request on to outcome planning.
+  and puts them on the to-do list with their reason. Only a plan that covers no file at all, or a preview none of
+  whose samples gets through (each fails its check or is refused), sends the request on to outcome planning.
+- At preview time, when a document's sample fails a check (or the engine fails on it) while another sample passes.
+  Its card stays, with its failed checks and its pages, so you see what went wrong; it is listed under **Left
+  untouched** and the chat says it before the button. **Create edited copies** makes no copy of it and creates the
+  others: it is not run, so no recovery follows for it; after a Safe-mode button it is under **Left untouched by
+  the last button**, and in Default and Obliterate it goes on the to-do list with its failed checks. The other documents of its layout are not set aside on its account: each runs and is checked
+  on its own. In Obliterate a sample whose copy was made but failed its checks is not set aside: it is delivered
+  marked UNVERIFIED. A custom method's samples are never set aside: one its method fails on makes Create unavailable
+  for the method.
 - At delivery, when a file fails a verification check. It is never delivered. Spec Surgeon then checks it
   again internally (below); a file nothing can check again goes on the to-do list.
 
@@ -659,8 +676,8 @@ makes a method refuse, with a worked assertion — `verify.props.KIND_CONTRACTS`
 modules, never by an operation). Its submissions are tried in the sandbox and judged by the verifier; the
 contract is what tells it, before the first try, what a passing assertion looks like.
 
-When no ordinary plan fits (no operation for the request, a plan that covers no file, a sample that fails its
-check, or a preview whose every sample is refused), the outcome planner proposes the outcomes it would check
+When no ordinary plan fits (no operation for the request, a plan that covers no file, or a preview none of whose
+samples gets through), the outcome planner proposes the outcomes it would check
 instead, and the conversation offers them as one choice, **Use these outcomes and continue**, with every word they
 would place beneath it and the outcomes in full above. Nothing runs until you pick it, and the pick approves those
 words as any pick does (`Session.outcome` takes a custom method on its own, never an outcome plan;
@@ -686,7 +703,7 @@ custom method, the visual check or recovery) may write up to 128,000 tokens, the
 conversation runs at medium reasoning effort (its sentences and plans are short and the operations' settings ride the
 cached prompt, so a plan is one or two calls), and so does the visual check it runs inside a turn, because the
 conversation's budget sets the effort for every call inside it. The outcome planning when no ordinary plan
-fits (no operation for the request, a plan that covers no file, a sample that fails its check, or a preview whose every sample is refused), and recovery, think at high: their own budget sits inside the
+fits (no operation for the request, a plan that covers no file, or a preview none of whose samples gets through), and recovery, think at high: their own budget sits inside the
 conversation's and wins. Writing a custom method — the one place Claude writes the code that edits the documents,
 from the conversation or inside recovery — thinks at `xhigh` (`resources.CODEGEN_EFFORT`, the owner's decision,
 2026-10-26): `codegen.generate_op` enters `llm.effort_scope`, an effort-only budget with no limits of its own (the

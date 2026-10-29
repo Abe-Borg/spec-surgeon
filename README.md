@@ -128,7 +128,11 @@ it was, and once you have finished it the chip stops inviting. Help → How to u
    puts each document's own approved title in its footer.
    A file the plan cannot cover is listed under **Left untouched** with the reason, and the preview of the others
    stands; the assistant names it in its next reply and says what would let it take part. In a plan done in steps
-   (the template's headers and footers, then the fonts), a sample the later step refuses is listed there too.
+   (the template's headers and footers, then the fonts), a sample the later step refuses is listed there too. So is
+   a document whose preview did not pass its checks while another's did (its page layout moved, say): its preview
+   stays, marked **Did not pass** with the failed checks, so you see why, and the chat says it gets no copy; one
+   failing document never holds back the others. Only when no preview passes is **Create edited copies**
+   unavailable, with the reason beside it.
    Each preview carries a green checkmark (looks good) and a red X (needs more work: set it aside for after the
    others). To leave documents out of a request altogether, say so ("leave out 20, and 23 for now"), or keep the
    request to the ones you mean ("only 23", "just the Michigan one"): the plan covers those, every other document
@@ -137,16 +141,17 @@ it was, and once you have finished it the chip stops inviting. Help → How to u
    owner"): they go on your to-do list at once, with your reason, and stay out of every request until you work on
    them or put them back.
 6. **Create edited copies.** One button, in the conversation above the box you type in, approves the displayed plan.
-   The engine applies it to every file you did not set aside, verifies each one independently, and lists the copies
-   under **Your edited copies**; click one to open it in Word. Originals are never written. A file that fails a
+   The engine applies it to every file you did not set aside and that is not under **Left untouched**, verifies each
+   one independently, and lists the copies under **Your edited copies**; click one to open it in Word. Originals are never written. A file that fails a
    check is not delivered; Spec Surgeon checks it again internally and comes back with a question or a new plan,
    never a method to choose. The documents you set aside wait on a to-do list; once the other copies are saved, the
    conversation offers to work on them: they are planned alone, from the same request, and you say what should be
    different.
 
 **The to-do list.** Documents wait there, each with why, until you come back to them: the ones you marked with the
-red X, the ones you asked the assistant to set aside, a file the plan could not be applied to (it goes there when you
-create the others' copies), and a file whose copy could not be made with nothing left to check it again. While files
+red X, the ones you asked the assistant to set aside, a file the plan could not be applied to or whose preview did
+not pass its checks (it goes there when you create the others' copies), and a file whose copy could not be made with
+nothing left to check it again. While files
 are being checked again after a run, **Set the rest aside for later** (offered once the ready copies are saved) puts
 what was not fixed there too and ends the request. Nothing on the list is changed. "Work on the documents I set aside"
 (a reply the app offers) plans them on their own, from the request they were set aside from, with the assistant told
@@ -272,9 +277,11 @@ mode you last used (Safe the first time; never Obliterate).
 
 On a batch from different projects, Safe mode's buttons work on every document they can change exactly and leave
 the rest untouched, each with the engine's reason — a template's section line it cannot find, an odd-and-even pages
-setting that differs from the template's, a phrase whose formatting changes partway through. Nothing is guessed and
-nothing is half-edited: a copy passes every check or is not made. After the copies are created, **Try these in
-Default mode** puts the untouched documents on your to-do list in Default mode, where the conversation can plan them.
+setting that differs from the template's, a phrase whose formatting changes partway through, a preview whose page
+layout did not come out as the plan predicts. Nothing is guessed and nothing is half-edited: a copy passes every
+check or is not made, and a document whose preview failed never holds back the copies of the others. After the
+copies are created, **Try these in Default mode** puts the untouched documents on your to-do list in Default mode,
+where the conversation can plan them.
 
 Changed your mind in Safe mode? While a button's preview waits, **Discard preview** (or **All buttons**) withdraws it
 and nothing is created; each button's form keeps what you typed until **Clear form**. After the copies are created,
@@ -293,7 +300,7 @@ For Default mode, connect an Anthropic API key once in **Settings**. Every AI st
 with room for its full 128,000-token answer (the conversation, and the visual check it runs inside a turn, at medium
 effort; writing a custom method, here or in recovery, at extra-high (`xhigh`), after which the next call goes back to
 its own effort; the outcome planning when no ordinary plan fits (no operation for the request, a plan that
-covers no file, a sample that fails its check, or a preview whose every sample is refused), and recovery, at high;
+covers no file, or a preview none of whose samples passes its checks), and recovery, at high;
 no step at max; every operation's settings ride the cached prompt, so a plan is one or two calls; that prompt is cached for an
 hour, so a follow-up request reads it instead of paying for it again). While Claude asks you something or writes a
 plan, its words reach the chat as they are written. The

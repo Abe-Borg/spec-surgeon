@@ -103,27 +103,37 @@ function WordChanges({ sample, name }: { sample: Sample; name: string }) {
   );
 }
 
+/** The subtitle of a preview the server set aside: it did not pass while another did. */
+export const SET_ASIDE_SUBTITLE =
+  "Left untouched: it did not pass its checks, so no copy of it is made. The other documents' copies can still be created.";
+
 /**
  * "Preview · name": the page count before and after with the growth flag,
  * the words a custom method's copy adds and removes (or that none change),
  * the rendered before/after pages (a click opens the zoom), and the two marks
  * — the green checkmark says the pages look right, the red X sets the
- * document aside for more work after the others are created.
+ * document aside for more work after the others are created. A preview the
+ * server set aside (it did not pass while another did) keeps its pages and
+ * its failed checks, so you see why, but carries no marks: no copy of it is
+ * made, and it is listed under Left untouched.
  */
 export default function PreviewCard({ sample, mark, canReview, onMark, onZoom }: Props) {
   const pages = pageCount(sample);
   const name = sample.name || sample.source.split(/[\\/]/).pop() || "";
   const title = `Preview · ${name}`;
+  const aside = sample.set_aside === true;
   return (
     <div data-tour="preview-card">
     <PaperCard
       title={title}
       subtitle={
-        mark === "hold"
-          ? "Set aside: it goes on your to-do list; the other copies are created first."
-          : mark === "good"
-            ? "Looks good."
-            : undefined
+        aside
+          ? SET_ASIDE_SUBTITLE
+          : mark === "hold"
+            ? "Set aside: it goes on your to-do list; the other copies are created first."
+            : mark === "good"
+              ? "Looks good."
+              : undefined
       }
       aside={
         <div className="flex items-center gap-2">
@@ -134,12 +144,14 @@ export default function PreviewCard({ sample, mark, canReview, onMark, onZoom }:
             title={
               sample.passed
                 ? "This sample was applied and verified in memory; the source was not touched."
-                : "This sample did not pass every check; the plan needs another look."
+                : aside
+                  ? "This sample did not pass every check, so no copy of it is made; the other documents can still get theirs."
+                  : "This sample did not pass every check; the plan needs another look."
             }
           >
             {sample.passed ? "Checked" : "Did not pass"}
           </span>
-          {canReview && <ReviewMarks name={name} mark={mark} onMark={(m) => onMark(sample.source, m)} />}
+          {canReview && !aside && <ReviewMarks name={name} mark={mark} onMark={(m) => onMark(sample.source, m)} />}
         </div>
       }
     >
@@ -172,7 +184,7 @@ export default function PreviewCard({ sample, mark, canReview, onMark, onZoom }:
         </p>
       )}
       {sample.images.length > 0 ? (
-        <div className={`mt-2 flex flex-col gap-2 ${mark === "hold" ? "opacity-70" : ""}`}>
+        <div className={`mt-2 flex flex-col gap-2 ${mark === "hold" || aside ? "opacity-70" : ""}`}>
           {sample.images.map((url, index) => {
             const src = imageSrc(url);
             return (

@@ -95,12 +95,13 @@ change revives nothing stale and the next message is a fresh REQUEST; a follow-u
 revision (`conversation_matches`). `start_todo` still reuses the to-do entries' decisions.
 Documents the user leaves out of a request (`submit_editspec.leave_out` → `Session.left_out`) are not planned,
 previewed or run (`planned_files`) and wait under Left untouched; a file the plan refuses does too, at any step of a
-chain (`planner.plan_batch_chain` plans every step on every file; `preview.refusals`), and the preview of the others
-stands (outcome planning starts
-only when no file plans, a sample fails its check, or every sample is refused). The to-do list
+chain (`planner.plan_batch_chain` plans every step on every file; `preview.refusals`), and so does a sample that fails
+its check while another passes (`preview.failed_samples`, `Session.failed_samples`: never run, its card kept, the
+others created; a custom method's preview has none), and the preview of the others stands (outcome planning starts,
+and Safe mode's Create is unavailable, only when no file plans or no sample gets through). The to-do list
 (`DocumentTask.todo`, each entry with `why` and `reason`) is where documents wait for later: the red X, the chat's
 `set_aside` tool at the user's word (`Conversation.set_aside` → `DocumentTask._take_set_aside`), a file the plan
-refused once the others run, a run failure no recovery takes, and recovery's leftovers at `SET_ASIDE_REST`;
+refused or whose sample failed once the others run, a run failure no recovery takes, and recovery's leftovers at `SET_ASIDE_REST`;
 `put_back` takes one off without a pass.
 Delivered copies are the working set the next request builds on. The window
 works in a scratch folder (`scratch.py`: one per window under `data_dir()\scratch`, locked while it runs, holding

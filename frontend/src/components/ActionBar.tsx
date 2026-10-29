@@ -8,6 +8,8 @@ interface Props {
   button: ActionButton | null;
   /** How many previews carry the red X. */
   held: number;
+  /** How many previews the server set aside: they did not pass while others did; no copy of them is made. */
+  aside?: number;
   onAct: (token: string) => void;
   /** Discard (``lib/action.discardButton``): withdraws the preview, or a conversation's open request; nothing created. */
   discard?: DiscardButton | null;
@@ -24,7 +26,7 @@ interface Props {
  * The bar slides open and shut, so the conversation above it eases instead of
  * jumping.
  */
-export default function ActionBar({ button, held, onAct, discard, onDiscard }: Props) {
+export default function ActionBar({ button, held, aside = 0, onAct, discard, onDiscard }: Props) {
   const primary = button && button.kind !== "stop" ? button : null;
   const dropping = discard && onDiscard ? discard : null;
   const shown = !!primary || !!dropping;
@@ -33,7 +35,7 @@ export default function ActionBar({ button, held, onAct, discard, onDiscard }: P
       {shown && (
         <div className="border-t border-edge bg-surface/70 px-4 py-2.5" role="region" aria-label="Your decision" data-tour="action-bar">
           <div className="mx-auto flex max-w-3xl items-center justify-between gap-4">
-            <p className="text-xs leading-snug text-ink-dim">{primary ? actionSentence(primary, held) : dropping?.sentence}</p>
+            <p className="text-xs leading-snug text-ink-dim">{primary ? actionSentence(primary, held, primary.kind === "approve" ? aside : 0) : dropping?.sentence}</p>
             <div className="flex shrink-0 items-center gap-2">
               {dropping && (
                 <Tip tip={dropping.tip}>

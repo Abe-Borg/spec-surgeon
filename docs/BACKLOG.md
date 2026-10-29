@@ -148,6 +148,17 @@ specifications, Windows and Word, and only the owner can do them. Record what a 
   `settings.json`; the process killed mid-session and the next start restoring the conversation and its copies from
   the scratch folder, then sweeping it at that window's clean close; a copy left open in Word at the close and the
   remainder swept at the next start.
+- **One failed preview no longer holds back the batch (the owner's Safe-mode run of 2026-10-28; built
+  2026-10-28):** the owner's Division 21 batch (twelve documents) with `00_00_00_SPECIFICATION HEADER AND FOOTER
+  TEMPLATE.docx` through **Match headers and footers to template** with Word rendering, where *21 05 17 Sleeves and
+  Sleeve Seals for Fire-Suppression Piping* failed its page-layout check (V7) and Create was unavailable for all
+  twelve: Create is available; 21 05 17's preview keeps its pages and its V7 line, carries no checkmark or X, and is
+  listed under Left untouched with the reason; the chat and the sentence beside the button say it gets no copy; the
+  other eleven copies are created and open in Word, 21 05 17's file is unchanged and is under **Left untouched by the
+  last button**, and **Try these in Default mode** puts it on the to-do list with the same reason. The same batch in
+  Default mode: no outcome planning starts at the preview, Create makes the eleven, and 21 05 17 waits on the to-do
+  list (why: failed); **Work on the documents I set aside** plans it alone. A batch whose every preview fails still
+  says Create is unavailable.
 - **Safe mode's third set and the note (built 2026-10-28):** a real specification folder with Word rendering through
   each new button: *Change font* (Arial 10 pt, then Keep each document's sizes: headings and notes keep theirs); *Page
   size and margins* over a folder with a landscape schedule (that document waits under Left untouched with the

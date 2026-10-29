@@ -5,7 +5,7 @@ import type { Attachment, Choice, ExportKind, JobEvent, Mode, Recipe, RecipeInpu
 import * as api from "./lib/api";
 import { actionButton, discardButton } from "./lib/action";
 import { composerState, transcript } from "./lib/chat";
-import { canReview, heldSources, keptAcrossTour, reviewKey, setMark, type KeptReviews, type Mark, type Reviews } from "./lib/review";
+import { canReview, heldSources, keptAcrossTour, reviewKey, setAsideCount, setMark, type KeptReviews, type Mark, type Reviews } from "./lib/review";
 import { canUntick, occurrencesKey, previewedUnticks, toggleUntick, untickedKeys, unticksPending, type Unticks } from "./lib/occurrences";
 import { INITIAL_STATE, reduce } from "./lib/view";
 import { ACCEPT } from "./lib/workbench";
@@ -619,6 +619,7 @@ export default function App() {
           sendReason={composer.reason}
           button={button}
           held={held.length}
+          aside={setAsideCount(view.samples)}
           onSend={onSend}
           onChoose={onChoose}
           onAct={onAct}

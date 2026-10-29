@@ -320,11 +320,12 @@ class WindowState:
                     for i, m in enumerate(raw["messages"])]
         plan = {"groups": raw["groups"], "targets": raw["targets"], "set_aside": raw["set_aside"],
                 "stages": raw.get("stages", 0)} if raw["groups"] or raw["set_aside"] else None
+        aside = set(raw.get("samples_set_aside") or [])
         samples = [{"source": str(sv.source), "name": Path(sv.source).name,
                     "images": [self.image_url(p) for p in sv.images if Path(p).is_file()],
                     "pages_before": sv.pages_before, "pages_after": sv.pages_after, "passed": sv.passed,
                     "failures": failed_preview_checks(sv), "geometry": sv.geometry,
-                    "text_changes": getattr(sv, "text_changes", None)}
+                    "text_changes": getattr(sv, "text_changes", None), "set_aside": str(sv.source) in aside}
                    for sv in raw["samples"]]
         unverified = raw.get("unverified") or {}
         exported = raw.get("exported") or {}

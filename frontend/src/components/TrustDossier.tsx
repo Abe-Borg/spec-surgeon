@@ -581,7 +581,7 @@ function Dossier() {
         />
         <Term
           word="Approved"
-          claim="You pressed Create edited copies (or Save ready copies) on a plan whose fingerprint covers the plan and the exact content of each file. A changed file or plan voids the approval. In Safe and Default modes, Create also refuses a failed preview check. Save ready copies exports only the recovery's ready files. Export’s Word (Tracked Changes OFF) and PDF (Clean) are approved by your choice in the menu: each runs one plan fixed in the app over your edited copies and changes none of them."
+          claim="You pressed Create edited copies (or Save ready copies) on a plan whose fingerprint covers the plan and the exact content of each file. A changed file or plan voids the approval. In Safe and Default modes, a document whose preview failed a check is not part of it (it waits under Left untouched), and Create refuses a preview none of whose samples passed. Save ready copies exports only the recovery's ready files. Export’s Word (Tracked Changes OFF) and PDF (Clean) are approved by your choice in the menu: each runs one plan fixed in the app over your edited copies and changes none of them."
           not={[
             "That you read every sentence of the plan.",
             "That Claude understood you — only that the engine will do exactly what is on screen.",

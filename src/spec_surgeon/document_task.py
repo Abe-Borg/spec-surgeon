@@ -28,7 +28,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence
 
-from .ui_feedback import failed_preview_checks, refusal_message
+from .ui_feedback import PREVIEW_FAILED, failed_preview_checks, failed_sample_message, refusal_message
 
 from . import llm, review_display
 from .gui import Session
@@ -373,6 +373,7 @@ class DocumentTask:
         self._resume_recovery = None
         self._resume_layouts = []           # layout batch folders still to recover, from the journal
         self._words_said_for = None         # the custom method's preview whose word changes the chat has said
+        self._failed_said_for = None        # the preview whose samples set aside as failed the chat has said
         self._budget = self._new_budget()
         self._request_budget = self._new_request()
         # Files a caller handed the session (tests, the installed smoke test) become attachments.
@@ -1303,6 +1304,21 @@ class DocumentTask:
         for line in render_word_warnings(self.session.outcome().preview):
             self.say(line + ".")
 
+    def _say_failed_samples(self) -> None:
+        """The samples a preview set aside because they failed their checks while another passed
+        (``Session.failed_samples``) are said in the app's words before the button, in every mode, once per preview:
+        no copy of them is made, they wait under Left untouched, and the others' copies can be created. The model
+        hears them with the preview's note (``Session._note_preview``); the window's chat shows no app note."""
+        from .preview import sample_labels
+        from .ui_feedback import failed_samples_sentence
+        pv = self.session.preview
+        if pv is None or pv is self._failed_said_for:
+            return
+        failed = self.session.failed_samples()
+        if failed:
+            self._failed_said_for = pv
+            self.say(failed_samples_sentence(failed, sample_labels(failed)))
+
     def _occurrences_view(self, preview) -> List[Dict[str, Any]]:
         """The find-and-replace occurrences the waiting plan lists (backlog F1), per document of the plan — every
         planned document, not the sampled ones only — each item with the key the page sends back to leave it as it
@@ -1412,7 +1428,9 @@ class DocumentTask:
             self.todo[entry["path"]] = {
                 "name": entry["name"], "decisions": [entry["request"]] if entry["request"] else [], "seen": [],
                 "why": WHY_REFUSED if refused else WHY_FAILED,
-                "reason": ("The button could not change it" if refused else "Its copy could not be made")
+                # a document whose preview failed its checks says so as it is
+                "reason": f"{why}." if why.startswith(PREVIEW_FAILED) else
+                ("The button could not change it" if refused else "Its copy could not be made")
                 + (f": {why}." if why else ".")}
         self.left_untouched = [e for e in self.left_untouched if e["path"] not in wanted]
         self.mode = "default"
@@ -1424,8 +1442,9 @@ class DocumentTask:
         self.save()
 
     def _refused_by_preview(self, preview, request: str) -> List[Dict[str, str]]:
-        """The documents a button's preview refused (the plan, at any of its steps), with their reasons:
-        Create does not run them (``Session._without_refused``), so the run's own results never name them."""
+        """The documents a button's preview refused (the plan, at any of its steps), or set aside because their sample
+        failed its checks (``Session.failed_samples``), with their reasons: Create does not run them
+        (``Session._without_refused``), so the run's own results never name them."""
         from .preview import refusals
         out: List[Dict[str, str]] = []
         for path, reason in self.session.left_out_reasons.items():       # a button that left documents out, with why
@@ -1436,6 +1455,10 @@ class DocumentTask:
             origin = str(self.origin_of(source))
             out.append({"path": origin, "name": Path(origin).name, "why": WHY_REFUSED,
                         "reason": refusal_message(exc), "request": request})
+        for sv in self.session.failed_samples():                          # their sample failed its checks
+            origin = str(self.origin_of(Path(sv.source)))
+            out.append({"path": origin, "name": Path(origin).name, "why": WHY_FAILED,
+                        "reason": failed_sample_message(sv), "request": request})
         return out
 
     def _left_after_run(self, request: str, refused: Sequence[Dict[str, str]] = ()) -> List[Dict[str, str]]:
@@ -1537,6 +1560,7 @@ class DocumentTask:
             self._take_set_aside()
             outcome = s.outcome()
         self._say_text_changes()                 # a custom method's words, before the button that approves them
+        self._say_failed_samples()               # the samples whose copies are not made, before the button too
         self._revision += 1
         if self._answered(outcome):
             # an answer with nothing pending: the request is finished with it, and the window rests on the copies
@@ -1750,9 +1774,9 @@ class DocumentTask:
         if self.stage == "preview":
             # what Undo goes back to once this run has delivered (a later save of recovered copies keeps this point)
             self._pending_undo = self._undo_point()
-        # the files the preview refused never run (Session._without_refused): once the others run they go on the to-do
-        # list with the plan's reason, to come back to (the session keeps them until the request ends: the approval
-        # was taken over them)
+        # the files the preview refused, and the samples it set aside because they failed, never run
+        # (Session._without_refused): once the others run they go on the to-do list with the reason, to come back to
+        # (the session keeps them until the request ends: the approval was taken over them)
         refused = self._refused_now(held) if s.recovery is None else []
         # a Safe-mode button's, or any plan approved in Safe mode (a Default-mode preview still waiting when the mode
         # changed): no AI step follows, and what the run leaves untouched waits beside the copies, not on the list
@@ -1778,8 +1802,8 @@ class DocumentTask:
                 return
             if not remaining:
                 # every previewed document set aside: nothing to create; the pass over them begins at once
-                for path, seen_by, reason in refused:
-                    self._set_aside(path, seen_by, why=WHY_REFUSED, reason=reason)
+                for path, seen_by, why, reason in refused:
+                    self._set_aside(path, seen_by, why=why, reason=reason)
                 self.say("You set every document aside, so no copy was created. Tell me what should be different, "
                          "and I’ll plan them again.")
                 self.start_todo()
@@ -1793,8 +1817,8 @@ class DocumentTask:
         log("Creating and checking your edited copies…")
         s.run(False, self.render, log, only=remaining)
         if not model_free:
-            self._binned += [self._set_aside(path, seen_by, why=WHY_REFUSED, reason=reason)
-                             for path, seen_by, reason in refused]
+            self._binned += [self._set_aside(path, seen_by, why=why, reason=reason)
+                             for path, seen_by, why, reason in refused]
         self._collect_results()
         self._emit({"type": "results", "results": self._results_view()})
         if model_free:
@@ -1862,9 +1886,10 @@ class DocumentTask:
             self._offer_todo(binned)
 
     def _refused_now(self, held: Sequence[Path] = ()) -> List[tuple]:
-        """At Create: the documents of the displayed plan its preview refused while another planned, each with the
-        plan the user saw and the plan's reason, ``(path, seen, reason)``: they go on the to-do list once the others
-        run. The ones the user set aside with the red X are theirs already."""
+        """At Create: the documents of the displayed plan its preview refused, or set aside because their sample
+        failed its checks (``Session.failed_samples``), while another planned, each with the plan the user saw, why
+        and the reason, ``(path, seen, why, reason)``: they go on the to-do list once the others run. The ones the
+        user set aside with the red X are theirs already."""
         s = self.session
         planned, runnable = s.planned_files(), s.runnable_files()
         refused = [f for f in planned if f not in runnable and f not in held]
@@ -1873,10 +1898,14 @@ class DocumentTask:
         from .preview import refusals
         seen = [c["summary"] for g in self._groups() for c in g["changes"]]
         reasons = {source.resolve(): exc.get("reason", "") for source, exc in refusals(s.preview)}
+        failed = {Path(sv.source).resolve(): failed_sample_message(sv) for sv in s.failed_samples()}
         out = []
         for f in refused:
+            if Path(f).resolve() in failed:
+                out.append((f, seen, WHY_FAILED, failed[Path(f).resolve()]))
+                continue
             why = str(reasons.get(Path(f).resolve(), "")).strip().rstrip(".")
-            out.append((f, seen, "The plan could not be applied to it" + (f": {why}." if why else ".")))
+            out.append((f, seen, WHY_REFUSED, "The plan could not be applied to it" + (f": {why}." if why else ".")))
         return out
 
     def _bin_failed(self, files) -> List[str]:
@@ -2086,14 +2115,23 @@ class DocumentTask:
 
     def _left_untouched(self, preview) -> List[Dict[str, str]]:
         """Left untouched beside a preview: the documents the user left out of the request (no plan covers them),
-        then those the preview refused (the plan, at any of its steps), each with its reason."""
+        then those the preview refused (the plan, at any of its steps), then those whose sample failed its checks
+        while another passed (``Session.failed_samples``: their cards stay, so the user sees why), each with its
+        reason."""
         if preview is None:
             return []
         from .preview import refusals
         why = self.session.left_out_reasons
         items = [{"name": Path(path).name, "reason": refusal_message({"reason": why.get(str(path), LEFT_OUT_REASON)})} for path in self.session.left_out]
         items += [{"name": source.name, "reason": refusal_message(exc)} for source, exc in refusals(preview)]
+        items += [{"name": Path(sv.source).name, "reason": failed_sample_message(sv)}
+                  for sv in self.session.failed_samples()]
         return items
+
+    def _samples_set_aside(self) -> List[str]:
+        """The samples whose cards say they are left untouched: they failed their checks while another passed
+        (``Session.failed_samples``), so Create makes no copy of them and the others' copies are created."""
+        return [str(sv.source) for sv in self.session.failed_samples()]
 
     def _delivered(self) -> List[Path]:
         """The documents whose copies a partial save during recovery already delivered: their pages and findings leave
@@ -2128,11 +2166,13 @@ class DocumentTask:
     def _samples_view(self) -> Dict[str, Any]:
         preview = self.session.outcome().preview
         samples = self._undelivered_samples(preview)
+        aside = self._samples_set_aside()
         return {"samples": [{"source": str(sv.source), "name": Path(sv.source).name,
                              "images": [str(p) for p in sv.images if Path(p).is_file()],
                              "pages_before": sv.pages_before, "pages_after": sv.pages_after, "passed": sv.passed,
                              "failures": failed_preview_checks(sv), "geometry": sv.geometry,
-                             "text_changes": getattr(sv, "text_changes", None)}
+                             "text_changes": getattr(sv, "text_changes", None),
+                             "set_aside": str(sv.source) in aside}
                             for sv in samples],
                 "occurrences": self._occurrences_view(preview),
                 "warnings": list(dict.fromkeys(getattr(preview, "warnings", []) or [])),
@@ -2194,7 +2234,8 @@ class DocumentTask:
         if blocking and self.stage == "preview":
             labels["preview"] = "I reviewed the flagged pages — create copies"
         planned = getattr(batch_plan, "files", None)
-        if s.model_free and self.stage == "preview" and planned and len(set_aside) >= len(planned):
+        from .preview import refusals
+        if s.model_free and self.stage == "preview" and planned and len(refusals(preview)) >= len(planned):
             labels.pop("preview", None)              # a button no document can take: there is nothing to create
         if self.stage == "question" and outcome.partial:
             ready = len(s.recovery.ready)
@@ -2243,6 +2284,7 @@ class DocumentTask:
                 "choices": [{"id": c.id, "label": c.label, "words": list(c.words), "detail": c.detail,
                              "editable": getattr(c, "editable", False)} for c in choices],
                 "samples": samples, "set_aside": set_aside,
+                "samples_set_aside": self._samples_set_aside() if pages is not None else [],
                 "occurrences": self._occurrences_view(pages) if pages is not None else [],
                 "warnings": list(dict.fromkeys(warnings)), "results": dict(self.results),
                 "unverified": {k: list(v) for k, v in self.unverified.items()},

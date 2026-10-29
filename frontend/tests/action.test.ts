@@ -20,6 +20,7 @@ import {
   STOP_TIP,
   actionButton,
   actionSentence,
+  asideSentence,
   defaultLabel,
   discardButton,
   heldTip,
@@ -86,6 +87,24 @@ test("a server verification failure disables Create and explains why", () => {
   assert.equal(button.disabled, true);
   assert.equal(button.tip, reason);
   assert.equal(actionSentence(button, 0), reason);
+});
+
+test("previews the server set aside are said beside an available Create, never on its label", () => {
+  // one sample of two did not pass: the server leaves it untouched and Create makes the other's copy
+  const button = actionButton(view({ action: { label: "Create edited copies", token: "t", kind: "approve", can_hold: true } }), false, false);
+  assert.ok(button && button.kind !== "stop" && !button.disabled);
+  assert.equal(button.label, "Create edited copies");
+  assert.equal(
+    actionSentence(button, 0, 1),
+    "If the pages look right, create the edited copies. One document whose preview did not pass gets no copy: it stays as it is, under Left untouched.",
+  );
+  assert.ok(actionSentence(button, 1, 2).startsWith("One document marked with the red X goes on your to-do list"));
+  assert.ok(actionSentence(button, 1, 2).endsWith(" 2 documents whose preview did not pass get no copy: they stay as they are, under Left untouched."));
+  assert.equal(asideSentence(0), "");
+  assert.ok(asideSentence(1).includes("gets no copy"));
+  // a disabled button says only why
+  const blocked = actionButton(view({ action: { label: "Create edited copies", token: "t", kind: "approve", disabled_reason: "Create is unavailable: x." } }), false, false)!;
+  assert.equal(actionSentence(blocked, 0, 1), "Create is unavailable: x.");
 });
 
 test("an unknown kind from a newer server shows no button rather than a wrong one", () => {

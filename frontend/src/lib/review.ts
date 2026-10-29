@@ -4,6 +4,8 @@
  * (the samples and the action they lead to); a new plan or preview starts the
  * review over. At "Create edited copies" the documents marked with the X are
  * sent as `hold`: they go on the to-do list and the others get their copies.
+ * A preview the server set aside (`set_aside`: it did not pass while another
+ * did) carries no marks; no copy of it is made either way.
  *
  * Pure, so `node --test` can pin every rule.
  */
@@ -39,9 +41,14 @@ export function setMark(reviews: Reviews, source: string, mark: Mark): Reviews {
   return next;
 }
 
-/** The sources marked with the X, in preview order, among the previews shown. */
-export function heldSources(reviews: Reviews, samples: Pick<Sample, "source">[]): string[] {
-  return samples.map((s) => s.source).filter((source) => reviews[source] === "hold");
+/** The sources marked with the X, in preview order, among the previews shown (never one the server set aside). */
+export function heldSources(reviews: Reviews, samples: Pick<Sample, "source" | "set_aside">[]): string[] {
+  return samples.filter((s) => !s.set_aside).map((s) => s.source).filter((source) => reviews[source] === "hold");
+}
+
+/** How many previews the server set aside because they did not pass while another did: no copy of them is made. */
+export function setAsideCount(samples: Pick<Sample, "set_aside">[]): number {
+  return samples.filter((s) => s.set_aside === true).length;
 }
 
 export interface ReviewCounts {

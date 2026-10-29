@@ -7,7 +7,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import type { View } from "../src/types.ts";
-import { canReview, heldSources, keptAcrossTour, reviewCounts, reviewKey, setMark } from "../src/lib/review.ts";
+import { canReview, heldSources, keptAcrossTour, reviewCounts, reviewKey, setAsideCount, setMark } from "../src/lib/review.ts";
 import { EMPTY_VIEW } from "../src/lib/view.ts";
 
 const sample = (source: string) => ({ source, name: source, images: [], pages_before: 1, pages_after: 1, passed: true });
@@ -31,6 +31,15 @@ test("the held sources are the X'd previews, in preview order, among the preview
   assert.deepEqual(heldSources(reviews, [sample("c"), sample("a"), sample("b")]), ["c", "a"]);
   assert.deepEqual(heldSources({}, [sample("a")]), []);
   assert.deepEqual(reviewCounts(reviews, [sample("a"), sample("b"), sample("c"), sample("d")]), { good: 1, hold: 2, unmarked: 1 });
+});
+
+test("a preview the server set aside is never sent as held, and is counted apart", () => {
+  // it did not pass while another did: no copy of it is made either way, so a mark left on it means nothing
+  const reviews = { a: "hold" as const, b: "hold" as const };
+  const samples = [{ ...sample("a"), passed: false, set_aside: true }, sample("b"), sample("c")];
+  assert.deepEqual(heldSources(reviews, samples), ["b"]);
+  assert.equal(setAsideCount(samples), 1);
+  assert.equal(setAsideCount([sample("a")]), 0);
 });
 
 test("the review key follows the action token and the samples: a new plan or preview starts over", () => {

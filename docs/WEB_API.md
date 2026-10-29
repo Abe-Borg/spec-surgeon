@@ -136,6 +136,13 @@ Rules the page relies on:
   earlier step's layout is checked at the run. A note never says no pages were rendered when they were.
   `"at": "run"` marks the verdicts the run will give. `null` for a sample the plan refused. Common refusal reasons under Left untouched are presented without operation numbers
   or extraction patterns; the engine's original exceptions and check records remain in diagnostics.
+- `samples[].set_aside` is true for a sample that did not pass its checks (or that the engine failed on; in Obliterate
+  only that) while another sample passed (`Session.failed_samples`): Create makes no copy of it and creates the
+  others, it is listed under `plan.set_aside` with a reason that begins "Its preview did not pass its checks", the
+  page shows its card without the checkmark and the red X, and the chat says it once before the button. After the
+  run it is under `left_untouched` (Safe mode) or on the `todo` list with `why: "failed"` (Default and Obliterate).
+  Always false for a custom method's samples (one its method fails on makes Create unavailable) and when no sample
+  passed (then `action.disabled_reason` says why). Absent from an older server.
 - `samples[].text_changes` is the words a custom method's sample copy adds and removes, as the independent checker
   read them (its V2 record of the copy, `preview.text_changes_of`; never the method's or the model's account): one
   entry per changed paragraph, `{part, where, paragraph, removed, added, block?}` — `part` as the record names it,
@@ -169,8 +176,10 @@ Rules the page relies on:
   no button. The button
   lives in the conversation pane, above the composer; while `busy` the composer shows "Stop now" instead.
   `action.disabled_reason` is empty when the action is available; otherwise the button is disabled and this reason
-  appears beside it and in its tooltip. Safe and Default refuse Create after a failed preview check; the server
-  enforces the same gate even if a caller submits a current token directly. Recovery can still save READY copies.
+  appears beside it and in its tooltip. Safe and Default refuse Create when no sample of the preview passed its
+  checks; the server enforces the same gate even if a caller submits a current token directly. A sample that failed
+  while another passed does not hold Create back: it is `samples[].set_aside`, listed under `plan.set_aside` with its
+  failed checks, and never run. Recovery can still save READY copies.
   In Safe mode, `results` contains only the current button's copies; earlier copies remain in the working set and
   on disk, so a later failed or refused button cannot present them as its results.
   `action.can_hold` is true when the previews can be marked: each preview card then carries a green checkmark
