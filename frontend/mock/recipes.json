@@ -517,6 +517,14 @@
    ]
   },
   {
+   "id": "remove_notes",
+   "label": "Remove specifier notes",
+   "group": "Clean up",
+   "summary": "Deletes specifier's and editor's notes and hidden text in one press; placeholders, copyright lines, headings and coloured text stay.",
+   "needs": [],
+   "fields": []
+  },
+  {
    "id": "remove_empty_paragraphs",
    "label": "Remove empty paragraphs",
    "group": "Clean up",

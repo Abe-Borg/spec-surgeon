@@ -278,6 +278,33 @@ def test_safe_buttons_saved_as_a_recipe_run_on_other_documents_as_one_plan(tmp_p
     assert done(task) == [] and task.working == {}
 
 
+def test_remove_specifier_notes_saved_with_another_button_runs_in_default_mode_with_no_ai_call(tmp_path, store,
+                                                                                               monkeypatch):
+    """The notes button's two steps ride a saved recipe like any button's one: kept as the button, built again from
+    the documents attached now (their own note styles), and run in Default mode as one plan with no AI call."""
+    from fx_removal import build_spec_notes
+    no_ai(monkeypatch)
+    first = safe(tmp_path, store)
+    first.attach(specs(tmp_path / "a", (("21 13 13", "WET-PIPE SPRINKLER SYSTEMS"),)))
+    press(first, "remove_notes")
+    press(first, "remove_comments")
+    record = first.save_recipe("Clean for issue", "", [r["id"] for r in done(first)])
+    assert [s["button"] for s in record["steps"]] == ["remove_notes", "remove_comments"]
+    others = tmp_path / "b"
+    others.mkdir()
+    (others / "21 13 16.docx").write_bytes(build_spec_notes())
+    task = DocumentTask(Session(out_root=tmp_path / "out2", visual_check=False), render=False, mode="default",
+                        recipes=store)
+    task.attach([others / "21 13 16.docx"])
+    view = task.perform("saved_recipe", recipe=record["id"], steps=None)
+    assert view["stage"] == "preview" and task.session.model_free
+    assert [st["name"] for st in task.session.spec["stages"]] == ["Remove specifier notes", "Remove specifier notes",
+                                                                  "Remove all comments"]
+    view = task.perform("primary", token=view["token"])
+    assert view["stage"] == "done" and task._budget.calls == 0
+    assert all(r.status == "PASS" for r in task.session.last_batch.files)
+
+
 def test_an_edited_recipe_runs_its_steps_in_their_new_order_and_runs_added_to_it_come_last(
         tmp_path, store, monkeypatch):
     no_ai(monkeypatch)

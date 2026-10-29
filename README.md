@@ -221,7 +221,8 @@ mode you last used (Safe the first time; never Obliterate).
   be unticked and left as it is, the plan remade
   with **Update the preview**, and the checker confirms it was left untouched), *Change the issue stamp*, *Add END OF
   SECTION where missing*, *Keep numbers with their units*, *Accept or reject all tracked changes*,
-  *Remove all comments*, *Remove highlighting*, *Remove hidden text*, *Remove empty paragraphs*, *Clean up spaces*,
+  *Remove all comments*, *Remove highlighting*, *Remove hidden text*, *Remove specifier notes*, *Remove empty
+  paragraphs*, *Clean up spaces*,
   *Standardize quotes and dashes*, *Remove hyperlinks*, *Freeze fields as plain text*, *Remove unused styles*, *Name
   files by section number and title*, *Set the document title property*, *Turn off Track Changes*, *Set author and
   company* and *Set proofing language* (clean PDFs are Export's, in every mode). A note above the buttons says what Safe mode is, what it
@@ -238,6 +239,22 @@ mode you last used (Safe the first time; never Obliterate).
   it is named for it (`SECTION TITLE`, `SECTION NAME`, `Specification Name`…); case, underscores and enclosing
   brackets do not matter. The form names the placeholders each document fills itself, so it asks only for the rest. No model is called — no plan, no visual check, no recovery — so it needs no API key and
   spends nothing.
+- **Remove specifier notes** (Safe mode) is the one-press clean-up of a master's editorial notes, with no form and
+  no settings. It deletes every whole paragraph that is a note — in a note style (CMT, Specifier Note, Editor's Note,
+  Note to Specifier, Editorial Note, Coordinator Note, matched by the style's id or name as Word shows it, or a style
+  based on one) or opening as a specifier's instruction ("NOTE TO SPECIFIER", "[Specifier: …]", "[Editor's Note …]",
+  "Retain or delete …", "Delete if not applicable", "Retain paragraph below …", "Select one of the following
+  paragraphs", "--- OPTIONAL ---" and the like) — and Word's hidden text, in the body, headers, footers, footnotes and
+  endnotes. The opening words are SpecCleanse's rules, each narrowed there against requirements it once took, and
+  anchored here at the paragraph's start, so a requirement that only contains them ("Provide two [retain or delete]
+  spare heads", "Retain records of all tests", "Select one of the listed manufacturers") keeps them; no heading
+  (SECTION, PART, ARTICLE, END OF SECTION) is ever one. Placeholders (`[Insert …]`, `[Verify …]`, `[TBD]`), "to be
+  determined", copyright and confidentiality lines, headings, coloured or italic text, tracked changes and comments
+  stay: in a copy that goes to a client a placeholder is an open item, not noise. It runs as two steps — the hidden
+  text first, then the note paragraphs — so a hidden note holding a field goes whole; a visible note paragraph that
+  holds a field or a section break sets its document aside with the reason. Clean copies; the preview lists every
+  removed note. Default and Obliterate mode go further when asked: cut placeholders out of their sentences, delete
+  copyright lines or headings, edit "to be determined", accept or reject tracked changes.
 - **Match body formatting to template** (Safe mode) makes each document look like your template without touching a
   word or a table. The form shows the template's style for each part of a section (the section number line, the
   title, PART, articles, paragraphs and subparagraphs, END OF SECTION), read from the template and changeable. Each
