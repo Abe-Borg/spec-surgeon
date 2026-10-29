@@ -599,7 +599,10 @@ REATTACH = "I'll accept the changes in Word first and attach the files again"
     ("Do everything else now, I'll accept in Word", REATTACH, False),
     ("I'll accept in Word first and re-attach", EVERYTHING, False),
     ("Yes", "Yes, change the headers too", True),
-    ("Valves only", "Change only Valves", True),
+    ("Only Valves", "Change only Valves", True),
+    ("Valves only", "Change only Valves", False),                              # in another order: kept
+    ("Keep the headers and change the footers", "Change the headers and keep the footers", False),   # other targets
+    ("Don't change the headers, change the footers", "Change the headers, don't change the footers", False),
     ("Leave out the fourth for now", "Change the three that have a stamp; leave the fourth as it is", False),
     ("Set the fourth aside for later", "Give the fourth the same stamp in its header", False),
     ("Don't change the headers", "Change the headers", False),                 # the opposite answer

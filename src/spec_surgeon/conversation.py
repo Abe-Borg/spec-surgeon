@@ -294,22 +294,36 @@ def _reply_words(text: str):
     return words, names
 
 
+def _in_order(said: List[str], offered: List[str]) -> int:
+    """How many of ``said``'s words ``offered`` carries in the same order, with every negation of either matched by
+    one of the other's in that order (a negation is never skipped); -1 when the negations cannot be matched."""
+    best = [[-1] * (len(offered) + 1) for _ in range(len(said) + 1)]
+    best[0][0] = 0
+    for i in range(len(said) + 1):
+        for j in range(len(offered) + 1):
+            if i and j and said[i - 1] == offered[j - 1] and best[i - 1][j - 1] >= 0:
+                best[i][j] = best[i - 1][j - 1] + 1
+            if i and said[i - 1] not in _NEGATIONS:
+                best[i][j] = max(best[i][j], best[i - 1][j])
+            if j and offered[j - 1] not in _NEGATIONS:
+                best[i][j] = max(best[i][j], best[i][j - 1])
+    return best[-1][-1]
+
+
 def restates(chip: str, label: str) -> bool:
     """True when a suggested reply says a choice's label again in other words, as "Do everything else now, I'll
     accept in Word" beside the choice "Do everything else on all four now; leave the tracked changes in the three
     files for me to accept in Word" did (the owner's report, 2026-10-29: every answer showed twice). Its words other
-    than small ones (``_FILLER``) are the label's, all but one in five; it names exactly what the label names (each
-    number and capitalised name of either is a word of the other); and it carries the same negations. A reply that
-    names another document or number, or says the opposite, is a different answer and stays."""
+    than small ones (``_FILLER``) are the label's in the label's order, all but one in five, with the same negations
+    in the same places (``_in_order``); and it names exactly what the label names (each number and capitalised name
+    of either is a word of the other). A reply that names another document or number, says the opposite, or puts
+    the same words to other targets ("Keep the headers and change the footers") is a different answer and stays."""
     words, names = _reply_words(chip)
     label_words, label_names = _reply_words(label)
-    said, offered = set(words), set(label_words)
     content = [w for w in words if w not in _FILLER]
-    if not content or not names <= offered or not label_names <= said:
+    if not content or not names <= set(label_words) or not label_names <= set(words):
         return False
-    if said & _NEGATIONS != offered & _NEGATIONS:
-        return False
-    return 5 * sum(w in offered for w in content) >= 4 * len(content)
+    return 5 * _in_order(content, [w for w in label_words if w not in _FILLER]) >= 4 * len(content)
 
 
 def _texts(raw: Any, what: str, errors: List[str]) -> List[str]:
