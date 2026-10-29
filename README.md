@@ -221,7 +221,8 @@ mode you last used (Safe the first time; never Obliterate).
   be unticked and left as it is, the plan remade
   with **Update the preview**, and the checker confirms it was left untouched), *Change the issue stamp*, *Add END OF
   SECTION where missing*, *Keep numbers with their units*, *Accept or reject all tracked changes*,
-  *Remove all comments*, *Remove highlighting*, *Remove hidden text*, *Remove empty paragraphs*, *Clean up spaces*,
+  *Remove all comments*, *Remove highlighting*, *Remove hidden text*, *Remove specifier notes*, *Remove empty
+  paragraphs*, *Clean up spaces*,
   *Standardize quotes and dashes*, *Remove hyperlinks*, *Freeze fields as plain text*, *Remove unused styles*, *Name
   files by section number and title*, *Set the document title property*, *Turn off Track Changes*, *Set author and
   company* and *Set proofing language* (clean PDFs are Export's, in every mode). A note above the buttons says what Safe mode is, what it
@@ -238,6 +239,22 @@ mode you last used (Safe the first time; never Obliterate).
   it is named for it (`SECTION TITLE`, `SECTION NAME`, `Specification Name`…); case, underscores and enclosing
   brackets do not matter. The form names the placeholders each document fills itself, so it asks only for the rest. No model is called — no plan, no visual check, no recovery — so it needs no API key and
   spends nothing.
+- **Remove specifier notes** (Safe mode) is the one-press clean-up of a master's editorial notes, with no form and
+  no settings. It deletes every whole paragraph that is a note — in a note style (CMT, Specifier Note, Editor's Note,
+  Note to Specifier, Editorial Note, Coordinator Note, matched by the style's id or name as Word shows it, or a style
+  based on one) or opening as a specifier's instruction ("NOTE TO SPECIFIER", "[Specifier: …]", "[Editor's Note …]",
+  "Retain or delete …", "Delete if not applicable", "Retain paragraph below …", "Select one of the following
+  paragraphs", "--- OPTIONAL ---" and the like) — and Word's hidden text, in the body, headers, footers, footnotes and
+  endnotes. The opening words are SpecCleanse's rules, each narrowed there against requirements it once took, and
+  anchored here at the paragraph's start, so a requirement that only contains them ("Provide two [retain or delete]
+  spare heads", "Retain records of all tests", "Select one of the listed manufacturers") keeps them; no heading
+  (SECTION, PART, ARTICLE, END OF SECTION) is ever one. Placeholders (`[Insert …]`, `[Verify …]`, `[TBD]`), "to be
+  determined", copyright and confidentiality lines, headings, coloured or italic text, tracked changes and comments
+  stay: in a copy that goes to a client a placeholder is an open item, not noise. It runs as two steps — the hidden
+  text first, then the note paragraphs — so a hidden note holding a field goes whole; a visible note paragraph that
+  holds a field or a section break sets its document aside with the reason. Clean copies; the preview lists every
+  removed note. Default and Obliterate mode go further when asked: cut placeholders out of their sentences, delete
+  copyright lines or headings, edit "to be determined", accept or reject tracked changes.
 - **Match body formatting to template** (Safe mode) makes each document look like your template without touching a
   word or a table. The form shows the template's style for each part of a section (the section number line, the
   title, PART, articles, paragraphs and subparagraphs, END OF SECTION), read from the template and changeable. Each
@@ -271,6 +288,24 @@ mode you last used (Safe the first time; never Obliterate).
 - **Default — a conversation.** What you control: any change you can describe, from one word to whole tables,
   sections and pictures, on documents built in different ways. What it costs: an Anthropic API key and the AI's
   spending, and the AI can misread a request, so you read what it plans and look at the pages before you approve.
+
+  Default mode also does what the Specification Formatter did, under the same checks as every other request:
+  - **Format a consultant's specification to an architect's template.** The template's role styles, page, headers and
+    footers go onto each document. Claude reads each document's outline (the section number line, the title, PART,
+    articles, paragraph levels, END OF SECTION) with the app's own structure reader first; only the paragraphs the
+    reader cannot place, and typed "PART 1" or "1.5" openings whose words read as a requirement rather than a heading,
+    go to a separate Claude reading. Claude's message names the parts of the outline that rest on its reading, so you
+    check them in the preview. The plan names each document's own paragraphs, so one document's choice can never land
+    on another's. Ask for the template's even/odd page headers and the switch that shows them comes with them. The
+    template's theme and compatibility settings are never carried; its fonts reach the copied styles as their own
+    values.
+  - **Convert CSI numbering to Canadian CSC PageFormat, or back.** With an architect's Canadian or CSI template, the
+    outline moves onto its list. With no template, Claude offers a built-in scheme (CSC PageFormat, nine levels:
+    PART 1, 1.1, .1 … .1; or CSI: PART 1, 1.1, A., 1., a., 1), a), (1), (a)) as a choice; picking it attaches it as
+    the template. Every number keeps its value ("A." becomes ".1", "1.01" becomes "1.1") or the document is set aside,
+    and you can keep each paragraph's own look so only the numbers change. Typed CSI numbers ("PART 1 - GENERAL",
+    "1.01", "A.") become automatic PageFormat numbers. Numbers stay automatic both ways: no number is ever typed into
+    the text. A typed Canadian ".1" is not converted, because it does not say which level it is.
 - **Obliterate — the conversation without guardrails (hidden).** Off the switch until Settings → **Advanced** →
   *Show Obliterate mode* is on, and chosen only after its warning, every time (tick *I understand*, then **Turn on
   Obliterate**). What you control: Claude may write wording itself (every word it places must be in its reply to
@@ -538,6 +573,9 @@ recorded for the requests that follow.
   [docs/CONVERSATIONAL_DESKTOP.md](docs/CONVERSATIONAL_DESKTOP.md)).
 - The installer is unsigned: the checksum checks prove the download is the file the release lists, not who published it.
 - Costs shown for Claude calls are estimates from a built-in price table.
+- The structure reader knows seven numbered levels (PART, article and five below); PageFormat's eighth and ninth
+  levels convert by list level but are not given a role. A typed Canadian ".1" is never converted. An imported
+  template style leaves out Word 2010's text effects (a text fill, glow, shadow, ligatures).
 
 ## Where everything else is
 

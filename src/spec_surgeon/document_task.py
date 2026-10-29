@@ -108,6 +108,7 @@ TOOL_ACTIVITY = {
     "run_analysis": "Analysing the documents", "read_analysis_result": "Reading the analysis",
     "propose_defined_terms": "Finding defined terms", "read_context_archive": "Looking back at the conversation",
     "submit_editspec": "Writing the plan", "ask_user": "", "set_aside": "Setting documents aside",
+    "read_outline": "Reading the outline",
 }
 # The tools whose input carries the model's words to the user in a top-level "message": the reply joins them to its
 # plain text (``conversation._ask_turn``, ``_spec_turn``), so the window shows them as they are written.
@@ -407,7 +408,8 @@ class DocumentTask:
         # run keeps it as what came before
         self._before_button: Optional[Dict[str, Any]] = None
         # the working set as it was before each run that delivered copies, newest last (``undo``), and the point
-        # taken at the approval that is running, kept by ``_advance_generation`` once that run delivers
+        # taken at the approval that is running, kept by ``_advance_generation`` once that run delivers (journalled
+        # while recovery checks the run's documents, so a reopened window still has it)
         self.undo_points: List[Dict[str, Any]] = []
         self._pending_undo: Optional[Dict[str, Any]] = None
         # What you've done so far: one entry per run that delivered copies, oldest first — the request (a button's
@@ -607,6 +609,7 @@ class DocumentTask:
         self.session._set_outcome()
         self.session.end_conversation()
         self._resume_recovery = None
+        self._pending_undo = self._pending_steps = None        # a run still being checked ends with the plan
         self._revision += 1
         if self.mode == "safe" or recipe_run:
             # nothing to continue without the conversation: a button press, or a saved recipe's run, is planned again
@@ -789,6 +792,7 @@ class DocumentTask:
                                     if len(self.decisions) > 1 else "")
 
     def _compile(self, log):
+        self._pending_undo = self._pending_steps = None        # a new request: no earlier approval is its run's
         self.session.replay_word_sources = list(self.word_sources)
         self._emit({"type": "status", "kind": "reading", "text": "Reading your documents…"})
         with self._conversation():
@@ -907,6 +911,7 @@ class DocumentTask:
                     moved.append(key)
                 self.working[key] = copy_path
         if not moved:
+            self._pending_undo = self._pending_steps = None       # the run is over with nothing delivered
             return
         request = self.decisions[0] if self.decisions else ""
         # a button's run only when the plan that ran is a button's (``Session.model_free``): the same words typed as a
@@ -918,7 +923,8 @@ class DocumentTask:
                           "documents": list(moved),
                           "not": {k: RUN_SET_ASIDE if k in self.todo else RUN_UNTOUCHED
                                   for k in attached if k not in moved}})
-        # what a recipe would keep of this run: the steps taken at its approval (none: it resumed after a restart)
+        # what a recipe would keep of this run: the steps taken at its approval (none: it resumed from a journal that
+        # kept none)
         steps, self._pending_steps = self._pending_steps, None
         self.run_steps[run_id] = steps or {"steps": [], "name": "", "recipe_id": "",
                                            "why_not": saved_recipes.WHY_NOT_KEPT}
@@ -927,8 +933,8 @@ class DocumentTask:
         self._running_recipe = None
         point, self._pending_undo = self._pending_undo, None
         if point is None:
-            # a run whose approval took no point (it resumed after a restart): nothing before it can be gone back to
-            # exactly, so no undo reaches past it
+            # a run whose approval took no point (it resumed from a journal that kept none): nothing before it can be
+            # gone back to exactly, so no undo reaches past it
             self.undo_points = []
         else:
             before = set(point.pop("todo_before", []))
@@ -1417,6 +1423,9 @@ class DocumentTask:
     def _take(self, chosen, log, edited=None):
         """A choice the user picked: its label is a decision, its exact words are approved wording — or, ``edited``,
         the user's own edit of them, and the draft is not."""
+        if chosen.kind == "scheme":
+            self._take_scheme(chosen, log)
+            return
         words = [edited] if edited is not None else list(chosen.words)
         self.decisions.append(chosen.label)
         self.decisions.extend(words)
@@ -1424,6 +1433,22 @@ class DocumentTask:
         self.save(in_progress=True)
         with self._conversation():
             self.session.reply(choice_id=chosen.id, render=self.render, log=log, wording=edited)
+
+    def _take_scheme(self, chosen, log):
+        """A bundled numbering scheme the user picked (schemes.py, docs/SPEC_FORMATTER_MODES_DESIGN.md N5): its file is
+        copied into the scratch folder's ``attachments/`` and attached as the template — replacing one the user
+        attached, as the choice said — and the request is planned again with the decisions so far, the pick among
+        them. The pick is a decision, never wording: nothing is added to the approved words."""
+        from . import schemes
+        scheme = (chosen.snapshot or {}).get("scheme")
+        source = schemes.scheme_file(scheme)
+        folder = Path(self.session.out_root) / "attachments" / ("scheme-" + time.strftime("%Y%m%d-%H%M%S"))
+        folder.mkdir(parents=True, exist_ok=True)
+        target = folder / source.name
+        target.write_bytes(source.read_bytes())
+        self.decisions.append(chosen.label)
+        self.attach([target], template=True)
+        self._compile(log)
 
     # ---- Safe mode ----
     def set_mode(self, mode: str, acknowledged: bool = False) -> None:
@@ -2177,9 +2202,11 @@ class DocumentTask:
         if held and s.recovery is not None:
             raise ValueError("A document cannot be set aside while files are being checked again; save the ready "
                              "copies first.")
-        if self.stage == "preview":
-            # what Undo goes back to once this run has delivered (a later save of recovered copies keeps this point),
-            # and what a recipe saved from it would keep: the plan approved now
+        if (self.stage == "preview" and s.recovery is None) or self._pending_undo is None:
+            # what Undo goes back to once this run has delivered, and what a recipe saved from it would keep: the plan
+            # approved now. A save of recovered copies keeps the ones its run's approval took — the copies that run
+            # delivered first are part of the change Undo takes off, and the plan the user approved is the step a
+            # recipe repeats; it takes its own only when no run took any (an outcome plan the user picked)
             self._pending_undo = self._undo_point()
             self._pending_steps = self._steps_now()
         # the files the preview refused, and the samples it set aside because they failed, never run
@@ -2977,6 +3004,7 @@ class DocumentTask:
             "working": dict(self.working), "generation": self.generation, "history": list(self.history),
             "applied": self.applied, "fresh": self.fresh, "todo": self.todo, "focus": self.focus,
             "undo": self.undo_points, "runs": self.runs, "run_steps": self._kept_run_steps(),
+            "pending_undo": self._pending_undo, "pending_steps": self._pending_steps,
             "recipe_run": self.session.outcome_source == "saved",
             "exported": self.exported, "export_folder": self.export_folder,
             "budget": self._budget.to_dict(), "request": self._request_budget.to_dict(), "in_progress": in_progress})
@@ -3001,6 +3029,21 @@ class DocumentTask:
                 out[key] = {"steps": entry["steps"], "name": entry.get("name", ""),
                             "recipe_id": entry.get("recipe_id", ""), "why_not": entry.get("why_not", "")}
         return out
+
+    def _restore_pending(self, data) -> None:
+        """The undo point and the recipe steps a run's approval took (``_primary``), when the journal has that run's
+        recovery to resume: its later save keeps them, so Undo and Save as a recipe reach the run as they would have
+        without the restart. Without a recovery to resume, or when the point does not read, there are none (the save
+        takes its own, as before); steps that do not read are none (the run says what it ran was not kept)."""
+        self._pending_undo = self._pending_steps = None
+        if not (self._resume_recovery or self._resume_layouts):
+            return
+        point = data.get("pending_undo")
+        before = point.get("todo_before", []) if isinstance(point, dict) else None
+        restored = self._restored_undo([point]) if isinstance(point, dict) else []
+        if restored and isinstance(before, list) and all(isinstance(k, str) for k in before):
+            self._pending_undo = {**restored[0], "todo_before": list(before)}
+            self._pending_steps = self._restored_run_steps({"run": data.get("pending_steps")}).get("run")
 
     def _restore_todo(self, data) -> None:
         """The changes each copy carries, the documents attached since the last run, the to-do list and the pass over
@@ -3207,6 +3250,7 @@ class DocumentTask:
         if not isinstance(layouts, list) or not all(isinstance(x, str) for x in layouts):
             raise ValueError("The saved conversation could not be read.")
         self._resume_layouts = list(layouts)
+        self._restore_pending(data)
         budget = data.get("budget", {})
         # Retain conservative accounting; never reset spending by reopening the app. A journal from a version with a
         # spending allowance or a call-count pause keeps its call count and spending, never its ceilings or pauses.

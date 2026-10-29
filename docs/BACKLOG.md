@@ -17,11 +17,23 @@ them was built; `git log --all -- 'docs/PLAN-*'` finds them, with their findings
 | S4 — what a run left open | Over test-set-2 (13 specifications, eight owners): the reference rules find no section number in seven of them (VA, Wisconsin, Port of Portland, Michigan layouts); a chain preview repeats the spec's summary and assumptions for each step; after an outcome-planner question the next reply still goes to that planner, not the assistant (seen again over test-set-3) | Reference rules for those layouts; a chain preview that says its summary once; the reply after an outcome-planner question goes back to the assistant |
 | Font button: documents built alike at two body sizes | **Match font to template** plans per body size (one layout per size, `recipes._font_layouts`), and a layout routes by structure pattern (`layouts.route`): two documents of one pattern whose body sizes differ cannot take two sizes in one press, so the size most of them have wins and the rest wait under Left untouched with the reason, to be pressed alone | A layout that names its documents beside its patterns (`validate_layout_plan`, `route`, the `applies_to` pin and the approval token), so one press covers them — only if the owner's runs meet the case |
 
-### Safe mode, the second round of buttons (M1–M3)
+### What the Specification Formatter's lessons found (from N1–N7's audit)
+
+Spec Surgeon was audited against the Formatter's list of common mistakes and its hardening program. Its CT_Settings and
+CT_PPr order tables match the Formatter's schema-checked ones element for element, pictures (an SVG's DOCTYPE) are kept
+out of the revision-id scan, template parts with tracked changes are refused, and revision ids start above every
+annotation id. The typed headings the reader misreads were fixed for the outline tool (N1). Left open:
+
+| Item | What the audit found | What to build |
+| --- | --- | --- |
+| X1 — Word 2010 text effects on import | `style_import` and the header template copy a template style without its extension markup (`apply_header_footer_template.strip_foreign`, mirrored by `verify/template.strip_extensions`): a `w14:textFill`, `w14:glow`, `w14:shadow` or `w14:ligatures` in the template's style is dropped, so a coloured text fill or glow does not arrive and nothing says so. The Formatter carries them, keyed by expanded name, with their namespaces declared | Carry them (both sides, the prefixes declared on the target's root, a prefix bound elsewhere refused) — or at least flag each dropped property by name |
+| X2 — the structure reader's typed headings | Safe mode's reading (`structure.analyze_structure`) still takes "1.5 times the pipe diameter shall be maintained." for an article and "PART 1 of the Contract Documents shall govern." for a PART; the outline tool holds them to a heading's shape (`outline.demote_unshaped`), Safe mode's body-formatting button does not | The same rule in the reader itself, which changes what Safe mode matches: the owner's decision |
+
+### Safe mode, the second round of buttons (M1, M3)
 
 The owner's go-ahead of 2026-10-28 built the Safe mode proposal's first round (twelve buttons, Reject beside Accept,
-and the note above the buttons). These three were proposed with it and need their forms designed before they are
-built; each is an operation the engine already has and verifies, so each is a recipe in `recipes.py`, its form, its
+and the note above the buttons). These were proposed with it and need their forms designed before they are
+built (M2, Remove specifier notes, is built: under "Waiting on the owner's machine"); each is an operation the engine already has and verifies, so each is a recipe in `recipes.py`, its form, its
 sentence and its tests, never a new operation. Every rule of the first round holds: built in code from the form, the
 one gate, no AI call, every placed word typed or read from an attached file, a capability and a tour step for any new
 control, the trust surfaces in the same change.
@@ -29,7 +41,6 @@ control, the trust surfaces in the same change.
 | Item | Operation | What to design |
 | --- | --- | --- |
 | M1 — Fill in project information | `fill_variables` | The form lists the placeholders found across the attached documents (`{{NAME}}` markers and yellow highlights), a box for each, as the template button lists a prepared template's `typed_slots`; that needs a reading step over the documents (not the template) carried by the view, like `template_kind`. Or an attached table (CSV or Excel: the names column and this project's column, chosen in the form). A placeholder with no value refuses the document (`unknown: refuse`), never left half-filled. Typed values are the sources (`compiler.placed_words` already traces `fill_variables` values) |
-| M2 — Remove specifier notes | `remove_notes` | Notes found by what the owner's masters use: the note style picked from the paragraph styles found in the documents (a field like `roles`, over the documents' styles), the opening words (Retain, Delete, Revise, Coordinate, Verify, Insert …) as a pattern the app builds from escaped literals (`ops/patterns.compile_pattern`), their colour, or Hidden. The preset words are checked on the owner's masters first, so no requirement that starts with one of them is taken; the preview's text changes and the verifier's `remove_notes` kind are the proof |
 | M3 — Make section numbers agree | `make_values_agree` | The SECTION line is the truth (`REFERENCE_FILLS["SECTION_NUMBER"]`); the places are the headers, the footers, the END OF SECTION line and the file name, each with a fixed pattern the app writes. Waits on S4: the reference rules miss the section number in some layouts, and a button that cannot read the truth sets those documents aside |
 
 ### Word as the judge of tracked changes (W1–W4)
@@ -137,6 +148,27 @@ specifications, Windows and Word, and only the owner can do them. Record what a 
   once on a machine with LibreOffice and no Word: no `soffice.bin` left running after the stop, and the next
   preview renders. Closing the window while a Safe-mode run is checking copies ends at once. A stop that does not land within 30 s is in the app log ("is still running … after Stop", with
   every thread's stack): record it here.
+- **Remove specifier notes (M2, built 2026-10-29):** in Safe mode with Word rendering, the button over a real batch
+  from each kind of master the owner starts from (MasterSpec sections and an owner's data-center masters): every note
+  paragraph is gone (the CMT or note-style editor's notes, "NOTE TO SPECIFIER", "Retain or delete …", "Retain
+  paragraph below …", "Select one of the following …") and the hidden text with it; no requirement, heading,
+  placeholder, "to be determined", copyright or confidentiality line, red or blue requirement text, tracked change or
+  comment went. Read the preview's list of removed notes against the documents for anything that is not a note, and
+  the copies for a note the button missed (a note style by another name, an opening it does not know): either is a
+  new item here, with the words or the style name. A document a note's field or section break set aside is under Left
+  untouched with the reason, and **Try these in Default mode** removes that note when asked. The copies open in Word
+  without a repair prompt. Then, in Default mode on those copies, one request cuts the placeholders and deletes the
+  copyright line.
+- **The Specification Formatter's modes in Default mode (N1–N7, built 2026-10-29;
+  [docs/SPEC_FORMATTER_MODES_DESIGN.md](SPEC_FORMATTER_MODES_DESIGN.md)):** with Word, a consultant's CSI
+  specification formatted to a real architect template: the outline from the reader and Claude's reading (its message
+  names the parts that rest on Claude's reading; a misread one is seen in the preview), the template's headers with its
+  even/odd switch ("with the template's odd and even page headers"). A CSI batch converted to CSC PageFormat with an
+  architect's Canadian template, then with the built-in scheme picked in the chat, keeping each paragraph's look; a
+  typed CSI set ("PART 1 - GENERAL", "1.01", "A.") converted the same way; a PageFormat document converted back to CSI.
+  Every copy opens in Word without a repair prompt, its numbers read as the source's counters in the new scheme, and
+  Word's indents look right where a paragraph kept its own style. Record a misread outline, a refusal that should not
+  have happened or a spending surprise as a new item above.
 - **Left untouched says what was looked for; Remove all documents on the title line (the owner's Safe-mode run of
   2026-10-29; built 2026-10-29):** the recipe "DIV 21 IFP" (Match headers and footers to template, then Find and
   replace) over the same 28 documents with the template attached, with Word: no line under Left untouched reads
@@ -172,6 +204,13 @@ specifications, Windows and Word, and only the owner can do them. Record what a 
   a request added, that it is now a Default-mode recipe (its tile leaves My recipes in Safe mode). With two windows
   open, an Edit opened in one and saved after the other renamed the recipe is refused with the reason and nothing is
   written over; `recipes.json` shows the edited steps. The editor reads well at 1280 px wide.
+- **A run recovery finishes, undone and saved whole (built 2026-10-29):** in Default mode with Word rendering over a
+  real batch, a request whose run sends a document to recovery (a check fails and the chat says it is checking the
+  files that still need work), then Create on recovery's preview: What you've done so far lists the request once, and
+  **Save as a recipe…** keeps it (no "What it ran was not kept"), the step's plan the one approved at the first
+  Create. **Undo the last change** then shows the copies from before the request, not its first copies, and the next
+  request builds on those. Again with the window closed from Task Manager while recovery's preview waits: after the
+  restart and Continue, the same holds, and the earlier changes in the list can still be undone one by one.
 - **What you've done so far (built 2026-10-29):** over a real batch in Safe mode, Remove all comments, Accept all
   tracked changes and Match headers and footers to the template, each created in turn; the list under the copies
   names the three in order, the newest marked LATEST, with "All N documents" or which documents did not get one and

@@ -44,6 +44,16 @@ export const SAFE_OPERATIONS: readonly TypicalOperation[] = [
       "white or tiny text.",
   },
   {
+    task: "Remove specifier notes before issue: editor's notes, NOTE TO SPECIFIER, Retain or delete …, hidden text",
+    buttons: ["Remove specifier notes"],
+    can: "Yes",
+    note:
+      "One press, no settings. A note is a whole paragraph in a note style (CMT, Specifier Note, Editor's Note …) or " +
+      "one that opens as a specifier's instruction; hidden text goes too. Placeholders, copyright lines, “to be " +
+      "determined”, headings, coloured text, tracked changes and comments stay. A note holding a field or a section " +
+      "break sets its file aside. Clean copies; every removed note is listed in the preview.",
+  },
+  {
     task: "Tidy the text: double spaces, quote marks, dashes, units that break across lines",
     buttons: ["Clean up spaces", "Standardize quotes and dashes", "Keep numbers with their units"],
     can: "Yes",
@@ -157,8 +167,8 @@ export const SAFE_OPERATIONS: readonly TypicalOperation[] = [
 
 export const SAFE_LIMITS =
   "Safe mode cannot change wording beyond literal replacement and the issue stamp, delete or insert articles, fix " +
-  "numbering, edit tables, remove specifier notes, fill placeholders, or do anything that needs judgment per " +
-  "document. Those are Default requests.";
+  "numbering, edit tables, remove or fill placeholders, remove copyright lines, or do anything that needs judgment " +
+  "per document. Those are Default requests.";
 
 export const DEFAULT_OPERATIONS: readonly TypicalOperation[] = [
   {
@@ -180,6 +190,15 @@ export const DEFAULT_OPERATIONS: readonly TypicalOperation[] = [
     note:
       "Size is never a reason to refuse. A text box, a field crossing the edge, or a chart in an untracked " +
       "deletion sets the file aside.",
+  },
+  {
+    task:
+      "Clean further than Safe mode's notes button: cut placeholders ([Insert …], [Verify …], [TBD]), delete copyright " +
+      "or confidentiality lines, edit “to be determined”, change or delete headings",
+    can: "Yes",
+    note:
+      "Say exactly what goes. A placeholder is cut out of its sentence and the words around it stay; a line or " +
+      "heading is deleted, or its words replaced with yours. Tracked by default.",
   },
   {
     task: "Keep or remove system-tagged paragraphs in a master, such as WET or DRY tags",

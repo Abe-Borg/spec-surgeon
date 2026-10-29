@@ -125,6 +125,7 @@ def test_packaged_worked_examples_match_the_documented_examples_exactly():
     assert catalog.worked_examples() == [json.loads(expected[name]) for name in sorted(expected)]
     pyproject = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
     assert "examples/specs/*.json" in pyproject["tool"]["setuptools"]["package-data"]["spec_surgeon"]
+    assert "examples/schemes/*.docx" in pyproject["tool"]["setuptools"]["package-data"]["spec_surgeon"]
     assert '"examples/specs/*.json"' in SPEC
     release = (ROOT / ".github/workflows/release.yml").read_text()
     assert '/tmp/spec-surgeon-release-smoke/bin/python "$GITHUB_WORKSPACE/packaging/installed_wheel_smoke.py"' in release

@@ -159,7 +159,10 @@ export const RUNTIME_CARDS: RuntimeCard[] = [
       "Your answer goes back into the same conversation. A choice that would place words shows them beneath its " +
       "button; picking it approves exactly those words — or, after Edit wording, exactly your version of them, " +
       "never the draft you replaced. A tapped suggested reply answers the question but is never " +
-      "approved wording: it was written by Claude.",
+      "approved wording: it was written by Claude. Picking a built-in numbering scheme (CSC PageFormat or CSI " +
+      "SectionFormat, offered when a conversion has no template of yours) copies that file, which ships with the " +
+      "app, into the window's scratch folder and attaches it as the template — in place of yours, as the choice " +
+      "says — and the request is planned again: the pick is a decision, never wording.",
     sent: "The same as sending a request: your answer joins the conversation's history.",
     ai: conversationModel,
     bounds: "As for a request: an answer is a request of its own for the spending check, Stop, and nothing changes in a file.",
@@ -213,6 +216,32 @@ export const RUNTIME_CARDS: RuntimeCard[] = [
     bounds:
       "One call per preview, counted toward the pause. It is advice: it can stop nothing permanently and pass " +
       "nothing. If it fails, the preview says it was unavailable.",
+  },
+  {
+    covers: ["B20"],
+    title: "Claude's reading of an outline",
+    automatic: true,
+    you: "Nothing: Claude asks for a document's outline while it plans your request, when a part of the outline it needs (the PART headings, the articles, the paragraph levels) has no style or typed shape the app can select it by.",
+    runs:
+      "The structure reader, code on your computer, reads every paragraph of the document's body first, Canadian " +
+      "PageFormat numbering included; what it places is final, except a typed PART or article number followed by " +
+      "words that read as a requirement rather than a heading, which is sent too. Only the paragraphs it could not " +
+      "place are sent, " +
+      `${F.outlineParagraphsPerCall} at a time with a few paragraphs of context around them, and Claude gives each ` +
+      "one part of the outline, or none with a reason. An answer that misses, repeats or invents a paragraph is " +
+      "asked for once more; what is still not answered stays unplaced. The plan that uses the result places no " +
+      "words: a part of the outline only chooses paragraphs, and Claude says in its message which parts rest on its " +
+      "reading, so you check them in the preview and approve them with the plan.",
+    sent:
+      `To the Anthropic API: those paragraphs' text (at most ${F.outlineTextChars} characters each) and their ` +
+      "context's, with each one's style, list number and indent, the outline above them, and the file's name. " +
+      `Nothing when the reader placed every paragraph, or when more than ${grouped(F.outlineMaxParagraphs)} are ` +
+      "left: then the reader's reading stands alone.",
+    ai: `${MODEL_NAME} (${F.model}) by default, ${F.outlineEffort} effort, one call per ${F.outlineParagraphsPerCall} paragraphs.`,
+    bounds:
+      "Inside the request that asked for it: the spending check counts its calls and Stop cuts one off. Asking " +
+      "again for the same document makes no call (the answer is kept by the file's bytes, for the conversation). " +
+      "A failed call keeps what was read and ends Claude's reading.",
   },
   {
     covers: ["B7"],

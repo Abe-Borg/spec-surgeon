@@ -906,8 +906,9 @@ class Session:
                            chips=list(getattr(turn, "chips", []) or []) if turn is not None else [])
         if turn is not None and turn.needs_user():
             # the app's choices the user does not see: a recovery target has its own question (the window numbers
-            # the candidates); an outcome plan is offered as a choice like Claude's own
-            user = [c for c in turn.choices if c.kind not in APP_CHOICE_KINDS or c.kind == "recovery_plan"]
+            # the candidates); an outcome plan, and a bundled numbering scheme (the window attaches it), are offered as
+            # choices like Claude's own
+            user = [c for c in turn.choices if c.kind not in APP_CHOICE_KINDS or c.kind in ("recovery_plan", "scheme")]
             return Outcome("question", message=turn.message, questions=list(turn.questions), choices=user,
                            chips=list(getattr(turn, "chips", []) or []))
         if self.conversation is not None:

@@ -65,7 +65,9 @@ FAILURE_EXPLANATIONS: Dict[str, Tuple[str, str]] = {
     ),
     "even-odd": (
         "Different Odd & Even Pages Setting",
-        "This document's evenAndOddHeaders setting differs from the template's.",
+        "This document's evenAndOddHeaders setting differs from the template's, and the request did not ask to take "
+        "the template's — or could not: the setting follows the template only when headers and footers both come "
+        "from it and the document has a settings part to hold it.",
     ),
     "title-page": (
         "Different First Page Setting",

@@ -229,6 +229,106 @@ def test_undo_waits_for_an_open_question_to_be_dropped(tmp_path):
     assert task.working == {}
 
 
+def fail_once(monkeypatch, failing):
+    """The next run's page comparison fails for ``failing``: the run delivers the others' copies and recovery takes it
+    up, its Create saving the copy it fixed."""
+    from spec_surgeon import batch
+    from spec_surgeon.verify.suite import CheckResult
+    original, done = batch._render_and_compare, []
+
+    def compare(result, *args, **kwargs):
+        original(result, *args, **kwargs)
+        if not done:
+            item = next(f for f in result.files if f.source == failing)
+            item.record.set(CheckResult("V6", "Page rendering", "FAIL", "Renderer stopped unexpectedly"))
+            done.append(item)
+    monkeypatch.setattr(batch, "_render_and_compare", compare)
+
+
+REPAIR = {"candidate": {"kind": "spec", "spec": SPEC}}                    # recovery's plan for the failed one
+
+
+def recovering_task(tmp_path, monkeypatch, *replies, journal=None):
+    from spec_surgeon.recovery import RecoveryOptions
+    from spec_surgeon.saved_recipes import Store
+    task = DocumentTask(Session(client=FakeClient(*replies), out_root=tmp_path / "out", visual_check=False),
+                        render=False, journal=journal, recipes=Store(tmp_path / "config" / "recipes.json"))
+    monkeypatch.setattr(task, "_recovery_options", lambda: RecoveryOptions(render=False, critic_review=False,
+                                                                          visual_review=False))
+    return task
+
+
+@pytest.mark.parametrize("reopen", [False, True])
+def test_a_run_recovery_finished_is_undone_whole_and_keeps_its_plan_for_a_recipe(tmp_path, monkeypatch, reopen):
+    # A run whose documents recovery fixed after it is one change: its approval took the undo point and the steps a
+    # recipe keeps, and recovery's Create — after a reopened window too — keeps them rather than taking its own (a
+    # point that would show the run's first copies as what came before, and steps that say nothing was kept)
+    journal = tmp_path / "conversation.json"
+    docs = [document(tmp_path / "First.docx"), document(tmp_path / "Second.docx")]
+    italic = {"candidate": {"kind": "spec", "spec": ITALIC}}
+    task = recovering_task(tmp_path, monkeypatch, plan(), plan(ITALIC, "t2"), resp(tool("submit_repair", italic)),
+                           journal=journal)
+    task.attach(docs)
+    task.perform("primary", token=task.perform("send", text=REQUEST)["token"])
+    first = {"working": dict(task.working), "results": dict(task.results), "history": list(task.history)}
+    fail_once(monkeypatch, Path(first["working"][str(docs[1])]))
+    view = task.perform("primary", token=task.perform("send", text=AGAIN)["token"])
+    assert task.session.recovery and view["stage"] == "preview" and len(task.undo_points) == 1
+    if reopen:
+        task = recovering_task(tmp_path, monkeypatch, journal=journal)
+        assert task.restore() and task._pending_undo["results"] == first["results"]
+        view = task.perform("primary", token=task.action_token())
+        assert task.session.recovery and view["stage"] == "preview"
+    task.perform("primary", token=view["token"])
+    assert task.stage == "done" and task.generation == 2 and len(task.undo_points) == 2
+    done = task._done_view()
+    assert [row["request"] for row in done] == [REQUEST, AGAIN] and all(row["why_not"] == "" for row in done)
+    record = task.save_recipe("Bold then italic", "", [row["id"] for row in done])
+    assert [step["request"] for step in record["steps"]] == [REQUEST, AGAIN]
+    assert record["steps"][1]["plan"]["ops"] == ITALIC["ops"]
+    task.undo()
+    assert task.working == first["working"] and task.history == first["history"] and task.generation == 1
+    assert task.results == first["results"]                    # the copies before the run show again, not its own
+    assert [row["request"] for row in task._done_view()] == [REQUEST]
+
+
+def test_a_reopened_window_keeps_a_runs_point_only_while_its_recovery_waits(tmp_path, monkeypatch):
+    journal = tmp_path / "conversation.json"
+    docs = [document(tmp_path / "First.docx"), document(tmp_path / "Second.docx")]
+    task = recovering_task(tmp_path, monkeypatch, plan(), resp(tool("submit_repair", REPAIR)), journal=journal)
+    task.attach(docs)
+    fail_once(monkeypatch, docs[1])
+    task.perform("primary", token=task.perform("send", text=REQUEST)["token"])
+    data = json.loads(journal.read_text(encoding="utf-8"))
+    assert data["recovery"] and data["pending_undo"]["working"] == {} and data["pending_steps"]["steps"]
+    no_recovery = {**data, "recovery": None, "pending_layouts": []}
+    journal.write_text(json.dumps(no_recovery), encoding="utf-8")
+    again = recovering_task(tmp_path, monkeypatch, journal=journal)
+    assert again.restore() and again._pending_undo is None and again._pending_steps is None
+    malformed = {**data, "pending_undo": {**data["pending_undo"], "working": ["not", "a", "map"]}}
+    journal.write_text(json.dumps(malformed), encoding="utf-8")
+    again = recovering_task(tmp_path, monkeypatch, journal=journal)
+    assert again.restore() and again._pending_undo is None and again._pending_steps is None  # nothing restored wrongly
+    lost_steps = {**data, "pending_steps": {"steps": "not a list"}}
+    journal.write_text(json.dumps(lost_steps), encoding="utf-8")
+    again = recovering_task(tmp_path, monkeypatch, journal=journal)
+    assert again.restore() and again._pending_steps is None
+    assert {k: again._pending_undo[k] for k in data["pending_undo"]} == data["pending_undo"]
+
+
+def test_a_runs_point_ends_with_the_request_it_was_taken_for(tmp_path, monkeypatch):
+    # attaching a document while recovery waits voids the plan, and the run's approval with it: no later request's
+    # save of recovered copies may take that point or those steps for its own
+    docs = [document(tmp_path / "First.docx"), document(tmp_path / "Second.docx")]
+    task = recovering_task(tmp_path, monkeypatch, plan(), resp(tool("submit_repair", REPAIR)))
+    task.attach(docs)
+    fail_once(monkeypatch, docs[1])
+    task.perform("primary", token=task.perform("send", text=REQUEST)["token"])
+    assert task.session.recovery and task._pending_undo is not None and task._pending_steps is not None
+    task.attach([document(tmp_path / "Third.docx")])
+    assert task.session.recovery is None and task._pending_undo is None and task._pending_steps is None
+
+
 def test_discard_during_a_pass_puts_its_documents_back_on_the_to_do_list(tmp_path):
     docs = [document(tmp_path / f"{n}.docx") for n in ("21 05 00", "21 13 13")]
     task = chat_task(tmp_path, plan(), plan(ITALIC, "t2"))

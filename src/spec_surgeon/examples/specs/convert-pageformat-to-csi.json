@@ -1,0 +1,41 @@
+{
+  "request": "Convert this Canadian PageFormat spec back to CSI numbering",
+  "summary": "Every paragraph numbered by the document's main PageFormat list moves onto the bundled CSI list at its own level (PART 1, 1.1, A., 1., a.) and keeps its own paragraph style; the numbers stay automatic, so no number is written into the text; every number keeps its counters.",
+  "assumptions": [
+    "with no CSI template attached, the scheme is the bundled CSI SectionFormat scheme, picked by the user in the chat and attached as the template",
+    "the numbers stay automatic Word numbering: none is typed into the text",
+    "each paragraph keeps its own style, fonts and indents (styles keep)",
+    "a whole-document numbering change is plain formatting"
+  ],
+  "questions": [],
+  "applies_to": {
+    "or": "all"
+  },
+  "mode": "formatting",
+  "ops": [
+    {
+      "op": "convert_numbering",
+      "params": {
+        "template": "../templates/CSI scheme.docx",
+        "levels": [
+          "CSIPart",
+          "CSIArticle",
+          "CSIParagraph",
+          "CSISubparagraph",
+          "CSILevel5"
+        ],
+        "styles": "keep",
+        "counters": "keep"
+      },
+      "expect": {
+        "text_diffs": 0,
+        "members_added": 0,
+        "members_removed": 0
+      }
+    }
+  ],
+  "review": {
+    "sample_files": 2,
+    "geometry_reference": "none"
+  }
+}
