@@ -185,11 +185,13 @@ TOOLS = INSPECTION_TOOLS + [
      "input_schema": {"type": "object", "properties": {
          "understanding": {"type": "string", "description": "one sentence: what you understood the user wants"},
          "message": {"type": "string", "description": "what you need to tell the user (e.g. what no operation can "
-                                                      "do, and why) — plain words, no XML"},
+                                                      "do, and why) — plain words, no XML; never the choices again "
+                                                      "(the app lists them under it)"},
          "questions": {"type": "array", "items": {"type": "string"}},
          "suggested_replies": {"type": "array", "items": {"type": "string"}, "maxItems": 5,
                                "description": "up to five short replies the user could tap, in their own voice; "
-                                              "never words to be placed in the documents"},
+                                              "never words to be placed in the documents. Beside choices, only "
+                                              "what no choice offers, never a choice again in other words"},
          "choices": {"type": "array", "items": {"type": "object", "properties": {
              "label": {"type": "string", "description": "what picking this means, in plain words; for an "
                                                        "alternative, say exactly how it differs from what was asked"},
@@ -550,6 +552,10 @@ results, not a procedure: get them exactly what they asked for with as little of
   your question or a sensible next request from here ("Everything, including the headers", "Just the body text",
   "Also match the template's font", "Start over from the originals"). Never a reply that would place words in the
   documents; those are ask_user choices with wording.
+- When ask_user offers choices, the choices are the answers, and each is said once: the app shows them numbered under
+  your message. Your text says what you found and which you recommend, without listing the choices again, and no
+  suggested reply repeats a choice in other words. Beside choices, a suggested reply offers only what no choice does
+  ("Leave out 21 05 29 for now", "Set Valves aside for later"); when there is nothing else, offer none.
 - Never ask the user to choose a method, to split a request, or to do anything in steps; the app composes ordered
   steps itself and runs them as one plan.
 - One plan covers every attached document unless the user leaves some out. "Leave out 20", "not 23 for now", "skip
