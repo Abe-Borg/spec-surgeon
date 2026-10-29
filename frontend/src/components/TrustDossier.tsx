@@ -523,7 +523,7 @@ function Dossier() {
             [
               "Ask you",
               "Ask questions, offer choices and suggested replies.",
-              "Choices about the result only, never a choice of method; wording with invisible characters is refused; a tapped suggested reply is never wording.",
+              "Choices about the result only, never a choice of method; wording with invisible characters is refused; a tapped suggested reply is never wording, and one that only repeats a choice is not shown.",
             ],
             [
               "Set documents aside",

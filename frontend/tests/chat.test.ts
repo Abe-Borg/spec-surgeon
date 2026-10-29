@@ -20,6 +20,8 @@ import {
   requestPill,
   endedLive,
   liveHasContent,
+  NOTE_PILL_CHARS,
+  noteShape,
   pauseFor,
   promptsFor,
   spentText,
@@ -304,4 +306,15 @@ test("a working line whose job ended without a message in its place folds away w
   const replied = transcript(reduce(s, { type: "event", event: { type: "message", message: message("m1", "assistant", "ok") } }));
   assert.equal(endedLive(replied, end([user, message("m1", "assistant", "ok")])), null);
   assert.equal(endedLive(withLeaving(idle, ended), idle), null);
+});
+
+test("a short app note is a pill; a long one or one of several lines is a block, never a crammed ellipse", () => {
+  assert.equal(noteShape("Preview discarded; nothing was created."), "pill");
+  assert.equal(noteShape("x".repeat(NOTE_PILL_CHARS)), "pill");
+  assert.equal(noteShape("x".repeat(NOTE_PILL_CHARS + 1)), "block");
+  assert.equal(noteShape("One line.\nAnother."), "block");
+  const custom =
+    "Claude is writing a one-off custom method for this and trying it on copies of your documents; nothing is " +
+    "created until you have seen its preview and approved it. What it is to do, in Claude’s words: “Copy the page.”";
+  assert.equal(noteShape(custom), "block");
 });

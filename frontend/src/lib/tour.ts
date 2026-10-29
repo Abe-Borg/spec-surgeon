@@ -17,7 +17,7 @@ import { TRUST_FACTS as F } from "./trustFacts.ts";
  * Bump whenever chapter or step ORDER changes: the resume record (lib/tourStorage.ts) keeps numeric indexes, and a
  * stale one would land a reload on another chapter than the one it was left at. A bump discards it.
  */
-export const TOUR_VERSION = 3;
+export const TOUR_VERSION = 4;
 
 /** The version a finished tour is recorded as (settings.json `tutorial_version`); bump it when the tour changes
  *  enough that someone who finished the old one should be invited again. */
@@ -43,7 +43,7 @@ export type TourMode = "optional" | "explanatory";
 
 /** What the view must hold for a step's control to be on screen; unmet, the step keeps its words beside the
  *  workbench and says the control is not available, never a pretend one. */
-export type TourNeeds = "samples" | "set-aside" | "action" | "results" | "left-untouched" | "todo" | "question" | "occurrences";
+export type TourNeeds = "samples" | "set-aside" | "action" | "results" | "done" | "left-untouched" | "todo" | "question" | "occurrences";
 
 export interface TourStep {
   id: string;
@@ -294,6 +294,17 @@ export const TOUR: readonly TourChapter[] = [
         title: "Copies, checked word for word",
         body:
           "These copies were really made from the practice documents by the same engine that edits yours: each from its original, each checked by an independent checker that shares no code with the editing, and delivered only because it passed. Click one to open it in Word; the folder button opens the run's folder. Originals are never written. A copy that fails a check is moved aside and never delivered. The tour marked one document with the red X before creating these, so it got no copy.",
+      },
+      {
+        id: "done-list",
+        capabilities: ["results.done"],
+        mode: "explanatory",
+        anchor: "done-list",
+        needs: "done",
+        placement: "left",
+        title: "What you've done so far",
+        body:
+          "Each button you ran since the originals is listed here, oldest first, in the words of your line in the chat (in Default and Obliterate, each request). Under each, how many of the documents attached now carry it, and why any other does not: left untouched, set aside on your to-do list, or attached later. Undo the last button takes the newest off; Start over clears the list. In Safe mode a button you already ran carries a checkmark, so there is nothing to remember. The list is kept in the saved conversation.",
       },
       {
         id: "export",
@@ -578,6 +589,8 @@ export function stepNeedsMet(step: Pick<TourStep, "needs">, view: View): boolean
       return view.action.kind !== "none" && !!view.action.token;
     case "results":
       return view.results.length > 0;
+    case "done":
+      return (view.working?.done ?? []).length > 0;
     case "left-untouched":
       return (view.left_untouched ?? []).length > 0;
     case "todo":

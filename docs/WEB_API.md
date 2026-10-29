@@ -89,7 +89,9 @@ Rules the page relies on:
   `question`, under the latest assistant message. Choices with `words` show the words beneath the button.
   Each of the model's words shows once: the assistant message carries its reply without the questions, and
   `questions` never repeats that message (a reply with nothing to pick, plain words or a failure, is in `messages`
-  only; `questions` carries it only when the chat did not say it, as a recovery turn's). A reply that is an answer
+  only; `questions` carries it only when the chat did not say it, as a recovery turn's), and `chips` never repeat a
+  choice: a suggested reply that only says a choice again in other words is dropped (`conversation.restates`; one
+  that names another document or number, says the opposite or puts the same words to other targets, stays). A reply that is an answer
   with nothing pending (words alone: no question, choice, suggested reply, plan or custom method, and no plan the gate
   refused on the way) ends the request: the stage is `done` when copies exist, else `empty`, `action.kind` is `none`,
   and the next `send` is a new request, told the exchange as context (docs/CONVERSATIONAL_DESKTOP.md, "When a request
@@ -233,6 +235,14 @@ Rules the page relies on:
   it." while a conversation's request is open); "" when it can. The page shows **Undo the last button** (Safe mode) or
   **Undo the last change** (Default, Obliterate) beside Start over while `undo` is set, disabled with `undo_blocked`
   as its reason.
+- `working.done` is **What you've done so far** (`DocumentTask.runs`, `_done_view`), in every mode: one entry per run
+  that delivered copies, oldest first, `{"request", "recipe", "documents", "of", "not"}` — the button's sentence or
+  the request the user typed; the Safe-mode button pressed (a recipe id, `""` for a request); how many of the
+  documents attached now carry it, of how many; and each other document attached now as `{"name", "why"}`, `why`
+  one of `left untouched` (the run left it as it was), `set aside` (it waited on the to-do list then) or `attached
+  later` (attached after the run, or removed and attached again). `POST /api/undo` takes the newest off; Start over
+  and removing the last working copy clear it; the journal keeps it. The page lists it under the copies, the newest
+  marked LATEST, and gives a Safe-mode button a checkmark while an entry names it.
 - `discard` is what `POST /api/discard` would withdraw now: `preview` (a preview waiting for approval, in every
   mode), `request` (Default and Obliterate: a request still open with nothing to approve — Claude's question, a reply
   to continue, a custom method being written, a pause at the spending check), or `""` (nothing, work runs, or recovery
