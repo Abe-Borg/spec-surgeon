@@ -369,9 +369,11 @@ export const RUNTIME_CARDS: RuntimeCard[] = [
     runs:
       "Saving keeps what the window noted of each change you ticked when you approved it: a button and its form, or " +
       "your request with the plan you approved, the sentences it was shown with and the words it places. It writes " +
-      "recipes.json beside settings.json. A run builds every step from the documents attached now (a button from its " +
+      "recipes.json beside settings.json, locking recipes.json.lock while it does so two windows never write over " +
+      "each other's saves. A run builds every step from the documents attached now (a button from its " +
       "form; a plan as approved, reading the template, picture or table attached now), passes each through the gate " +
-      "every plan passes, puts them in your order into one plan, passes that through the gate again and makes the " +
+      "every plan passes (a step that changes what an earlier one made is planned on the copies the earlier steps " +
+      "make), puts them in your order into one plan, passes that through the gate again and makes the " +
       "ordinary preview. Create runs it as one checked run, and Undo takes it off as one.",
     sent: "Nothing. Saving, running and managing a recipe never reach the network.",
     ai: NONE,

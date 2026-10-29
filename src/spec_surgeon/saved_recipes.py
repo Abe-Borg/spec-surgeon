@@ -26,7 +26,8 @@ with fewer guardrails (``runs_in``): Safe recipes everywhere, Default ones in De
 Obliterate only. Default recipes are never offered in Safe mode, whose plans are its own buttons'.
 
 Kept in ``recipes.json`` beside ``settings.json`` (``settings.config_dir``): plain JSON the user can read and delete,
-written atomically; read again before every change, so two windows do not undo each other's saves. Never kept: a
+written atomically; each change reads the file again and writes it under ``recipes.json.lock``, which every window's
+change takes (the OS releases it when a window ends), so two windows do not undo each other's saves. Never kept: a
 document, a template, a picture or a table — only their kind and name — and nothing about the conversation beyond the
 user's own words and the approved plan.
 """
@@ -35,7 +36,9 @@ from __future__ import annotations
 import copy
 import json
 import os
+import time
 import uuid
+from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -50,6 +53,7 @@ MAX_NAME = 120                 # characters in a recipe's name
 MAX_NOTE = 300                 # characters in what it is for
 MAX_STEPS = 40                 # steps in one recipe
 MAX_RECIPES = 500              # recipes kept
+LOCK_WAIT_S = 2.0              # seconds a change waits while another window changes the file
 
 # Why a run cannot be saved (``DocumentTask``'s run entries, shown in the save dialog beside the run)
 WHY_CUSTOM = ("Claude wrote a custom method for it. A recipe keeps only plans the engine runs as they are written; "
@@ -289,8 +293,9 @@ def note_of(value: Any) -> str:
 
 class Store:
     """The recipes in ``recipes.json``. Read again whenever the file changed; every change reads, changes and writes
-    it atomically. An unreadable file is renamed ``recipes.json.bad`` (kept for inspection) and the list starts empty;
-    a recipe that does not read is left out of the list and kept in the file until a change rewrites it."""
+    it atomically under one lock every window takes (``recipes.json.lock``, ``_changing``). An unreadable file is
+    renamed ``recipes.json.bad`` (kept for inspection) and the list starts empty; a recipe that does not read is left
+    out of the list and kept in the file until a change rewrites it."""
 
     def __init__(self, path: Optional[Path] = None):
         if path is None:
@@ -307,17 +312,21 @@ class Store:
             return None
         return (st.st_mtime_ns, st.st_size)
 
-    def _read(self) -> List[Dict[str, Any]]:
+    def _read(self, fresh: bool = False) -> List[Dict[str, Any]]:
         stamp = self._stamp()
-        if stamp is not None and stamp == self._seen:
+        if stamp is not None and stamp == self._seen and not fresh:
             return self._recipes
         recipes: List[Dict[str, Any]] = []
         if stamp is not None:
             try:
                 text = self.path.read_text(encoding="utf-8")
-            except OSError:
+            except OSError as e:
                 # held by another program for a moment (an antivirus scan, a sync client): the list as last read, and
-                # the file is read again next time; never set aside for a read that failed
+                # the file is read again next time; never set aside for a read that failed. A change (``fresh``) is
+                # refused instead: the list as last read may lack what another window saved since
+                if fresh:
+                    raise RecipeRunError(f"The recipes could not be read from {self.path.parent} "
+                                         f"({e.strerror or e}); try again in a moment.") from e
                 return self._recipes
             try:
                 data = json.loads(text)
@@ -344,6 +353,27 @@ class Store:
             raise RecipeRunError(f"The recipes could not be saved in {self.path.parent} ({e.strerror or e}).") from e
         self._recipes, self._seen = recipes, self._stamp()
 
+    @contextmanager
+    def _changing(self) -> Iterator[List[Dict[str, Any]]]:
+        """The recipes as the file holds them now, to change and ``_write``, under the lock every window's changes take
+        (released by the OS when a window ends, ``recovery_state.session_lock``): a save another window makes meanwhile
+        waits for this one and then reads it, so neither is written over."""
+        from .recovery_state import session_lock
+        deadline = time.monotonic() + LOCK_WAIT_S
+        with ExitStack() as held:
+            while True:
+                try:
+                    held.enter_context(session_lock(self.path.parent, create=True, filename=self.path.name + ".lock"))
+                    break
+                except OSError as e:
+                    raise RecipeRunError(f"The recipes could not be saved in {self.path.parent} "
+                                         f"({e.strerror or e}).") from e
+                except ValueError:
+                    if time.monotonic() >= deadline:
+                        raise RecipeRunError("Another window is changing the recipes; try again in a moment.") from None
+                    time.sleep(0.02)
+            yield copy.deepcopy(self._read(fresh=True))
+
     def all(self) -> List[Dict[str, Any]]:
         return copy.deepcopy(self._read())
 
@@ -354,12 +384,12 @@ class Store:
         raise RecipeRunError("There is no such recipe; it may have been deleted in another window.")
 
     def _change(self, recipe_id: str, change) -> Dict[str, Any]:
-        recipes = copy.deepcopy(self._read())
-        for i, r in enumerate(recipes):
-            if r["id"] == recipe_id:
-                recipes[i] = change(r)
-                self._write(recipes)
-                return copy.deepcopy(recipes[i])
+        with self._changing() as recipes:
+            for i, r in enumerate(recipes):
+                if r["id"] == recipe_id:
+                    recipes[i] = change(r)
+                    self._write(recipes)
+                    return copy.deepcopy(recipes[i])
         raise RecipeRunError("There is no such recipe; it may have been deleted in another window.")
 
     def add(self, name: str, note: str, steps: List[Dict[str, Any]]) -> Dict[str, Any]:
@@ -367,13 +397,13 @@ class Store:
             raise RecipeRunError("Tick at least one change to save.")
         if len(steps) > MAX_STEPS:
             raise RecipeRunError(f"A recipe holds at most {MAX_STEPS} steps.")
-        recipes = copy.deepcopy(self._read())
-        if len(recipes) >= MAX_RECIPES:
-            raise RecipeRunError(f"You have {MAX_RECIPES} recipes; delete one before saving another.")
         record = _clean({"id": new_id(), "name": name_of(name), "note": note_of(note), "saved": now_text(),
                          "last_run": "", "steps": copy.deepcopy(steps)})
-        recipes.append(record)
-        self._write(recipes)
+        with self._changing() as recipes:
+            if len(recipes) >= MAX_RECIPES:
+                raise RecipeRunError(f"You have {MAX_RECIPES} recipes; delete one before saving another.")
+            recipes.append(record)
+            self._write(recipes)
         return copy.deepcopy(record)
 
     def rename(self, recipe_id: str, name: str, note: Optional[str] = None) -> Dict[str, Any]:
@@ -389,11 +419,11 @@ class Store:
         return self.add(copy_name, original.get("note", ""), original["steps"])
 
     def delete(self, recipe_id: str) -> None:
-        recipes = copy.deepcopy(self._read())
-        kept = [r for r in recipes if r["id"] != recipe_id]
-        if len(kept) == len(recipes):
-            raise RecipeRunError("There is no such recipe; it may have been deleted in another window.")
-        self._write(kept)
+        with self._changing() as recipes:
+            kept = [r for r in recipes if r["id"] != recipe_id]
+            if len(kept) == len(recipes):
+                raise RecipeRunError("There is no such recipe; it may have been deleted in another window.")
+            self._write(kept)
 
     def update_inputs(self, recipe_id: str, inputs: Sequence[Any]) -> Dict[str, Any]:
         """A Safe recipe's buttons take the forms the run form holds (``Save these changes to the recipe``): one entry
@@ -610,11 +640,33 @@ def combine(outcomes: Sequence[Tuple[Any, str, str]], batch, name: str) -> Tuple
     return {"kind": "layouts", "request": name, "summary": name, "assumptions": [], "layouts": layouts}, left
 
 
+def _gate_step(plan: Any, own: List[str], named: Tuple[str, str], earlier: Sequence[Tuple[Any, str, str]], batch,
+               name: str, sources: Sequence[str], *, leave_out, unguarded: bool, shown: Sequence[str]
+               ) -> Tuple[Any, List[str]]:
+    """One step through the gate, on the documents as they are, its placed words traced to its own words (``own``).
+    A step that plans on none of them (``PLANS_ON_NONE``: its words and attachments already passed) is planned again as
+    the stage after the ``earlier`` steps, on the copies they make — a step that changes what an earlier one makes, as
+    the run it was saved from did; it is then kept as it is, and the recipe's one plan is gated again whole."""
+    from . import compiler
+    out = [Path(p) for p in leave_out]
+    gated, errors = compiler.compose_submission(plan, batch, own, leave_out=out, unguarded=unguarded, shown=shown)
+    if not (errors and earlier and errors[0].startswith(compiler.PLANS_ON_NONE)):
+        return gated, errors
+    after, _ = combine([*earlier, (plan, *named)], batch, name)
+    if after is None:
+        return gated, errors
+    _, later = compiler.compose_submission(after, batch, [*sources, *own], leave_out=out, unguarded=unguarded,
+                                           shown=shown)
+    return (plan, []) if not later else (gated, later)
+
+
 def build_run(record: Dict[str, Any], chosen: Sequence[Tuple[int, Dict[str, Any]]], ctx, *,
               unguarded: bool = False) -> RunBuild:
     """Every kept step built from the documents attached now (``recipes.Context``), each through the gate on its own
     (as its button or its request would be), composed in order (``combine``) and through the gate again as the one plan
-    the preview shows. Raises ``RecipeRunError`` naming the step that cannot be used."""
+    the preview shows. A step that plans on none of the documents as they are (it changes what an earlier step makes:
+    words an earlier step placed) is planned as the stage after the earlier steps, on the copies they make, as the run
+    it was saved from was (``_gate_step``). Raises ``RecipeRunError`` naming the step that cannot be used."""
     from . import compiler, recipes
     from .layouts import is_layout_plan
     name = record["name"]
@@ -643,9 +695,9 @@ def build_run(record: Dict[str, Any], chosen: Sequence[Tuple[int, Dict[str, Any]
                 if plan is None:
                     raise RecipeRunError(f"Step {n}, {recipe.label}: none of the documents can take it as they are.")
             else:
-                plan, errors = compiler.compose_submission(built.spec, batch, [built.request, *built.sources],
-                                                           leave_out=[Path(p) for p in built.left_out],
-                                                           unguarded=unguarded)
+                plan, errors = _gate_step(built.spec, [built.request, *built.sources], (recipe.label, built.request),
+                                          outcomes, batch, name, sources, leave_out=built.left_out,
+                                          unguarded=unguarded, shown=())
             if errors:
                 raise RecipeRunError(f"Step {n}, {recipe.label}, cannot be used on these documents: "
                                      + "; ".join(errors[:3]))
@@ -670,9 +722,9 @@ def build_run(record: Dict[str, Any], chosen: Sequence[Tuple[int, Dict[str, Any]
                             left_out.setdefault(str(Path(path).resolve()),
                                                 f"Not changed: step {n} was planned for documents built differently, "
                                                 f"and this one is not built like them.")
-            plan, errors = compiler.compose_submission(plan, batch, [step["request"], *step.get("places", [])],
-                                                       leave_out=[Path(p) for p in left_out], unguarded=unguarded,
-                                                       shown=shown)
+            plan, errors = _gate_step(plan, [step["request"], *step.get("places", [])],
+                                      (_short(step["request"]) or f"Step {n}", step["request"]), outcomes, batch,
+                                      name, sources, leave_out=left_out, unguarded=unguarded, shown=shown)
             if errors:
                 raise RecipeRunError(f"Step {n} cannot be used on these documents: " + "; ".join(errors[:3]))
             outcomes.append((plan, _short(step["request"]) or f"Step {n}", step["request"]))

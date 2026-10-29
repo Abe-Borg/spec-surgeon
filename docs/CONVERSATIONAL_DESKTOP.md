@@ -108,7 +108,8 @@ words the gate traced when it was approved) and the kind and name of each file i
 steps again. A run a recipe cannot keep says why in the dialog and cannot be ticked: a custom method (not a plan the
 engine runs as written), a plan bound to particular documents (bindings, typed or bound slot fills), capitals approved
 occurrence by occurrence. The recipes are kept in `recipes.json` beside `settings.json` (`saved_recipes.Store`: plain
-JSON, read again before every change so two windows never undo each other's saves, written atomically; an unreadable
+JSON, each change read, made and written atomically under `recipes.json.lock`, which every window takes and the OS
+releases when a window ends, so two windows never undo each other's saves; an unreadable
 file is renamed `recipes.json.bad`). A recipe keeps no document, template, picture or table.
 
 A recipe belongs to the mode of its steps (`saved_recipes.recipe_mode`): only buttons, Safe; a plan, Default; a plan
@@ -124,7 +125,9 @@ button step's form, for this run) and **Run** (untick to skip a step this time);
 keeps a changed form. **Preview** runs `saved_recipes.build_run` (`DocumentTask._saved_recipe`): every kept step built
 from the documents attached now — a button by `recipes.build` from its form, a plan as approved with the template,
 picture or table it reads mapped onto the one attached now (`remap`; the owner's decision: a recipe uses what is
-attached when it runs) — each through the one gate on its own, then composed in the user's order into ONE plan
+attached when it runs) — each through the one gate on its own (a step that plans on none of the documents as they
+are, because it changes what an earlier step makes, is planned as the stage after the earlier steps, its own words
+still traced to its own: `_gate_step`), then composed in the user's order into ONE plan
 (`combine`: a chain whose stages are the steps; when a step plans per layout, a plan per layout whose layouts are each
 a chain, a structure pattern a layout step does not cover left out with why) that passes the gate again. One preview
 shows the pages after every step; one Create runs it as one checked run (`Session.model_free`: no visual check, no

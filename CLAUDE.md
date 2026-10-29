@@ -212,7 +212,8 @@ jobs). Details: `docs/CONVERSATIONAL_DESKTOP.md`.
     body formatting: one plan per document from its own structure, one layout per agreeing pattern, each through the
     gate; what it cannot match is left out with the reason, `Session.left_out_reasons`).
   - `saved_recipes.py` — saved recipes: the runs of What you've done so far kept under a name (`Store`,
-    `config_dir()\recipes.json`, read again before every change, written atomically). A step is a Safe-mode button and
+    `config_dir()\recipes.json`, each change read, made and written atomically under `recipes.json.lock`, which every
+    window takes). A step is a Safe-mode button and
     its form, or the user's words and the plan they approved (`portable_plan`: a custom method, bindings, typed or bound
     slot fills and per-occurrence capitalisation are refused with the reason; unticked occurrences dropped), with the
     words it places (`compiler.placed_words` at approval). Taken at approval (`DocumentTask._steps_now` → `run_steps`,

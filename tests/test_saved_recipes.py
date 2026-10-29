@@ -6,9 +6,11 @@ fewer guardrails; the window's journal keeps what each run would save."""
 from __future__ import annotations
 
 import json
+import threading
 from pathlib import Path
 
 import pytest
+from docx import Document
 
 from fake_claude import FakeClient, resp, tool
 from make_fixtures import build
@@ -17,6 +19,7 @@ from test_recipes import font_fixtures, no_ai
 from spec_surgeon import layouts, saved_recipes
 from spec_surgeon.document_task import DocumentTask
 from spec_surgeon.gui import Session
+from spec_surgeon.recovery_state import session_lock
 from spec_surgeon.saved_recipes import RecipeRunError, Store
 
 TITLE = {"pattern": "SECTION {number} - {title}"}
@@ -88,6 +91,22 @@ def test_two_windows_read_each_others_saves_before_they_change_the_file(store):
     store.add("First", "", [STEP])
     other.add("Second", "", [STEP])                   # read again before writing: the first window's save survives
     assert [r["name"] for r in store.all()] == ["First", "Second"]
+
+
+def test_a_save_another_window_makes_mid_change_waits_for_the_lock_and_neither_is_lost(store):
+    other, write, saving = Store(store.path), store._write, []
+
+    def mid_change(recipes):
+        if not saving:                            # the other window saves between this one's read and its write
+            saving.append(threading.Thread(target=other.add, args=("Second", "", [STEP])))
+            saving[0].start()
+            saving[0].join(0.3)
+            assert saving[0].is_alive()           # it waits for the lock instead of writing first
+        write(recipes)
+    store._write = mid_change
+    store.add("First", "", [STEP])
+    saving[0].join(5)
+    assert [r["name"] for r in Store(store.path).all()] == ["First", "Second"]
 
 
 def test_an_unreadable_file_is_kept_aside_and_a_recipe_that_does_not_read_is_skipped(store):
@@ -296,6 +315,41 @@ def test_requests_saved_as_a_recipe_run_again_with_no_ai_call_and_a_document_tha
     assert run["name"] == "Bold and retain" and [s["text"] for s in run["steps"]] == [REQUEST, WORDS]
 
 
+def test_a_step_that_changes_what_an_earlier_step_made_is_planned_on_the_copies_that_step_makes(tmp_path, store):
+    """Runs that built on each other in the window are saved together: the second step finds words only the first one
+    places, so it plans on no original and is planned as the step after the first, as the run that made it was."""
+    again = "Replace “Retain this” with “Hold this”"
+    then = {"request": again, "summary": "Replace the words again", "mode": "untracked",
+            "ops": [{"op": "replace_text", "select": {"scope": ["document"]},
+                     "params": {"find": "Retain this", "replace": "Hold this", "tracked": False}}]}
+    record = store.add("Retain, then hold", "", [saved_recipes.plan_step(WORDS, REPLACE, [], False),
+                                                 saved_recipes.plan_step(again, then, [], False)])
+    task = chat(tmp_path, store)
+    spec = document(tmp_path / "Spec.docx")
+    task.attach([spec])
+    view = task.perform("saved_recipe", recipe=record["id"], steps=None)
+    assert view["stage"] == "preview", task.messages[-1]["text"]
+    view = task.perform("primary", token=view["token"])
+    assert view["stage"] == "done" and task._budget.calls == 0
+    assert Document(task.results[str(spec)]).paragraphs[2].text == "Hold this technical wording intact."
+
+    pairs = [{"find": "Keep this", "replace": "Retain this"}], [{"find": "Retain this", "replace": "Hold this"}]
+    buttons = store.add("Two passes", "", [saved_recipes.button_step("find_replace", {"pairs": p}, "") for p in pairs])
+    task = safe(tmp_path, store, name="out3")      # Safe mode's find and replace takes a pair it finds nowhere; its
+    spec = document(tmp_path / "c" / "Spec.docx")  # passes still run in the recipe's order
+    task.attach([spec])
+    view = task.perform("saved_recipe", recipe=buttons["id"], steps=None)
+    assert view["stage"] == "preview", task.messages[-1]["text"]
+    task.perform("primary", token=view["token"])
+    assert Document(task.results[str(spec)]).paragraphs[2].text == "Hold this technical wording intact."
+
+    alone = store.add("Hold only", "", [saved_recipes.plan_step(again, then, [], False)])
+    task = chat(tmp_path, store, name="out2")
+    task.attach([document(tmp_path / "b" / "Spec.docx")])
+    task.perform("saved_recipe", recipe=alone["id"], steps=None)          # no earlier step: refused as before
+    assert task.stage == "empty" and "Step 1 cannot be used on these documents" in task.messages[-1]["text"]
+
+
 def test_a_default_recipe_waits_for_an_open_request_and_is_never_handed_to_claude(tmp_path, store):
     record = store.add("Words", "", [saved_recipes.plan_step(WORDS, REPLACE, [], False)])
     task = chat(tmp_path, store, resp(tool("ask_user", {"questions": ["Which title should change?"]})))
@@ -435,9 +489,16 @@ def test_a_file_held_by_another_program_is_never_set_aside_and_a_failed_write_is
         raise PermissionError(13, "The process cannot access the file")
     monkeypatch.setattr(Path, "read_text", locked)
     assert held.all() == []                                       # nothing read yet: nothing shown, nothing moved
+    with pytest.raises(RecipeRunError, match="could not be read"):
+        held.add("Another", "", [STEP])                           # a change never writes the list as last read
     monkeypatch.undo()
     assert [r["id"] for r in held.all()] == [record["id"]] and store.path.is_file()
     assert not store.path.with_name("recipes.json.bad").exists()
+    monkeypatch.setattr(saved_recipes, "LOCK_WAIT_S", 0.05)
+    with session_lock(store.path.parent, filename="recipes.json.lock"):    # another window mid-change
+        with pytest.raises(RecipeRunError, match="Another window is changing the recipes"):
+            held.add("Another", "", [STEP])
     monkeypatch.setattr("os.replace", locked)
     with pytest.raises(RecipeRunError, match="could not be saved"):
         held.add("Another", "", [STEP])
+    assert [r["name"] for r in Store(store.path).all()] == ["Kept"]
