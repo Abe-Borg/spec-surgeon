@@ -74,11 +74,12 @@ def test_every_button_is_in_a_group_with_a_form_the_panel_can_render():
                 assert f["default"] in {o["value"] for o in f["options"]}
     assert seen == set(recipes.BY_ID)
     # the owner's list (2026-10-23): first set and second set, nothing dropped back in; and the body button; and the
-    # third set (2026-10-28: N1–N12 of the Safe mode proposal, with Accept widened to reject)
+    # third set (2026-10-28: N1–N12 of the Safe mode proposal, with Accept widened to reject); Save clean PDFs left
+    # for the top bar's Export → PDF (Clean), in every mode (2026-10-29)
     assert seen == {"headers_footers_template", "remove_headers_footers", "watermark", "swap_logo", "font_template",
                     "find_replace", "accept_changes", "remove_comments", "remove_highlight", "remove_hidden_text",
                     "remove_empty_paragraphs", "name_files", "title_property", "track_changes_off", "body_formatting",
-                    "clean_pdf", "set_font", "page_setup", "issue_stamp", "end_of_section", "nonbreaking_spaces",
+                    "set_font", "page_setup", "issue_stamp", "end_of_section", "nonbreaking_spaces",
                     "clean_spaces", "quotes_dashes", "remove_hyperlinks", "freeze_fields", "remove_unused_styles",
                     "author_company", "proofing_language"}
 

@@ -16,10 +16,12 @@ import {
   openTarget,
   pageCount,
   parentFolder,
-  pdfFolder,
   planHasContent,
   referencesTitle,
   copiesNote,
+  EXPORT_CHOICES,
+  exportBlocked,
+  exportChoiceBlocked,
   exportLabel,
   exportTip,
   runFolder,
@@ -165,19 +167,49 @@ test("the Export button says how many copies are not saved yet, and its hover te
   assert.equal(exportLabel({ export: { folder: "", unsaved: 2, copies: 3 } }), "Export · 2 unsaved");
   assert.equal(exportTip({ export: { folder: "", unsaved: 0, copies: 0 } }, true), "Finish or stop the current work first");
   assert.match(exportTip({ export: { folder: "", unsaved: 0, copies: 0 } }, false), /^Nothing to save yet/);
+  const head = "Save the edited copies to a folder you choose: as Word with tracked changes on or off, or as clean PDFs.";
   assert.equal(
     exportTip({ export: { folder: "", unsaved: 1, copies: 1 } }, false),
-    "Save the edited copies to a folder you choose. 1 of 1 copy is not saved yet, and only a saved copy survives closing the window.",
+    `${head} 1 of 1 copy is not saved yet as Word with their tracked changes, and only such a saved copy survives closing the window.`,
   );
   assert.equal(
     exportTip({ export: { folder: "", unsaved: 2, copies: 3 } }, false),
-    "Save the edited copies to a folder you choose. 2 of 3 copies are not saved yet, and only a saved copy survives closing the window.",
+    `${head} 2 of 3 copies are not saved yet as Word with their tracked changes, and only such a saved copy survives closing the window.`,
   );
-  assert.equal(
-    exportTip({ export: { folder: "C:/Saved", unsaved: 0, copies: 3 } }, false),
-    "Save the edited copies to a folder you choose. All 3 copies are saved to C:/Saved.",
+  assert.equal(exportTip({ export: { folder: "C:/Saved", unsaved: 0, copies: 3 } }, false), `${head} All 3 copies are saved to C:/Saved.`);
+  assert.equal(exportTip({ export: { folder: "", unsaved: 0, copies: 1 } }, false), `${head} All 1 copy is saved.`);
+  assert.match(exportTip({ export: { folder: "", unsaved: 1, copies: 1 }, tutorial: { active: true } as never }, false), /^Held still during the tour/);
+});
+
+test("Export opens its menu whenever the window lists copies and no work runs; the tour holds it still", () => {
+  const copies = (n: number) => ({ export: { folder: "", unsaved: n, copies: n } });
+  assert.equal(exportBlocked(copies(2), false), "");
+  assert.equal(exportBlocked(copies(2), true), "Finish or stop the current work first");
+  assert.match(exportBlocked(copies(0), false), /^Nothing to save yet/);
+  assert.match(exportBlocked({ ...copies(2), tutorial: { active: true } as never }, false), /^Held still during the tour/);
+  // an older server that says nothing about Export: nothing to save
+  assert.match(exportBlocked({ export: undefined as never }, false), /^Nothing to save yet/);
+});
+
+test("the Export menu offers the owner's three choices, in order, and PDF (Clean) waits for a program that makes PDFs", () => {
+  assert.deepEqual(
+    EXPORT_CHOICES.map((c) => [c.kind, c.label]),
+    [
+      ["word", "Word (Tracked Changes ON)"],
+      ["accepted", "Word (Tracked Changes OFF)"],
+      ["pdf", "PDF (Clean)"],
+    ],
   );
-  assert.equal(exportTip({ export: { folder: "", unsaved: 0, copies: 1 } }, false), "Save the edited copies to a folder you choose. All 1 copy is saved.");
+  for (const c of EXPORT_CHOICES) assert.ok(c.detail.trim().endsWith("."), c.kind);
+  assert.match(EXPORT_CHOICES[1].detail, /Comments stay/);
+  const none = { pdf: { available: false, renderer: "", reason: "Saving PDFs needs Microsoft Word or LibreOffice on this computer, and neither was found." } };
+  assert.equal(exportChoiceBlocked("pdf", none), none.pdf.reason);
+  assert.match(exportChoiceBlocked("pdf", { pdf: { available: false, renderer: "", reason: "" } }), /Microsoft Word or LibreOffice/);
+  assert.equal(exportChoiceBlocked("word", none), "");
+  assert.equal(exportChoiceBlocked("accepted", none), "");
+  assert.equal(exportChoiceBlocked("pdf", { pdf: { available: true, renderer: "LibreOffice", reason: "" } }), "");
+  // a server that says nothing about PDFs never holds the choice back; it answers at the choice
+  assert.equal(exportChoiceBlocked("pdf", {}), "");
 });
 
 test("the copies note says where they were saved, or that they are kept only in the scratch folder", () => {
@@ -190,7 +222,7 @@ test("the copies note says where they were saved, or that they are kept only in 
     saved_file_changed,
   });
   assert.equal(copiesNote({ results: [] }), "");
-  assert.match(copiesNote({ results: [copy("a.docx")] }), /^Not saved yet: Export, in the top bar, saves them to a folder you choose\. Until then they live only in this window's scratch folder/);
+  assert.match(copiesNote({ results: [copy("a.docx")] }), /^Not saved yet: Export, in the top bar, saves them to a folder you choose, as Word with tracked changes on or off or as clean PDFs\. Until saved as Word with their tracked changes they live only in this window's scratch folder/);
   assert.match(copiesNote({ results: [copy("a.docx", "C:/Saved/a.docx"), copy("b.docx")] }), /^1 of 2 not saved yet: Export/);
   assert.equal(copiesNote({ results: [copy("a.docx", "C:/Saved/a.docx"), copy("b.docx", "C:/Saved/b.docx")] }), "Saved to C:/Saved.");
   // a copy changed since it was saved (opened from the window and edited in Word) is not saved as it is now
@@ -238,11 +270,4 @@ test("a copy's link opens the saved file while it holds the copy's bytes, else t
   assert.equal(notSavedTip(copy("C:/Saved/a.docx", false, true)), "The file saved to C:/Saved/a.docx no longer holds this copy (changed or replaced since Export). Export saves it again, beside that file.");
 });
 
-test("the PDF folder is the parent of the first clean PDF", () => {
-  assert.equal(pdfFolder({ pdfs: [] }), "");
-  assert.equal(pdfFolder({}), "");
-  assert.equal(
-    pdfFolder({ pdfs: [{ source: "C:/Specs/a.docx", output: "C:\\runs\\2\\run\\pdf\\a.pdf", name: "a.pdf" }] }),
-    "C:\\runs\\2\\run\\pdf",
-  );
-});
+

@@ -298,13 +298,12 @@ export const RUNTIME_CARDS: RuntimeCard[] = [
       "copy; its results are kept beside it.",
   },
   {
-    covers: ["A23", "A24", "A25", "A29", "A30", "A32", "A37"],
-    title: "Safe mode: choosing a mode, pressing a button, saving clean PDFs, changing your mind (in every mode), handing documents over",
+    covers: ["A23", "A24", "A25", "A29", "A30", "A37"],
+    title: "Safe mode: choosing a mode, pressing a button, changing your mind (in every mode), handing documents over",
     you:
       "Choose Safe or Default in the top bar; in Safe mode, read or Hide the note above the buttons (What is Safe " +
       "mode? opens it again), and use its Add a Claude API key or Switch to Default mode; pick a button, fill in " +
       "its form and press Preview; " +
-      "Save clean PDFs, then Save clean PDFs beside its preview; " +
       "Discard preview, All buttons or Clear form; Undo the last button; Try these in Default mode beside what a " +
       "button left untouched. In Default and Obliterate: Discard preview, Drop this request and Undo the last change.",
     runs:
@@ -314,11 +313,7 @@ export const RUNTIME_CARDS: RuntimeCard[] = [
       "Safe-mode form in this window; an unsent message holds Create only in a conversation mode. A button builds its plan in code from your form " +
       "and your attachments; the plan passes the same gate as a conversation's (its settings, the files it reads, " +
       "every word it would place traced to what you typed) and the ordinary preview runs, without Claude's visual " +
-      "check. Create edited copies then makes and checks the copies as always. Save clean PDFs plans two steps, " +
-      "every comment removed and then every tracked change accepted; its run makes and checks those clean copies " +
-      "as always, then Word (a new, invisible instance) or LibreOffice turns each copy that passed into a PDF, " +
-      "through the render cache, and the app checks each PDF opens, has pages and carries no note. The PDFs are " +
-      "the result: the Word documents the next button works on keep their comments and tracked changes. Discard preview (or All buttons " +
+      "check. Create edited copies then makes and checks the copies as always. Discard preview (or All buttons " +
       "while a preview waits) withdraws it: nothing is created, and the window shows the copies it showed before. " +
       "Each button's form keeps what you typed until Clear form, New conversation or Start over. Undo the last " +
       "button makes the copies from before that button the ones the next button builds on again (your originals, " +
@@ -332,10 +327,7 @@ export const RUNTIME_CARDS: RuntimeCard[] = [
     ai: NONE,
     bounds:
       "The buttons and what they do are fixed in the app. A document a button cannot change exactly is left " +
-      "untouched with the reason; nothing an AI does follows, neither a visual check nor recovery. A document that " +
-      "cannot be cleaned exactly, or whose PDF does not pass that check, gets no PDF and is listed with why; a PDF " +
-      "that failed is kept apart in pdf-failed. Save clean PDFs needs Word or LibreOffice on this computer, " +
-      "and says so when there is neither. Discard and Undo " +
+      "untouched with the reason; nothing an AI does follows, neither a visual check nor recovery. Discard and Undo " +
       "write and delete no file: the copies an undone run made stay where they were saved. Undo goes back one " +
       "run at a time, never while a preview waits or a request is open, and refuses when a copy it would go back to " +
       "is gone. Discard is not offered while the documents are being checked again after a run: save the ready " +
@@ -460,9 +452,9 @@ export const RUNTIME_CARDS: RuntimeCard[] = [
   {
     covers: ["A12", "A16"],
     title: "Opening a copy or enlarging a page",
-    you: "Click a copy or a clean PDF, the folder button, or a page in a preview.",
+    you: "Click a copy, the folder button, or a page in a preview.",
     runs:
-      "A copy opens in its own application (usually Word) and a clean PDF in your PDF viewer: the file Export saved, " +
+      "A copy opens in its own application (usually Word): the file Export saved as Word (Tracked Changes ON), " +
       "while it still holds the copy's current bytes, else the working copy in the window's scratch folder (the one " +
       "with the newer content; the link's hover text says which). The folder button opens that run's folder in " +
       "Explorer. A page opens larger in the window, from the picture already rendered on your computer.",
@@ -474,27 +466,41 @@ export const RUNTIME_CARDS: RuntimeCard[] = [
       "counts as unsaved again (CHANGED beside it); save it with Export to keep it.",
   },
   {
-    covers: ["A34"],
-    title: "Export → Save the copies…",
-    you: "Export in the top bar, then choose a folder in the dialog (it opens where you last saved).",
+    covers: ["A32", "A34"],
+    title: "Export: Word (Tracked Changes ON), Word (Tracked Changes OFF), PDF (Clean)",
+    you:
+      "Export in the top bar, then one of its three choices, then a folder in the dialog (it opens where you last " +
+      "saved).",
     runs:
-      "Every copy the next request builds on (one per attached document), and every clean PDF of the last Save " +
-      "clean PDFs run, is written into that folder under its planned name, byte for byte the file the checker " +
-      "passed. A file already there with the same bytes is that " +
-      "copy, saved; a different file under the name is left alone and the copy is numbered beside it. Each copy's " +
+      "Export covers every edited copy the window lists: the ones the next request builds on, and those a run " +
+      "still checking other documents has already delivered. Word (Tracked Changes ON) writes each into that " +
+      "folder under its planned name, byte for byte the file the checker passed, its tracked changes and comments " +
+      "kept. Word (Tracked Changes OFF) and PDF (Clean) first make a clean version of each copy in the scratch " +
+      "folder, from a plan fixed in the app: every tracked change accepted (comments kept), or every comment " +
+      "removed and then every tracked change accepted. The clean versions pass the same gate and are checked by " +
+      "the same independent checker as any copy; for PDF (Clean), Word (a new, invisible instance) or LibreOffice " +
+      "turns each one that passed into a PDF, through the render cache, and the app checks each PDF opens, has " +
+      "pages and carries no note. Your choice in the menu approves that fixed plan; the copies in the window are " +
+      "not changed and nothing joins the history. A file already there with the same bytes is that " +
+      "file, saved; a different file under the name is left alone and the new one is numbered beside it. Each copy's " +
       "destination is recorded with a fingerprint of the bytes written, in the conversation's journal: a copy " +
       "is saved while a file with its current bytes sits where Export put it: the copy and the saved file are both " +
       "compared with the fingerprint. The copies list says SAVED while they agree, CHANGED once the copy's bytes " +
       "moved (a copy opened from the window and edited in Word; the next Export writes it again, beside the file " +
       "saved before), NOT SAVED once the saved file no longer holds them (written over, truncated or edited since), " +
-      "and nothing once the saved file is gone. The folder is kept in settings.json for the next dialog.",
+      "and nothing once the saved file is gone; only Word (Tracked Changes ON) saves a copy this way, since the " +
+      "other two write files made from it. The folder is kept in settings.json for the next dialog.",
     sent: "Nothing.",
     ai: NONE,
     bounds:
-      "Never over an input, and never into the app's scratch folder (it would go with it): a folder where a copy " +
+      "Never over an input, and never into the app's scratch folder (it would go with it): a folder where a file " +
       "would land on an attached document or on a working copy, or that lies inside the scratch tree, refuses the " +
-      "whole export, and nothing is written. Each file is written whole, then renamed into place. The copies in " +
-      "the scratch folder are unchanged, and nothing is written until you press Export.",
+      "whole export, and nothing is written. A copy whose clean version cannot be made exactly (a change Word must " +
+      "settle itself, a comment a tracked deletion would take away), does not pass every check, or whose PDF does " +
+      "not pass its own, gets no file and is named with why; a PDF that failed is kept apart in pdf-failed in the " +
+      "scratch folder. PDF (Clean) needs Word or LibreOffice on this computer and says so before it asks for a " +
+      "folder. Each file is written whole, then renamed into place. The copies in the scratch folder are unchanged, " +
+      "and nothing is written until you choose in the menu.",
   },
   {
     covers: ["B19"],
@@ -502,7 +508,7 @@ export const RUNTIME_CARDS: RuntimeCard[] = [
     automatic: true,
     you: "Close the window.",
     runs:
-      "If any edited copy or clean PDF is not saved as it is now (never saved with Export, changed since, its " +
+      "If any edited copy is not saved as it is now (never saved with Export → Word (Tracked Changes ON), changed since, its " +
       "saved file changed since, or gone; every copy and every saved file is read again here), one native " +
       "question first: OK closes and gives the " +
       "copies up, Cancel keeps the window open. Then a running AI step is cut off, the settings are saved, and the " +

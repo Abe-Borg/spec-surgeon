@@ -100,15 +100,17 @@ def serve(state: WindowState, port: int, *, dev: bool = False):
 
 
 def unsaved_copies_question(count: int) -> str:
-    """What the close asks when edited copies or clean PDFs are not saved as they are now (never saved with Export,
-    changed since they were, their saved file changed since, or gone): closing deletes them with the scratch
-    folder."""
-    files = ("1 file made in this window (an edited copy or a clean PDF) has" if count == 1
-             else f"{count} files made in this window (edited copies or clean PDFs) have")
+    """What the close asks when edited copies are not saved as they are now (never saved with Export → Word (Tracked
+    Changes ON), changed since they were, their saved file changed since, or gone): closing deletes them with the
+    scratch folder. A clean PDF or an accepted Word copy exported from a copy is the user's already, and is not it."""
+    files = ("1 edited copy made in this window has" if count == 1
+             else f"{count} edited copies made in this window have")
     them = "it" if count == 1 else "them"
-    return (f"{files} not been saved as {'it is' if count == 1 else 'they are'} now (never saved with Export, or "
-            f"the copy or its saved file changed since). Closing deletes {them} with the window's scratch folder.\n\n"
-            f"OK closes anyway. Cancel goes back, so you can save {them} with Export → Save the copies…")
+    return (f"{files} not been saved as {'it is' if count == 1 else 'they are'} now (never saved with Export → Word "
+            f"(Tracked Changes ON), or the copy or its saved file changed since; a PDF or a Word file with the tracked "
+            f"changes accepted is made from a copy, not the copy itself). Closing deletes {them} with the window's "
+            f"scratch folder.\n\n"
+            f"OK closes anyway. Cancel goes back, so you can save {them} with Export → Word (Tracked Changes ON).")
 
 
 def on_closing(state: WindowState) -> bool:

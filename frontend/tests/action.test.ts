@@ -17,7 +17,6 @@ import {
   DROP_ONLY,
   DROP_PAUSED,
   DROP_TIP,
-  PDF_TIP,
   STOP_TIP,
   actionButton,
   actionSentence,
@@ -142,20 +141,12 @@ test("Discard shows what the server says it would withdraw, in every mode, never
   }
 });
 
-test("a Save clean PDFs preview says PDFs on its button, its tip and the sentence beside it", () => {
-  const pdf = view({ action: { label: "Save clean PDFs", token: "t", kind: "approve", can_hold: true, export: "pdf" } });
-  const button = actionButton(pdf, false, false);
-  assert.equal(button?.label, "Save clean PDFs");
-  assert.equal(button?.tip, PDF_TIP);
-  assert.ok(button && button.kind === "approve" && button.pdf);
-  if (button) assert.equal(actionSentence(button, 0), "If the pages look right, save the clean PDFs.");
-  const held = actionButton(pdf, false, false, 1);
-  assert.equal(held?.label, "Save clean PDFs (1 set aside)");
-  assert.equal(held?.tip, heldTip(1, true));
-  assert.match(heldTip(1, true), /^Saves a clean PDF of every document except the one marked with the red X/);
-  if (held) assert.match(actionSentence(held, 1), /the rest get their PDFs now\.$/);
-  // an ordinary preview is unchanged
+test("an approval always creates edited copies: PDFs are Export's, never the one button's", () => {
   const copies = actionButton(view({ action: { label: "Create edited copies", token: "t", kind: "approve" } }), false, false);
   assert.equal(copies?.tip, APPROVE_TIP);
-  assert.ok(copies && copies.kind === "approve" && !copies.pdf);
+  if (copies) assert.equal(actionSentence(copies, 0), "If the pages look right, create the edited copies.");
+  const held = actionButton(view({ action: { label: "Create edited copies", token: "t", kind: "approve", can_hold: true } }), false, false, 1);
+  assert.equal(held?.tip, heldTip(1));
+  assert.match(heldTip(1), /^Creates an edited copy of every document except the one marked with the red X/);
+  if (held) assert.match(actionSentence(held, 1), /the rest get their copies now\.$/);
 });

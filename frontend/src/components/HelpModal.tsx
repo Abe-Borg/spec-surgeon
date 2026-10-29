@@ -373,7 +373,7 @@ function Workflows() {
           "Change the issue stamp to the new wording, and Add END OF SECTION where missing.",
           "Match body formatting to template (its outline styles and numbering, page and font), then Match headers and footers to template.",
           "Name files by section number and title last, so the copies carry their names.",
-          "Save clean PDFs for the issue: a PDF of each document with its comments removed and its tracked changes accepted, made by Word (or LibreOffice) from a checked clean copy. The PDFs open from the window; the Word documents keep their comments and tracked changes.",
+          "Save the issue with Export, in the top bar: PDF (Clean) writes a PDF of each copy with its comments removed and its tracked changes accepted, made by Word (or LibreOffice) from a checked clean copy; Word (Tracked Changes ON) and Word (Tracked Changes OFF) save the Word copies with their tracked changes, or with every one accepted. The copies in the window keep their comments and tracked changes.",
           "A document a button left untouched keeps its reason beside the copies; Try these in Default mode hands it to the conversation.",
         ]}
       />

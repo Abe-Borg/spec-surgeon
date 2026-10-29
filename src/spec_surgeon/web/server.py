@@ -122,6 +122,8 @@ def job_started_line(action: str, values: Dict[str, Any]) -> str:
         what = f"the Safe-mode button {diag.snip(values.get('recipe') or '?', 40)}"
     elif action == "occurrences":
         what = f"{len(values.get('skip') or [])} occurrence(s) unticked in the preview"
+    elif action == "export":
+        what = f"Export as {diag.snip(values.get('kind') or '?', 20)}"
     else:
         what = ""
     return f"Job {action} started" + (f" ({what})" if what else "")
@@ -339,10 +341,6 @@ class WindowState:
         results = [{"source": source, "output": output, "name": Path(output).name,
                     "unverified": list(unverified.get(source, [])), **saved(output)}
                    for source, output in raw["results"].items()]
-        pdf_marks = raw.get("pdf_unverified") or {}
-        pdfs = [{"source": source, "output": output, "name": Path(output).name,
-                 "unverified": list(pdf_marks.get(source, [])), **saved(output)}
-                for source, output in raw.get("pdfs", {}).items()]
         return {"version": self.version, "busy": busy, "stage": stage, "mode": raw.get("mode", "default"),
                 "modes": task.available_modes(), "template": task.template_info(),
                 "left_untouched": [dict(e) for e in raw.get("left_untouched", [])],
@@ -351,13 +349,12 @@ class WindowState:
                 "questions": list(raw["questions"]), "choices": list(raw["choices"]), "chips": list(raw["chips"]),
                 "samples": samples, "occurrences": [dict(d) for d in raw.get("occurrences") or []],
                 "warnings": list(raw["warnings"]), "blocking": bool(raw["blocking"]),
-                "results": results, "pdfs": pdfs, "pdf": task.pdf_info(),
+                "results": results, "pdf": task.pdf_info(),
                 "export": {"folder": raw.get("export_folder", ""), "unsaved": len(raw.get("unsaved") or []),
                            "copies": int(raw.get("copies") or 0)},
                 "action": {"label": label, "token": raw["token"], "kind": kind,
                            "disabled_reason": raw.get("blocked_reason", ""),
-                           "can_hold": kind == "approve" and bool(raw.get("can_hold")),
-                           "export": raw.get("export", "") if kind == "approve" else ""},
+                           "can_hold": kind == "approve" and bool(raw.get("can_hold"))},
                 "todo": [dict(item) for item in raw.get("todo", [])], "focus": list(raw.get("focus", [])),
                 "working": raw["working"], "budget": {"paused": bool(raw["budget_paused"]),
                                                       "reason": raw.get("pause_reason", "")},
@@ -856,21 +853,29 @@ def create_app(state: WindowState, *, dev: bool = False) -> FastAPI:
 
     @app.post("/api/export")
     async def export_copies(request: Request):
-        """Export → Save the copies…: the working set written into a folder — the one in the body, else the one the
-        native folder dialog returns (opened where the last export went). 501 without a dialog and a folder, 409
-        while work runs, 400 when there is nothing to save or the folder refuses; ``{"cancelled": true}`` when the
-        dialog was dismissed; else the view."""
+        """Export, the top bar's menu (``exports``): every edited copy the window lists, written into a folder — the
+        one in the body, else the one the native folder dialog returns (opened where the last export went) — in the
+        body's ``kind``: ``word`` (Word, Tracked Changes ON: the copies as they are; the default), ``accepted`` (Word,
+        Tracked Changes OFF) or ``pdf`` (PDF, Clean). 501 without a dialog and a folder, 409 while work runs, 400 when
+        there is nothing to save, the kind is unknown, no program can make a PDF or the folder refuses — each asked
+        before the dialog opens where it can be; ``{"cancelled": true}`` when the dialog was dismissed. ``word`` answers
+        with the view; ``accepted`` and ``pdf`` make and check the clean copies first, so they answer with the job
+        stream (``text/event-stream``, as ``/api/send``) ending in ``done`` with the view."""
         if state.busy:
             return busy_error()
         if state.tutorial.active:
             return error("End the tour first; Export saves your own copies, not the practice documents.", 409)
-        if not state.task.working and not state.task.pdfs:
-            return error("There are no edited copies or clean PDFs to save yet.")
         try:
             body = await request.json()
         except ValueError:
             body = {}
-        folder = str((body or {}).get("folder") or "") if isinstance(body, dict) else ""
+        body = body if isinstance(body, dict) else {}
+        kind = str(body.get("kind") or "word")
+        folder = str(body.get("folder") or "")
+        try:
+            state.task.export_ready(kind)
+        except ValueError as e:
+            return error(str(e))
         if not folder:
             chosen = state.shell.pick_folder(state.settings.export_folder or str(Path.home()))
             if chosen is None:
@@ -879,13 +884,20 @@ def create_app(state: WindowState, *, dev: bool = False) -> FastAPI:
                 return {"cancelled": True}
             folder = chosen
         try:
-            made = state.task.export(folder)
+            checked = str(state.task.check_export(folder, kind))
         except (OSError, ValueError) as e:
             return error(str(e))
-        diag.event("export.saved", folder=made["folder"], saved=made["saved"], already=made["already"])
-        diag.app_log().info(f"Export: {made['saved']} copies saved to {made['folder']} ({made['already']} already there)")
-        state.settings.export_folder = made["folder"]
+        state.settings.export_folder = checked
         state.save_settings()
+        if kind != "word":
+            diag.event("export.started", kind=kind, folder=checked)
+            return stream("export", kind=kind, folder=checked)
+        try:
+            made = state.task.export(checked, kind)
+        except (OSError, ValueError) as e:
+            return error(str(e))
+        diag.event("export.saved", kind=kind, folder=made["folder"], saved=made["saved"], already=made["already"])
+        diag.app_log().info(f"Export: {made['saved']} copies saved to {made['folder']} ({made['already']} already there)")
         return state.view()
 
     # ---- the guided tour (docs/WEB_API.md, "The guided tour"; ``tutorial.py``) ----

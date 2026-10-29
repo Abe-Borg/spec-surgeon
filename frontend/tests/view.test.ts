@@ -352,15 +352,11 @@ test("a call that wrote no words leaves no step, and a resent attempt keeps the 
   assert.equal(state.live?.text, "I'll make the title bold.");
 });
 
-test("the view carries the clean PDFs and whether this computer can make them; an older server holds nothing back", () => {
+test("the view says whether this computer can make PDFs for Export; an older server holds nothing back", () => {
   const v = normalizeView({
-    pdfs: [{ source: "C:/Specs/a.docx", output: "C:/runs/1/run/pdf/a.pdf", name: "a.pdf" }],
     pdf: { available: false, renderer: "", reason: "Saving PDFs needs Microsoft Word or LibreOffice on this computer, and neither was found." },
   });
-  assert.equal(v.pdfs.length, 1);
   assert.equal(v.pdf.available, false);
-  const old = normalizeView({});
-  assert.deepEqual(old.pdfs, []);
-  assert.equal(old.pdf.available, true);
-  assert.deepEqual(EMPTY_VIEW.pdfs, []);
+  assert.equal(normalizeView({}).pdf.available, true);
+  assert.equal("pdfs" in EMPTY_VIEW, false);
 });

@@ -2,7 +2,7 @@ import { memo, useEffect, useRef } from "react";
 import type { Attachment, View } from "../types";
 import type { Mark, Reviews } from "../lib/review";
 import type { Unticks } from "../lib/occurrences";
-import { changedTip, copiesNote, copyTip, isSaved, notSavedTip, openTarget, pdfFolder, planHasContent, runFolder, undoLink } from "../lib/workbench";
+import { changedTip, copiesNote, copyTip, isSaved, notSavedTip, openTarget, planHasContent, runFolder, undoLink } from "../lib/workbench";
 import { unverifiedLine } from "../lib/modes";
 import DocumentsTray from "./DocumentsTray";
 import Markdown from "./Markdown";
@@ -121,8 +121,6 @@ function Workbench({
   const untouched = view.left_untouched ?? [];
   const hasPlan = planHasContent(view.plan);
   const folder = runFolder(view);
-  const pdfs = view.pdfs ?? [];
-  const pdfsAt = pdfFolder(view);
   const setAside = view.plan?.set_aside ?? [];
   const todo = view.todo ?? [];
   const scrollRef = useRef<HTMLElement>(null);
@@ -136,7 +134,7 @@ function Workbench({
   useEffect(() => {
     if (previewsKey) previewsRef.current?.scrollIntoView({ block: "start", behavior: "smooth" });
   }, [previewsKey]);
-  const resultsKey = [...view.results, ...pdfs].map((r) => r.output).join("\n");
+  const resultsKey = view.results.map((r) => r.output).join("\n");
   useEffect(() => {
     if (resultsKey) resultsRef.current?.scrollIntoView({ block: "start", behavior: "smooth" });
   }, [resultsKey]);
@@ -155,13 +153,13 @@ function Workbench({
           focus={view.focus ?? []}
           busy={busy}
           uploading={uploading}
-          compact={hasPlan || view.results.length > 0 || pdfs.length > 0}
+          compact={hasPlan || view.results.length > 0}
           onAdd={onAdd}
           onAddFolder={onAddFolder}
           onRemove={onRemove}
         />
 
-        {view.samples.length === 0 && view.results.length === 0 && pdfs.length === 0 && (busy || !hasPlan) && (
+        {view.samples.length === 0 && view.results.length === 0 && (busy || !hasPlan) && (
           <PreviewPlaceholder
             working={busy}
             started={view.messages.length > 0}
@@ -253,7 +251,7 @@ function Workbench({
           <div data-tour="left-untouched-button">
           <PaperCard
             title="Left untouched by the last button"
-            subtitle={`These documents got no ${pdfs.length > 0 ? "PDF" : "copy"} from it; each line says why. Default mode can plan them with an AI model.`}
+            subtitle="These documents got no copy from it; each line says why. Default mode can plan them with an AI model."
             aside={
               <Tip
                 tip={
@@ -374,95 +372,6 @@ function Workbench({
           </div>
         )}
 
-        {pdfs.length > 0 && (
-          <div ref={view.results.length > 0 ? undefined : resultsRef} className="scroll-mt-6">
-            <PaperCard
-              title="Your clean PDFs"
-              subtitle={
-                pdfs.some((p) => (p.unverified ?? []).length > 0)
-                  ? "Each PDF was made from a clean copy that passed every check: comments removed, tracked changes accepted. A PDF marked UNVERIFIED was made from a document delivered UNVERIFIED earlier: check it before you use it. Your Word documents stay as they are."
-                  : "Each PDF was made from a copy that passed every check: comments removed, tracked changes accepted. Click one to open it; your Word documents stay as they are. " +
-                    copiesNote({ results: pdfs })
-              }
-              aside={
-                pdfsAt ? (
-                  <Tip tip={`Open the folder with these PDFs: ${pdfsAt}`}>
-                    <button
-                      type="button"
-                      onClick={() => onOpen(pdfsAt)}
-                      aria-label="Open the folder with these PDFs"
-                      data-capability="results.folder"
-                      className="flex h-8 w-8 items-center justify-center rounded-lg border border-paper-edge bg-white/60 text-paper-dim transition-colors hover:border-accent hover:text-accent"
-                    >
-                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-                        <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
-                      </svg>
-                    </button>
-                  </Tip>
-                ) : undefined
-              }
-            >
-              <ul className="divide-y divide-paper-edge">
-                {pdfs.map((pdf) => (
-                  <li key={pdf.output}>
-                    <button
-                      type="button"
-                      onClick={() => onOpen(openTarget(pdf))}
-                      title={copyTip(pdf)}
-                      data-capability="results.copies"
-                      className="flex w-full items-center gap-2 py-2 text-left text-sm text-paper-ink transition-colors hover:text-accent"
-                    >
-                      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden className="shrink-0 text-paper-dim">
-                        <path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z" />
-                        <path d="M14 3v5h5" />
-                      </svg>
-                      <span className="truncate">{pdf.name || pdf.output.split(/[\\/]/).pop()}</span>
-                      {isSaved(pdf) && (
-                        <span
-                          className="ml-auto flex-none rounded-full border border-ok/50 bg-ok/10 px-2 py-0.5 text-[10px] font-semibold tracking-wide text-ok"
-                          title={`Saved to ${pdf.saved_to}`}
-                        >
-                          SAVED
-                        </span>
-                      )}
-                      {pdf.saved_to && pdf.changed_since_saved && (
-                        <span
-                          className="ml-auto flex-none rounded-full border border-warn/50 bg-warn/10 px-2 py-0.5 text-[10px] font-semibold tracking-wide text-warn"
-                          title={changedTip(pdf)}
-                        >
-                          CHANGED
-                        </span>
-                      )}
-                      {pdf.saved_to && !pdf.changed_since_saved && pdf.saved_file_changed && (
-                        <span
-                          className="ml-auto flex-none rounded-full border border-warn/50 bg-warn/10 px-2 py-0.5 text-[10px] font-semibold tracking-wide text-warn"
-                          title={notSavedTip(pdf)}
-                        >
-                          NOT SAVED
-                        </span>
-                      )}
-                      {(pdf.unverified ?? []).length > 0 ? (
-                        <span
-                          className="ml-auto flex-none rounded-full border border-err/50 bg-err/10 px-2 py-0.5 text-[10px] font-semibold tracking-wide text-err"
-                          title={unverifiedLine(pdf.unverified)}
-                        >
-                          UNVERIFIED
-                        </span>
-                      ) : (
-                        <span className="ml-auto flex-none rounded-full border border-paper-edge px-2 py-0.5 text-[10px] font-semibold tracking-wide text-paper-dim">
-                          PDF
-                        </span>
-                      )}
-                    </button>
-                    {(pdf.unverified ?? []).length > 0 && (
-                      <p className="pb-2 pl-6 text-[11px] leading-snug text-err">{unverifiedLine(pdf.unverified)}</p>
-                    )}
-                  </li>
-                ))}
-              </ul>
-            </PaperCard>
-          </div>
-        )}
 
         {todo.length > 0 && (
           <div data-tour="todo-list">

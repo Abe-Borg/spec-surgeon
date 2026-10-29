@@ -225,8 +225,8 @@ export interface Result {
   name: string;
   /** Obliterate mode: the checks this copy failed; it was delivered anyway. Empty for a verified copy. */
   unverified?: string[];
-  /** Where Export → Save the copies… saved this copy, while that file is still there; "" while the copy lives only
-   *  in the window's scratch folder. Absent from an older server. */
+  /** Where Export → Word (Tracked Changes ON) saved this copy, while that file is still there; "" while the copy
+   *  lives only in the window's scratch folder. Absent from an older server. */
   saved_to?: string;
   /** The copy's bytes moved since it was saved to `saved_to` (opened from the window and edited in Word): it counts
    *  as unsaved again, and its link opens the working copy, the newer one. */
@@ -236,37 +236,26 @@ export interface Result {
   saved_file_changed?: boolean;
 }
 
-/** Export → Save the copies…: where the copies were last saved, how many working copies are not saved yet (only a
- *  saved copy survives closing the window), and how many working copies there are. */
+/** Export: where the last export went (any kind), how many edited copies are not saved as Word with their tracked
+ *  changes yet (only such a saved copy survives closing the window), and how many edited copies Export would save
+ *  (the working set and the copies a run still checking other documents delivered). */
 export interface ExportState {
   folder: string;
   unsaved: number;
   copies: number;
 }
 
-/** A clean PDF Save clean PDFs saved: `source` is the attached document, `output` the PDF made from its clean copy. */
-export interface PdfResult {
-  source: string;
-  output: string;
-  name: string;
-  /** Made from a working copy delivered UNVERIFIED (Obliterate mode): that copy's failed checks, as an earlier
-   *  copy's. Empty when nothing failed on the way. */
-  unverified?: string[];
-  /** Where Export → Save the copies… saved this PDF, while that file is still there; "" while it lives only in the
-   *  window's scratch folder. */
-  saved_to?: string;
-  /** The PDF's bytes moved since it was saved to `saved_to`: unsaved again, and its link opens the working file. */
-  changed_since_saved?: boolean;
-  /** The file at `saved_to` no longer holds the bytes Export wrote: unsaved again, the link opens the working file. */
-  saved_file_changed?: boolean;
-}
+/** Export's three kinds (docs/WEB_API.md, `POST /api/export`): `word` — Word (Tracked Changes ON), the copies as they
+ *  are; `accepted` — Word (Tracked Changes OFF), every tracked change accepted; `pdf` — PDF (Clean), comments removed
+ *  and tracked changes accepted. */
+export type ExportKind = "word" | "accepted" | "pdf";
 
-/** Whether this computer can make PDFs (Save clean PDFs needs Word or LibreOffice), and with which program. */
+/** Whether this computer can make PDFs (Export → PDF (Clean) needs Word or LibreOffice), and with which program. */
 export interface PdfInfo {
   available: boolean;
   /** "Microsoft Word" or "LibreOffice"; "" when neither is found. */
   renderer: string;
-  /** Why the button cannot be pressed; "" when it can. */
+  /** Why PDF (Clean) cannot be chosen; "" when it can. */
   reason: string;
 }
 
@@ -294,8 +283,6 @@ export interface Action {
   disabled_reason?: string;
   /** The previews can be marked: a document marked with the red X is set aside when the copies are created. */
   can_hold?: boolean;
-  /** "pdf": approving saves a clean PDF of each document (Save clean PDFs); "" or absent for edited copies. */
-  export?: string;
 }
 
 export interface Cost {
@@ -388,9 +375,7 @@ export interface View {
   warnings: string[];
   blocking: boolean;
   results: Result[];
-  /** The clean PDFs the last run saved (Save clean PDFs); the working set is not changed by them. */
-  pdfs: PdfResult[];
-  /** Whether Save clean PDFs can run on this computer. */
+  /** Whether Export → PDF (Clean) can run on this computer. */
   pdf: PdfInfo;
   export: ExportState;
   action: Action;
@@ -459,7 +444,7 @@ export interface Settings {
   can_remember: boolean;
   /** An app-managed session/saved key can be removed; external credentials are managed outside the app. */
   can_remove_key?: boolean;
-  /** Where Export → Save the copies… last saved, and where its folder dialog opens; "" before the first export. */
+  /** Where Export last saved (any of its kinds), and where its folder dialog opens; "" before the first export. */
   export_folder: string;
   logs_dir: string;
   /** The colour scheme kept in settings.json: one of src/lib/theme.ts's ids. */

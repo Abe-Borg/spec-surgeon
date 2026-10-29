@@ -36,7 +36,11 @@ files go to clients, so the one failure that matters is content lost or invented
    the user edited it first (`conversation.edited_wording`: the same `clean_wording` rule); a draft the user replaced
    is never approved.
 7. **One specification per edit.** The approved EditSpec (or chain of them) is the only description of a change the
-   engine executes; nothing runs that was not planned, previewed and approved as that spec.
+   engine executes; nothing runs that was not planned, previewed and approved as that spec. One exception, the
+   owner's (2026-10-29): Export's clean choices (`exports.clean_spec`: every tracked change accepted; or every comment
+   removed, then every tracked change accepted) are fixed specs built in code that the menu choice names and approves,
+   without a preview. They run over the edited copies through the gate and the checked run, into the scratch folder,
+   and change no copy, history line or undo point; never widen them, and never let a model choose one.
 
 Out of reach by decision (refused with a code, "change this one in Word"): shapes, SmartArt, charts, equations,
 embedded objects, data-bound content controls and the theme, and text boxes as objects (adding, moving, sizing or
@@ -98,15 +102,20 @@ only when no file plans, a sample fails its check, or every sample is refused). 
 `set_aside` tool at the user's word (`Conversation.set_aside` → `DocumentTask._take_set_aside`), a file the plan
 refused once the others run, a run failure no recovery takes, and recovery's leftovers at `SET_ASIDE_REST`;
 `put_back` takes one off without a pass.
-Delivered copies are the working set the next request builds on, except Safe mode's **Save clean PDFs**, whose
-result is the PDFs (`DocumentTask.pdfs`, `_end_export`): no working copy, history line or undo point. The window
+Delivered copies are the working set the next request builds on. The window
 works in a scratch folder (`scratch.py`: one per window under `data_dir()\scratch`, locked while it runs, holding
-every session folder, dropped file and the journal; deleted at a clean close after one question when a copy or a
-PDF is not saved as it is now — `DocumentTask.export_states`: a copy is saved while a file with its current bytes
-sits where Export put it, its destination recorded with the md5 of the bytes written — swept at the next start, a
-crashed window's taken over and restored), and writes a copy or a
-clean PDF where the user chose only through **Export → Save the copies…** (`DocumentTask.export` →
-`guard.write_new`, never over an input, never into the scratch tree; the engine and the verifier are untouched).
+every session folder, dropped file and the journal; deleted at a clean close after one question when a copy is not
+saved as it is now — `DocumentTask.export_states`: a copy is saved while a file with its current bytes sits where
+Export → Word (Tracked Changes ON) put it, its destination recorded with the md5 of the bytes written — swept at the
+next start, a crashed window's taken over and restored), and writes a file where the user chose only through
+**Export** (the top bar's menu, `ExportMenu.tsx`; `DocumentTask.export` → `guard.write_new`, never over an input,
+never into the scratch tree). Export covers every copy the window lists (`export_set`: the working set and copies a
+run still in recovery delivered) in the owner's three kinds (`exports.py`): **Word (Tracked Changes ON)**, the copies
+as they are; **Word (Tracked Changes OFF)**, every tracked change accepted, comments kept; **PDF (Clean)**, comments
+removed and tracked changes accepted, then `pdf_export`. The clean kinds run as a job (`perform("export")`), each a
+fixed spec through the gate and a checked run in `exports\` (invariant 7's exception); a copy whose clean version or
+PDF cannot be made gets no file, named with why. Safe mode's Save clean PDFs button was retired for it (2026-10-29).
+The assistants point to Export for PDFs (`compiler.SIMPLE_EXPERIENCE`, `exports.PROMPT_NOTE`).
 **Discard preview**
 (`DocumentTask.discard_preview`; what it withdraws is `discard_kind`, the view's `discard`) withdraws a preview: in Safe
 mode it shows again what `_recipe` set aside (`_before_button`); in Default and Obliterate it — or **Drop this
@@ -192,8 +201,8 @@ jobs). Details: `docs/CONVERSATIONAL_DESKTOP.md`.
     re-finds every occurrence, honours the plan's skips by its own reading and records the log under V10's data
     (`verify/suite.occurrence_lines`). **Add a folder of documents** (`DocumentTask.attach_folder`, `/api/attach-folder`)
     attaches a folder's own `.docx` files, subfolders not entered.
-    `pdf_export.py` (Save clean PDFs: a PDF of each copy that passed, rendered through `render` and its cache, then
-    `check_pdf`; the button's plan is a fixed chain, comments removed and then tracked changes accepted).
+    `exports.py` (Export's three kinds: `clean_spec`, `make_clean`, `PROMPT_NOTE`) and `pdf_export.py` (Export → PDF
+    (Clean): a PDF of each clean copy that passed, rendered through `render` and its cache, then `check_pdf`).
     `template_roles.py` (a template's style per role, page and font, read without a model) and `body_match.py` (match
     body formatting: one plan per document from its own structure, one layout per agreeing pattern, each through the
     gate; what it cannot match is left out with the reason, `Session.left_out_reasons`).

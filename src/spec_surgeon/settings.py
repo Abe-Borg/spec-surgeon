@@ -17,7 +17,7 @@ v0.4.x file's ``"dark"``) reads as the first. ``fast_mode`` is Claude's fast mod
 until the user turns it on; the window applies it to every call from its start (``llm.set_fast_mode``).
 ``spending_limit_usd`` is the spending check (Settings → "Spending check"): the estimated dollars one request may spend
 before the work pauses for the user's go-ahead, ``DEFAULT_SPENDING_LIMIT_USD`` until the user changes it, 0 for off.
-``export_folder`` is where Export → Save the copies… last saved, and where its folder dialog opens next time; the
+``export_folder`` is where Export (any of its kinds) last saved, and where its folder dialog opens next time; the
 copies themselves are kept nowhere but the window's scratch folder until they are saved there.
 ``show_obliterate`` only makes Obliterate mode a choice in the top bar (Settings → Advanced); being IN Obliterate mode
 is never stored — ``mode`` is Safe or Default, and a window left in Obliterate opens in Default. ``tutorial_version``
@@ -141,7 +141,7 @@ class Settings:
     schema: int = 1
     folder: str = ""
     template: str = ""
-    export_folder: str = ""                       # where Export → Save the copies… last saved; its dialog opens there
+    export_folder: str = ""                       # where Export last saved (any kind); its dialog opens there
     render: bool = True
     request_draft: str = ""
     window_geometry: str = ""                     # hex of QWidget.saveGeometry()

@@ -1,7 +1,7 @@
 // Adapted from Build-a-Spec's frontend/src/lib/api.ts (copy-based reuse):
 // the fetch helpers and `streamChat`'s shape, against Spec Surgeon's own
 // contract (docs/WEB_API.md).
-import type { About, BundleSaved, JobEvent, Mode, Recipe, RecipeInputs, Settings, Tutorial, Update, View } from "../types.ts";
+import type { About, BundleSaved, ExportKind, JobEvent, Mode, Recipe, RecipeInputs, Settings, Tutorial, Update, View } from "../types.ts";
 import type { Report } from "./diagnostics.ts";
 import {
   apiHeaders,
@@ -151,9 +151,6 @@ export async function openPath(path: string): Promise<void> {
   await post<unknown>("/api/open", { path });
 }
 
-/** Export → Save the copies…: the working copies written into the folder the native dialog asks for (it opens where
- *  the last export went). null when the dialog was dismissed; an ApiError from a window without a dialog (501), with
- *  nothing to save or a folder that refuses (400), or while work runs (409). */
 /** Add a folder of documents: the native folder dialog, then the folder's own .docx files attached. The view, null
  *  when the dialog was dismissed; a 501 (no dialog here) is thrown as any other failure. */
 export async function attachFolder(): Promise<View | null> {
@@ -162,10 +159,28 @@ export async function attachFolder(): Promise<View | null> {
   return normalizeView(answer);
 }
 
-export async function exportCopies(): Promise<View | null> {
-  const answer = await post<unknown>("/api/export");
+/** What Export answers: the view (Word (Tracked Changes ON) is written at once), the job stream (the clean kinds make
+ *  and check their copies first), or null when the folder dialog was dismissed. */
+export type ExportAnswer = { view: View } | { stream: AsyncGenerator<JobEvent> } | null;
+
+/** Export, one of its three kinds (docs/WEB_API.md, `POST /api/export`): every edited copy written into the folder the
+ *  native dialog asks for (it opens where the last export went). An ApiError from a window without a dialog (501),
+ *  with nothing to save, no program to make a PDF or a folder that refuses (400), or while work runs (409). */
+export async function exportCopies(kind: ExportKind = "word"): Promise<ExportAnswer> {
+  const resp = await fetch(apiUrl(setup, "/api/export"), {
+    method: "POST",
+    headers: apiHeaders(setup, { "Content-Type": "application/json" }),
+    body: JSON.stringify({ kind }),
+    cache: "no-store",
+  });
+  if (!resp.ok) {
+    const data: unknown = await resp.json().catch(() => null);
+    throw new ApiError(resp.status, messageFrom(data, resp.status));
+  }
+  if ((resp.headers.get("content-type") ?? "").includes("text/event-stream")) return { stream: readSse<JobEvent>(resp) };
+  const answer: unknown = await resp.json().catch(() => null);
   if (answer && typeof answer === "object" && (answer as { cancelled?: unknown }).cancelled === true) return null;
-  return normalizeView(answer);
+  return { view: normalizeView(answer) };
 }
 
 /** Stop the running model call; the job's stream then ends with `done`. A

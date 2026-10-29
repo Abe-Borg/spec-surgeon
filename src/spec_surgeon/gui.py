@@ -157,9 +157,6 @@ class Session:
                                                   # in plan order (a plan per layout recovers one layout at a time)
     outcome_source: str = ""                      # where the outcome came from: "compiled" (the conversation),
                                                   # "recipe" (a Safe-mode button: ``model_free``), "" (none, or a test)
-    export: str = ""                              # what the run also delivers: "pdf", a clean PDF of each verified
-                                                  # copy (Safe mode's Save clean PDFs, ``pdf_export``); "" nothing
-    last_pdfs: Any = None                         # pdf_export.PdfExport of the last run that saved PDFs
     left_out: List[Path] = field(default_factory=list)   # documents the user left out of the request: the plan, its
                                                   # preview and its run cover the others (``planned_files``)
     left_out_reasons: Dict[str, str] = field(default_factory=dict)   # str(resolved path) → why a Safe-mode button
@@ -254,21 +251,15 @@ class Session:
 
     @_session_action
     def _set_outcome(self, spec: Optional[Dict[str, Any]] = None, generated: Any = None, source: str = "",
-                     left_out: Sequence[Any] = (), left_out_reasons: Optional[Dict[str, str]] = None,
-                     export: str = "") -> None:
+                     left_out: Sequence[Any] = (), left_out_reasons: Optional[Dict[str, str]] = None) -> None:
         """The one place the session's outcome changes. A new outcome voids everything previewed or approved for the
         old one: a reply that turns a custom transform into a spec must never leave the transform runnable, and a reply
         that only asks a question must never leave the old spec's preview runnable. The outcome is a spec (or a plan
-        per layout) XOR a custom transform. ``export`` ("pdf") is a spec's only: what its run delivers beside the
-        copies, decided with the outcome and void with it, so a preview never runs with an export it was not made
-        for."""
+        per layout) XOR a custom transform."""
         if spec is not None and generated is not None:
             raise ValueError("a session runs either a spec or a custom transform, not both")
-        if export not in ("", "pdf") or (export and spec is None):
-            raise ValueError("only a spec's run can also save PDFs")
         self.spec, self.generated = spec, generated
         self.outcome_source = source if (spec is not None or generated is not None) else ""
-        self.export = export
         self.left_out = [Path(p).resolve() for p in left_out]   # an outcome's own: what the user left out of it
         self.left_out_reasons = {str(Path(k).resolve()): str(v) for k, v in (left_out_reasons or {}).items()}
         self.recovery = None
@@ -1042,35 +1033,8 @@ class Session:
     @_session_action
     def run(self, in_place: bool, render: bool, log: Log, only: Optional[List[Path]] = None) -> str:
         """Apply the approved outcome to the approved files and deliver copies; ``only`` runs part of the approved
-        batch (the user set the other documents aside), every file still held to its approved identity. An outcome
-        that exports (``export``) then saves a clean PDF of each verified copy (``_export_pdfs``)."""
-        self.last_pdfs = None
-        text = self._run(in_place, render, log, only)
-        if self.export == "pdf" and self.last_batch is not None:
-            text += "\n" + self._export_pdfs(log)
-        return text
-
-    def _export_pdfs(self, log: Log) -> str:
-        """Save clean PDFs' delivery (``pdf_export``): a PDF of every copy the run delivered and the checker passed
-        (an identical copy too: a document with nothing to clean still gets its PDF), in ``<run>/pdf``. A copy that
-        failed a check, or none at all, gets no PDF; nothing is rendered from an original."""
-        from .pdf_export import PDF_FOLDER, export_pdfs
-        from .render import RenderCache
-        copies: Dict[Path, Path] = {}
-        for item in self.last_batch.files:
-            if item.status != "PASS" or getattr(item, "unverified", None):
-                continue
-            made = item.delivered_to or (item.output if getattr(item, "noop", False) else None)
-            if made and Path(made).is_file():
-                copies[Path(item.source)] = Path(made)
-        run_dir = Path(self.last_run_dir)
-        log("Saving the clean PDFs…")
-        self.last_pdfs = export_pdfs(copies, run_dir / PDF_FOLDER, cache=RenderCache.for_out_dir(run_dir), log=log)
-        done = self.last_pdfs
-        lines = [f"Clean PDFs: {len(done.pdfs)} of {len(copies)} saved to {done.folder}"
-                 + (f" by {done.renderer_name}" if done.renderer_name else "")]
-        lines += [f"  no PDF  {source.name}: {why}" for source, why in done.failed.items()]
-        return "\n".join(lines)
+        batch (the user set the other documents aside), every file still held to its approved identity."""
+        return self._run(in_place, render, log, only)
 
     def _run(self, in_place: bool, render: bool, log: Log, only: Optional[List[Path]] = None) -> str:
         from .batch import run_batch

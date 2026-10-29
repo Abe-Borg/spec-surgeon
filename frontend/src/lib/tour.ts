@@ -293,18 +293,18 @@ export const TOUR: readonly TourChapter[] = [
         placement: "left",
         title: "Copies, checked word for word",
         body:
-          "These copies were really made from the practice documents by the same engine that edits yours: each from its original, each checked by an independent checker that shares no code with the editing, and delivered only because it passed. Click one to open it in Word; the folder button opens the run's folder. Originals are never written. A copy that fails a check is moved aside and never delivered. The tour marked one document with the red X before creating these, so it got no copy. Safe mode's Save clean PDFs button lists its PDFs in a card of their own here, with the same open and folder buttons.",
+          "These copies were really made from the practice documents by the same engine that edits yours: each from its original, each checked by an independent checker that shares no code with the editing, and delivered only because it passed. Click one to open it in Word; the folder button opens the run's folder. Originals are never written. A copy that fails a check is moved aside and never delivered. The tour marked one document with the red X before creating these, so it got no copy.",
       },
       {
         id: "export",
-        capabilities: ["header.export"],
+        capabilities: ["header.export", "header.export-kinds"],
         mode: "explanatory",
         anchor: "header-export",
         needs: "results",
         placement: "bottom",
         title: "Save the copies with Export",
         body:
-          "The copies live in the window's scratch folder until you save them. Export, here in the top bar, asks for a folder and writes every copy the next request builds on into it under its planned name, byte for byte the copy the checker passed; clean PDFs go with them. A file already there with the same content counts as saved; a different file under a copy's name is left alone and the copy numbered beside it; a folder where a copy would land on an attached file is refused. The button counts the copies not saved yet, and only a saved copy survives closing the window: the close asks once first. The practice copies are not yours, so the button is held still during the tour.",
+          "The copies live in the window's scratch folder until you save them. Export, here in the top bar, offers three choices, then asks for a folder. Word (Tracked Changes ON) writes each copy as it is, byte for byte what the checker passed. Word (Tracked Changes OFF) accepts every tracked change and keeps the comments. PDF (Clean) removes the comments, accepts the tracked changes and makes a PDF with Word or LibreOffice. The clean versions are checked like any copy; your copies stay as they are, and no attached file is written over. The button counts the copies not saved as Word, and the close asks once before they go. The practice copies are not yours, so the button is held still during the tour.",
       },
       {
         id: "working-line",

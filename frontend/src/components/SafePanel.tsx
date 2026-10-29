@@ -24,7 +24,7 @@ import Tip from "./Tip";
 
 interface Props {
   recipes: Recipe[];
-  view: Pick<View, "attachments" | "template" | "stage" | "pdf">;
+  view: Pick<View, "attachments" | "template" | "stage">;
   busy: boolean;
   /** Previews the button's change: a job with no AI call (docs/WEB_API.md, `POST /api/recipe`). */
   onPreview: (recipe: Recipe, inputs: RecipeInputs) => void;
@@ -405,10 +405,7 @@ function SafePanel({
         )}
         <div className="flex items-center justify-between gap-3">
           <p className="min-w-0 flex-1 text-[13px] leading-snug text-ink-dim">
-            {needs ||
-              (chosen.needs.includes("pdf")
-                ? "Nothing is saved until you look at the previews and save the PDFs."
-                : "Nothing changes until you look at the previews and create the copies.")}
+            {needs || "Nothing changes until you look at the previews and create the copies."}
           </p>
           <Tip tip={busy ? "Wait for the current work to finish" : needs || "Shows the pages before and after; no copy is made yet"}>
             <button
