@@ -23,6 +23,7 @@ from . import __version__, compiler, diagnostics as diag, llm, recovery_adaptive
 from .batch import check_inputs_outside, load_set_aside, output_names
 from .chain import chain_key, chain_templates, run_chain, validate_chain
 from .editspec import is_template_file, spec_input_files, spec_templates, validate_spec
+from .exports import PROMPT_NOTE
 from .fingerprint import fingerprint
 from .ops.selectors import DEFAULT_PRESERVE_FONTS
 from .ops.base import JobException
@@ -219,7 +220,7 @@ replan and try again. review_candidate can revisit a retained verified candidate
 Each listed file must be verified; READY documents are outside subsequent trials. Paginate complete evidence.
 Unreadable damage stays unresolved until a supported independently verified method exists or the user
 refreshes the source. Never silently normalize corruption or discard text. Sources remain immutable.
-"""
+""" + PROMPT_NOTE
 
 
 SYSTEM = """You investigate failures in a Word specification formatting application. Work on the user's
@@ -240,7 +241,7 @@ custom_transform is available only with explicit permission and only within the 
 Its generated code cannot change words, add parts, edit numbering, or weaken checks. A custom transform
 must still satisfy the original goals. Old cases are suggestions, never sources of approved document words.
 Finish with a trial, need_user, or unsupported; a plain answer ends the investigation for this group.
-"""
+""" + PROMPT_NOTE
 
 
 def _tool(name, description, properties, required=()):

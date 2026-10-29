@@ -248,23 +248,6 @@ test("going back to a button finds what was typed in its form, until the form is
   assert.equal(leaveForm(EMPTY_SAFE_FORM), EMPTY_SAFE_FORM);
 });
 
-const PDF = recipe({ id: "clean_pdf", label: "Save clean PDFs", group: "Files & properties", needs: ["pdf"] });
-
-test("Save clean PDFs waits for a program that makes PDFs, and says why", () => {
-  const docs = [file("a.docx", "document")];
-  const pdf = (available: boolean, reason = "") => ({ ...view(docs), pdf: { available, renderer: available ? "Microsoft Word" : "", reason } });
-  assert.equal(availability(PDF, pdf(true)).ready, true);
-  assert.deepEqual(availability(PDF, pdf(false, "Saving PDFs needs Microsoft Word or LibreOffice on this computer, and neither was found.")), {
-    ready: false,
-    reason: "Saving PDFs needs Microsoft Word or LibreOffice on this computer, and neither was found.",
-  });
-  assert.match(availability(PDF, pdf(false)).reason, /Microsoft Word or LibreOffice/);
-  // the documents come first, and a server that says nothing about PDFs never holds the button back
-  assert.equal(availability(PDF, { ...view([]), pdf: { available: false, renderer: "", reason: "x" } }).reason, "Add the Word documents first.");
-  assert.equal(availability(PDF, view(docs)).ready, true);
-  assert.equal(availability(PDF, normalizeView({ attachments: docs })).ready, true);
-});
-
 const STAMP = recipe({
   id: "issue_stamp",
   label: "Change the issue stamp",

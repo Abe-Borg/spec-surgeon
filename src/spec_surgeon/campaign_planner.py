@@ -11,6 +11,7 @@ import json
 from pathlib import Path
 
 from . import compiler, goals, llm
+from .exports import PROMPT_NOTE
 from .recovery_state import json_value, repair_interrupted_tools
 
 
@@ -38,7 +39,7 @@ document IDs, and never a procedure (set up, split or narrow anything, start ove
 A contract covers every document of the conversation. When the user asks to leave documents
 out, say so plainly in one sentence: this plan includes every attached document, and removing a
 document from their documents list leaves it out (the request is then checked again).
-"""
+""" + PROMPT_NOTE
 
 
 def _tool(name, description, properties, required=()):

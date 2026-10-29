@@ -1,6 +1,6 @@
-"""Clean PDFs: a PDF of each verified copy (Safe mode's *Save clean PDFs*, docs/CONVERSATIONAL_DESKTOP.md).
+"""Clean PDFs: a PDF of each verified clean copy (Export → PDF (Clean), ``exports``, docs/CONVERSATIONAL_DESKTOP.md).
 
-The copy is the run's own: the button's plan removed every comment and then accepted every tracked change, and the
+The copy is the export run's own: its fixed plan removed every comment and then accepted every tracked change, and the
 independent checker passed it (V1–V10), so there is no comment, balloon or redline left in the file for a renderer to
 draw. This module only turns it into a PDF and looks at what came out:
 
