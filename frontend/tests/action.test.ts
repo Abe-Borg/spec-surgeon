@@ -1,6 +1,7 @@
 /**
  * The one button (lib/action.ts): its label from the server's action, the
- * blocking variant, Stop now while busy, and the hold while a draft waits.
+ * copies Create makes counted on it, the blocking variant, Stop now while
+ * busy, and the hold while a draft waits.
  */
 import assert from "node:assert/strict";
 import test from "node:test";
@@ -17,13 +18,16 @@ import {
   DROP_ONLY,
   DROP_PAUSED,
   DROP_TIP,
+  NONE_TIP,
   STOP_TIP,
   actionButton,
   actionSentence,
   asideSentence,
+  countedLabel,
   defaultLabel,
   discardButton,
   heldTip,
+  unpreviewedSentence,
 } from "../src/lib/action.ts";
 import { EMPTY_VIEW } from "../src/lib/view.ts";
 
@@ -168,4 +172,59 @@ test("an approval always creates edited copies: PDFs are Export's, never the one
   assert.equal(held?.tip, heldTip(1));
   assert.match(heldTip(1), /^Creates an edited copy of every document except the one marked with the red X/);
   if (held) assert.match(actionSentence(held, 1), /the rest get their copies now\.$/);
+});
+
+test("Create counts the copies it makes, less the previews marked with the red X", () => {
+  const counted = (held: number, copies = 30, unpreviewed = 22, blocking = false) =>
+    actionButton(view({ action: { label: "Create edited copies", token: "t", kind: "approve", can_hold: true, copies, unpreviewed }, blocking }), false, false, held);
+  const all = counted(0)!;
+  assert.ok(all.kind === "approve" && !all.disabled);
+  assert.equal(all.label, "Create 30 edited copies");
+  assert.equal(all.tip, APPROVE_TIP);
+  // the documents without a preview of their own are named in the sentence, never left to guess
+  assert.equal(
+    actionSentence(all, 0),
+    "If the pages look right, create the edited copies. 22 more documents, not previewed, get the same plan.",
+  );
+  const three = counted(3)!;
+  assert.equal(three.label, "Create 27 edited copies (3 set aside)");
+  assert.equal(three.tip, heldTip(3));
+  assert.equal(
+    actionSentence(three, 3),
+    "3 documents marked with the red X go on your to-do list; the rest get their copies now. 22 more documents, not previewed, get the same plan.",
+  );
+  assert.equal(counted(0, 1, 0)?.label, "Create 1 edited copy");
+  assert.equal(countedLabel(2, false), "Create 2 edited copies");
+  // the blocking variant keeps its own words and tip, with the count
+  const blocking = counted(1, 8, 0, true)!;
+  assert.equal(blocking.label, "I reviewed the flagged pages — create 7 copies (1 set aside)");
+  assert.equal(blocking.tip, BLOCKING_TIP);
+  assert.equal(countedLabel(1, true), "I reviewed the flagged pages — create 1 copy");
+  assert.equal(unpreviewedSentence(0), "");
+  assert.equal(unpreviewedSentence(1), " One more document, not previewed, gets the same plan.");
+});
+
+test("every document Create would run carrying the red X says that no copy is made", () => {
+  const button = actionButton(view({ action: { label: "Create edited copies", token: "t", kind: "approve", can_hold: true, copies: 2, unpreviewed: 0 } }), false, false, 2)!;
+  assert.ok(button.kind === "approve");
+  assert.equal(button.label, "Create no copies (2 set aside)");
+  assert.equal(button.tip, NONE_TIP);
+  assert.equal(actionSentence(button, 2), "Every preview carries the red X: no copy is created, and they go on your to-do list.");
+  const one = actionButton(view({ action: { label: "Create edited copies", token: "t", kind: "approve", can_hold: true, copies: 1 } }), false, false, 1)!;
+  assert.equal(actionSentence(one, 1), "Its preview carries the red X: no copy is created, and it goes on your to-do list.");
+});
+
+test("without a count from the server the label stays as it was: recovery, an older server, Continue and Save", () => {
+  // recovery's approve sends no count (0), an older server sends none at all, and a malformed one is ignored
+  for (const copies of [0, undefined, -1, 2.5, "3" as unknown as number]) {
+    const button = actionButton(view({ action: { label: "Create edited copies", token: "t", kind: "approve", copies } }), false, false, 1);
+    assert.equal(button?.label, "Create edited copies (1 set aside)");
+  }
+  const save = actionButton(view({ action: { label: "Save 2 ready copies", token: "t", kind: "save", copies: 5, unpreviewed: 3 } }), false, false)!;
+  assert.equal(save.label, "Save 2 ready copies");
+  assert.ok(save.kind === "save" && save.unpreviewed === undefined);
+  // a disabled Create still counts, and says only why it is disabled
+  const draft = actionButton(view({ action: { label: "Create edited copies", token: "t", kind: "approve", copies: 4, unpreviewed: 1 } }), false, true, 1)!;
+  assert.equal(draft.label, "Create 3 edited copies (1 set aside)");
+  assert.equal(actionSentence(draft, 1), DRAFT_TIP);
 });

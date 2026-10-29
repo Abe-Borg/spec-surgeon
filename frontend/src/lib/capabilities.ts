@@ -52,6 +52,7 @@ export const END_USER_CAPABILITIES = [
   "preview.occurrences-all",
   "preview.left-untouched",
   "action.primary",
+  "action.include-all",
   "action.discard",
   "zoom.controls",
   // the copies and what comes after

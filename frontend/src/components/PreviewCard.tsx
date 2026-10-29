@@ -7,9 +7,9 @@ import PaperCard from "./PaperCard";
 
 interface Props {
   sample: Sample;
-  /** The user's mark on this preview: looks good, or needs more work (set aside). */
+  /** The user's mark on this preview: it gets its copy (where every preview starts), or it is set aside. */
   mark?: Mark;
-  /** The marks can be given: the plan awaits approval and nothing runs. */
+  /** The marks can be given: the plan awaits approval, Create is available and nothing runs. */
   canReview: boolean;
   onMark: (source: string, mark: Mark) => void;
   onZoom: (src: string, title: string) => void;
@@ -31,29 +31,31 @@ function Cross() {
   );
 }
 
-/** The two marks: a green checkmark (looks good) and a red X (needs more work; set aside). */
-function ReviewMarks({ name, mark, onMark }: { name: string; mark?: Mark; onMark: (mark: Mark) => void }) {
+/** The two marks: a green checkmark (it gets its copy: filled from the start) and a red X (needs more work; set
+ *  aside). The checkmark, or the X a second time, takes the X back. */
+function ReviewMarks({ name, mark, onMark }: { name: string; mark: Mark; onMark: (mark: Mark) => void }) {
   const base =
     "flex h-7 w-7 items-center justify-center rounded-full border transition-colors disabled:pointer-events-none";
+  const held = mark === "hold";
   return (
     <div role="group" aria-label={`Review ${name}`} className="flex items-center gap-1" data-tour="review-marks" data-capability="preview.marks">
       <button
         type="button"
-        aria-pressed={mark === "good"}
-        aria-label={`Looks good · ${name}`}
-        title="Looks good: its copy is created with the others"
+        aria-pressed={!held}
+        aria-label={`Gets a copy · ${name}`}
+        title={held ? "Take back the red X: it gets its copy with the others" : GETS_COPY_TITLE}
         onClick={() => onMark("good")}
-        className={`${base} ${mark === "good" ? "border-ok bg-ok text-white" : "border-ok/50 bg-white/60 text-ok hover:bg-ok/15"}`}
+        className={`${base} ${held ? "border-ok/50 bg-white/60 text-ok hover:bg-ok/15" : "border-ok bg-ok text-white"}`}
       >
         <Check />
       </button>
       <button
         type="button"
-        aria-pressed={mark === "hold"}
-        aria-label={`Needs more work · ${name}`}
-        title="Needs more work: set it aside; it goes on your to-do list after the others are created"
+        aria-pressed={held}
+        aria-label={`Set aside · ${name}`}
+        title={held ? "Take back the red X: it gets its copy with the others" : SET_ASIDE_TITLE}
         onClick={() => onMark("hold")}
-        className={`${base} ${mark === "hold" ? "border-err bg-err text-white" : "border-err/50 bg-white/60 text-err hover:bg-err/15"}`}
+        className={`${base} ${held ? "border-err bg-err text-white" : "border-err/50 bg-white/60 text-err hover:bg-err/15"}`}
       >
         <Cross />
       </button>
@@ -103,6 +105,16 @@ function WordChanges({ sample, name }: { sample: Sample; name: string }) {
   );
 }
 
+/** The checkmark's hover text while the preview gets its copy, as every preview does until it carries the X. */
+export const GETS_COPY_TITLE = "Gets a copy: every preview does until you mark it with the red X";
+/** The X's hover text while the preview gets its copy. */
+export const SET_ASIDE_TITLE =
+  "Needs more work: set it aside; it gets no copy now and goes on your to-do list after the others are created";
+/** The subtitle of a preview that gets its copy: where every preview starts. */
+export const GETS_COPY_SUBTITLE = "Gets a copy when you create the edited copies.";
+/** The subtitle of a preview marked with the red X. */
+export const HELD_SUBTITLE = "Set aside: it goes on your to-do list; the other copies are created first.";
+
 /** The subtitle of a preview the server set aside: it did not pass while another did. */
 export const SET_ASIDE_SUBTITLE =
   "Left untouched: it did not pass its checks, so no copy of it is made. The other documents' copies can still be created.";
@@ -111,8 +123,9 @@ export const SET_ASIDE_SUBTITLE =
  * "Preview · name": the page count before and after with the growth flag,
  * the words a custom method's copy adds and removes (or that none change),
  * the rendered before/after pages (a click opens the zoom), and the two marks
- * — the green checkmark says the pages look right, the red X sets the
- * document aside for more work after the others are created. A preview the
+ * — the green checkmark, filled from the start, says it gets its copy; the
+ * red X sets the document aside for more work after the others are created,
+ * and the checkmark or a second X takes it back. A preview the
  * server set aside (it did not pass while another did) keeps its pages and
  * its failed checks, so you see why, but carries no marks: no copy of it is
  * made, and it is listed under Left untouched.
@@ -130,9 +143,9 @@ export default function PreviewCard({ sample, mark, canReview, onMark, onZoom }:
         aside
           ? SET_ASIDE_SUBTITLE
           : mark === "hold"
-            ? "Set aside: it goes on your to-do list; the other copies are created first."
-            : mark === "good"
-              ? "Looks good."
+            ? HELD_SUBTITLE
+            : canReview
+              ? GETS_COPY_SUBTITLE
               : undefined
       }
       aside={
@@ -151,7 +164,7 @@ export default function PreviewCard({ sample, mark, canReview, onMark, onZoom }:
           >
             {sample.passed ? "Checked" : "Did not pass"}
           </span>
-          {canReview && !aside && <ReviewMarks name={name} mark={mark} onMark={(m) => onMark(sample.source, m)} />}
+          {canReview && !aside && <ReviewMarks name={name} mark={mark ?? "good"} onMark={(m) => onMark(sample.source, m)} />}
         </div>
       }
     >

@@ -13,7 +13,7 @@ try {
   const mode = (name) => page.getByRole("group", { name: "Mode" }).getByRole("button", { name, exact: true });
   const box = page.getByLabel("Describe a change or answer a question");
   const watermark = page.getByPlaceholder("NOT FOR CONSTRUCTION");
-  const create = page.getByRole("button", { name: "Create edited copies", exact: true });
+  const create = page.getByRole("button", { name: /^Create \d+ edited cop(?:y|ies)$/ });
   const load = async (scenario) => {
     await mock.scenario(scenario);
     await page.goto(`${mock.base}/?token=${TOKEN}`);
@@ -109,7 +109,7 @@ try {
   await page.getByRole("button", { name: /All recipes/ }).click();
   await page.getByRole("dialog", { name: "All recipes" }).getByRole("button", { name: /Riverside closeout/ }).click();
   await page.getByRole("button", { name: "Preview 1 step" }).click();
-  await page.getByRole("button", { name: "Create edited copies" }).waitFor({ timeout: 20000 });
+  await page.getByRole("button", { name: /^Create \d+ edited cop(?:y|ies)$/ }).waitFor({ timeout: 20000 });
   assert.ok(await page.getByText("Run the recipe “Riverside closeout: NFPA 13 2025 edition”").count());
   await page.getByRole("button", { name: /All recipes/ }).click();
   await page.getByRole("button", { name: "Manage recipes…" }).click();

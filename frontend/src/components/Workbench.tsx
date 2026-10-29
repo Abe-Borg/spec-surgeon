@@ -17,9 +17,9 @@ interface Props {
   view: View;
   busy: boolean;
   uploading: boolean;
-  /** The user's marks on the previews, by sample source. */
+  /** The previews the user marked with the red X, by sample source; every other preview gets its copy. */
   reviews: Reviews;
-  /** The marks can be given right now (the plan awaits approval, nothing runs). */
+  /** The marks can be given right now (the plan awaits approval, Create is available, nothing runs). */
   canReview: boolean;
   onMark: (source: string, mark: Mark) => void;
   /** The find-and-replace occurrences unticked on the page, by key (lib/occurrences.ts). */
@@ -193,8 +193,8 @@ function Workbench({
           <div ref={previewsRef} className="flex scroll-mt-6 flex-col gap-5" data-tour="previews">
             {canReview && (
               <p className="-mb-2 px-1 text-[12px] text-ink-faint">
-                Look at each preview. The green checkmark says it looks right; the red X sets that document aside for
-                more work after the others are created.
+                Look at each preview. Every document gets its copy, as its green checkmark says; the red X sets one
+                aside for more work after the others are created.
               </p>
             )}
             {view.samples.map((sample) => (

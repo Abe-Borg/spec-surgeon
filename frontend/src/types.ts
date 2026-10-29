@@ -294,6 +294,11 @@ export interface Action {
   disabled_reason?: string;
   /** The previews can be marked: a document marked with the red X is set aside when the copies are created. */
   can_hold?: boolean;
+  /** Approve: how many copies Create makes with nothing set aside — the documents without a preview of their own
+   *  too (0 when not counted: recovery, an older server). */
+  copies?: number;
+  /** Approve: how many of those documents have no preview of their own (the previews are a sample). */
+  unpreviewed?: number;
 }
 
 export interface Cost {

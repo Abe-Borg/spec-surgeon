@@ -263,7 +263,7 @@ export const TOUR: readonly TourChapter[] = [
         placement: "left",
         title: "The green checkmark and the red X",
         body:
-          "Every preview carries two marks. The green checkmark says the pages look right. The red X sets that document aside for more work: when you create the copies it gets none and goes on your to-do list, and the button says so. The marks belong to the plan on screen; a new plan starts the review over. Only the page remembers a mark until you press the button.",
+          "Every preview starts with its green checkmark filled: that document gets its copy, so there is nothing to tick before you create the copies. The red X sets it aside for more work: it gets no copy now and goes on your to-do list, and the button counts it. The checkmark, or the X a second time, takes the X back. The marks belong to the plan on screen; a new plan starts the review over. Only the page remembers a mark until you press the button.",
       },
       {
         id: "left-untouched",
@@ -488,14 +488,14 @@ export const TOUR: readonly TourChapter[] = [
       },
       {
         id: "red-x",
-        capabilities: ["action.primary", "preview.marks"],
+        capabilities: ["action.primary", "action.include-all", "preview.marks"],
         mode: "explanatory",
         anchor: "action-bar",
         needs: "action",
         placement: "top",
         title: "Create, with some set aside",
         body:
-          "Mark a preview with the red X and the button's label counts it: that document goes on your to-do list and the others get their copies. A document that is not part of the displayed plan can never be set aside or run. If Claude's visual check of the pages flags something as blocking, the button changes to say you reviewed the flagged pages: a separate, explicit decision.",
+          "The button counts the copies it makes, the documents without a preview of their own too: the previews are a sample, and its sentence says how many more get the same plan. Mark a preview with the red X and the count drops, the label says how many are set aside: those go on your to-do list and the others get their copies. Include all, after the sentence, takes every X back. A document that is not part of the displayed plan can never be set aside or run. If Claude's visual check flags something as blocking, the button says you reviewed the flagged pages: a separate, explicit decision.",
       },
     ],
   },

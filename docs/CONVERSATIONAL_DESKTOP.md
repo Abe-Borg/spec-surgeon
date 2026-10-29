@@ -6,8 +6,8 @@ leaves the machine but the model calls you ask for (the contract between the pag
 `docs/WEB_API.md`). On the left is the conversation, with the one button above the box you type in. On the right
 are three sections, each with its own fold and its own button to add more: the Word documents you attached,
 optionally one reference template, and any pictures or tables you attached for the edit to use. Each folds to one line
-once a plan exists (click its title to open it); below them are the before/after pages. You add documents, describe the result, look at the pages, mark each preview with a green checkmark or a red
-X, and create edited copies. Nothing else is asked of you: no operations, methods or settings beyond an API key.
+once a plan exists (click its title to open it); below them are the before/after pages. You add documents, describe the result, look at the pages, set aside with the red X any
+preview that needs more work (every other one keeps its green checkmark and gets its copy), and create edited copies. Nothing else is asked of you: no operations, methods or settings beyond an API key.
 That is Default mode. Safe mode, the other choice in the top bar, puts buttons for the common changes where the box
 you type in is, and calls no model at all ("Safe mode" below).
 Both panes render what the assistant writes as formatted text (lists, bold, links), in the chat and on the cards
@@ -597,11 +597,17 @@ drops out of the previews, and its visual findings with it, while the conversati
 
 ## The green checkmark, the red X and the to-do list
 
-Every preview card carries two marks. The green checkmark says the pages look right. The red X says this
-document needs more work: it is **set aside**. When you create the edited copies, the documents you set aside
-get no copy; they go on a to-do list, and the button says so ("Create edited copies (2 set aside)"). Every
-other document is created and verified as usual, each one still held to the exact file the preview was made
-from; a document that is not part of the displayed plan can never be set aside or run.
+Every preview card carries two marks, and every card starts with its green checkmark filled: the document gets its
+copy, so there is nothing to tick before you create the copies ("Gets a copy when you create the edited copies").
+The red X says this document needs more work: it is **set aside**. The checkmark, or the X a second time, takes it
+back, and **Include all**, after the sentence beside the button, takes every X back at once. The button counts the
+copies it makes: every document the plan runs, the ones without a preview of their own too (the previews are a
+sample, at least one per layout), and the sentence beside it says how many have no preview ("Create 30 edited
+copies" · "22 more documents, not previewed, get the same plan."). When you create the edited copies, the
+documents you set aside get no copy; they go on a to-do list, and the button says so ("Create 28 edited copies (2
+set aside)"). Every other document is created and verified as usual, each one still held to the exact file the
+preview was made from; a document that is not part of the displayed plan can never be set aside or run. The marks
+show only while Create is available.
 
 Once the other copies are saved, the conversation shows **Set aside for more work** with the documents'
 names, why each one waits, and one button, **Work on them now** (the same as typing “Work on the documents I set
@@ -672,7 +678,9 @@ what it does. Its label says what it does:
 
 - **Create edited copies**: approve the displayed plan and preview. The engine applies the specification to
   every document you did not set aside with the red X, verifies each one independently, and delivers only the
-  files that pass every check. "(N set aside)" on the label counts the documents that go on the to-do list. A
+  files that pass every check. The label counts the copies it makes ("Create 30 edited copies"), the documents
+  without a preview of their own included, and the sentence beside it says how many those are; "(N set aside)" on
+  the label counts the documents that go on the to-do list. A
   document whose preview did not pass while another's did is not run (its card carries no marks); the sentence
   beside the button says it gets no copy.
 - **Continue**: the documents or the plan changed while a request was open; the documents are checked against the

@@ -33,6 +33,7 @@ def previewed(tmp_path, fake, journal=None, names=("A.docx", "B.docx")):
     view = task.perform("send", text=REQUEST)
     assert view["stage"] == "preview" and view["can_hold"] is True
     assert {str(s) for s in sources} == {str(sv.source) for sv in view["samples"]}   # every document is previewed
+    assert view["copies_to_create"] == len(sources) and view["unpreviewed"] == 0
     return task, sources, view
 
 
@@ -54,6 +55,7 @@ def test_a_document_set_aside_at_approval_waits_on_the_to_do_list_while_the_othe
                              "reason": "You marked its preview as needing more work."}] and view["focus"] == []
     assert view["chips"][0] == WORK_TODO and START_OVER in view["chips"]
     assert view["can_hold"] is False
+    assert view["copies_to_create"] == 0 and view["unpreviewed"] == 0          # nothing waits to be created
     assert any("to-do list" in m["text"] and "B.docx" in m["text"] for m in task.messages if m["role"] == "app")
 
 

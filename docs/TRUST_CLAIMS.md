@@ -79,6 +79,10 @@ saved plan cannot take waits on the to-do list, no AI re-plans it; a step uses w
 export or import of recipe files; Default recipes are not offered in Safe mode): Save as a recipe, running one, and
 managing them (A39, A40, A41, T64), `recipes.json` beside `settings.json` and what each run would keep in
 `conversation.json` (1e).
+Updated 2026-10-29 with the review of the previews: every preview starts with its ✓ (it gets its copy), **Include
+all** takes every ✗ back, and Create counts the copies it makes, the documents without a preview of their own
+included (A7, A8; `action.copies` and `action.unpreviewed` in `docs/WEB_API.md`); page state and the view only, no
+new call.
 Paths are relative to `src/spec_surgeon/` unless they start with `frontend/`, `tests/` or `docs/`.
 
 **Verification column:**
@@ -101,8 +105,8 @@ Paths are relative to `src/spec_surgeon/` unless they start with `frontend/`, `t
 | A4 | Remove an attachment (✕) | `POST /api/remove` | none |
 | A5 | Type a request or answer, then **Send** or Enter | `POST /api/send` → `DocumentTask._send` | conversation |
 | A6 | Pick a choice (after **Edit wording**, with your own version of its drafted wording), type its number, or tap a suggested reply | `POST /api/choose` (`wording`) or `/api/send` (`chip`) | conversation |
-| A7 | Mark a preview ✓ / ✗ | page state only; ✗ is sent as `hold` with A8 | none |
-| A8 | **Create edited copies** (or **I reviewed the flagged pages — create copies**) | `POST /api/primary` → `DocumentTask._primary` → `Session.run` | none to make and check the copies; recovery afterwards if a copy fails (never after a Safe-mode button: `Session.model_free`) |
+| A7 | Mark a preview ✓ / ✗ (every preview starts with its ✓: it gets its copy), or **Include all** beside the button (takes every ✗ back) | page state only (`frontend/src/lib/review.ts`); ✗ is sent as `hold` with A8 | none |
+| A8 | **Create edited copies** (or **I reviewed the flagged pages — create copies**), the label counting the copies it makes: the view's `action.copies` (`Session.runnable_files`, the documents without a preview of their own included) less the ✗'d previews | `POST /api/primary` → `DocumentTask._primary` → `Session.run` | none to make and check the copies; recovery afterwards if a copy fails (never after a Safe-mode button: `Session.model_free`) |
 | A9 | **Save N ready copies** | `POST /api/primary` during recovery | none |
 | A10 | **Continue** (after a pause at the spending check, a stop, a failure or a restored conversation) | `POST /api/primary` → `_primary` (stage `budget`: the request's limit becomes its spending plus the amount, or none for `unpriced`) → `_resume`; a custom method the check paused goes on from its checkpoint in its own folder (`Session._generate_custom` → `codegen.generate_op(resume_from=)`, `GeneratedOp.budget_stop`), with the exchange it had, its calls and attempts counting on | conversation, recovery or the custom-method writer |
 | A11 | **Stop** beside the spending in the top bar, the stop button in the chat, and closing the window while work runs | `POST /api/stop`; `web/shell.on_closing` | cuts the running call off |

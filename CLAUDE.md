@@ -83,7 +83,8 @@ optional template and pictures or tables for the edit to use; `triage.py` checks
 the previewed spec in the sentences each op writes for itself (`Op.describe`); the window shows no plan card (the chat
 says what will change, the previews show it), and those sentences record each copy's changes in `applied`. The one
 button lives in the chat pane;
-each preview carries a checkmark and an X: X'd documents are `hold` on the primary action (`Session.run(only=)` keeps
+each preview carries a checkmark (filled from the start: it gets its copy) and an X, and Create counts the copies it
+makes (`action.copies`, less the X'd; `action.unpreviewed` have no preview); X'd documents are `hold` on the primary action (`Session.run(only=)` keeps
 every approved pin), wait on `DocumentTask.todo`, and the reply `WORK_TODO` begins a pass over them alone (`focus`, one
 request at a time); `applied` keeps the changes each copy carries, so the history the model hears is per document; `runs` keeps each run
 that delivered copies (its request, the Safe-mode button, the documents it delivered and why the others got none), which

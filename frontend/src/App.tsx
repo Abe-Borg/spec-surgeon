@@ -154,8 +154,8 @@ export default function App() {
   }, []);
 
   // --- The review of the previews ------------------------------------------
-  // A green checkmark or a red X per preview; the marks belong to one set of
-  // previews and start over when a new plan or preview arrives.
+  // A green checkmark (where every preview starts: it gets its copy) or a red X per preview; the marks belong to one
+  // set of previews and start over when a new plan or preview arrives.
   const [reviews, setReviews] = useState<Reviews>({});
   const key = reviewKey(view);
   const keyRef = useRef(key);
@@ -170,6 +170,7 @@ export default function App() {
   reviewsRef.current = reviews;
   const tourReviewsRef = useRef<KeptReviews | null>(null);
   const onMark = useCallback((source: string, mark: Mark) => setReviews((r) => setMark(r, source, mark)), []);
+  const onIncludeAll = useCallback(() => setReviews({}), []);
   const reviewing = canReview(view, busy);
   const held = useMemo(() => (reviewing ? heldSources(reviews, view.samples) : []), [reviewing, reviews, view.samples]);
 
@@ -679,6 +680,7 @@ export default function App() {
           sendReason={composer.reason}
           button={button}
           held={held.length}
+          onIncludeAll={onIncludeAll}
           aside={setAsideCount(view.samples)}
           onSend={onSend}
           onChoose={onChoose}

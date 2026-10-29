@@ -78,6 +78,8 @@ def test_in_safe_mode_one_failed_sample_is_left_untouched_and_create_makes_the_o
     assert page["action"]["label"] == "Create edited copies"
     assert {s["name"]: s["set_aside"] for s in page["samples"]} == {"good.docx": False, "other.docx": False,
                                                                      "bad.docx": True}
+    # the failed sample is not counted among the copies Create makes; every document that runs has its preview
+    assert (page["action"]["copies"], page["action"]["unpreviewed"]) == (2, 0)
     task.perform("primary", token=view["token"])
     assert task.stage == "done"
     assert sorted(Path(k).name for k in task.results) == ["good.docx", "other.docx"]
@@ -103,6 +105,11 @@ def test_a_file_of_the_failed_samples_layout_that_was_not_sampled_still_runs_and
     sampled = [Path(sv.source).name for sv in task.session.preview.samples]
     assert "bad.docx" in sampled and len(sampled) < len(files)
     unsampled = sorted(set(names) - set(sampled))
+    # the button counts what Create makes (every document but the failed sample) and how many show no preview
+    view = task.view()
+    assert view["copies_to_create"] == len(files) - 1 and view["unpreviewed"] == len(unsampled) > 0
+    page = WindowState(task, Settings(), token="test-token").view()
+    assert (page["action"]["copies"], page["action"]["unpreviewed"]) == (len(files) - 1, len(unsampled))
     task.perform("primary", token=task.action_token())
     assert task.stage == "done"
     ran = {f.source.name for f in task.session.last_batch.files}

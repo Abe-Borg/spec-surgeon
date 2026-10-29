@@ -140,8 +140,11 @@ it was, and once you have finished it the chip stops inviting. Help → How to u
    stays, marked **Did not pass** with the failed checks, so you see why, and the chat says it gets no copy; one
    failing document never holds back the others. Only when no preview passes is **Create edited copies**
    unavailable, with the reason beside it.
-   Each preview carries a green checkmark (looks good) and a red X (needs more work: set it aside for after the
-   others). To leave documents out of a request altogether, say so ("leave out 20, and 23 for now"), or keep the
+   Each preview starts with its green checkmark filled: it gets its copy, so there is nothing to tick. The red X
+   says it needs more work: set it aside for after the others (the checkmark, a second X, or **Include all** beside
+   the button takes it back). The button counts the copies it makes ("Create 30 edited copies"), including the
+   documents without a preview of their own (the previews are a sample), and says how many of those there are.
+   To leave documents out of a request altogether, say so ("leave out 20, and 23 for now"), or keep the
    request to the ones you mean ("only 23", "just the Michigan one"): the plan covers those, every other document
    stays exactly as it is under **Left untouched**, and your next request covers them all again unless you leave
    them out again. To park documents for later instead, say that ("set 20 aside for later, I'm waiting on the
