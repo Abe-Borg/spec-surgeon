@@ -2,7 +2,7 @@
 import { memo, useLayoutEffect, useRef, useState } from "react";
 import type { Message } from "../types";
 import type { Aside, LiveReply, Step } from "../lib/view";
-import { statusLabel, stepsLabel } from "../lib/chat";
+import { noteShape, statusLabel, stepsLabel } from "../lib/chat";
 import { freshFrom } from "../lib/reveal";
 import { useReveal } from "../lib/useReveal";
 import Collapse from "./Collapse";
@@ -212,7 +212,7 @@ export function UserBubble({ text }: { text: string }) {
  * a pill: its paragraphs stay apart and its words are quoted in full.
  */
 export function AppNote({ text }: { text: string }) {
-  if (text.includes("\n")) {
+  if (noteShape(text) === "block") {
     return (
       <div className="chat-in rounded-xl border border-edge bg-surface/50 px-4 py-2.5 text-xs leading-relaxed text-ink-dim" data-note="block">
         <Markdown text={text} />
