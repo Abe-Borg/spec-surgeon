@@ -294,6 +294,7 @@ def test_a_second_job_while_one_runs_is_refused(tmp_path):
     assert client.post("/api/send", json={"text": "again"}).status_code == 409
     assert client.post("/api/attach", json={"paths": []}).status_code == 409
     assert client.post("/api/discard").status_code == 409 and client.post("/api/undo").status_code == 409
+    assert client.post("/api/remove-documents").status_code == 409
     gate.set()
     while True:
         event = events.get(timeout=30)
@@ -848,3 +849,12 @@ def test_attach_refuses_paths_that_are_not_a_list_of_strings(tmp_path):
     assert r.status_code == 200 and r.json() == {"ok": True, "taken": 0}
     assert client.post("/api/diagnostics", content='{"x":', headers={"content-type": "application/json"}).status_code == 400
     _health(client)
+
+
+def test_remove_all_documents_answers_with_the_view(tmp_path):
+    """409 while work runs: ``test_a_second_job_while_one_runs_is_refused``."""
+    state, client = window(tmp_path)
+    paths = [str(document(tmp_path / name)) for name in ("A.docx", "B.docx")]
+    assert len(client.post("/api/attach", json={"paths": paths}).json()["attachments"]) == 2
+    view = client.post("/api/remove-documents").json()
+    assert view["attachments"] == [] and view["messages"][-1]["text"].startswith("2 documents removed")

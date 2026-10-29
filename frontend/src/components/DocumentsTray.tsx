@@ -9,7 +9,7 @@ import {
   trayTitle,
   type TraySection,
 } from "../lib/workbench";
-import { quietBtn } from "./ModalShell";
+import { primaryBtn, quietBtn } from "./ModalShell";
 import Tip from "./Tip";
 
 interface Props {
@@ -27,6 +27,10 @@ interface Props {
   /** Add a folder of documents: the native folder dialog, then the folder's own .docx files. */
   onAddFolder: () => void;
   onRemove: (attachment: Attachment) => void;
+  /** Remove all documents: every Word document out of this conversation; the template and pictures stay. */
+  onRemoveAll: () => void;
+  /** Edited copies exist: the confirmation says they leave the list with their documents. */
+  hasCopies: boolean;
 }
 
 const BUSY_TIP = "Finish or stop the current work first";
@@ -168,11 +172,29 @@ function Section({
  * exist and opens on a click. Dropping a file anywhere in the window works
  * too (App owns the drop ring).
  */
-export default function DocumentsTray({ attachments, todo, focus, busy, uploading, compact, onAdd, onAddFolder, onRemove }: Props) {
+export default function DocumentsTray({
+  attachments,
+  todo,
+  focus,
+  busy,
+  uploading,
+  compact,
+  onAdd,
+  onAddFolder,
+  onRemove,
+  onRemoveAll,
+  hasCopies,
+}: Props) {
   const held = busy || uploading;
   const holdTip = uploading ? "Reading the files you added…" : BUSY_TIP;
   const hasTemplate = attachments.some((a) => a.kind === "template");
   const view = { attachments, todo, focus };
+  // Remove all documents asks once before it acts: a list of a dozen documents is one click from empty
+  const documentCount = sectionAttachments("documents", view).length;
+  const [confirmingRemoveAll, setConfirmingRemoveAll] = useState(false);
+  useEffect(() => {
+    if (held || documentCount < 2) setConfirmingRemoveAll(false);
+  }, [held, documentCount]);
 
   const cards = (section: TraySection) => {
     const listed = sectionAttachments(section, view);
@@ -208,7 +230,43 @@ export default function DocumentsTray({ attachments, todo, focus, busy, uploadin
               Add a folder of documents
             </button>
           </Tip>
+          {documentCount >= 2 && (
+            <Tip tip={held ? holdTip : "Take every Word document out of this conversation; the template, pictures and tables stay"}>
+              <button
+                type="button"
+                className={quietBtn}
+                disabled={held}
+                onClick={() => setConfirmingRemoveAll((c) => !c)}
+                aria-expanded={confirmingRemoveAll}
+                data-capability="documents.remove-all"
+              >
+                Remove all documents
+              </button>
+            </Tip>
+          )}
         </div>
+        {confirmingRemoveAll && (
+          <div className="mt-3 flex flex-wrap items-center gap-2 rounded-xl border border-edge bg-surface px-3 py-2.5" role="group" aria-label="Confirm removing all documents">
+            <span className="w-full text-[12px] leading-snug text-ink-dim">
+              Remove all {documentCount} documents from this conversation? The files themselves are not touched.
+              {hasCopies && " Their edited copies leave the list with them; export any you want to keep first."}
+            </span>
+            <button type="button" className={quietBtn} onClick={() => setConfirmingRemoveAll(false)}>
+              Keep them
+            </button>
+            <button
+              type="button"
+              className={primaryBtn}
+              disabled={held}
+              onClick={() => {
+                setConfirmingRemoveAll(false);
+                onRemoveAll();
+              }}
+            >
+              Remove all {documentCount}
+            </button>
+          </div>
+        )}
         {attachments.length === 0 && (
           <p className="mt-3 text-[12px] text-ink-faint">
             Or drop .docx files, pictures or spreadsheets anywhere in this window.
