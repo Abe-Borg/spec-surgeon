@@ -691,9 +691,11 @@ def test_safe_mode_routes_discard_and_undo(tmp_path, monkeypatch):
         view = frames(r)[-1]["state"]
     assert view["working"]["generation"] == 1 and view["working"]["undo"] == "Remove highlighting"
     assert view["working"]["undo_blocked"] == ""
+    assert view["working"]["done"] == [{"request": "Remove highlighting", "recipe": "remove_highlight",
+                                        "documents": 1, "of": 1, "not": []}]
     view = client.post("/api/undo").json()
     assert view["working"] == {"generation": 0, "from_originals": True, "can_start_over": False,
-                               "undo": "", "undo_blocked": ""}
+                               "undo": "", "undo_blocked": "", "done": []}
     assert view["results"] == [] and view["attachments"][0]["current"] == str(spec)
 
 

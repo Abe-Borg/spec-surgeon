@@ -17,6 +17,7 @@ import {
   type SafeFormState,
 } from "../lib/recipes";
 import { SWITCH_TO_DEFAULT, safeNoteWords } from "../lib/safeNote";
+import { ranLabel, timesRun } from "../lib/workbench";
 import { TOUR_HOLD } from "../lib/tour";
 import { primaryBtn } from "./ModalShell";
 import SafeNote from "./SafeNote";
@@ -24,7 +25,7 @@ import Tip from "./Tip";
 
 interface Props {
   recipes: Recipe[];
-  view: Pick<View, "attachments" | "template" | "stage">;
+  view: Pick<View, "attachments" | "template" | "stage" | "working">;
   busy: boolean;
   /** Previews the button's change: a job with no AI call (docs/WEB_API.md, `POST /api/recipe`). */
   onPreview: (recipe: Recipe, inputs: RecipeInputs) => void;
@@ -498,10 +499,26 @@ function SafePanel({
             <div className="grid grid-cols-[repeat(auto-fill,minmax(12.5rem,1fr))] gap-2">
               {items.map((recipe) => {
                 const ready = availability(recipe, view);
+                const ran = timesRun(view, recipe.id);
                 return (
-                  <Tip key={recipe.id} tip={busy ? "Wait for the current work to finish" : ready.reason || recipe.summary} className="h-full">
+                  <Tip
+                    key={recipe.id}
+                    tip={busy ? "Wait for the current work to finish" : `${ready.reason || recipe.summary}${ran ? ` ${ranLabel(ran)}` : ""}`}
+                    className="h-full"
+                  >
                     <button type="button" disabled={busy || !ready.ready} onClick={() => open(recipe)} className={tileClass}>
                       <span className="min-w-0 flex-1">{recipe.label}</span>
+                      {ran > 0 && (
+                        <span
+                          role="img"
+                          aria-label={ranLabel(ran)}
+                          className="flex h-[18px] w-[18px] flex-none items-center justify-center rounded-full border border-ok/50 bg-ok/10 text-ok"
+                        >
+                          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                            <path d="M20 6 9 17l-5-5" />
+                          </svg>
+                        </span>
+                      )}
                       <Chevron />
                     </button>
                   </Tip>
