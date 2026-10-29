@@ -348,6 +348,8 @@ export interface Working {
 
 /** One run the copies carry (docs/WEB_API.md, `working.done`). */
 export interface DoneStep {
+  /** The run's id: what Save as a recipe names. Absent from an older server. */
+  id?: string;
   /** The button's sentence, or the request the user typed. */
   request: string;
   /** The Safe-mode button pressed (a recipe id); "" for a request. */
@@ -357,6 +359,58 @@ export interface DoneStep {
   of: number;
   /** Each other document attached now, and why it does not carry it ("left untouched", "set aside", "attached later"). */
   not: { name: string; why: string }[];
+  /** The saved recipe this run ran; "" for a button or a request. */
+  name?: string;
+  /** What a recipe saved from this run keeps: one step, or a recipe run's steps. Empty when it cannot be kept. */
+  steps?: RecipeStep[];
+  /** The Safe-mode buttons this run carried, its own or its recipe's (their tiles carry the checkmark). */
+  buttons?: string[];
+  /** Why a recipe cannot keep this run; "" when it can. */
+  why_not?: string;
+}
+
+/** The mode a saved recipe belongs to: only buttons (Safe), a plan (Default), a plan approved in Obliterate mode. */
+export type RecipeMode = "safe" | "default" | "obliterate";
+
+/** One step of a saved recipe, or of a run a recipe could keep (src/spec_surgeon/saved_recipes.py, `step_view`). */
+export interface RecipeStep {
+  kind: "button" | "plan";
+  /** The button's label; "Your request" for a plan. */
+  label: string;
+  /** The button's sentence, or the user's own words for a plan. */
+  text: string;
+  /** A plan's sentences, as the preview showed them; empty for a button. */
+  plan: string[];
+  /** What it needs attached beside the documents: "template", "picture", "table". */
+  needs: string[];
+  /** The words it places, as they were approved. */
+  places: string[];
+  /** A plan approved in Obliterate mode. */
+  unguarded: boolean;
+  /** A button step: the button and the form it runs with. */
+  button?: string;
+  inputs?: RecipeInputs;
+  /** A plan step: the files it reads, by kind and name. */
+  files?: { kind: string; name: string }[];
+}
+
+/** A saved recipe as the window lists it (docs/WEB_API.md, `saved_recipes`). */
+export interface SavedRecipe {
+  id: string;
+  name: string;
+  /** What it is for, as the user typed it; "" when nothing was. */
+  note: string;
+  mode: RecipeMode;
+  /** When it was saved, and when it last ran (ISO 8601, UTC; "" never), on how many documents. */
+  saved: string;
+  last_run: string;
+  last_documents: number;
+  steps: RecipeStep[];
+  /** What its steps need attached, each once. */
+  needs: string[];
+  /** It runs in this mode; else why not. */
+  runs_here: boolean;
+  why_not_here: string;
 }
 
 export type Discard = "" | "preview" | "request";
@@ -448,6 +502,10 @@ export interface View {
   /** The note about Safe mode above its buttons is folded to its one line (settings.json); false from an older
    *  server. */
   safe_note_hidden: boolean;
+  /** The saved recipes (recipes.json), Obliterate's only while Obliterate mode is shown; empty from an older server. */
+  saved_recipes: SavedRecipe[];
+  /** Why a saved recipe cannot run now (a request is open, a preview waits in Default mode); "" when it can. */
+  recipe_blocked: string;
 }
 
 /** The kinds the `status` frame names; anything else renders as "Working…". */

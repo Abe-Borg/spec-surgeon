@@ -309,12 +309,37 @@ export function doneCoverage(step: DoneStep): string {
   return others.length ? `${head} · not ${others.join("; ")}` : head;
 }
 
-/** How many runs of the working set a Safe-mode button made: its tile carries a checkmark while any does. */
+/** How many runs of the working set carried a Safe-mode button, pressed or in a saved recipe's run: its tile carries a
+ *  checkmark while any does. A server from before recipes names only the button a run pressed. */
 export function timesRun(view: Pick<View, "working">, recipeId: string): number {
-  return doneSteps(view).filter((step) => step.recipe === recipeId).length;
+  return doneSteps(view).reduce(
+    (n, step) => n + (step.buttons ? step.buttons.filter((b) => b === recipeId).length : step.recipe === recipeId ? 1 : 0),
+    0,
+  );
 }
 
 /** The checkmark's words, for its hover text and a screen reader. */
 export function ranLabel(times: number): string {
   return `You ran it ${times === 1 ? "once" : `${times} times`} on these copies (What you've done so far).`;
+}
+
+/** Why Save as a recipe cannot open now, or "": work runs, or no run of the list can be kept (a custom method, a plan
+ *  bound to particular documents). */
+export function saveRecipeBlocked(view: Pick<View, "working">): string {
+  const runs = doneSteps(view);
+  if (!runs.some((step) => !!step.id && (step.steps ?? []).length > 0)) {
+    return runs.length === 1 && runs[0].why_not ? runs[0].why_not : "None of these changes can be kept in a recipe.";
+  }
+  return "";
+}
+
+/** Save as a recipe's hover text. */
+export function saveRecipeTip(view: Pick<View, "working" | "mode">, busy: boolean): string {
+  if (busy) return "Wait for the current work to finish";
+  return (
+    saveRecipeBlocked(view) ||
+    (view.mode === "safe"
+      ? "Saves these buttons and what you filled in under a name, to run again on other documents in one preview"
+      : "Saves these requests and the plans you approved under a name, to run again on other documents with no AI")
+  );
 }

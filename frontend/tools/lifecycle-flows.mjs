@@ -86,6 +86,38 @@ try {
   assert.equal(await page.getByRole("img", { name: /^You ran it once/ }).count(), 1, "Undo takes the checkmark off");
   console.log("PASS What you've done so far lists each button, marks it, and Undo takes the newest off");
 
+  // Saved recipes: the history saved under a name, run again as one preview, one entry in the list, one Undo.
+  await load("safe-done");
+  await page.getByRole("button", { name: /Save as a recipe/ }).click();
+  const saveDialog = page.getByRole("dialog");
+  await saveDialog.getByLabel("Name").fill("Clean copies");
+  assert.equal(await saveDialog.getByRole("checkbox").count(), 1);
+  await saveDialog.getByRole("button", { name: "Save recipe" }).click();
+  const mine = page.getByRole("region", { name: "My recipes" });
+  await mine.getByRole("button", { name: /Clean copies/ }).click();
+  await page.getByText("RECIPE · 1 STEP", { exact: false }).waitFor();
+  await page.getByRole("button", { name: "Preview 1 step" }).click();
+  await create.click();
+  await done.nth(1).waitFor({ timeout: 20000 });
+  assert.match(await done.nth(1).innerText(), /Recipe[\s\S]*Clean copies[\s\S]*LATEST/);
+  await page.getByRole("button", { name: "Undo the last button", exact: true }).click();
+  await page.getByText("Undid", { exact: false }).last().waitFor();
+  assert.equal(await page.getByRole("region", { name: "What you've done so far" }).getByText("Clean copies").count(), 0);
+  console.log("PASS a saved recipe runs as one preview, lists as one entry, and Undo takes it off");
+
+  await load("done");
+  await page.getByRole("button", { name: /All recipes/ }).click();
+  await page.getByRole("dialog", { name: "All recipes" }).getByRole("button", { name: /Riverside closeout/ }).click();
+  await page.getByRole("button", { name: "Preview 1 step" }).click();
+  await page.getByRole("button", { name: "Create edited copies" }).waitFor({ timeout: 20000 });
+  assert.ok(await page.getByText("Run the recipe “Riverside closeout: NFPA 13 2025 edition”").count());
+  await page.getByRole("button", { name: /All recipes/ }).click();
+  await page.getByRole("button", { name: "Manage recipes…" }).click();
+  const manage = page.getByRole("dialog", { name: "Your recipes" });
+  await manage.getByRole("button", { name: "Duplicate" }).first().click();
+  await manage.getByText("(copy)", { exact: false }).waitFor();
+  console.log("PASS Default mode runs a recipe from beside the message box and manages them");
+
   assert.deepEqual(errors, []);
   console.log("PASS no lifecycle browser errors");
 } finally {

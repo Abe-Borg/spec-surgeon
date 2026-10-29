@@ -158,7 +158,8 @@ class Session:
     pending_layout_recovery: List[Path] = field(default_factory=list)   # layout batch folders still to recover,
                                                   # in plan order (a plan per layout recovers one layout at a time)
     outcome_source: str = ""                      # where the outcome came from: "compiled" (the conversation),
-                                                  # "recipe" (a Safe-mode button: ``model_free``), "" (none, or a test)
+                                                  # "recipe" (a Safe-mode button: ``model_free``), "saved" (a saved
+                                                  # recipe: ``model_free`` too), "" (none, or a test)
     left_out: List[Path] = field(default_factory=list)   # documents the user left out of the request: the plan, its
                                                   # preview and its run cover the others (``planned_files``)
     left_out_reasons: Dict[str, str] = field(default_factory=dict)   # str(resolved path) → why a Safe-mode button
@@ -273,9 +274,10 @@ class Session:
 
     @property
     def model_free(self) -> bool:
-        """The outcome is a Safe-mode button's (``recipes``): its preview and its run make no AI call — no visual
-        check of the pages, no investigation or recovery of the documents it sets aside."""
-        return self.outcome_source == "recipe"
+        """The outcome is a Safe-mode button's (``recipes``) or a saved recipe's (``saved_recipes``, source
+        ``"saved"``): its preview and its run make no AI call — no visual check of the pages, no investigation or
+        recovery of the documents it sets aside."""
+        return self.outcome_source in ("recipe", "saved")
 
     def outcome_key(self) -> Any:
         """What the approval token is taken over beside the files: the spec, a chain's key, or the plan per layout."""
@@ -1421,9 +1423,12 @@ def main(argv=None) -> int:
         # copies come back; every other leftover is swept.
         scratch = open_window()
         session = Session(out_root=scratch.path)
+        # the user's saved recipes, kept beside settings.json (``saved_recipes``)
+        from .saved_recipes import Store
+        recipes = Store()
         # a launch opens in Safe or Default (settings.MODES): Obliterate is never restored, only chosen again
         task = DocumentTask(session, journal=scratch.journal, mode=settings.mode,
-                            obliterate_allowed=settings.show_obliterate)
+                            obliterate_allowed=settings.show_obliterate, recipes=recipes)
         restored = False
         if scratch.adopted:
             try:
@@ -1432,7 +1437,7 @@ def main(argv=None) -> int:
                 diag.app_log().warning(f"The previous session's conversation could not be restored ({exc}); this "
                                        "session starts clean")
                 task = DocumentTask(session, journal=scratch.journal, mode=settings.mode,
-                                    obliterate_allowed=settings.show_obliterate)
+                                    obliterate_allowed=settings.show_obliterate, recipes=recipes)
         if previous or restored:
             last = previous[-1] if previous else {}
             task.say("The previous session ended unexpectedly"

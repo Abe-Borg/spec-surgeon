@@ -380,7 +380,7 @@ const SCENARIOS = {
     v.export = { folder: "", unsaved: v.results.length, copies: v.results.length };
     v.working = {
       generation: 1, from_originals: false, can_start_over: true,
-      done: [{ request: "Remove highlighting", recipe: "remove_highlight", documents: 2, of: 3, not: [{ name: name(DOCS[2].path), why: "left untouched" }] }],
+      done: [{ id: "run-s1", request: "Remove highlighting", recipe: "remove_highlight", documents: 2, of: 3, not: [{ name: name(DOCS[2].path), why: "left untouched" }], name: "", steps: [buttonStep("remove_highlight", {}, "Remove highlighting")], buttons: ["remove_highlight"], why_not: "" }],
     };
     v.left_untouched = [{ path: DOCS[2].path, name: name(DOCS[2].path), reason: "Editing is restricted in this file (Review → Restrict Editing); remove the restriction in Word, then run again." }];
     return v;
@@ -445,7 +445,11 @@ const SCENARIOS = {
     v.action = { label: "", token: "", kind: "none", can_hold: false };
     v.working = {
       generation: 1, from_originals: false, can_start_over: true,
-      done: [{ request: v.messages.find((m) => m.role === "user")?.text ?? "", recipe: "", documents: 3, of: 3, not: [] }],
+      done: [(() => {
+        const request = v.messages.find((m) => m.role === "user")?.text ?? "";
+        return { id: "run-d1", request, recipe: "", documents: 3, of: 3, not: [], name: "", buttons: [], why_not: "",
+          steps: [{ kind: "plan", label: "Your request", text: request, plan: ["Sets every font to Arial 10 pt, in the body, the headers and the footers.", "Replaces the footer line with “Riverside Medical Center — Issued for Construction”."], needs: [], places: ["Riverside Medical Center — Issued for Construction"], unguarded: false, files: [] }] };
+      })()],
     };
     v.attachments = v.attachments.map((a) =>
       a.kind === "document" && a.state !== "refused" ? { ...a, current: `${RUN_DIR}/${a.name}` } : a,
@@ -566,7 +570,66 @@ function doneWith(request, delivered, untouched) {
   const not = docs
     .filter((a) => !delivered.some((d) => d.source === a.path))
     .map((a) => ({ name: a.name, why: view.todo.some((t) => t.path === a.path) && !untouched.some((u) => u.path === a.path) ? "set aside" : "left untouched" }));
-  return [...(view.working.done ?? []), { request, recipe: lastRecipe, documents: docs.length - not.length, of: docs.length, not }];
+  const steps = lastRecipeRun
+    ? lastRecipeRun.steps
+    : lastRecipe
+      ? [buttonStep(lastRecipe, lastInputs, request)]
+      : [{ kind: "plan", label: "Your request", text: request, plan: ["Sets the text of the documents as you asked."], needs: [], places: [], unguarded: view.mode === "obliterate", files: [] }];
+  const run = {
+    id: `run-${++seq}`, request, recipe: lastRecipe, documents: docs.length - not.length, of: docs.length, not,
+    name: lastRecipeRun ? lastRecipeRun.name : "", steps,
+    buttons: steps.filter((st) => st.kind === "button").map((st) => st.button), why_not: "",
+  };
+  lastRecipeRun = null;
+  return [...(view.working.done ?? []), run];
+}
+
+// --- Saved recipes (src/spec_surgeon/saved_recipes.py): kept across scenarios like the settings ---------------------
+
+let lastInputs = {};          // the form the waiting button preview was built from
+let lastRecipeRun = null;     // the saved recipe whose preview waits: { id, name, steps }
+function buttonStep(id, inputs, request) {
+  const button = RECIPES.recipes.find((r) => r.id === id);
+  return { kind: "button", label: button?.label ?? id, text: request, plan: [], needs: [...(button?.needs ?? [])], places: [], unguarded: false, button: id, inputs: { ...inputs } };
+}
+function modeOfSteps(steps) {
+  if (steps.some((st) => st.kind === "plan" && st.unguarded)) return "obliterate";
+  return steps.some((st) => st.kind === "plan") ? "default" : "safe";
+}
+let savedRecipes = [
+  {
+    id: "r-seed-ifc", name: "Division 21 · Issued for Construction", note: "Bid set to IFC: office headers and footers, clean copies",
+    saved: "2026-10-27T15:02:00+00:00", last_run: "", last_documents: 0,
+    steps: [
+      buttonStep("headers_footers_template", { slots: {} }, "Match headers and footers to the template Office master 2026.docx"),
+      buttonStep("accept_changes", { action: "accept" }, "Accept all tracked changes"),
+      buttonStep("remove_comments", {}, "Remove all comments"),
+    ],
+  },
+  {
+    id: "r-seed-nfpa", name: "Riverside closeout: NFPA 13 2025 edition", note: "",
+    saved: "2026-10-28T18:40:00+00:00", last_run: "2026-10-28T19:05:00+00:00", last_documents: 5,
+    steps: [{ kind: "plan", label: "Your request", text: "Replace “NFPA 13, 2022 edition” with “NFPA 13, 2025 edition” everywhere, headers and footers too.", plan: ["Replaces “NFPA 13, 2022 edition” with “NFPA 13, 2025 edition” in the body, the headers and the footers."], needs: [], places: ["NFPA 13, 2025 edition"], unguarded: false, files: [] }],
+  },
+];
+const RANK = { safe: 0, default: 1, obliterate: 2 };
+function recipesOf(v) {
+  return savedRecipes
+    .map((r) => ({ ...r, mode: modeOfSteps(r.steps) }))
+    .filter((r) => r.mode !== "obliterate" || settings.show_obliterate)
+    .map((r) => {
+      const here = RANK[v.mode] >= RANK[r.mode];
+      return {
+        ...r, needs: [...new Set(r.steps.flatMap((st) => st.needs))], runs_here: here,
+        why_not_here: here ? "" : r.mode === "obliterate" ? "It was saved in Obliterate mode and runs only there." : "It was saved in Default mode: Safe mode runs only recipes made of its own buttons.",
+      };
+    });
+}
+function recipeBlockedOf(v) {
+  if (v.mode === "safe") return "";
+  if (v.focus?.length) return "Finish the pass over your to-do list first.";
+  const kind = discardOf(v);
+  return kind === "preview" ? "Discard the preview first, or create its copies." : kind === "request" ? "Drop the request that is open first, or finish it." : "";
 }
 /** What Discard withdraws now, as the app says it (docs/WEB_API.md, `discard`). */
 /** What Export would save, as the app counts it (docs/WEB_API.md, `export`): the copies the window lists, and those not
@@ -594,6 +657,8 @@ function json(res, status, body) {
   if (body === view) {
     view.discard = discardOf(view);
     view.export = exportOf(view);
+    view.saved_recipes = recipesOf(view);
+    view.recipe_blocked = recipeBlockedOf(view);
   }
   const data = JSON.stringify(body);
   res.writeHead(status, {
@@ -748,6 +813,8 @@ function startStream(res) {
     running = null;
     view.discard = discardOf(view);
     view.export = exportOf(view);
+    view.saved_recipes = recipesOf(view);
+    view.recipe_blocked = recipeBlockedOf(view);
     res.write(`data: ${JSON.stringify({ type: "done", state: view })}\n\n`);
     res.end();
   };
@@ -862,8 +929,10 @@ async function planJob(res, userText, layouts = false) {
 
 /** A Safe-mode button: no AI call, so no words stream — the checks, the plan and the pages, then the one button.
  *  The last document is set aside with a reason, as the real engine does for one it cannot change exactly. */
-async function recipeJob(res, recipe) {
+async function recipeJob(res, recipe, inputs = {}) {
   const s = startStream(res);
+  lastInputs = inputs;
+  lastRecipeRun = null;
   view.messages.push(msg("user", recipe.label));
   if (!beforeButton) beforeButton = { results: view.results, left_untouched: view.left_untouched };
   lastRequest = recipe.label;
@@ -892,6 +961,36 @@ async function recipeJob(res, recipe) {
   view.stage = "preview";
   view.action = { label: "Create edited copies", token: `tok-approve-${++seq}`, kind: "approve", can_hold: true };
   view.working = { ...view.working, ...undoFields() };
+  s.end();
+}
+
+/** A saved recipe: its kept steps as one plan, one preview (src/spec_surgeon/document_task.py, `_saved_recipe`). */
+async function savedRecipeJob(res, record, steps) {
+  const s = startStream(res);
+  const request = `Run the recipe “${record.name}”`;
+  view.messages.push(msg("user", request));
+  view.messages.push(msg("app", `Its ${steps.length} step${steps.length === 1 ? "" : "s"}, in order, planned without AI: ${steps.map((st, i) => `${i + 1}. ${st.text}`).join("; ")}.`));
+  if (view.mode === "safe" && !beforeButton) beforeButton = { results: view.results, left_untouched: view.left_untouched };
+  lastRequest = request;
+  lastRecipe = "";
+  lastRecipeRun = { id: record.id, name: record.name, steps };
+  view.results = [];
+  view.samples = [];
+  view.left_untouched = [];
+  await s.emit({ type: "status", kind: "checking", text: "Checking the documents…" });
+  const docs = view.attachments.filter((a) => a.kind === "document" && a.state !== "refused");
+  view.plan = {
+    groups: [{ id: "", label: "", count: docs.length, files: [], changes: steps.map((st) => ({ title: st.label, summary: st.text, details: [] })), assumptions: [] }],
+    targets: [], set_aside: [], stages: steps.length,
+  };
+  await s.emit({ type: "plan", plan: view.plan });
+  view.samples = samples();
+  await s.emit({ type: "samples", samples: view.samples, occurrences: [], warnings: [], blocking: false });
+  view.stage = "preview";
+  view.action = { label: "Create edited copies", token: `tok-approve-${++seq}`, kind: "approve", can_hold: true };
+  view.working = { ...view.working, ...undoFields() };
+  const saved = savedRecipes.find((r) => r.id === record.id);
+  if (saved) Object.assign(saved, { last_run: new Date().toISOString(), last_documents: docs.length });
   s.end();
 }
 
@@ -1289,7 +1388,51 @@ async function handle(req, res) {
       const recipe = RECIPES.recipes.find((r) => r.id === body.recipe);
       if (!recipe) return json(res, 400, { error: "There is no such button." });
       if (view.mode !== "safe") return json(res, 400, { error: "The buttons are Safe mode's; switch to Safe mode to use them." });
-      return recipeJob(res, recipe);
+      return recipeJob(res, recipe, body.inputs && typeof body.inputs === "object" ? body.inputs : {});
+    }
+    case "POST /api/saved-recipes/run": {
+      if (view.busy) return busyRefusal();
+      const body = await readJson(req);
+      const record = recipesOf(view).find((r) => r.id === body.id);
+      if (!record) return json(res, 400, { error: "There is no such recipe; it may have been deleted in another window." });
+      if (!record.runs_here) return json(res, 400, { error: `${record.name}: ${record.why_not_here}` });
+      const blocked = recipeBlockedOf(view);
+      if (blocked) return json(res, 400, { error: blocked });
+      const picks = Array.isArray(body.steps) ? body.steps : record.steps.map(() => ({ skip: false }));
+      if (picks.length !== record.steps.length) return json(res, 400, { error: "The recipe changed since its form was opened; open it again." });
+      const kept = record.steps.flatMap((st, i) => (picks[i]?.skip ? [] : [st.kind === "button" && picks[i]?.inputs ? { ...st, inputs: picks[i].inputs } : st]));
+      if (!kept.length) return json(res, 400, { error: "Every step is skipped; keep at least one." });
+      return savedRecipeJob(res, record, kept);
+    }
+    case "POST /api/saved-recipes/save": {
+      if (view.busy) return busyRefusal();
+      const body = await readJson(req);
+      const name = typeof body.name === "string" ? body.name.trim() : "";
+      if (!name) return json(res, 400, { error: "Type a name for the recipe." });
+      const runs = (view.working.done ?? []).filter((d) => Array.isArray(body.runs) && body.runs.includes(d.id));
+      if (!runs.length) return json(res, 400, { error: "Tick the changes to save; the list changed since the dialog opened." });
+      const steps = runs.flatMap((d) => d.steps ?? []);
+      savedRecipes.push({ id: `r-${++seq}`, name, note: typeof body.note === "string" ? body.note.trim() : "", saved: new Date().toISOString(), last_run: "", last_documents: 0, steps });
+      view.messages.push(msg("app", `Saved the recipe “${name}”: ${steps.length} step${steps.length === 1 ? "" : "s"}.`));
+      return json(res, 200, view);
+    }
+    case "POST /api/saved-recipes/change": {
+      if (view.busy) return busyRefusal();
+      const body = await readJson(req);
+      const i = savedRecipes.findIndex((r) => r.id === body.id);
+      if (i < 0) return json(res, 400, { error: "There is no such recipe; it may have been deleted in another window." });
+      if (body.action === "rename") {
+        if (typeof body.name !== "string" || !body.name.trim()) return json(res, 400, { error: "Type a name for the recipe." });
+        savedRecipes[i] = { ...savedRecipes[i], name: body.name.trim(), note: typeof body.note === "string" ? body.note.trim() : savedRecipes[i].note };
+      } else if (body.action === "duplicate") {
+        savedRecipes.push({ ...savedRecipes[i], id: `r-${++seq}`, name: `${savedRecipes[i].name} (copy)`, saved: new Date().toISOString(), last_run: "", last_documents: 0 });
+      } else if (body.action === "delete") {
+        savedRecipes.splice(i, 1);
+      } else if (body.action === "inputs") {
+        const forms = Array.isArray(body.inputs) ? body.inputs : [];
+        savedRecipes[i] = { ...savedRecipes[i], steps: savedRecipes[i].steps.map((st, j) => (forms[j] && st.kind === "button" ? { ...st, inputs: forms[j] } : st)) };
+      } else return json(res, 400, { error: "Unknown recipe change." });
+      return json(res, 200, view);
     }
     case "POST /api/mode": {
       if (view.busy) return busyRefusal();

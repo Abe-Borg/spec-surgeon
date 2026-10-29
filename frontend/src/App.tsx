@@ -1,7 +1,7 @@
 // Adapted from Build-a-Spec's frontend/src/App.tsx (copy-based reuse): the
 // layout and the one place the job stream's events dispatch.
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
-import type { Attachment, Choice, ExportKind, JobEvent, Mode, Recipe, RecipeInputs, Update, View } from "./types";
+import type { Attachment, Choice, ExportKind, JobEvent, Mode, Recipe, RecipeInputs, SavedRecipe, Update, View } from "./types";
 import * as api from "./lib/api";
 import { actionButton, discardButton } from "./lib/action";
 import { composerState, transcript } from "./lib/chat";
@@ -19,6 +19,10 @@ import SettingsModal from "./components/SettingsModal";
 import HelpModal from "./components/HelpModal";
 import ZoomModal from "./components/ZoomModal";
 import SafePanel from "./components/SafePanel";
+import SaveRecipeDialog from "./components/SaveRecipeDialog";
+import ManageRecipes from "./components/ManageRecipes";
+import RecipesStrip from "./components/RecipesStrip";
+import { composerRecipes } from "./lib/savedRecipes";
 import { EMPTY_SAFE_FORM, openForm, type SafeFormState } from "./lib/recipes";
 import ObliterateWarning from "./components/ObliterateWarning";
 import { modeChoice } from "./lib/modes";
@@ -386,6 +390,44 @@ export default function App() {
   const onDefaultMode = useCallback(() => onMode("default"), [onMode]);
   const onOpenSettings = useCallback(() => setSettingsOpen(true), []);
   const tourRunning = view.tutorial.active;
+
+  // --- Saved recipes -------------------------------------------------------
+  // Saved from What you've done so far, run from Safe mode's panel or beside the message box, managed in a dialog.
+  // A run is a job like a button's; a save or a change answers with the view (true), or a notice says why not (false).
+  const [savingRecipe, setSavingRecipe] = useState(false);
+  const [managingRecipes, setManagingRecipes] = useState(false);
+  const answered = useCallback(async (promise: Promise<View>): Promise<boolean> => {
+    try {
+      const next = await promise;
+      if (!busyRef.current) dispatch({ type: "view", view: next });
+      return true;
+    } catch (failure) {
+      setNotice(failureText(failure));
+      return false;
+    }
+  }, []);
+  const onRunRecipe = useCallback(
+    (recipe: SavedRecipe, picks: api.RecipeRunPick[]) =>
+      void runJob(api.runSavedRecipe(recipe.id, picks), `Run the recipe “${recipe.name}”`, "saved_recipe"),
+    [runJob],
+  );
+  const onSaveRecipeForms = useCallback(
+    (recipe: SavedRecipe, forms: (RecipeInputs | null)[]) => answered(api.saveRecipeForms(recipe.id, forms)),
+    [answered],
+  );
+  const onSaveRecipe = useCallback(
+    (name: string, note: string, runs: string[]) => answered(api.saveRecipe(name, note, runs)),
+    [answered],
+  );
+  const onOpenSaveRecipe = useCallback(() => setSavingRecipe(true), []);
+  const onManageRecipes = useCallback(() => setManagingRecipes(true), []);
+  const onRenameRecipe = useCallback(
+    (recipe: SavedRecipe, name: string, note: string) => answered(api.changeRecipe("rename", recipe.id, { name, note })),
+    [answered],
+  );
+  const onDuplicateRecipe = useCallback((recipe: SavedRecipe) => answered(api.changeRecipe("duplicate", recipe.id)), [answered]);
+  const onDeleteRecipe = useCallback((recipe: SavedRecipe) => answered(api.changeRecipe("delete", recipe.id)), [answered]);
+
   const panel = useMemo(
     () => (
       <SafePanel
@@ -402,9 +444,24 @@ export default function App() {
         onNoteHidden={onSafeNoteHidden}
         onDefaultMode={onDefaultMode}
         onAddKey={onOpenSettings}
+        onRunRecipe={onRunRecipe}
+        onSaveRecipeForms={onSaveRecipeForms}
+        onManageRecipes={onManageRecipes}
       />
     ),
-    [recipes, view, busy, onRecipe, onDiscard, safeForm, tourRunning, onSafeNoteHidden, onDefaultMode, onOpenSettings],
+    [recipes, view, busy, onRecipe, onDiscard, safeForm, tourRunning, onSafeNoteHidden, onDefaultMode, onOpenSettings,
+      onRunRecipe, onSaveRecipeForms, onManageRecipes],
+  );
+  const recipesStrip = (
+    <RecipesStrip
+      view={view}
+      catalog={recipes}
+      busy={busy}
+      tourActive={tourRunning}
+      onRun={onRunRecipe}
+      onSaveForms={onSaveRecipeForms}
+      onManage={onManageRecipes}
+    />
   );
 
   const onPutBack = useCallback((path: string) => applyView(api.putBack(path)), [applyView]);
@@ -634,6 +691,7 @@ export default function App() {
           draft={draft}
           mode={view.mode}
           panel={panel}
+          recipes={composerRecipes(view).length > 0 ? recipesStrip : undefined}
           onMode={onMode}
           discard={discardWhat}
           onDiscard={discard}
@@ -664,6 +722,8 @@ export default function App() {
           onPutBack={onPutBack}
           onZoom={onZoom}
           onHandOff={onHandOff}
+          onSaveRecipe={onOpenSaveRecipe}
+          tourActive={tourActive}
         />
       </main>
       <input
@@ -699,6 +759,25 @@ export default function App() {
       />
       <TourOverlay tour={tour} view={view} busy={busy} />
       {zoom && <ZoomModal src={zoom.src} title={zoom.title} onClose={() => setZoom(null)} />}
+      {savingRecipe && (
+        <SaveRecipeDialog
+          done={view.working.done ?? []}
+          catalog={recipes}
+          busy={busy}
+          onSave={onSaveRecipe}
+          onClose={() => setSavingRecipe(false)}
+        />
+      )}
+      {managingRecipes && (
+        <ManageRecipes
+          recipes={view.saved_recipes}
+          busy={busy}
+          onRename={onRenameRecipe}
+          onDuplicate={onDuplicateRecipe}
+          onDelete={onDeleteRecipe}
+          onClose={() => setManagingRecipes(false)}
+        />
+      )}
       {warning && (
         <ObliterateWarning
           keyReady={!!view.connection?.ready}

@@ -360,6 +360,32 @@ export const RUNTIME_CARDS: RuntimeCard[] = [
       "own ticks, in every mode: no request can leave occurrences out on its own.",
   },
   {
+    covers: ["A39", "A40", "A41"],
+    title: "Saved recipes: saving one, running it, managing them",
+    you:
+      "Save as a recipe, on What you've done so far: a name, what it is for, and the changes to keep. Run one from My " +
+      "recipes (Safe mode) or beside the message box (Default and Obliterate): change a button's form or skip a step " +
+      "for this run, then Preview and Create edited copies. Manage renames, duplicates or deletes them.",
+    runs:
+      "Saving keeps what the window noted of each change you ticked when you approved it: a button and its form, or " +
+      "your request with the plan you approved, the sentences it was shown with and the words it places. It writes " +
+      "recipes.json beside settings.json, locking recipes.json.lock while it does so two windows never write over " +
+      "each other's saves. A run builds every step from the documents attached now (a button from its " +
+      "form; a plan as approved, reading the template, picture or table attached now), passes each through the gate " +
+      "every plan passes (a step that changes what an earlier one made is planned on the copies the earlier steps " +
+      "make), puts them in your order into one plan, passes that through the gate again and makes the " +
+      "ordinary preview. Create runs it as one checked run, and Undo takes it off as one.",
+    sent: "Nothing. Saving, running and managing a recipe never reach the network.",
+    ai: NONE,
+    bounds:
+      "A recipe keeps no document, template, picture or table, only their kind and name. A change Claude wrote a " +
+      "custom method for, or planned with values read from particular documents, cannot be kept, and says why. A " +
+      "recipe runs in its own mode and in any with fewer guardrails, never in one with more: Safe recipes everywhere, " +
+      "Default ones in Default and Obliterate, Obliterate ones only in Obliterate. Every word it places passes the " +
+      "gate again, and the chat names them before Create. A document a step cannot take is left untouched (Safe " +
+      "mode) or waits on your to-do list (Default and Obliterate); nothing an AI does follows.",
+  },
+  {
     covers: ["A7"],
     title: "Marking a preview",
     you: "The ✓ or ✗ on a document's preview.",

@@ -63,7 +63,7 @@ render checks are recorded as N/A with the reason.
 | `ANTHROPIC_API_KEY` | typed requests, Claude's visual check, custom transforms and recovery; or enter it in Settings |
 | `SPEC_SURGEON_MODEL` | the model every Claude call uses (default `claude-opus-5-5`) |
 | `SPEC_SURGEON_NO_UPDATE_CHECK` | any value: the window never checks for updates on its own |
-| `SPEC_SURGEON_CONFIG_DIR` | where the app keeps `settings.json` and, under `data`, its scratch folders (one per window, deleted when it closes), the render cache, downloaded updates and its logs |
+| `SPEC_SURGEON_CONFIG_DIR` | where the app keeps `settings.json`, your saved recipes (`recipes.json`) and, under `data`, its scratch folders (one per window, deleted when it closes), the render cache, downloaded updates and its logs |
 
 ## The window: documents and a conversation
 
@@ -305,6 +305,19 @@ words of your line in the chat, with how many of the documents attached now carr
 (left untouched, set aside on the to-do list, or attached later). **Undo the last button** takes the newest off, Start
 over clears the list, and a button you already ran carries a checkmark, so the steps of a long batch never need
 remembering. In Default and Obliterate mode the list names each request the same way.
+
+**Save as a recipe…**, on that list, keeps the changes you tick under a name, to run again on the next set of
+documents: in Safe mode the buttons and what you filled in their forms, in Default and Obliterate your requests with
+the plans you approved. Safe mode shows your recipes under **My recipes**, above the buttons; Default and Obliterate
+beside the message box (**All recipes**). Open one, change a step's form or skip a step for this run, and **Preview**:
+every step is built from the documents attached now and checked by the same gate as any plan, then previewed once,
+with the pages after every step; one **Create edited copies** makes the copies, and **Undo** takes the whole recipe
+off. No AI is called, so a recipe costs nothing to run. A step that needs a template, picture or table uses the one
+attached when it runs; a document a step cannot take is left untouched in Safe mode and waits on your to-do list in
+Default and Obliterate. A recipe runs in the mode it was saved in or one with fewer guardrails: Safe recipes in every
+mode, Default ones in Default and Obliterate, Obliterate ones only in Obliterate. A change Claude wrote a custom method
+for, or planned with values read from particular documents, cannot be kept, and the dialog says why. Recipes are kept
+in `recipes.json` beside `settings.json`; **Manage** renames, duplicates and deletes them.
 
 Besides Word documents you can attach pictures and tables for the edit to use, such as a new logo to swap in or
 insert, a schedule to place as a table, or a spreadsheet of project values to fill in; Claude is told about them and can read the tables, and nothing

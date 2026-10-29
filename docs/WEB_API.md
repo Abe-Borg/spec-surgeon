@@ -242,7 +242,26 @@ Rules the page relies on:
   one of `left untouched` (the run left it as it was), `set aside` (it waited on the to-do list then) or `attached
   later` (attached after the run, or removed and attached again). `POST /api/undo` takes the newest off; Start over
   and removing the last working copy clear it; the journal keeps it. The page lists it under the copies, the newest
-  marked LATEST, and gives a Safe-mode button a checkmark while an entry names it.
+  marked LATEST, and gives a Safe-mode button a checkmark while an entry names it (in `buttons`, below).
+  Each entry also carries what a saved recipe would keep of the run (`DocumentTask.run_steps`, taken at its approval
+  by `_steps_now`): `id` (what `POST /api/saved-recipes/save` names), `name` (the saved recipe it ran; `""` for a
+  button or a request), `steps` (each `saved_recipes.step_view`: `{"kind": "button" | "plan", "label", "text",
+  "plan", "needs", "places", "unguarded", "button"?, "inputs"?, "files"?}` — a button and its form, or the user's words
+  with the approved plan's sentences, the words it places and the files it reads by kind and name; a recipe's run lists
+  its steps), `buttons` (the Safe-mode buttons it carried, its own or its recipe's) and `why_not` (why a recipe cannot
+  keep it — a custom method, values read from particular documents, per-occurrence capitalisation, or nothing kept;
+  `""` when it can). The page shows a recipe's run as one entry with its steps under it.
+- `saved_recipes` lists the saved recipes (`saved_recipes.Store`, `config_dir()/recipes.json`;
+  `DocumentTask.recipes_view`): every Safe and Default recipe, and Obliterate's only while Obliterate mode is shown,
+  each `{"id", "name", "note", "mode": "safe" | "default" | "obliterate", "saved", "last_run", "last_documents",
+  "steps", "needs", "runs_here", "why_not_here"}` — `steps` as above, `needs` what they need attached beside the
+  documents, and whether the recipe runs in this mode (a recipe runs in its own mode and in any with fewer guardrails:
+  Safe everywhere, Default in Default and Obliterate, Obliterate only in Obliterate). Safe mode's panel shows its own
+  under **My recipes**; Default and Obliterate list the ones that run there beside the message box, Obliterate's
+  greyed. `recipe_blocked` says why a recipe cannot run now ("Discard the preview first, or create its copies.", "Drop
+  the request that is open first, or finish it.", "Finish the pass over your to-do list first." — Default and
+  Obliterate only; Safe mode replaces a waiting preview as a button does); `""` when it can. An older server leaves
+  both out.
 - `discard` is what `POST /api/discard` would withdraw now: `preview` (a preview waiting for approval, in every
   mode), `request` (Default and Obliterate: a request still open with nothing to approve — Claude's question, a reply
   to continue, a custom method being written, a pause at the spending check), or `""` (nothing, work runs, or recovery
@@ -296,6 +315,9 @@ explicitly injected clients are retained. Both key replacement and removal refus
 | POST | `/api/primary` | `{"token": "...", "hold"?: ["<sample source path>", …]}` — `hold` names the previewed documents marked with the red X: set aside on the to-do list, the others run; a path that is not one of the plan's documents is refused (400 for a malformed list, the job's `error` for an unknown path) | SSE stream |
 | GET | `/api/recipes` | | `{"recipes": [{"id", "label", "group", "summary", "needs": ["template" \| "picture"], "fields": [{"name", "kind": "text \| lines \| pairs \| choice \| check \| picture \| table \| slots \| roles", "label", "required", "default"?, "options"?, "help"?, "placeholder"?, "optional_choice"?, "row"?}]}], "groups": [...]}` — Safe mode's buttons (`recipes.catalog()`), the same for the whole session. A `lines` field is sent as a list of one-line strings (the issue stamp's wordings, empty rows dropped); consecutive fields with the same `row` render side by side (the four page margins) |
 | POST | `/api/recipe` | `{"recipe": "<id>", "inputs": {<field name>: value}}` — a Safe-mode button and its form; a form that cannot be used, or a plan the gate refuses, is said in one `app` message and nothing is previewed; 400 for inputs that are not an object | SSE stream |
+| POST | `/api/saved-recipes/save` | `{"name": "…", "note": "…", "runs": ["<working.done id>", …]}` — **Save as a recipe**: the ticked runs' steps, oldest first, as one recipe (`DocumentTask.save_recipe` → `saved_recipes.Store.add`), and one `app` message | the view, `saved_recipes` with it; 400 with `{"error"}` for no name, a name over 120 characters, no run, a run not listed or one a recipe cannot keep (its `why_not`); 409 while work runs |
+| POST | `/api/saved-recipes/change` | `{"action": "rename \| duplicate \| delete \| inputs", "id": "<recipe id>", "name"?: "…", "note"?: "…", "inputs"?: [<form or null per step>]}` — Manage: rename (and what it is for), duplicate, delete; `inputs`: a Safe recipe's button forms as its run form holds them (**Save these changes to the recipe**), `null` for a step left as it is | the view; 400 with `{"error"}` for an unknown action or recipe, an empty name, or forms that do not fit the recipe; 409 while work runs |
+| POST | `/api/saved-recipes/run` | `{"id": "<recipe id>", "steps": [{"skip": false, "inputs"?: {…}}, …]}` — one entry per saved step (`steps` left out: every step as saved): whether it is skipped this time and the form a button step runs with; every kept step is built from the documents attached now, each through the gate, composed in order into one plan (a chain, or a plan per layout of chains) and through the gate again (`saved_recipes.build_run`), then previewed with no AI call (`Session.model_free`); a step that cannot be used, or a plan the gate refuses, is said in one `app` message and nothing is previewed | SSE stream; 400 for `steps` that are not a list of objects; the job's `error` for a recipe that does not run in this mode or while `recipe_blocked` is set |
 | POST | `/api/occurrences` | `{"skip": ["<key>", …]}` — every find-and-replace occurrence the user unticked in the preview's list, by its `key` (the whole unticked set: a key left out is an occurrence put back); the previewed plan is made again with those occurrences left as they are (backlog F1: each `replace_table` op's `skip` list is exactly the unticked occurrences of its own, the spec passes the gate again with those keys as the ones recorded from the user's unticks, and the preview is remade on the same documents; the approval token changes, so the page's marks start over); 400 for a body that is not a list of keys; the job's `error` when no preview waits or a key is not in the list; a plan the gate refuses keeps the preview as it was and says so in one `app` message | SSE stream |
 | POST | `/api/mode` | `{"mode": "safe \| default \| obliterate", "acknowledged"?: true}` — `obliterate` needs `show_obliterate` on and `acknowledged: true` (the user ticked its warning this time); entering or leaving it voids the plan | the view; Safe or Default is kept in settings.json, Obliterate never is (the next start opens in Default); 400 for another mode, a hidden Obliterate or a missing acknowledgement |
 | POST | `/api/handoff` | `{"paths": ["<left_untouched path>", …]}` — the documents go on the to-do list with the button's sentence as their request, and the mode becomes `default`; 400 for a path the last button did not leave untouched, or while a preview waits | the view |
@@ -350,7 +372,7 @@ Unknown kinds and fields are passed over; text is cut to 2,000 characters and st
 
 Any report is a sign of life: a showing page (`visible`) that sends nothing for 45 s is journalled as unresponsive.
 
-## The job stream (`send`, `choose`, `primary`, `recipe`, `occurrences`, and `export` of a clean kind)
+## The job stream (`send`, `choose`, `primary`, `recipe`, `saved-recipes/run`, `occurrences`, and `export` of a clean kind)
 
 `Content-Type: text/event-stream`; each frame is `data: <json>\n\n`; the last frame is `done` or `error`.
 
