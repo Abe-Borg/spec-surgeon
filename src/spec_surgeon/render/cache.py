@@ -123,6 +123,10 @@ class RenderCache:
         diag.event("render.cache_hit", source=str(docx), output=str(pdf), renderer=renderer)
         return pdf
 
+    def seen_digest(self, docx: Path) -> Optional[str]:
+        """The digest ``get`` read for ``docx`` (None before a ``get``, or when it could not be read)."""
+        return self._seen.get(Path(docx))
+
     def _valid(self, entry: Path, meta: Path, digest: str, renderer: str) -> bool:
         """The entry is the PDF its sidecar describes, rendered from these bytes by this renderer; anything else is
         removed so a fresh render takes its place."""

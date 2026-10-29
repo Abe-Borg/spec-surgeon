@@ -315,7 +315,13 @@ room for it, ending in an ellipsis past 22rem. Then the in-app guide, one dialog
   has a problem"). These replace the old Help menu and About box.
 
 Before the guide's tabs, **Tour** starts the guided tour (below). On the right: the estimated spending of the
-conversation, the connection pill (it opens Settings),
+conversation, then (after **Stop** while work runs) the context gauge adapted from Build-a-Spec's context pill: "142k /
+1M context", the conversation's context at its last step as Anthropic counted it against the model's window, with the
+exact count, the share and the rollover point (past which `contexts.manage_context` seals the history and goes on in a
+fresh epoch) on hover (`lib/chat.contextPill`, `contextTip`; `cost.context` in `docs/WEB_API.md`). Only the chat's own
+calls move it; once a request ends, the next message starts a fresh conversation, so the gauge turns faint and stands
+for the one before until the next step. None before the first step and none in Safe mode. Then the connection pill (it
+opens Settings),
 **New conversation** and the gear. An update set aside with the banner's **Not now** stays in the top bar as a pill
 ("v1.7.0 available — install"), and About offers it too.
 
@@ -323,10 +329,11 @@ The bar is one line. When it holds more than the window's width (at 1280 px with
 Obliterate shown or an update waiting), it gives way one step at a time until everything fits, measured on the page
 rather than guessed from the width (`frontend/src/lib/useFit.ts`; the steps are `GIVE_WAY` in
 `frontend/src/components/Header.tsx`): the context line goes, the spacing tightens, "this conversation" leaves the
-spending pill, the connection pill says **Key**, **No AI** or **Credentials** (**Add your API key** stays whole), the
+spending pill, "context" leaves the context gauge, the connection pill says **Key**, **No AI** or **Credentials** (**Add your API key** stays whole), the
 help topics take one word each (**Guide**, **Workflows**, **Mechanics**, **Trust**, **About**, the full name on hover),
 **New conversation** and **Export · 3 unsaved** become **New** and **Export · 3**, the dividers go, "this request"
-leaves the request's spending, the spacing tightens again, and last the update pill (About still offers it). The title, every topic, the mode
+leaves the request's spending, the spacing tightens again, the context gauge goes (a measurement, no control), and
+last the update pill (About still offers it). The title, every topic, the mode
 switch and every button always stay, and a wider window gets the words back.
 
 ## The guided tour

@@ -106,6 +106,9 @@ def expected() -> dict:
     return {
         "model": one(r'os\.environ\.get\("SPEC_SURGEON_MODEL", "([^"]+)"\)', llm_src, "llm.DEFAULT_MODEL"),
         "maxOutputTokens": const("resources.py", "DEFAULT_MAX_OUTPUT_TOKENS"),
+        "contextWindowTokens": const("llm.py", "CONTEXT_WINDOWS")[
+            one(r'os\.environ\.get\("SPEC_SURGEON_MODEL", "([^"]+)"\)', llm_src, "llm.DEFAULT_MODEL")],
+        "contextRolloverTokens": const("resources.py", "DEFAULT_CONTEXT_TOKENS"),
         "conversationEffort": const("document_task.py", "CONVERSATION_EFFORT"),
         "recoveryEffort": const("document_task.py", "RECOVERY_EFFORT"),
         "codegenEffort": const("resources.py", "CODEGEN_EFFORT"),
@@ -157,7 +160,7 @@ def expected() -> dict:
         "processMinFiles": const("batch.py", "PROCESS_MIN_FILES"),
         "maxProcessWorkers": const("batch.py", "MAX_PROCESS_WORKERS"),
         "planProcessMinFiles": const("planner.py", "PLAN_PROCESS_MIN_FILES"),
-        "libreOfficeTimeoutSeconds": default("render/libreoffice.py", "render_pdfs", "timeout"),
+        "libreOfficeTimeoutSeconds": default("render/libreoffice.py", "render_groups", "timeout"),
         "credentialTarget": const("credentials.py", "TARGET"),
         "appLogMB": int(one(r"maxBytes=(\d+) \* 2 \*\* 20", source("diagnostics.py"), "the app log's size")),
         "appLogBackups": int(one(r"maxBytes=\d+ \* 2 \*\* 20, backupCount=(\d+)", source("diagnostics.py"),
@@ -270,7 +273,8 @@ def test_the_ledger_covers_the_facts_and_the_rule():
     assert "The trust surfaces are a contract" in claude
     for key in ("DEFAULT_SPENDING_LIMIT_USD", "AUTO_STEPS", "CHECK_INTERVAL", "SANDBOX_TIMEOUT", "DEFAULT_MEMORY_MB",
                 "MAX_CASES", "STOPPED_OUTPUT_RATE", "RETRY_DELAYS", "CONVERSATION_EFFORT", "RECOVERY_EFFORT",
-                "CODEGEN_EFFORT", "UNGUARDED_CHECK_ROUNDS", "STREAMED_TOOLS", "REGEX_TIMEOUT_S", "MAX_PATTERN_CHARS"):
+                "CODEGEN_EFFORT", "UNGUARDED_CHECK_ROUNDS", "STREAMED_TOOLS", "REGEX_TIMEOUT_S", "MAX_PATTERN_CHARS",
+                "CONTEXT_WINDOWS", "DEFAULT_CONTEXT_TOKENS"):
         assert key in ledger, f"the ledger names no source for {key}"
 
 

@@ -551,6 +551,7 @@ def test_v7_template_pages_are_paired_not_searched(tmp_path):
     assert res.failed_pages and "cannot be paired" in res.pages[0].problems[0]
 
 
+@pytest.mark.render
 @pytest.mark.skipif(shutil.which("soffice") is None, reason="LibreOffice not installed")
 def test_v7_template_reference_rendered(tmp_path):
     """V7 against the template's headers/footers rendered alone. With the distances aligned the regions match
@@ -580,6 +581,7 @@ def test_v7_template_reference_rendered(tmp_path):
         assert all(p["anchors"] >= 4 for p in rec.get("V7").data["pages"]), rec.get("V7").summary
 
 
+@pytest.mark.render
 @pytest.mark.skipif(shutil.which("soffice") is None, reason="LibreOffice not installed")
 def test_v7_copies_are_named_short_whatever_the_documents_name(tmp_path):
     """The owner's 1.10.0 run: the headers/footers-only copy of a document with an 84-character name, under a
@@ -604,6 +606,7 @@ def _title_page_on_cover(root):
     etree.SubElement(sp, W + "titlePg")
 
 
+@pytest.mark.render
 @pytest.mark.skipif(shutil.which("soffice") is None, reason="LibreOffice not installed")
 def test_v7_blank_first_page_variant_does_not_hide_a_displaced_header(template, tmp_path):
     """The template's cover has titlePg and no first-page header/footer (its first page renders blank). Aligned,
@@ -647,6 +650,7 @@ def _wrapping_spec(tpl: Path, **params) -> dict:
             "review": {"sample_files": 2, "geometry_reference": "template"}}
 
 
+@pytest.mark.render
 @pytest.mark.skipif(shutil.which("soffice") is None, reason="LibreOffice not installed")
 def test_v7_template_reference_carries_each_documents_fills_and_text_width(tmp_path, monkeypatch):
     """Live QA finding F08: V7 compared the filled header with the unfilled template, so a fill shorter than its
@@ -710,6 +714,7 @@ def _distances_set_wrong(monkeypatch, header: str) -> None:
     monkeypatch.setattr(ApplyHeaderFooterTemplate, "plan", wrong_distance)
 
 
+@pytest.mark.render
 @pytest.mark.skipif(shutil.which("soffice") is None, reason="LibreOffice not installed")
 def test_v7_template_reference_holds_the_vertical_layout_the_plan_asks_for(tmp_path, monkeypatch):
     """The reference takes the document's fills and text width, and its vertical layout only where the plan keeps the

@@ -388,7 +388,7 @@ const SCENARIOS = {
   question: () => {
     const v = SCENARIOS.attached();
     v.stage = "question";
-    v.cost = { usd: 0.07, text: "about $0.07", calls: 2 };
+    v.cost = { usd: 0.07, text: "about $0.07", calls: 2, context: { tokens: 48_210, window: 1_000_000, rollover: 900_000, live: true } };
     v.messages = [
       msg("user", "Change every font to Arial 10 pt and update the footer to say Issued for Construction."),
       msg(
@@ -414,7 +414,7 @@ const SCENARIOS = {
   preview: () => {
     const v = SCENARIOS.attached();
     v.stage = "preview";
-    v.cost = { usd: 0.21, text: "about $0.21", calls: 5 };
+    v.cost = { usd: 0.21, text: "about $0.21", calls: 5, context: { tokens: 142_304, window: 1_000_000, rollover: 900_000, live: true } };
     v.messages = [
       msg("user", "Change every font to Arial 10 pt and update the footer to say Issued for Construction."),
       msg("assistant", "I read the three documents and the template. Before I plan this, one thing to clarify."),

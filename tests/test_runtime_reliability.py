@@ -26,6 +26,8 @@ from spec_surgeon.render import libreoffice, word_com, word_worker
 from spec_surgeon.verify.reader import VPackage
 from spec_surgeon.verify import run_suite
 
+REAL_WORD_AVAILABLE = word_com.available          # conftest hides every renderer from a test not marked render
+
 CONTINUOUS = {"request": "Number the pages continuously", "summary": "Continuous page numbers", "mode": "formatting",
               "ops": [{"op": "fix_page_numbering", "params": {"option": "continuous"}}]}
 
@@ -605,6 +607,7 @@ REPLACE = _spec("content", [{"op": "replace_text", "params": {"find": "FM Global
 
 
 def test_word_is_picked_only_when_it_is_installed(monkeypatch):
+    monkeypatch.setattr(word_com, "available", REAL_WORD_AVAILABLE)      # the check itself is what is tested here
     monkeypatch.setattr(sys, "platform", "win32")
     for name in ("win32com", "win32com.client", "pythoncom"):
         monkeypatch.setitem(sys.modules, name, types.ModuleType(name))

@@ -720,8 +720,9 @@ def render_samples(samples: List[SampleView], out_dir: Path, renderer: str, do_r
     cache = render_mod.RenderCache.for_out_dir(Path(out_dir))
     if cache is not None:
         detail(f"render cache: {cache.root}")
-    srcs = render_mod.render_pdfs(src_in, rdir / "source", backend, 2, log=warn, detail=detail, cache=cache)
-    outs = render_mod.render_pdfs(out_in, rdir / "output", backend, 2, log=warn, detail=detail, cache=cache)
+    # the sources and the copies render side by side, in one round of renderer processes
+    srcs, outs = render_mod.render_pdf_groups([(src_in, rdir / "source"), (out_in, rdir / "output")], backend, 2,
+                                              log=warn, detail=detail, cache=cache)
     for s, a, b, name in zip(done, src_in, out_in, unique):
         sp, op = srcs.get(a), outs.get(b)
         if not sp or not op:

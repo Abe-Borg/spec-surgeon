@@ -192,6 +192,7 @@ def test_private_copy_of_word_inert_default_discards_inactive_children(tmp_path)
     assert imported.find(W + "rPr") is None and imported.find(W + "basedOn") is None
 
 
+@pytest.mark.render
 @pytest.mark.skipif(shutil.which("soffice") is None, reason="LibreOffice not installed")
 def test_inherited_borders_and_shading_match_the_rendered_template(tmp_path):
     """Pixel evidence for the review regression and Word's inert built-in defaults."""

@@ -450,6 +450,7 @@ def test_every_assistant_knows_export_makes_the_pdfs():
 
 # ---- with the real LibreOffice, when this computer has it --------------------------------------------------------------
 
+@pytest.mark.render
 @pytest.mark.skipif(render.pick("libreoffice") is None, reason="LibreOffice is not installed here")
 def test_libreoffice_makes_a_clean_pdf_where_the_redlined_copy_shows_its_markup(tmp_path, no_ai):
     task = edited(tmp_path, ["redline.docx"])                  # Jack deleted "black steel "
