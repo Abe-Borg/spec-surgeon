@@ -228,7 +228,10 @@ jobs). Details: `docs/CONVERSATIONAL_DESKTOP.md`.
     `examples/tutorial/`, the tour's showcase, shipped in the wheel and the app; `packaging/installed_wheel_smoke.py`
     checks the installed bytes against the checkout).
 - `tests/` — pytest; `make_fixtures.py` and `fx_*.py` build synthetic documents; `fake_claude.py` scripts Claude;
-  `conftest.py` seals keys, config dir and model; `describe_cases/` feeds `test_describe.py`.
+  `fake_render.py` fakes the renderer seam (`render.render_pdf_groups`); `conftest.py` seals keys, config dir and
+  model, and hides Word and LibreOffice from every test not marked `@pytest.mark.render` (a test that looks at
+  rendered pages carries the mark; one that fakes a renderer patches it itself); `describe_cases/` feeds
+  `test_describe.py`.
 - `docs/` — `BACKLOG.md` (the open work), design notes (`BUILTIN_OPS_BATCH*_DESIGN.md`), `releases/`;
   `TRUST_CLAIMS.md` (the ledger behind the trust surfaces).
 - `packaging/` — PyInstaller spec, Inno Setup script, installed-app smoke tests, `license_notices.py` (the app's
@@ -240,7 +243,8 @@ jobs). Details: `docs/CONVERSATIONAL_DESKTOP.md`.
 
 ```sh
 pip install -e ".[dev,gui,agent]"            # Windows: py -3 -m pip install -e ".[dev,gui,agent,word]"
-python3 -m pytest -q -n auto                  # every core, as CI; Windows: py -3 -m pytest -q -n auto
+python3 -m pytest -q -n auto --dist worksteal # every core, as CI; Windows: py -3 -m pytest -q -n auto --dist worksteal
+python3 -m pytest -q -n auto -m "not render"  # the quick loop: everything but the tests that render real pages
 python3 -m pytest -q tests/test_ops.py        # one module (in a git worktree: PYTHONPATH=src python3 -m pytest …)
 cd frontend && npm ci && npm run build        # rebuild the window's page (Node 22) into web/static; commit it
 python3 tests/make_fixtures.py OUT            # fixtures; --rich, --template, --reference, --styles-template, --numbering-scheme, --dirty

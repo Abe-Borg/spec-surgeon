@@ -229,6 +229,7 @@ def test_the_visual_check_rewrite_keeps_the_approval_inputs(tmp_path):
     assert "VISUAL CHECK: fine" in (tmp_path / "pv" / "PREVIEW.md").read_text(encoding="utf-8")
 
 
+@pytest.mark.render
 @pytest.mark.skipif(not (shutil.which("soffice") or shutil.which("libreoffice")), reason="LibreOffice not installed")
 def test_real_render_keeps_the_pdfs_and_the_pages_for_the_visual_check(folder, tmp_path):
     s = Session(documents=sorted(folder.glob("*.docx")), out_root=tmp_path / "out",

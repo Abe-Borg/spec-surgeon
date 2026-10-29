@@ -80,7 +80,9 @@ jobs:
           python -m pytest -q tests/test_convert_typed_numbers.py -k libreoffice_shows_every_typed_number_exactly_once_in_order
       - name: Run tests
         # -n auto: one pytest-xdist worker per core (4 on the hosted runners); every test is sealed by conftest.py.
-        run: python -m pytest -q -n auto --junitxml=test-results.xml
+        # --dist worksteal: a worker that runs out of tests takes some of another's, so a slow module never leaves
+        # the other cores idle at the end of the run.
+        run: python -m pytest -q -n auto --dist worksteal --junitxml=test-results.xml
       - name: Build and check distributions
         run: |
           python -m build

@@ -67,13 +67,28 @@ def pin_model(monkeypatch) -> None:
             monkeypatch.setattr(mod, "DEFAULT_MODEL", PINNED_MODEL)
 
 
+def _no_renderer():
+    """Stands in for ``libreoffice.find_soffice`` and ``word_com.available`` in a test without ``@pytest.mark.render``."""
+    return None
+
+
+def hide_renderers(monkeypatch) -> None:
+    """Neither Word nor LibreOffice is found: a preview or a run checks everything but the pages (V6/V7 not
+    applicable, as on a machine with neither) and starts no renderer process. A test that looks at rendered pages
+    carries ``@pytest.mark.render`` and gets what this machine has; a test that fakes a renderer patches these (or
+    ``render.pick``) itself."""
+    from spec_surgeon.render import libreoffice, word_com
+    monkeypatch.setattr(libreoffice, "find_soffice", _no_renderer)
+    monkeypatch.setattr(word_com, "available", lambda: False)
+
+
 @pytest.fixture(autouse=True)
 def _hermetic(request, tmp_path_factory, monkeypatch):
     """Every test is sealed off from the machine it runs on: settings live in a temporary
     folder (never the real %APPDATA%), no API key is visible (and none a test writes outlives it), Windows Credential
     Manager is out of reach (only tests/test_credentials.py's throw-away round trip reaches it), the model is the
-    default whatever SPEC_SURGEON_MODEL says, a Claude client that was not scripted cannot be built, and a scripted
-    failure is not re-sent."""
+    default whatever SPEC_SURGEON_MODEL says, a Claude client that was not scripted cannot be built, a scripted
+    failure is not re-sent, and no renderer is found unless the test is marked ``render`` (``hide_renderers``)."""
     monkeypatch.setenv("SPEC_SURGEON_CONFIG_DIR", str(tmp_path_factory.mktemp("config")))
     seal_environment(monkeypatch)
     if Path(str(request.node.path)).resolve() != REAL_CREDENTIALS_TEST:
@@ -96,3 +111,6 @@ def _hermetic(request, tmp_path_factory, monkeypatch):
     # test's patches never reach a spawned worker, so the suite runs them in this process unless a test asks.
     from spec_surgeon import batch
     monkeypatch.setattr(batch, "DEFAULT_WORKER_MODE", "thread")
+    # Rendering pages costs a renderer process (about a second of CPU a start) for what most tests never look at.
+    if request.node.get_closest_marker("render") is None:
+        hide_renderers(monkeypatch)

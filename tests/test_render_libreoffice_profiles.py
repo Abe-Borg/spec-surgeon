@@ -202,6 +202,7 @@ def test_a_profile_another_process_holds_is_skipped_for_the_next_free_one(tmp_pa
     assert len(got) == 1 and runs == [("1", ["A.docx"])]                       # the render went to profile 1
 
 
+@pytest.mark.render
 @pytest.mark.skipif(shutil.which("soffice") is None, reason="LibreOffice not installed")
 def test_the_real_soffice_renders_twice_on_one_kept_profile(tmp_path):
     source = _docx(tmp_path / "Spec.docx")

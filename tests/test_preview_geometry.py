@@ -221,6 +221,7 @@ def test_the_window_and_the_contract_carry_the_layout_note(folder, tmp_path, mon
     assert set(sample) >= {"source", "name", "images", "pages_before", "pages_after", "passed", "failures", "geometry"}
 
 
+@pytest.mark.render
 @pytest.mark.skipif(shutil.which("soffice") is None, reason="LibreOffice not installed")
 def test_with_a_real_renderer_the_previews_layout_verdict_is_the_runs(folder, tmp_path):
     spec = load_spec(SPECS / "remove-all-headers-footers.json")
@@ -414,6 +415,7 @@ def test_a_template_plan_replaces_the_bands_and_the_plan_s_own_removals_are_subt
     assert g.words_missing.count == 60 and g.words_missing.words == [f"w{i}" for i in range(WORDS_LISTED)]
 
 
+@pytest.mark.render
 @pytest.mark.skipif(shutil.which("soffice") is None, reason="LibreOffice not installed")
 def test_with_a_real_renderer_smaller_margins_reflow_the_words_without_a_warning(folder, tmp_path):
     spec = {"request": "half-inch margins", "summary": "Every section's margins become half an inch.", "mode": "formatting",
@@ -522,6 +524,7 @@ def test_a_custom_run_without_rendering_says_why_its_pages_were_not_checked(fold
     assert t.record.get("V7").summary == "rendering disabled"
 
 
+@pytest.mark.render
 @pytest.mark.skipif(shutil.which("soffice") is None, reason="LibreOffice not installed")
 def test_with_a_real_renderer_a_custom_samples_layout_verdict_is_its_runs(folder, tmp_path):
     from spec_surgeon import codegen

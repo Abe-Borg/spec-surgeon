@@ -1319,6 +1319,7 @@ def test_a_spec_runs_through_the_batch_pipeline(src, pics, tmp_path):
     assert [f.status for f in batch.files] == ["PASS", "PASS"], [f.exception for f in batch.files]
 
 
+@pytest.mark.render
 @pytest.mark.skipif(shutil.which("soffice") is None, reason="LibreOffice not installed")
 def test_libreoffice_opens_and_renders_the_outputs(src, pics, tmp_path):
     from spec_surgeon.render import libreoffice

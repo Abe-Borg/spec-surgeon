@@ -222,6 +222,7 @@ def test_preview_and_approval_token(folder, tmp_path):
     assert approval_token(spec, files(folder)) != pv.token                          # a touched file voids it
 
 
+@pytest.mark.render
 @pytest.mark.skipif(shutil.which("soffice") is None, reason="LibreOffice not installed")
 def test_preview_renders_side_by_side_images(folder, tmp_path):
     pv = make_preview(load_spec(SPECS / "remove-all-headers-footers.json"), [str(folder)], tmp_path / "pv")

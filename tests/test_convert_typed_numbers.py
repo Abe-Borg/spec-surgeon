@@ -845,6 +845,7 @@ def test_rendered_numbering_oracle_rejects_changed_content(rendered):
         _assert_rendered_words(docx_of(doc), rendered)
 
 
+@pytest.mark.render
 @pytest.mark.skipif(not (shutil.which("soffice") and shutil.which("pdftotext")), reason="LibreOffice/poppler missing")
 @pytest.mark.parametrize("tracked", [False, True])
 @pytest.mark.parametrize("narrow_page", [False, True], ids=["default-width", "wrapped"])

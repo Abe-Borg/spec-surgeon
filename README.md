@@ -369,7 +369,9 @@ conversations and a clean start, recovery, resource use, verification limits and
 ## Without the window
 
 There is no command line. Developers and coding agents drive the engine from Python, and the test suite
-(`python -m pytest -n auto`, one worker per core) is how a change is checked; see [CLAUDE.md](CLAUDE.md). A batch
+(`python -m pytest -n auto --dist worksteal`, one worker per core) is how a change is checked; see
+[CLAUDE.md](CLAUDE.md). Only the tests marked `render` render real pages, with Word or LibreOffice when one is
+installed (`-m "not render"` leaves them out for a quicker run); every other test sees no renderer. A batch
 from Python:
 
 ```python

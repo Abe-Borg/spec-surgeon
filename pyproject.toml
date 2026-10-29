@@ -47,3 +47,6 @@ spec_surgeon = ["schemas/**/*.xsd", "skill/**/*.md", "legal/*.txt", "web/static/
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = [
+    "render: the test looks at rendered pages, so it gets the renderer this machine has (Word, else LibreOffice); without the mark a test sees none (tests/conftest.py)",
+]
