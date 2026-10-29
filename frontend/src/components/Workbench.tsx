@@ -28,6 +28,8 @@ interface Props {
   /** The ticks differ from the previewed plan's: Update the preview is due. */
   unticksPending: boolean;
   onToggleUntick: (key: string) => void;
+  /** Tick or untick many occurrences at once (the select-all boxes). */
+  onSetTicks: (keys: string[], ticked: boolean) => void;
   onUpdateOccurrences: () => void;
   onAdd: (kind: "documents" | "template" | "references") => void;
   /** Add a folder of documents (the native folder dialog). */
@@ -104,6 +106,7 @@ function Workbench({
   canUntick,
   unticksPending,
   onToggleUntick,
+  onSetTicks,
   onUpdateOccurrences,
   onAdd,
   onAddFolder,
@@ -196,6 +199,7 @@ function Workbench({
             canUntick={canUntick}
             pending={unticksPending}
             onToggle={onToggleUntick}
+            onSetTicks={onSetTicks}
             onUpdate={onUpdateOccurrences}
           />
         )}
@@ -226,7 +230,7 @@ function Workbench({
         {!view.blocking && view.notes.length > 0 && (
           <PaperCard
             title="Worth knowing"
-            subtitle="Notes on this change before you create the copies. Nothing here stops them."
+            subtitle="Notes on this change to read before you create the copies."
           >
             <ul className="divide-y divide-paper-edge">
               {view.notes.map((note, index) => (

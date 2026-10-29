@@ -1,5 +1,6 @@
+import { useEffect, useRef } from "react";
 import type { OccurrenceDoc } from "../types";
-import { occurrenceCounts, placeLabel, UPDATE_TIP, type Unticks } from "../lib/occurrences";
+import { occurrenceCounts, placeLabel, tickState, UPDATE_TIP, type Unticks } from "../lib/occurrences";
 import Markdown from "./Markdown";
 import { primaryBtn } from "./ModalShell";
 import PaperCard from "./PaperCard";
@@ -13,18 +14,51 @@ interface Props {
   /** The ticks differ from the previewed plan's. */
   pending: boolean;
   onToggle: (key: string) => void;
+  /** Tick every one of `keys`, or untick every one (the select-all boxes). */
+  onSetTicks: (keys: string[], ticked: boolean) => void;
   onUpdate: () => void;
+}
+
+/** A box that ticks or unticks every occurrence of `keys` at once, shown mixed while only some are ticked. */
+function AllBox({ keys, unticks, disabled, label, onSetTicks }: {
+  keys: string[];
+  unticks: Unticks;
+  disabled: boolean;
+  label: string;
+  onSetTicks: (keys: string[], ticked: boolean) => void;
+}) {
+  const state = tickState(unticks, keys);
+  const ref = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    if (ref.current) ref.current.indeterminate = state === "some";
+  }, [state]);
+  return (
+    <label className={`inline-flex items-center gap-2 ${disabled ? "" : "cursor-pointer"}`} data-capability="preview.occurrences-all">
+      <input
+        ref={ref}
+        type="checkbox"
+        className="h-3.5 w-3.5 shrink-0 accent-accent"
+        checked={state === "all"}
+        disabled={disabled}
+        onChange={() => onSetTicks(keys, state !== "all")}
+        aria-label={`${state === "all" ? "Untick" : "Tick"} ${label}`}
+      />
+      <span className="text-[12px] text-paper-dim">{label}</span>
+    </label>
+  );
 }
 
 /**
  * "Find and replace, occurrence by occurrence": every occurrence the waiting plan found, per document — every
- * document of the plan, not the sampled ones only — each with a checkbox. Unticked, an occurrence is left as it is;
+ * document of the plan, not the sampled ones only — each with a checkbox, and a box above them (and beside each
+ * document's name when there are several) that ticks or unticks them all at once. Unticked, an occurrence is left as it is;
  * Update the preview makes the plan and pages again with the unticked ones left out, and the one button waits until
  * then. A document the plan set aside lists every occurrence found, so the occurrence the reason names can
  * be unticked and the document then plans.
  */
-export default function OccurrencesCard({ docs, unticks, canUntick, pending, onToggle, onUpdate }: Props) {
+export default function OccurrencesCard({ docs, unticks, canUntick, pending, onToggle, onSetTicks, onUpdate }: Props) {
   const counts = occurrenceCounts(unticks, docs);
+  const allKeys = docs.flatMap((d) => d.items.map((i) => i.key));
   const summary = `${counts.total} occurrence${counts.total === 1 ? "" : "s"} in ${counts.documents} document${counts.documents === 1 ? "" : "s"}`;
   return (
     <div data-tour="occurrences" data-capability="preview.occurrences">
@@ -48,9 +82,29 @@ export default function OccurrencesCard({ docs, unticks, canUntick, pending, onT
         }
       >
         <div className="flex flex-col gap-4">
+          <div className="border-b border-paper-edge pb-2">
+            <AllBox
+              keys={allKeys}
+              unticks={unticks}
+              disabled={!canUntick}
+              label={`All ${counts.total} occurrence${counts.total === 1 ? "" : "s"}${counts.documents > 1 ? ` in ${counts.documents} documents` : ""}`}
+              onSetTicks={onSetTicks}
+            />
+          </div>
           {docs.map((doc) => (
             <section key={doc.source} aria-label={doc.name}>
-              <p className="text-sm font-medium text-paper-ink">{doc.name}</p>
+              <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
+                <p className="text-sm font-medium text-paper-ink">{doc.name}</p>
+                {docs.length > 1 && doc.items.length > 1 && (
+                  <AllBox
+                    keys={doc.items.map((i) => i.key)}
+                    unticks={unticks}
+                    disabled={!canUntick}
+                    label={`All ${doc.items.length} in this document`}
+                    onSetTicks={onSetTicks}
+                  />
+                )}
+              </div>
               {doc.status === "refused" && (
                 <p className="mt-0.5 text-[12px] leading-relaxed text-err">
                   Set aside: <Markdown text={doc.reason} paper inline /> Untick the occurrence it names to let the

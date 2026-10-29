@@ -205,7 +205,8 @@ mode you last used (Safe the first time; never Obliterate).
   template*, *Remove headers and footers*, *Add or remove a watermark*, *Swap the logo*, *Match body formatting to
   template*, *Match font to template*, *Change font*, *Page size and margins*,
   *Find and replace* (typed pairs or an attached table; body, headers and footers; every occurrence found is listed
-  under the previews with a checkbox, so a historical reference can be unticked and left as it is, the plan remade
+  under the previews with a checkbox — and a box to tick or untick them all at once — so a historical reference can
+  be unticked and left as it is, the plan remade
   with **Update the preview**, and the checker confirms it was left untouched), *Change the issue stamp*, *Add END OF
   SECTION where missing*, *Keep numbers with their units*, *Accept or reject all tracked changes*,
   *Remove all comments*, *Remove highlighting*, *Remove hidden text*, *Remove empty paragraphs*, *Clean up spaces*,
