@@ -262,6 +262,13 @@ def refusal_message(exception, step: bool = True):
                        f"value was given or could be read for it. Fill it in the form, or use a template without it.")
     if code in {"not-found", "ambiguous"} and "slot" in details:
         return head + _slot_message(exception, details)
+    if code == "even-odd" and details.get("why") == "one kind":
+        return head + ("Word's Different Odd & Even Pages setting covers headers and footers alike, so it follows the "
+                       "template only when both come from it. Match the headers and the footers together, or change "
+                       "the setting in Word.")
+    if code == "even-odd" and details.get("why") == "no settings part":
+        return head + ("This document has no settings part to hold Word's Different Odd & Even Pages setting. Save it "
+                       "from Word once and try again.")
     if code == "even-odd" and "template_even_odd" in details:
         on = bool(details["template_even_odd"])
         return head + EVEN_ODD.format(document="This document does not have" if on else "This document has",

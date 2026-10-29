@@ -155,6 +155,9 @@ COMMON_ASSUMPTIONS: Dict[str, List[str]] = {
         "direct_formatting 'replace_style_owned' removes only eligible direct properties supplied by the destination "
         "style and its basedOn chain; unrelated properties and unsupported partial overrides are preserved. "
         "The preview names retained overrides; symbol fonts, hidden text and superscripts stay protected",
+        "the template's theme and compatibility settings are never carried into the document (the theme is out of "
+        "reach by decision): a style the template draws from its theme fonts arrives with those fonts resolved and "
+        "pinned, never with the theme itself",
     ],
     "add_review_comments": [
         "adds exactly the user's approved text and optional literal source as Word review comments; never invents "
@@ -573,6 +576,13 @@ COMMON_ASSUMPTIONS: Dict[str, List[str]] = {
         "a spec binding's typed wording is the user's own words for that one document's slot (title case like the "
         "template, say), placed exactly as approved and pinned to the document's bytes; every document the spec "
         "covers gets its own, and the copy is untracked",
+        "Word's document-wide 'Different Odd & Even Pages' switch must already be the template's: a document set "
+        "otherwise is set aside (even_odd 'refuse', the default). even_odd 'template' gives it the template's switch "
+        "with its headers and footers, only when the user asks for the template's odd/even pages and both kinds are "
+        "templated (one kind alone, or a document with no settings part, is refused); the preview says it",
+        "the template's theme and compatibility settings are never carried into the document (the theme is out of "
+        "reach by decision); the copied headers and footers render as in the template because their effective "
+        "fonts and sizes are pinned as resolved values",
     ],
     # ---- built-in batch 6 (docs/BUILTIN_OPS_BATCH6_DESIGN.md §2) ----
     "remove_footnotes": [
