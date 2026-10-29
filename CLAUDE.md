@@ -204,7 +204,8 @@ jobs). Details: `docs/CONVERSATIONAL_DESKTOP.md`.
     keys (`compiler.compose_submission(skips=)`: a request never writes `skip` itself), a new preview. The verifier
     re-finds every occurrence, honours the plan's skips by its own reading and records the log under V10's data
     (`verify/suite.occurrence_lines`). **Add a folder of documents** (`DocumentTask.attach_folder`, `/api/attach-folder`)
-    attaches a folder's own `.docx` files, subfolders not entered.
+    attaches a folder's own `.docx` files, subfolders not entered; **Remove all documents**
+    (`DocumentTask.remove_documents`, `/api/remove-documents`) takes every Word document out, each as its ✕ would.
     `exports.py` (Export's three kinds: `clean_spec`, `make_clean`, `PROMPT_NOTE`) and `pdf_export.py` (Export → PDF
     (Clean): a PDF of each clean copy that passed, rendered through `render` and its cache, then `check_pdf`).
     `template_roles.py` (a template's style per role, page and font, read without a model) and `body_match.py` (match

@@ -106,6 +106,12 @@ export async function remove(path: string, template: boolean): Promise<View> {
   return normalizeView(await post<unknown>("/api/remove", { path, template }));
 }
 
+/** Remove all documents: every Word document out of this conversation at once; the template, the pictures and tables
+ *  and the files themselves stay. */
+export async function removeDocuments(): Promise<View> {
+  return normalizeView(await post<unknown>("/api/remove-documents"));
+}
+
 /** A document off the to-do list without a pass over it: back among the documents the next request works on. */
 export async function putBack(path: string): Promise<View> {
   return normalizeView(await post<unknown>("/api/put-back", { path }));

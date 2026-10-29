@@ -1372,6 +1372,14 @@ async function handle(req, res) {
       voidPlan();
       return json(res, 200, view);
     }
+    case "POST /api/remove-documents": {
+      if (view.busy) return busyRefusal();
+      const removed = view.attachments.filter((a) => a.kind === "document").length;
+      view.attachments = view.attachments.filter((a) => a.kind !== "document");
+      voidPlan();
+      if (removed) view.messages.push(msg("app", `${removed} documents removed from this conversation; the files themselves are untouched.`));
+      return json(res, 200, view);
+    }
     case "GET /api/recipes":
       return json(res, 200, RECIPES);
     case "POST /api/recipe": {

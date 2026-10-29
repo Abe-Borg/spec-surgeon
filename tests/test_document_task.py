@@ -184,6 +184,26 @@ def test_a_plain_reply_shows_in_the_chat_and_never_again_in_the_card(tmp_path):
     assert view["chips"] == ["Fix the sizes"]           # the card keeps only what the user can tap
 
 
+def test_each_answer_shows_once_a_suggested_reply_that_restates_a_choice_is_not_offered(tmp_path):
+    # the owner's report (2026-10-29): both choices came back as chips in other words, so every answer showed twice
+    everything = ("Do everything else on all four now; leave the tracked changes in the three files for me to "
+                  "accept in Word")
+    reattach = "I'll accept the changes in Word first and attach the files again"
+    ask = {"message": "The three refused files are the ones that still have tracked changes.",
+           "choices": [{"label": everything, "kind": "alternative",
+                        "detail": "The tracked changes in 21 05 23, 21 05 29 and 21 05 53 stay pending."},
+                       {"label": reattach, "kind": "clarify"}],
+           "suggested_replies": ["Do everything else now, I'll accept in Word",
+                                 "I'll accept in Word first and re-attach", "Leave out 21 05 29 for now"]}
+    task = task_for(tmp_path, FakeClient(resp(tool("ask_user", ask))))
+    task.attach([document(tmp_path / "Spec.docx")])
+    view = task.perform("send", text=REQUEST)
+    assert view["stage"] == "question"
+    assert [c["label"] for c in view["choices"]] == [everything, reattach]
+    assert view["chips"] == ["Leave out 21 05 29 for now"]       # what no choice offers stays
+    assert any("restating a choice" in e for e in task.session.turn.errors)
+
+
 def test_a_question_of_several_lines_shows_whole_in_the_card_and_never_in_the_chat(tmp_path):
     question = "Which one should change?\n\n- the header\n- the footer"
     task = task_for(tmp_path, FakeClient(resp(tool("ask_user", {"message": "I checked both.", "questions": [question]}))))
@@ -1361,3 +1381,30 @@ def test_a_failed_custom_method_attempt_starts_the_next_afresh(tmp_path, monkeyp
     assert sorted(p.name for p in Path(pending["out"]).glob("codegen*")) == ["codegen", "codegen-02"]
     assert len(fake.requests[3]["messages"]) == 1                       # the brief alone: nothing carried over
     assert len(fake.requests) == 4
+
+
+def test_remove_all_documents_takes_every_document_out_and_keeps_the_template_and_tables(tmp_path):
+    """**Remove all documents**: every Word document leaves as its ✕ would take it (its edited copy with it, so the
+    next change starts from the originals), a refused one too; the template and the pictures and tables stay; the
+    files themselves are untouched; one message says how many."""
+    docs = [document(tmp_path / f"Spec {n}.docx") for n in range(3)]
+    refused = tmp_path / "broken.docx"
+    refused.write_bytes(b"not a zip")
+    template = document(tmp_path / "tpl" / "Template.docx")
+    table = tmp_path / "values.csv"
+    table.write_text("NAME,VALUE\nPROJECT,Data Hall\n", encoding="utf-8")
+    task = task_for(tmp_path)
+    task.attach([*docs, refused, table])
+    assert [a.refused for a in task.attachments if a.path == refused.resolve()] == [True]
+    before = [p.read_bytes() for p in docs]
+    view = task.perform("send", text=REQUEST)
+    task.perform("primary", token=view["token"])
+    assert task.stage == "done" and set(task.working) == {str(p) for p in docs}
+    task.attach([template], template=True)        # after the run: it is a copy of each document's original
+    assert task.remove_documents() == 4
+    assert [a.path for a in task.attachments] == [table.resolve(), template.resolve()]
+    assert task.working == {} and task.history == [] and task.undo_points == [] and task.documents() == []
+    assert task.messages[-1]["text"] == "4 documents removed from this conversation; the files themselves are untouched."
+    assert [p.read_bytes() for p in docs] == before
+    said = len(task.messages)
+    assert task.remove_documents() == 0 and len(task.messages) == said          # nothing listed: nothing said

@@ -88,7 +88,9 @@ Rules the page relies on:
   `question`, under the latest assistant message. Choices with `words` show the words beneath the button.
   Each of the model's words shows once: the assistant message carries its reply without the questions, and
   `questions` never repeats that message (a reply with nothing to pick, plain words or a failure, is in `messages`
-  only; `questions` carries it only when the chat did not say it, as a recovery turn's). A reply that is an answer
+  only; `questions` carries it only when the chat did not say it, as a recovery turn's), and `chips` never repeat a
+  choice: a suggested reply that only says a choice again in other words is dropped (`conversation.restates`; one
+  that names another document or number, says the opposite or puts the same words to other targets, stays). A reply that is an answer
   with nothing pending (words alone: no question, choice, suggested reply, plan or custom method, and no plan the gate
   refused on the way) ends the request: the stage is `done` when copies exist, else `empty`, `action.kind` is `none`,
   and the next `send` is a new request, told the exchange as context (docs/CONVERSATIONAL_DESKTOP.md, "When a request
@@ -297,6 +299,7 @@ explicitly injected clients are retained. Both key replacement and removal refus
 | POST | `/api/upload` | multipart `files[]`, `template` field | copies the bytes under the scratch folder's `attachments/<stamp>/` (deleted with it when the window closes) and attaches them as `/api/attach` does; the view. 400 with `{"error"}` naming the file when the folder cannot take its name (too long for the path: Windows' 260 characters; the sentence says to shorten the name, the app never shortens it, since the attached name is the copy's planned name), nothing attached then |
 | POST | `/api/pick` | `{"kind": "documents | template | references"}` | opens the NATIVE file dialog through the shell (pywebview); `{"paths": [...]}` — 501 when no shell |
 | POST | `/api/remove` | `{"path": "...", "template": false}` | the view |
+| POST | `/api/remove-documents` | | **Remove all documents** (`DocumentTask.remove_documents`): every Word document, a refused one too, taken out as `/api/remove` takes one; the template and the pictures and tables stay; one `app` message says how many; the view. 409 while work runs |
 | POST | `/api/send` | `{"text": "...", "chip"?: true}` — `chip` marks one of the model's suggested replies the user tapped: their decision, never approved wording | SSE stream (below) |
 | POST | `/api/choose` | `{"choice_id": "c1", "wording": "…"}` — `wording` only for an `editable` choice (one drafted wording): the user's edit, approved instead of the draft (400 when it is not text; an edit that breaks the wording rule ends the job in `error`) | SSE stream |
 | POST | `/api/primary` | `{"token": "...", "hold"?: ["<sample source path>", …]}` — `hold` names the previewed documents marked with the red X: set aside on the to-do list, the others run; a path that is not one of the plan's documents is refused (400 for a malformed list, the job's `error` for an unknown path) | SSE stream |

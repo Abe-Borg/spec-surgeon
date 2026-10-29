@@ -31,6 +31,7 @@ export const END_USER_CAPABILITIES = [
   "documents.add",
   "documents.folder",
   "documents.remove",
+  "documents.remove-all",
   "documents.template",
   "documents.references",
   // Safe mode
