@@ -27,7 +27,7 @@ from spec_surgeon.editspec import load_spec
 from spec_surgeon.ooxml import block_full_text, paragraphs
 from spec_surgeon.package import DocxPackage
 from spec_surgeon.preview import (GEOMETRY_AT_RUN, GEOMETRY_RENDERED_AT_RUN, GEOMETRY_RENDERED_NOT_COMPARED,
-                                  make_chain_preview, make_preview, preview_generated)
+                                  NO_LAYOUT_REFERENCE, make_chain_preview, make_preview, preview_generated)
 from spec_surgeon.ui_feedback import failed_preview_checks
 from fake_render import per_group
 
@@ -179,12 +179,34 @@ def test_a_comparison_the_preview_could_not_make_says_the_pages_were_rendered(fo
 
 
 def test_a_plan_with_no_layout_reference_by_design_says_why(folder, tmp_path, monkeypatch):
+    # two operations give the reference up (the style fonts and the document's default font): the window says it once,
+    # in plain words with no operation named; each operation's own reason stays in the preview text and V7's record
     fake_renderer(monkeypatch)
     spec = load_spec(SPECS / "change-all-font-arial.json")
     pv = make_preview(spec, [str(folder)], tmp_path / "pv", renderer="fake", do_render=True)
     [sv] = pv.samples
     assert sv.passed is True and sv.checks["V7"] == "NA"
-    assert sv.geometry["status"] == "NA" and "by design" in sv.geometry["note"]
+    assert sv.geometry == {"status": "NA", "note": NO_LAYOUT_REFERENCE}
+    assert NO_LAYOUT_REFERENCE == ("Page layout is not compared: this change can move or change what the pages show, "
+                                   "so the original's pages are no reference.")
+    reasons = sv.plan["geometry_reason"]
+    assert "#2 set_style_font: " in reasons and "#3 set_doc_defaults_font: " in reasons
+    assert f"page geometry (V7) NA: {NO_LAYOUT_REFERENCE} (why: {reasons})" in pv.to_text()
+    batch = run_batch([str(folder)], "edit-spec", {}, tmp_path / "run", workers=1, renderer="fake", spec=spec)
+    [fr] = batch.files
+    assert fr.record.get("V7").summary.startswith(f"N/A — no layout reference by design: {reasons}. ")
+
+
+def test_the_window_says_no_layout_reference_in_one_plain_sentence(folder, tmp_path, monkeypatch):
+    from spec_surgeon.document_task import DocumentTask
+    from spec_surgeon.gui import Session
+    fake_renderer(monkeypatch)
+    task = DocumentTask(Session(out_root=tmp_path / "out", visual_check=False), render=True, mode="safe")
+    task.attach(sorted(folder.glob("*.docx")))
+    task.perform("recipe", recipe="set_font", inputs={"font": "Arial"})
+    [sample] = task._samples_view()["samples"]                 # what PreviewCard shows under the card's title
+    assert sample["geometry"] == {"status": "NA", "note": NO_LAYOUT_REFERENCE}
+    assert "#" not in sample["geometry"]["note"] and "_" not in sample["geometry"]["note"]
 
 
 def test_a_chain_checks_the_layout_of_its_last_step_only_when_that_step_needs_no_earlier_render(
@@ -205,7 +227,7 @@ def test_a_chain_checks_the_layout_of_its_last_step_only_when_that_step_needs_no
                                                  {"name": "step 2", "spec": load_spec(SPECS / "change-all-font-arial.json")}]}
     pv = make_chain_preview(last_none, [str(folder)], tmp_path / "pv2", renderer="fake", do_render=True)
     [sv] = pv.samples
-    assert sv.checks["V7"] == "NA" and "by design" in sv.geometry["note"]
+    assert sv.checks["V7"] == "NA" and sv.geometry["note"] == NO_LAYOUT_REFERENCE
 
 
 def test_the_window_and_the_contract_carry_the_layout_note(folder, tmp_path, monkeypatch):
@@ -483,7 +505,8 @@ def test_a_custom_sample_with_no_layout_reference_by_design_says_why(folder, tmp
     gp = preview_generated(_proved(_method(layout_by_design=True), folder, tmp_path), tmp_path / "pv",
                            renderer="fake", do_render=True)
     [sv] = gp.samples
-    assert sv.checks["V7"] == "NA" and sv.passed is True and "the header moves by design" in sv.geometry["note"]
+    assert sv.checks["V7"] == "NA" and sv.passed is True and sv.geometry["note"] == NO_LAYOUT_REFERENCE
+    assert "(why: #1 set_header_distance: the header moves by design)" in gp.to_text()   # the method's own reason
 
 
 def test_a_custom_methods_run_renders_and_compares_every_copy_before_delivering_it(folder, tmp_path, monkeypatch):
