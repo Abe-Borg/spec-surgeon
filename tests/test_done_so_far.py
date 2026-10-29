@@ -200,3 +200,11 @@ def test_the_list_is_read_from_the_documents_attached_now(tmp_path, files):
     task.attach([template], template=True)
     [step] = done(task)
     assert (step["documents"], step["of"]) == (2, 2)                   # a template is not a document of the batch
+
+
+def test_remove_all_documents_clears_the_list(tmp_path, files):
+    task = safe_task(tmp_path)
+    task.attach(files)
+    press(task, "remove_comments")
+    assert task.remove_documents() == 2
+    assert task.runs == [] and done(task) == []

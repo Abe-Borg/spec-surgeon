@@ -731,6 +731,19 @@ class DocumentTask:
             self.say("No edited copy is attached any more, so the next change starts from your originals.")
         self.save()
 
+    def remove_documents(self) -> int:
+        """**Remove all documents**: every Word document in the list (a refused one too) taken out of this
+        conversation through ``remove``, one at a time, so each leaves exactly as its ✕ would take it; the template and
+        the pictures and tables stay. The files themselves are untouched. Returns how many were removed."""
+        listed = [a.path for a in self.attachments if not a.template and not a.reference]
+        for path in listed:
+            self.remove(path)
+        if listed:
+            self.say(f"{len(listed)} document{'s' if len(listed) != 1 else ''} removed from this conversation; the "
+                     f"files themselves are untouched.")
+            self.save()
+        return len(listed)
+
     # ---- the request ----
     def _request(self):
         if not self.decisions:

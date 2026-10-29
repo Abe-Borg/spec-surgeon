@@ -342,7 +342,9 @@ you had picked them one by one (`DocumentTask.attach_folder`): its subfolders ar
 many documents they hold so you can add those folders too; Word's `~$` lock files are skipped, the app's own folders
 are refused as a source, and nothing about the folder is remembered. Files from different folders can be used
 together, including files with the same name. Each file has
-a remove button. **Add a template (optional)** attaches one reference document; it is never part of the batch,
+a remove button; with two or more documents listed, **Remove all documents** takes every Word document out at once
+after one confirmation (`DocumentTask.remove_documents`, each as its ✕ would), leaving the template and the pictures
+and tables. **Add a template (optional)** attaches one reference document; it is never part of the batch,
 and if one of the documents is a copy of the template the window says so and asks you to remove one of them.
 
 **Add a picture or table (optional)**, or dropping one, attaches a file for the edit to use: a picture
