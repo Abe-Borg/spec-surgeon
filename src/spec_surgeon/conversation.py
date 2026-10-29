@@ -58,7 +58,7 @@ from .resources import (DEFAULT_CONTEXT_TOKENS, DEFAULT_EFFORT, DEFAULT_MAX_ATTE
                         DEFAULT_STALL_REPETITIONS, InvestigationProgress, positive_integer)
 
 CHOICE_KINDS_FROM_CLAUDE = ("clarify", "alternative", "rephrase")   # built from Claude's own label and wording
-APP_CHOICE_KINDS = ("custom_transform", "recovery_plan", "recovery_target")   # carried out by the app, never sent to
+APP_CHOICE_KINDS = ("custom_transform", "recovery_plan", "recovery_target", "scheme")   # carried out by the app, never sent to
 # Claude as a reply: a custom transform the app takes on its own, an outcome plan once the user picks it (its words
 # beneath the choice), a recovery target by the window's numbered question
 MAX_CALLS_PER_TURN = compiler.MAX_TURNS
@@ -997,6 +997,18 @@ class Conversation:
                          f"Context: {record['context']}")
                 out.append(Choice(self._next_choice_id(), label, kind, wording=record["after"],
                                   detail="Approves only this occurrence in this source file.", snapshot=copy.deepcopy(record)))
+                continue
+            if kind == "scheme":
+                # a bundled numbering scheme (schemes.py, docs/SPEC_FORMATTER_MODES_DESIGN.md N5): the app writes the
+                # label and the window carries the pick out (it attaches the file as the template)
+                from . import schemes
+                sid = str(c.get("scheme") or "").strip().lower()
+                if self.mode != "chat" or sid not in schemes.SCHEMES:
+                    errors.append('a scheme choice was dropped: scheme must be "csc" or "csi" (and only in a chat)')
+                    continue
+                out.append(Choice(self._next_choice_id(), schemes.label(sid), kind,
+                                  detail=schemes.detail(sid, self.batch.template is not None),
+                                  snapshot={"scheme": sid}))
                 continue
             if kind in ("recipe", "operation", "snippet"):
                 errors.append("Choose the implementation internally; ask the user only about the document result.")

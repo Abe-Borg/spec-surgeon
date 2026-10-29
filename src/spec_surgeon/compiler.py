@@ -62,6 +62,7 @@ from .ops import JobException
 from .ooxml import paragraphs
 from .ops.effective import PropResolver
 from .ops.patterns import compile_pattern
+from . import schemes
 from .ops.selectors import StyleSheet
 from .ops.slots import display_text, nearest_p
 from .package import W, DocxPackage
@@ -608,6 +609,9 @@ roles, and Claude's proposals for paragraphs the reader could not place. Use the
 several files in one plan, merge their indices_by_document entries into one selector. Say in your message which \
 roles rest on Claude's reading (proposed_by_claude) so the user checks them in the preview. Matching a template's \
 look never carries the template's theme or compatibility settings: say so when the user asks for the template's look.
+- """ + schemes.prompt_note() + """ To change only the numbers and keep each paragraph's look (the usual wish with \
+no template of the user's), convert_numbering takes styles "keep"; typed CSI numbers ("A.", "1.01") convert with \
+convert_typed_numbers, typed_as "csi" and match "counters". Numbers stay automatic: never write a number as text.
 """
 
 
@@ -627,8 +631,10 @@ def _chat_ask_user() -> Dict[str, Any]:
     """ask_user as the conversation offers it: a defined-term capitalization choice carries the proposal it approves."""
     tool = copy.deepcopy(next(t for t in TOOLS if t["name"] == "ask_user"))
     choice = tool["input_schema"]["properties"]["choices"]["items"]
-    choice["properties"]["kind"]["enum"] = ["clarify", "alternative", "rephrase", "capitalization"]
+    choice["properties"]["kind"]["enum"] = ["clarify", "alternative", "rephrase", "capitalization", "scheme"]
     choice["properties"]["proposal_id"] = {"type": "string", "description": "kind capitalization: exact id returned by propose_defined_terms"}
+    choice["properties"]["scheme"] = {"type": "string", "enum": ["csc", "csi"],
+                                      "description": "kind scheme: the bundled numbering scheme the choice attaches"}
     return tool
 
 
