@@ -20,6 +20,13 @@ plan the engine runs as written), values read from particular documents (binding
 capitalisation approved occurrence by occurrence. A find-and-replace's unticked occurrences belong to the documents
 they were found in and are not kept; the next preview lists the occurrences again.
 
+A recipe is edited in Manage (``Store.edit``): its name, what it is for, and its steps removed, put in another order or,
+for a button, given another form; and **Save as a recipe** can add the runs it keeps to the end of a recipe already
+saved (``Store.append``). A step saved from a request is never rewritten: its words and plan are what the user approved
+(invariant 7), so it is kept, moved or removed whole. Every run of an edited recipe passes the gate, the preview and the
+approval as before; an edit is refused when the recipe changed since the editor opened (``revision``), and so is a run
+form opened before an edit (its skips and forms are by position: ``choose_steps``, ``Store.update_inputs``).
+
 The mode a recipe belongs to is its steps' (``recipe_mode``): only buttons — Safe; a plan — Default; a plan approved in
 Obliterate mode (its words may be Claude's, shown in its reply) — Obliterate. A recipe runs in its own mode and in any
 with fewer guardrails (``runs_in``): Safe recipes everywhere, Default ones in Default and Obliterate, Obliterate ones in
@@ -34,6 +41,7 @@ user's own words and the approved plan.
 from __future__ import annotations
 
 import copy
+import hashlib
 import json
 import os
 import time
@@ -270,6 +278,13 @@ def _clean(r: Dict[str, Any]) -> Dict[str, Any]:
             "steps": steps}
 
 
+def revision(r: Dict[str, Any]) -> str:
+    """What an editor opened on (``recipe_view``'s ``rev``): its name, what it is for and its steps, never when it last
+    ran — an edit made after another window changed any of them is refused instead of writing over that change."""
+    kept = {"name": r.get("name", ""), "note": r.get("note", ""), "steps": r.get("steps", [])}
+    return hashlib.sha256(json.dumps(kept, sort_keys=True, ensure_ascii=False).encode("utf-8")).hexdigest()[:16]
+
+
 def name_of(value: Any) -> str:
     """A recipe's name as typed: one line, not empty, at most ``MAX_NAME`` characters."""
     if not isinstance(value, str) or not value.strip():
@@ -425,11 +440,57 @@ class Store:
                 raise RecipeRunError("There is no such recipe; it may have been deleted in another window.")
             self._write(kept)
 
-    def update_inputs(self, recipe_id: str, inputs: Sequence[Any]) -> Dict[str, Any]:
-        """A Safe recipe's buttons take the forms the run form holds (``Save these changes to the recipe``): one entry
-        per step, a form for each button step, ``None`` to leave one as it is."""
+    def append(self, recipe_id: str, steps: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """**Save as a recipe**, added to the end of a recipe already saved: its steps, then these, in the order run."""
+        if not steps:
+            raise RecipeRunError("Tick at least one change to save.")
+
         def change(r):
-            if not isinstance(inputs, (list, tuple)) or len(inputs) != len(r["steps"]):
+            if len(r["steps"]) + len(steps) > MAX_STEPS:
+                raise RecipeRunError(f"A recipe holds at most {MAX_STEPS} steps; “{r['name']}” has "
+                                     f"{len(r['steps'])}.")
+            return _clean({**r, "steps": [*r["steps"], *copy.deepcopy(steps)]})
+        return self._change(recipe_id, change)
+
+    def edit(self, recipe_id: str, rev: str, name: Any, note: Any, steps: Any) -> Dict[str, Any]:
+        """**Edit** in Manage: its name, what it is for, and its steps — kept, removed or put in another order, a button
+        step's form changed. ``steps`` lists the steps it keeps in their new order, each ``{"step": its number as saved,
+        counted from 0, "inputs"?: the button's form}``; a step left out is removed. A step saved from a request runs
+        as it was approved and is never rewritten here (its words and plan are what was approved; ask again and save
+        that run instead). ``rev`` is the ``revision`` the editor opened on: a recipe changed since is refused."""
+        new_name, new_note = name_of(name), note_of(note)
+        if not isinstance(steps, list) or not all(isinstance(e, dict) for e in steps):
+            raise RecipeRunError("The recipe's steps could not be read.")
+        if not steps:
+            raise RecipeRunError("Keep at least one step, or delete the recipe.")
+
+        def change(r):
+            if not isinstance(rev, str) or rev != revision(r):
+                raise RecipeRunError("The recipe changed since you opened it, perhaps in another window; open it again.")
+            out: List[Dict[str, Any]] = []
+            seen = set()
+            for entry in steps:
+                n = entry.get("step")
+                if type(n) is not int or not 0 <= n < len(r["steps"]) or n in seen:
+                    raise RecipeRunError("The recipe's steps could not be read.")
+                seen.add(n)
+                step = copy.deepcopy(r["steps"][n])
+                if entry.get("inputs") is not None:
+                    if step["kind"] != "button" or not isinstance(entry["inputs"], dict):
+                        raise RecipeRunError(f"Step {n + 1} was saved from a request and runs as you approved it; "
+                                             f"only a button's form can be changed.")
+                    step["inputs"] = copy.deepcopy(entry["inputs"])
+                out.append(step)
+            return _clean({**r, "name": new_name, "note": new_note, "steps": out})
+        return self._change(recipe_id, change)
+
+    def update_inputs(self, recipe_id: str, inputs: Sequence[Any], rev: Optional[str] = None) -> Dict[str, Any]:
+        """A Safe recipe's buttons take the forms the run form holds (``Save these changes to the recipe``): one entry
+        per step, a form for each button step, ``None`` to leave one as it is. ``rev``: the ``revision`` the run form
+        opened on — the forms are by position, so a recipe whose steps were edited since is refused."""
+        def change(r):
+            if (rev is not None and rev != revision(r)) or not isinstance(inputs, (list, tuple)) \
+                    or len(inputs) != len(r["steps"]):
                 raise RecipeRunError("The recipe changed since its form was opened; open it again.")
             steps = copy.deepcopy(r["steps"])
             for step, form in zip(steps, inputs):
@@ -456,8 +517,9 @@ def recipe_view(r: Dict[str, Any], mode: str) -> Dict[str, Any]:
     missing = next((n for n, s in enumerate(r["steps"], 1) if s["kind"] == "button" and s["button"] not in BY_ID), 0)
     why = (f"Step {missing} uses a button this version of the app does not have." if missing
            else not_here(r["mode"], mode))
-    return {"id": r["id"], "name": r["name"], "note": r.get("note", ""), "mode": r["mode"], "saved": r.get("saved", ""),
-            "last_run": r.get("last_run", ""), "last_documents": r.get("last_documents", 0), "steps": steps,
+    return {"id": r["id"], "rev": revision(r), "name": r["name"], "note": r.get("note", ""), "mode": r["mode"],
+            "saved": r.get("saved", ""), "last_run": r.get("last_run", ""),
+            "last_documents": r.get("last_documents", 0), "steps": steps,
             "needs": list(dict.fromkeys(n for s in steps for n in s["needs"])),
             "runs_here": not why, "why_not_here": why}
 
@@ -479,10 +541,14 @@ class RunBuild:
     nothing: bool = False
 
 
-def choose_steps(record: Dict[str, Any], picks: Any) -> List[Tuple[int, Dict[str, Any]]]:
+def choose_steps(record: Dict[str, Any], picks: Any, rev: Optional[str] = None) -> List[Tuple[int, Dict[str, Any]]]:
     """The steps this run keeps, in order, ``(number, step)``: ``picks`` names each saved step once — ``{"skip": bool,
-    "inputs": {…}}``, the form a button step runs with this time (none: as saved). A plan step runs as saved."""
+    "inputs": {…}}``, the form a button step runs with this time (none: as saved). A plan step runs as saved. ``rev``:
+    the ``revision`` the run form opened on — picks are by position, so a recipe whose steps were edited since (moved,
+    removed, added) is refused rather than given a form or a skip meant for another step."""
     steps = record["steps"]
+    if rev is not None and rev != revision(record):
+        raise RecipeRunError("The recipe changed since its form was opened; open it again.")
     if picks is None:
         picks = [{} for _ in steps]
     if not isinstance(picks, list) or len(picks) != len(steps) or not all(isinstance(p, dict) for p in picks):

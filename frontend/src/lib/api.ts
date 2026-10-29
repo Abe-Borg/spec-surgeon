@@ -266,7 +266,8 @@ export const recipe = (id: string, inputs: RecipeInputs) => streamJob("/api/reci
 export const occurrences = (skip: string[]) => streamJob("/api/occurrences", { skip });
 /** A saved recipe as one plan, previewed with no AI call (docs/WEB_API.md, `POST /api/saved-recipes/run`): one entry
  *  per saved step — skipped this time, and the form a button step runs with. */
-export const runSavedRecipe = (id: string, steps: RecipeRunPick[]) => streamJob("/api/saved-recipes/run", { id, steps });
+export const runSavedRecipe = (id: string, steps: RecipeRunPick[], rev?: string) =>
+  streamJob("/api/saved-recipes/run", { id, steps, ...(rev ? { rev } : {}) });
 
 // --- Saved recipes -----------------------------------------------------------
 
@@ -276,9 +277,22 @@ export interface RecipeRunPick {
   inputs?: RecipeInputs;
 }
 
-/** Save as a recipe: the runs of What you've done so far the user ticked, by id. */
-export async function saveRecipe(name: string, note: string, runs: string[]): Promise<View> {
-  return normalizeView(await post<unknown>("/api/saved-recipes/save", { name, note, runs }));
+/** Save as a recipe: the runs of What you've done so far the user ticked, by id; with `into`, added to the end of that
+ *  saved recipe instead of saved as a new one. */
+export async function saveRecipe(name: string, note: string, runs: string[], into?: string): Promise<View> {
+  return normalizeView(await post<unknown>("/api/saved-recipes/save", { name, note, runs, ...(into ? { into } : {}) }));
+}
+
+/** Manage → Edit: the name, what it is for, and the steps kept in their new order (each the step it was, counted from
+ *  0, and a button's changed form), on the recipe as the editor opened it (`rev`). */
+export async function editRecipe(
+  id: string,
+  rev: string,
+  name: string,
+  note: string,
+  steps: { step: number; inputs?: RecipeInputs }[],
+): Promise<View> {
+  return normalizeView(await post<unknown>("/api/saved-recipes/change", { action: "edit", id, rev, name, note, steps }));
 }
 
 /** Manage recipes: rename (and what it is for), duplicate or delete one. */
@@ -291,8 +305,8 @@ export async function changeRecipe(
 }
 
 /** A Safe recipe's buttons take the forms its run form holds: one entry per step, null to leave one as it is. */
-export async function saveRecipeForms(id: string, inputs: (RecipeInputs | null)[]): Promise<View> {
-  return normalizeView(await post<unknown>("/api/saved-recipes/change", { action: "inputs", id, inputs }));
+export async function saveRecipeForms(id: string, inputs: (RecipeInputs | null)[], rev?: string): Promise<View> {
+  return normalizeView(await post<unknown>("/api/saved-recipes/change", { action: "inputs", id, inputs, ...(rev ? { rev } : {}) }));
 }
 
 // --- Settings, about, updates, logs ---------------------------------------

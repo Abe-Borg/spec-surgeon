@@ -779,7 +779,8 @@ def create_app(state: WindowState, *, dev: bool = False) -> FastAPI:
     @app.post("/api/saved-recipes/run")
     async def run_saved_recipe(request: Request):
         """A saved recipe as one plan, previewed (a job, as a button's ``/api/recipe``): ``id``, and ``steps`` — one
-        entry per saved step, ``{"skip": bool, "inputs": {…}}``, the form a button step runs with this time."""
+        entry per saved step, ``{"skip": bool, "inputs": {…}}``, the form a button step runs with this time; ``rev``,
+        the recipe as the run form opened it (refused when its steps were edited since)."""
         try:
             body = await json_object(request)
         except ValueError as e:
@@ -787,30 +788,36 @@ def create_app(state: WindowState, *, dev: bool = False) -> FastAPI:
         steps = body.get("steps")
         if steps is not None and (not isinstance(steps, list) or not all(isinstance(p, dict) for p in steps)):
             return error("The recipe's steps could not be read.")
-        return stream("saved_recipe", recipe=str(body.get("id") or ""), steps=steps)
+        rev = body.get("rev")
+        return stream("saved_recipe", recipe=str(body.get("id") or ""), steps=steps,
+                      rev=rev if isinstance(rev, str) else None)
 
     @app.post("/api/saved-recipes/save")
     async def save_recipe(request: Request):
-        """Save as a recipe: ``name``, ``note`` and ``runs`` (the ids of What you've done so far's runs to keep)."""
+        """Save as a recipe: ``name``, ``note`` and ``runs`` (the ids of What you've done so far's runs to keep), or
+        ``into`` (a saved recipe's id) to add them to the end of that recipe."""
         if state.busy:
             return busy_error()
         try:
             body = await json_object(request)
-            state.task.save_recipe(body.get("name"), body.get("note"), body.get("runs"))
+            state.task.save_recipe(body.get("name"), body.get("note"), body.get("runs"), into=body.get("into") or None)
         except ValueError as e:
             return error(str(e))
         return state.view()
 
     @app.post("/api/saved-recipes/change")
     async def change_recipe(request: Request):
-        """Manage recipes: ``action`` ``rename`` (``name``, ``note``), ``duplicate``, ``delete``, or ``inputs`` (a Safe
-        recipe's forms, one entry per step, null to leave one as it is), on the recipe ``id``."""
+        """Manage recipes: ``action`` ``rename`` (``name``, ``note``), ``edit`` (``name``, ``note``, ``steps`` — the
+        steps kept in their new order, ``{"step", "inputs"?}`` — and ``rev``, the recipe as the editor opened it),
+        ``duplicate``, ``delete``, or ``inputs`` (a Safe recipe's forms, one entry per step, null to leave one as it
+        is), on the recipe ``id``."""
         if state.busy:
             return busy_error()
         try:
             body = await json_object(request)
             state.task.change_recipe(str(body.get("action") or ""), str(body.get("id") or ""),
-                                     name=body.get("name"), note=body.get("note"), inputs=body.get("inputs"))
+                                     name=body.get("name"), note=body.get("note"), inputs=body.get("inputs"),
+                                     steps=body.get("steps"), rev=body.get("rev"))
         except ValueError as e:
             return error(str(e))
         return state.view()
