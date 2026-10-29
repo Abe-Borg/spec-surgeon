@@ -343,6 +343,11 @@ COMMON_ASSUMPTIONS: Dict[str, List[str]] = {
         "match 'counters' converts a typed number whose VALUES are the list's at that place even when the list writes "
         "it otherwise ('1.01' into a '1.1' list, 'PART 1 –' into 'PART 1 -'), each flagged; a typo, skip or duplicate "
         "still sets the file aside",
+        "typed_as 'csi' (with match 'counters') reads the typed numbers as CSI's — PART 1, 1.1 or 1.01, A., 1., a., 1), "
+        "a), (1), (a) for levels 0-8 — whatever your list writes, so typed CSI numbers become another list's numbers "
+        "with the same values: a typed 'A.' shows as a PageFormat list's '.1', a typed '1.01' as its '1.1'; letters are "
+        "letters there, never Roman numerals; a typed Canadian '.1' is never converted (it carries no depth: '.1' is "
+        "the same at every level below the article)",
         "the list number must LOOK like the typed one: a hidden or capitalised typed number ('a.' in All Caps), a "
         "paragraph mark that would make the number hidden, coloured, sized, raised, struck or in a symbol font sets the "
         "file aside; 'PART 1 -', '1.1', 'A.' in capitals are fine; a bold/italic/underline/font difference is flagged",

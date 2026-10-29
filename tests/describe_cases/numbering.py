@@ -44,6 +44,12 @@ CASES = {
          ["without tracked changes", "values are the ones your list counts at that place",
           "whatever its zero padding or dash", "“1.01” shows as the list's “1.1”",
           "every other paragraph must read exactly as before"]),
+        # typed CSI numbers onto another list (a Canadian PageFormat scheme), plain
+        ({}, {"levels": ["CSC0", "CSC1", "CSC2"], "template": "CSC PageFormat scheme.docx", "match": "counters",
+              "typed_as": "csi", "tracked": False},
+         ["typed CSI numbers at the start of every paragraph", "real list numbers", "without tracked changes",
+          "typed CSI numbers such as “A.” become your list's numbers wherever their values are the list's",
+          "a typed “A.” shows as a PageFormat list's “.1”", "every other paragraph must read exactly as before"]),
     ],
     "set_list_level": [
         # "restart per PART": the articles' level restarts after any higher level

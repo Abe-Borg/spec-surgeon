@@ -10,7 +10,8 @@ Parameters: ``levels``, ``template``, ``existing`` — ``numbering_convert`` (th
 its runs and its mark; with a TRACKED conversion refused ``bad-params``, see below); ``tracked`` (default **true** —
 characters are removed, batch 1 rule 2; false → untracked, clean copies); ``author``; ``allow_missing`` (default true: a
 file with no typed number to convert is a no-op with a note; false → ``not-found``); ``match``: ``exact`` (default) |
-``counters`` (below). ``select``: ``paragraphs`` (the paragraph selector grammar; default all), ``include_tables``
+``counters`` (below); ``typed_as``: absent (default) | ``"csi"`` (below; only with ``match: "counters"``, else
+``bad-params``). ``select``: ``paragraphs`` (the paragraph selector grammar; default all), ``include_tables``
 (default false: a typed "1." in a table cell is left alone). Main document only.
 
 Definitions (the verifier's own reading is verify/typednumbers.py):
@@ -64,6 +65,15 @@ Definitions (the verifier's own reading is verify/typednumbers.py):
   list where the list counts 1.1 there, "PART 1 –" into "PART 1 -". Every other counted paragraph reads exactly as
   before. A typo, a skip or a duplicate still refuses the file (``numbering-mismatch``); each converted number the list
   shows otherwise than typed is flagged.
+* **typed_as "csi"** (docs/SPEC_FORMATTER_MODES_DESIGN.md N6; with ``match: "counters"``): the typed numbers are CSI's
+  whatever the destination list writes — each scheme level k's typed number is found by its CSI shape
+  (``lists.csi_typed_number``, ``lists.CSI_SHAPES``: ``PART n`` with a dash or colon after it, ``n.n`` or ``n.0n``,
+  ``A.``, ``1.``, ``a.``, ``1)``, ``a)``, ``(1)``, ``(a)`` for levels 0–8; letters are letters, never Roman) instead of
+  the level's own text, and its values are the ones its shape names (``lists.csi_typed_values``: PART its own, an article
+  its PART and itself, the others their own level) — ``counters_differ`` then holds them to the list's predicted
+  counters as above. A typed "A." becomes a PageFormat list's ".1", a typed "1.01" its "1.1". A level the scheme lacks
+  finds nothing (the paragraph stays as typed and must read the same, as any). A typed Canadian ".1" is never read: it
+  carries no depth.
 * Flagged: the look differences above; paragraphs whose lower-case text the new style shows in capitals (F9: "General"
   reads "GENERAL" under PRT); scheme level styles whose level is the linked level (``Destination.linked``, F3:
   LibreOffice's proofs show them at level 0); the destination's restart rules; double numbering.
@@ -104,8 +114,9 @@ from .slots import field_runs
 from .style_import import apply_import, check_template_unchanged
 from .textedit import Edit, RunText, apply_part_edits, edits_to_data, plan_paragraph, run_text
 
-PARAM_KEYS = {"template", "levels", "existing", "direct_formatting", "tracked", "author", "allow_missing", "match"}
-USER_PARAMS = ("template", "levels", "existing", "direct_formatting", "tracked", "allow_missing", "match")
+PARAM_KEYS = {"template", "levels", "existing", "direct_formatting", "tracked", "author", "allow_missing", "match",
+              "typed_as"}
+USER_PARAMS = ("template", "levels", "existing", "direct_formatting", "tracked", "allow_missing", "match", "typed_as")
 REFLOW_REASON = "the typed numbers become list numbers with the scheme's indents; text reflows"
 MISMATCH_SHOWN = 5
 
@@ -125,10 +136,18 @@ def hidden_toggle(look: Look, rpr, p) -> Optional[bool]:
     return None if (a is None or b is None) else False
 
 
-def counters_differ(tn: lists.TypedNumber, y: Optional[lists.NumberedPar], scheme) -> Optional[str]:
+def typed_in(text: str, scheme, lenient: bool, csi: bool) -> Optional[lists.TypedNumber]:
+    """The typed number at the start of ``text``: by the CSI shapes (``typed_as: "csi"``), else by the scheme's own
+    patterns (lenient with ``match: "counters"``)."""
+    return lists.csi_typed_number(text, scheme) if csi else lists.typed_number(text, scheme, lenient)
+
+
+def counters_differ(tn: lists.TypedNumber, y: Optional[lists.NumberedPar], scheme, csi: bool = False) -> Optional[str]:
     """``match: "counters"``: why the converted typed number's values are not the list's counters at that place (None
-    when they are): the typed values (``lists.typed_values``) against the predicted counters of the levels they name."""
-    values = lists.typed_values(tn.token, scheme.level_defs, tn.level)
+    when they are): the typed values (``lists.typed_values``; with ``typed_as: "csi"`` ``lists.csi_typed_values``, the
+    values the CSI shape names) against the predicted counters of the levels they name."""
+    values = (lists.csi_typed_values(tn.token, tn.level) if csi
+              else lists.typed_values(tn.token, scheme.level_defs, tn.level))
     if values is None:
         return f"the typed {tn.token!r} does not read as a number of its level"
     if y is None or not y.evaluated:
@@ -223,7 +242,12 @@ class ConvertTypedNumbers(Op):
                           "description": "a file with no typed number to convert is a no-op (false: set aside)"},
         "match": {"type": "string", "enum": ["exact", "counters"], "default": "exact",
                   "description": "exact: the list must show each typed number as typed; counters: its values are "
-                                 "enough (\"1.01\" into a \"1.1\" list, \"PART 1 –\" into \"PART 1 -\")"}}}
+                                 "enough (\"1.01\" into a \"1.1\" list, \"PART 1 –\" into \"PART 1 -\")"},
+        "typed_as": {"type": "string", "enum": ["csi"],
+                     "description": "only with match counters: the typed numbers are CSI's (PART 1, 1.1 or 1.01, A., "
+                                    "1., a., 1), a), (1), (a) for levels 0-8) whatever the list writes, so typed CSI "
+                                    "numbers become another list's numbers with the same values (\"A.\" into a "
+                                    "PageFormat \".1\" list); a typed Canadian \".1\" is never converted"}}}
     select_schema = {"type": "object", "properties": {
         "paragraphs": {"description": "'all' or {style_in, text_regex, in_table, is_empty, index_range, has_bold, "
                                       "is_all_caps, after_heading_regex, between_paragraphs}"},
@@ -247,7 +271,14 @@ class ConvertTypedNumbers(Op):
         first = prose.sentence(f"Turn the typed numbers at the start of {subject} into real list numbers of "
                                f"{scheme_phrase(params)}: each typed number and the space or tab after it are removed, "
                                f"{how}, and your list shows the same number in its place")
-        if params.get("match") == "counters":
+        if params.get("typed_as") == "csi":
+            first = prose.sentence(f"Turn the typed CSI numbers at the start of {subject} into real list numbers of "
+                                   f"{scheme_phrase(params)}: each typed number and the space or tab after it are "
+                                   f"removed, {how}, and your list shows its number in its place")
+            extras = ["nothing is added; typed CSI numbers such as “A.” become your list's numbers wherever their "
+                      "values are the list's (a typed “A.” shows as a PageFormat list's “.1”), and every other "
+                      "paragraph must read exactly as before"]
+        elif params.get("match") == "counters":
             extras = ["nothing is added; a typed number converts when its values are the ones your list counts at that "
                       "place, whatever its zero padding or dash (a typed “1.01” shows as the list's “1.1”), and every "
                       "other paragraph must read exactly as before"]
@@ -278,6 +309,12 @@ class ConvertTypedNumbers(Op):
         if params.get("match", "exact") not in ("exact", "counters"):
             raise JobException("match must be 'exact' or 'counters'", "bad-params")
         lenient = params.get("match") == "counters"
+        if "typed_as" in params and params["typed_as"] not in lists.TYPED_AS:
+            raise JobException(f"typed_as must be one of {list(lists.TYPED_AS)}", "bad-params")
+        csi = params.get("typed_as") == "csi"
+        if csi and not lenient:
+            raise JobException("typed_as 'csi' reads typed numbers by their values, so it needs match 'counters': a "
+                               "typed CSI number never shows exactly as another list writes it", "bad-params")
         if "include_tables" in select and not isinstance(select["include_tables"], bool):
             raise JobException("include_tables must be true or false", "bad-params")
         tracked = bool(params.get("tracked", True))
@@ -318,14 +355,14 @@ class ConvertTypedNumbers(Op):
                 continue
             nb = lists.paragraph_numbering(p, sheet, defs)
             if nb is not None and not nb.dangling:
-                if lists.typed_number(texts[i], dest.scheme, lenient) is not None:
+                if typed_in(texts[i], dest.scheme, lenient, csi) is not None:
                     double.append(i)
                 continue
             if in_table(p) and not tables:
                 continue
             if not paragraph_selected(pred, p, i, block_full_text(p), sheet, all_pars=pars):
                 continue
-            tn = lists.typed_number(texts[i], dest.scheme, lenient)
+            tn = typed_in(texts[i], dest.scheme, lenient, csi)
             if tn is None:
                 continue
             where = f"{main} paragraph {i} ({shown(texts[i])!r})"
@@ -390,7 +427,7 @@ class ConvertTypedNumbers(Op):
             y = pred_at.get(i)
             after = visible(y, texts[i][ends[i]:] if i in ends else texts[i])
             if lenient and i in typed:
-                differs = counters_differ(typed[i], y, dest.scheme) is not None    # its values, not its look
+                differs = counters_differ(typed[i], y, dest.scheme, csi) is not None   # its values, not its look
             else:
                 differs = before != after
             if differs:
@@ -517,7 +554,7 @@ class ConvertTypedNumbers(Op):
             frag.notes.append("no typed number of the scheme in this file; no change")
         if not tables:
             skipped = sum(1 for i, p in enumerate(pars) if in_table(p) and lists.counted(p) and i not in by_src
-                          and lists.typed_number(texts[i], dest.scheme, lenient) is not None)
+                          and typed_in(texts[i], dest.scheme, lenient, csi) is not None)
             if skipped:
                 frag.notes.append(f"{skipped} typed number(s) in table cells left as typed (include_tables: false)")
         if double:

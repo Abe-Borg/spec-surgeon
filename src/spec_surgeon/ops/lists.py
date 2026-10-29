@@ -1155,6 +1155,62 @@ def typed_number(run_text: str, scheme: Scheme, lenient: bool = False) -> Option
                        levels=tuple(h[0] for h in hits))
 
 
+
+# ---- typed CSI numbers (``convert_typed_numbers`` ``typed_as: "csi"``; docs/SPEC_FORMATTER_MODES_DESIGN.md N6) -------
+
+# The typed number of each CSI level, k = 0…8, whatever the destination list writes there: its pattern and, per group,
+# the level the group names and the format its value is read in. "PART n" takes a dash or colon after it with it (the
+# typed marker, "PART 1 – GENERAL"); an article is "n.n" or "n.0n"; letters are letters at every level (CSI has no Roman
+# level: "i." is the ninth letter). The shapes exclude one another, so a typed number reads at one level at most.
+CSI_SHAPES: Tuple[Tuple[str, Tuple[Tuple[int, str], ...]], ...] = (
+    ("PART[ \u00a0]+([0-9]+)(?:[ \u00a0]*[" + DASHES + ":])?", ((0, "decimal"),)),
+    ("([0-9]+)\\.([0-9]+)", ((0, "decimal"), (1, "decimal"))),
+    ("([A-Z]+)\\.", ((2, "upperLetter"),)),
+    ("([0-9]+)\\.", ((3, "decimal"),)),
+    ("([a-z]+)\\.", ((4, "lowerLetter"),)),
+    ("([0-9]+)\\)", ((5, "decimal"),)),
+    ("([a-z]+)\\)", ((6, "lowerLetter"),)),
+    ("\\(([0-9]+)\\)", ((7, "decimal"),)),
+    ("\\(([a-z]+)\\)", ((8, "lowerLetter"),)),
+)
+TYPED_AS = ("csi",)
+
+
+def csi_typed_number(run_text: str, scheme: Scheme) -> Optional[TypedNumber]:
+    """``typed_number`` with each scheme level's typed number read by its CSI shape (``CSI_SHAPES``) instead of the
+    level's own text: spaces/tabs at the start, a non-empty match of the shape, then spaces/tabs/NBSPs or the end. A
+    scheme level past the CSI levels finds nothing."""
+    hits: List[Tuple[int, Any]] = []
+    for sl in scheme.levels:
+        if sl.ilvl >= len(CSI_SHAPES):
+            continue
+        m = re.match("[ \t]*(" + CSI_SHAPES[sl.ilvl][0] + ")(?:[ \t\u00a0]+|\\Z)", run_text)
+        if m is not None and m.group(1):
+            hits.append((sl.ilvl, m))
+    if not hits:
+        return None
+    k, m = hits[0]
+    return TypedNumber(level=k if len(hits) == 1 else None, token=m.group(1), token_start=m.start(1), end=m.end(),
+                       levels=tuple(h[0] for h in hits))
+
+
+def csi_typed_values(token: str, k: int) -> Optional[Dict[int, int]]:
+    """The counter values a typed CSI number of level ``k`` names, by level ({0: part} for "PART 1", {0: part, 1:
+    article} for "1.01", {k: value} for the others), or None when the token is not one of level ``k``."""
+    if not 0 <= k < len(CSI_SHAPES):
+        return None
+    shape, groups = CSI_SHAPES[k]
+    m = re.fullmatch(shape, token)
+    if m is None:
+        return None
+    out: Dict[int, int] = {}
+    for g, (j, fmt) in enumerate(groups, start=1):
+        v = value_of(fmt, m.group(g))
+        if v is None:
+            return None
+        out[j] = v
+    return out
+
 # ---- what a count reads (rule 9; design §6) --------------------------------------------------------------------------
 
 def count_reads(pkg: DocxPackage, sheet, pars: Sequence[NumberedPar], extra_styles: Iterable[str] = ()
