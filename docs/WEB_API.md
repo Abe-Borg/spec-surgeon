@@ -133,8 +133,10 @@ Rules the page relies on:
   steps that failed before a later step passed. A preview that could not complete says so; a missing renderer is
   not a failed verification. `samples[].geometry` is the page-layout verdict (check V7) in plain words — `status`
   `PASS`, `FAIL` (then V7 is among the failures and the sample did not pass) or `NA` with a `note` saying why: no
-  layout reference by design, a wording change that reflows the text, or that the run checks it — no pages rendered
-  here, or pages rendered here (the before/after pictures and page counts stand) that the preview could not check,
+  layout reference by design (one plain sentence however many operations give it up, naming none; each operation's
+  own reason stays in V7's record and the preview text), a wording change that reflows the text, or that the run
+  checks it — no pages rendered here, or pages rendered here (the before/after pictures and page counts stand)
+  that the preview could not check,
   because it holds no plan for the sample (a custom method's trial kept without its plan) or because the layout reference could not be
   rendered or compared, the note saying which; a plan done in steps renders its last step's pages only, so an
   earlier step's layout is checked at the run. A note never says no pages were rendered when they were.
@@ -281,9 +283,9 @@ Rules the page relies on:
   cleared, and the next message is a new request told that this one was withdrawn. The page keeps each button's form
   when the user goes back to all the buttons (page memory only; **Clear form** empties it).
 - The page keeps the unsent message and staged Safe form across mode switches. Only a conversation mode's draft
-  holds its Create action. A successful New conversation or Start over clears both inputs; a failed reset keeps
-  them. Start over retains the attached originals and clears the last button's untouched status; New conversation
-  starts with no attachments.
+  holds its Create action. A successful New conversation or Start over clears both inputs, the last job's failure
+  note and a saved recipe's open run form; a failed reset keeps them. Start over retains the attached originals and
+  clears the last button's untouched status; New conversation starts with no attachments.
 - `cost.fast` is true while fast mode is in effect (`llm.fast_for(llm.DEFAULT_MODEL)`: Settings → Fast responses
   is on, the model is served fast, and Anthropic has not refused fast mode for this key): the spending pill then says
   "Fast". An older server leaves it out.

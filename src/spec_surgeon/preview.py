@@ -265,17 +265,23 @@ GEOMETRY_RENDERED_NOT_COMPARED = {"status": "NA", "at": "run",
 GEOMETRY_AT_RUN_STEPS = {"status": "NA", "at": "run",
                          "note": "Page layout of a plan done in steps is checked step by step when the copies are "
                                  "created; the preview renders the last step's pages only."}
+# a plan that gives up the source render as its layout reference (``geometry_reference`` "none"): one sentence for the
+# window however many operations give it up; each operation's own reason (``geometry_reason``, labelled ``#n op``)
+# stays in V7's record and in the preview text (``geometry_text``)
+NO_LAYOUT_REFERENCE = ("Page layout is not compared: this change can move or change what the pages show, so the "
+                       "original's pages are no reference.")
 
 
 def geometry_text(sv: Any) -> str:
     """The page-layout verdict in a sample's line of the preview text: V7's status and note when the preview checked
-    it, else that the run will."""
+    it, else that the run will. A plan with no layout reference by design adds each operation's own reason."""
     g = sv.geometry
     if not g:
         return ""
     if g.get("at") == "run":
         return f"; page geometry (V7): checked at the run — {g['note']}"
-    return f"; page geometry (V7) {g['status']}: {g['note']}"
+    why = ((sv.plan or {}).get("geometry_reason") or "").strip() if g.get("note") == NO_LAYOUT_REFERENCE else ""
+    return f"; page geometry (V7) {g['status']}: {g['note']}" + (f" (why: {why})" if why else "")
 
 
 def geometry_note(plan: Dict[str, Any], v7: Any) -> str:
@@ -288,7 +294,7 @@ def geometry_note(plan: Dict[str, Any], v7: Any) -> str:
     if v7.status == "FAIL":
         return "Page layout differs from what the plan predicts: " + diag.snip(v7.summary, 400)
     if ref == "none":
-        return f"No page-layout reference by design: {plan.get('geometry_reason') or 'the plan reflows the text'}."
+        return NO_LAYOUT_REFERENCE
     if plan.get("mode") in ("content", "untracked") and plan.get("diffs"):
         return "Text reflows after a wording change; the page layout is recorded, not asserted."
     return "Page layout not asserted here: " + diag.snip(v7.summary, 400)

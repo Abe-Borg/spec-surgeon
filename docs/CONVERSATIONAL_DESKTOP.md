@@ -122,8 +122,9 @@ two last run as chips and **All recipes** with every one. **Manage** renames, du
 
 Opening a recipe shows its run form: each step with what it keeps, whether what it needs is attached, **Change** (a
 button step's form, for this run) and **Run** (untick to skip a step this time); **Save these changes to the recipe**
-keeps a changed form. **Preview** runs `saved_recipes.build_run` (`DocumentTask._saved_recipe`): every kept step built
-from the documents attached now — a button by `recipes.build` from its form, a plan as approved with the template,
+keeps a changed form; New conversation or Start over closes the run form as it closes a button's. **Preview** runs
+`saved_recipes.build_run` (`DocumentTask._saved_recipe`): every kept step built from the documents attached now — a
+button by `recipes.build` from its form, a plan as approved with the template,
 picture or table it reads mapped onto the one attached now (`remap`; the owner's decision: a recipe uses what is
 attached when it runs) — each through the one gate on its own (a step that plans on none of the documents as they
 are, because it changes what an earlier step makes, is planned as the stage after the earlier steps, its own words
@@ -561,8 +562,9 @@ and footers as the sample's plan fills them — its own values in the slots, at 
 header/footer distances when the request keeps them — rendered alone,
 the independent header/footer-removal reference), so a sample's **Checked** covers its
 page layout: a layout that moved is a sample that did not pass, and the plan goes the way a failed check sends it.
-The card says in one line what the layout check found, or why it is not asserted (no layout reference by design, a
-wording change that reflows the text), or that it waits for the run and why: no pages were rendered; the pages
+The card says in one line what the layout check found, or why it is not asserted (no layout reference by design,
+said once and naming no operation, each operation's own reason kept in V7's record and the preview text; a wording
+change that reflows the text), or that it waits for the run and why: no pages were rendered; the pages
 were rendered but the preview could not check them (a custom method's trial kept without its plan;
 a layout reference that could not be rendered or compared — the pictures and page counts on the card stand, and
 the line says the pages were rendered); or the plan is done in steps and only its last step's pages are rendered

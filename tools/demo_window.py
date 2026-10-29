@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import shutil
 import sys
 import tempfile
@@ -66,15 +67,19 @@ def main(argv=None) -> int:
     ap.add_argument("--scenario", choices=("plan", "question", "template"), default="plan")
     ap.add_argument("--no-open", action="store_true", help="print the URL instead of opening a browser")
     ap.add_argument("--no-render", action="store_true", help="skip page rendering (no LibreOffice or Word needed)")
-    ap.add_argument("--folder", help="use this folder for the fixtures and the copies (default: a temp folder)")
+    ap.add_argument("--folder", help="use this folder for the fixtures and the copies (default: a temp folder, "
+                                     "deleted when the demo stops)")
     args = ap.parse_args(argv)
     from make_fixtures import build_sized
     from spec_surgeon.document_task import DocumentTask
     from spec_surgeon.gui import Session
-    from spec_surgeon.settings import Settings
+    from spec_surgeon.settings import CONFIG_ENV, Settings
     from spec_surgeon.web.server import WindowState, new_token
     from spec_surgeon.web.shell import free_port, serve
     folder = Path(args.folder) if args.folder else Path(tempfile.mkdtemp(prefix="spec-surgeon-demo-"))
+    # settings.json, the logs and the render cache go in the demo's folder too: a setting changed in the demo never
+    # overwrites the real app's (the spawned workers inherit it)
+    os.environ.setdefault(CONFIG_ENV, str(folder / "config"))
     docs = folder / "specs"
     docs.mkdir(parents=True, exist_ok=True)
     (docs / "21 13 13 – WET-PIPE SPRINKLER SYSTEMS.docx").write_bytes(build_sized())
@@ -86,7 +91,8 @@ def main(argv=None) -> int:
     task.attach([str(p) for p in sorted(docs.glob("*.docx"))])
     if args.scenario == "template" and template.is_file():
         task.attach([str(template)], template=True)
-    state = WindowState(task, Settings(out_root=str(folder / "runs")), token=new_token())
+    # the window has no output folder of its own (gui.main: its scratch folder is the Session's out_root)
+    state = WindowState(task, Settings(), token=new_token())
     port = free_port()
     server = serve(state, port)
     url = f"http://127.0.0.1:{port}/?token={state.token}"
@@ -99,6 +105,8 @@ def main(argv=None) -> int:
             time.sleep(1)
     except KeyboardInterrupt:
         server.should_exit = True
+        if not args.folder:     # our own temp folder; a file still held open stays behind in it
+            shutil.rmtree(folder, ignore_errors=True)
     return 0
 
 
