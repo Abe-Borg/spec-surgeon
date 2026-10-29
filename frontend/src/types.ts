@@ -222,6 +222,14 @@ export interface OccurrenceDoc {
   items: OccurrenceItem[];
 }
 
+/** A note worth reading before the copies are made, listed under Worth knowing: the same words a change leaves
+ *  elsewhere, a fill shown in another case than the template, an input that changed under the preview. */
+export interface PreviewNote {
+  /** The document it is about; "" for a note about the whole plan. */
+  name: string;
+  text: string;
+}
+
 export interface Result {
   source: string;
   output: string;
@@ -390,7 +398,11 @@ export interface View {
   /** The find-and-replace occurrences of the waiting plan, per document (every document, not the sampled ones only);
    *  empty when no plan waits or it has no find-and-replace. Absent from an older server. */
   occurrences: OccurrenceDoc[];
+  /** Every note of the checks; kept for diagnostics, listed on the page only under Please check (`blocking`). */
   warnings: string[];
+  /** The notes worth reading before the copies are made: the one part of `warnings` the page lists, under Worth
+   *  knowing. Absent from an older server. */
+  worth_knowing: PreviewNote[];
   blocking: boolean;
   results: Result[];
   /** Whether Export → PDF (Clean) can run on this computer. */
@@ -448,7 +460,7 @@ export type JobEvent =
   | { type: "text_delta"; text: string }
   | { type: "message"; message: Message }
   | { type: "plan"; plan: Plan }
-  | { type: "samples"; samples: Sample[]; occurrences?: OccurrenceDoc[]; warnings: string[]; blocking: boolean }
+  | { type: "samples"; samples: Sample[]; occurrences?: OccurrenceDoc[]; warnings: string[]; worth_knowing?: PreviewNote[]; blocking: boolean }
   | { type: "results"; results: Result[] }
   | { type: "question"; questions: string[]; choices: Choice[]; chips: string[] }
   | { type: "cost"; cost: Cost }

@@ -75,7 +75,9 @@ are your documents (optionally with one template) and the before/after pages. Th
 the usual jobs), **How it works** and **About** (the version, the model, the release notes, the license,
 **Check for updates**, **Open diagnostic logs** and **Save a diagnostic bundle**) — beside a line saying what the conversation works on ("3
 documents · 1 template · building on your copies"), the estimated spending, the connection, **New conversation**
-and Settings.
+and Settings. On a narrower window (1280 px wide, say) the top bar says the same in fewer words, one step at a time
+until it fits on one line: the context line goes first, then words such as "this conversation", and the help topics
+become **Guide**, **Workflows**, **Mechanics**, **Trust** and **About** (the full name on hover).
 
 **New to the window? Take the guided tour.** **Tour** in the top bar, the chip at the top of an empty conversation,
 or **Help → How to use → Start the guided tour** walks through every part of the window, chapter by chapter, on
@@ -118,8 +120,9 @@ it was, and once you have finished it the chip stops inviting. Help → How to u
 5. **Look at the pages.** The chat says in plain words what will change. Beside it: rendered before/after pages for
    sample documents with their page counts, and **Left untouched**: any file the plan cannot cover, with the reason.
    When a change is kept to one place and the same words remain elsewhere (the footer renamed while the first page
-   keeps the old title, a header filled with a title the document does not have), a note beside the pages names the
-   document and where; Spec Surgeon offers to change those too when you reply, and never does it unasked. A header or
+   keeps the old title, a header filled with a title the document does not have), a note under **Worth knowing**,
+   beside the pages, names the document and where; Spec Surgeon offers to change those too when you reply, and
+   never does it unasked. A header or
    footer fill that will show in another case than the template's (a title typed "Identification for …" where the
    template shows "DOOR HARDWARE") is noted the same way; "show it in capitals like the template" makes it look so
    through formatting, without retyping a letter. Word has no title-case look, so when the template shows its title

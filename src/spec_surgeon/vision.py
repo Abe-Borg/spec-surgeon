@@ -3,8 +3,9 @@
 * ``page_pngs`` renders a batch file (or the template) and rasterises a few pages for the conversation's
   ``view_pages`` tool, so Claude can see what the user means by "the line under the header" or "like the template".
 * ``review_samples`` is **Claude's visual check** of the preview: the before/after pages of the sample files (page 1
-  and the first page whose words moved), with the request, in one call. Its findings are shown to the user; a
-  ``block`` finding stops Run until the user has looked at it and acknowledged it.
+  and the first page whose words moved), with the request, in one call. Its findings are kept in the preview's records
+  (the window lists them only when one is blocking); a ``block`` finding stops Run until the user has looked at it and
+  acknowledged it.
 
 Claude never grades. The engine's checks (V1–V10) decide PASS/FAIL from the XML; the visual check is not a check in
 the verification record, can add a reason to stop and can never pass anything — not a file, not a preview, not a run.
