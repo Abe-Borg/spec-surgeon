@@ -60,7 +60,7 @@ export const RUNTIME_CARDS: RuntimeCard[] = [
     runs:
       "Your conversation is set aside untouched and a practice workspace takes its place: copies of the bundled " +
       "practice documents (four short specifications, a file the app refuses, a header/footer template, a logo and " +
-      "a table of values) in a folder of their own under the app's data folder. Each chapter's state is built there " +
+      "a table of values) in a folder of their own inside the window's scratch folder. Each chapter's state is built there " +
       "by the same engine as your own work — triage on arrival, a real Safe-mode button through the same gate to a " +
       "real preview, a real run that writes checked copies — and the conversation chapters show a recorded example " +
       "that says so, with Send and the answer buttons held still. When the tour ends, your conversation comes back " +

@@ -86,7 +86,7 @@ bundled practice documents: four short specifications, a file triage refuses, a 
 logo and a table of values. The tour has a workspace of its own. Your conversation is set aside the moment it starts
 and comes back exactly as it was when it ends; nothing of yours is read or written, and no AI call is made at any
 point. Its Safe-mode chapters press a real button through the real engine on the practice copies (a preview, then
-checked copies, in a practice folder under the app's data folder that is deleted when the tour ends), so what you see
+checked copies, in a practice folder inside the window's scratch folder that is deleted when the tour ends), so what you see
 is what the app does; its conversation chapters show a recorded example, labelled as one, with Send and the answer
 buttons held still. You only watch: Continue, Back or End the tour at any step, a reload picks the tour back up where
 it was, and once you have finished it the chip stops inviting. Help → How to use starts it at any chapter.
