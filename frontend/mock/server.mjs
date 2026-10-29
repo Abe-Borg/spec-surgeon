@@ -215,6 +215,32 @@ function samples() {
   }));
 }
 
+/**
+ * Create, counted as the server counts it (docs/WEB_API.md, `action.copies` and `action.unpreviewed`): the documents
+ * it runs — those in scope, less the plan's Left untouched and the samples set aside — and how many show no preview.
+ */
+function approveAction(v, token) {
+  const out = (a) =>
+    (v.plan?.set_aside ?? []).some((i) => i.path === a.path || i.name === a.name) ||
+    v.samples.some((sv) => sv.set_aside && (sv.source === a.path || sv.source === a.current));
+  const runs = v.attachments.filter(
+    (a) =>
+      a.kind === "document" &&
+      a.state !== "refused" &&
+      (v.focus.length ? v.focus.includes(a.path) : !v.todo.some((t) => t.path === a.path)) &&
+      !out(a),
+  );
+  const shown = (a) => v.samples.some((sv) => sv.source === a.path || sv.source === a.current);
+  return {
+    label: "Create edited copies",
+    token,
+    kind: "approve",
+    can_hold: true,
+    copies: runs.length,
+    unpreviewed: runs.filter((a) => !shown(a)).length,
+  };
+}
+
 /** A sample that did not pass its checks (V2 and V7), as the server shows it. */
 function failSample(sample) {
   sample.passed = false;
@@ -309,9 +335,9 @@ const TUTORIAL_SCENARIOS = {
     v.stage = "preview";
     v.messages = [msg("user", "Headers and footers from the template · ISSUED FOR PERMIT → ISSUED FOR CONSTRUCTION 2026-03-01")];
     v.samples = samples();
-    v.action = { label: "Create edited copies", token: "tok-tour-button", kind: "approve", can_hold: true };
     // the plan refused the other firm's document, as the server's chapter does (no section number line to fill)
     v.plan = { groups: [], targets: [], set_aside: [{ path: DOCS[2].path, name: name(DOCS[2].path), reason: "Its first lines carry no section number for the template's placeholder; change this one in Word." }], stages: 1 };
+    v.action = approveAction(v, "tok-tour-button");
     return v;
   },
   copies: () => SCENARIOS["safe-done"](),
@@ -321,8 +347,8 @@ const TUTORIAL_SCENARIOS = {
     v.messages = [msg("user", "Find and replace: “FM Global” → “FM Approvals”"), msg("app", "1 occurrence will be left as it is; the preview is being made again.")];
     v.samples = samples();
     v.occurrences = occurrences([occurrences()[1].items[0].key]);
-    v.action = { label: "Create edited copies", token: "tok-tour-find", kind: "approve", can_hold: true };
     v.plan = { groups: [], targets: [], set_aside: [], stages: 1 };
+    v.action = approveAction(v, "tok-tour-find");
     return v;
   },
   conversation: () => SCENARIOS.attached(),
@@ -330,6 +356,7 @@ const TUTORIAL_SCENARIOS = {
   plan: () => {
     const v = SCENARIOS.preview();
     v.plan = { ...PLAN, set_aside: [{ path: DOCS[2].path, name: name(DOCS[2].path), reason: "You left it out of this request (“Leave out 21 05 00 for now”)." }] };
+    v.action = approveAction(v, v.action.token);
     return v;
   },
   todo: () => SCENARIOS.todo(),
@@ -423,7 +450,7 @@ const SCENARIOS = {
     v.plan = PLAN;
     v.samples = samples();
     v.warnings = WARNINGS;
-    v.action = { label: "Create edited copies", token: "tok-approve-1", kind: "approve", can_hold: true };
+    v.action = approveAction(v, "tok-approve-1");
     return v;
   },
   layouts: () => {
@@ -523,6 +550,7 @@ const SCENARIOS = {
         },
       ],
     };
+    v.action = approveAction(v, v.action.token);
     return v;
   },
   // Every sample did not pass: nothing shows the plan working, so Create is unavailable and says why.
@@ -838,7 +866,7 @@ async function planJob(res, userText, layouts = false) {
   view.blocking = false;
   await s.emit({ type: "samples", samples: view.samples, warnings: view.warnings, blocking: view.blocking });
   view.stage = "preview";
-  view.action = { label: "Create edited copies", token: `tok-approve-${++seq}`, kind: "approve", can_hold: true };
+  view.action = approveAction(view, `tok-approve-${++seq}`);
   await s.emit({ type: "cost", cost: spend(0.14, 3) });
   s.end();
 }
@@ -872,7 +900,7 @@ async function recipeJob(res, recipe) {
   view.occurrences = recipe.id === "find_replace" ? occurrences() : [];
   await s.emit({ type: "samples", samples: view.samples, occurrences: view.occurrences, warnings: [], blocking: false });
   view.stage = "preview";
-  view.action = { label: "Create edited copies", token: `tok-approve-${++seq}`, kind: "approve", can_hold: true };
+  view.action = approveAction(view, `tok-approve-${++seq}`);
   view.working = { ...view.working, ...undoFields() };
   s.end();
 }
@@ -969,7 +997,7 @@ async function primaryJob(res, token, hold = []) {
     await s.emit({ type: "message", message: note });
     view.stage = view.plan ? "preview" : "empty";
     view.action = view.plan
-      ? { label: "Create edited copies", token: `tok-approve-${++seq}`, kind: "approve", can_hold: true }
+      ? approveAction(view, `tok-approve-${++seq}`)
       : { label: "", token: "", kind: "none", can_hold: false };
     await s.emit({ type: "cost", cost: spend(0.02, 1) });
     return s.end();

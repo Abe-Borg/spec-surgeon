@@ -22,6 +22,8 @@ interface Props {
   button: ActionButton | null;
   /** How many previews carry the red X. */
   held: number;
+  /** Include all: takes every red X back. */
+  onIncludeAll?: () => void;
   /** How many previews the server set aside: they did not pass while others did (`samples[].set_aside`). */
   aside?: number;
   onSend: (text: string, chip?: boolean) => void;
@@ -54,6 +56,7 @@ export default function Chat({
   sendReason,
   button,
   held,
+  onIncludeAll,
   aside = 0,
   onSend,
   onChoose,
@@ -304,6 +307,7 @@ export default function Chat({
       <ActionBar
         button={paused || (safe && button?.kind === "stop") ? null : button}
         held={held}
+        onIncludeAll={onIncludeAll}
         aside={aside}
         onAct={onAct}
         discard={discard}

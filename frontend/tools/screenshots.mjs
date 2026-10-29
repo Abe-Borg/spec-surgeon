@@ -58,7 +58,7 @@ try {
 
   // 3. A plan with previews and the action button.
   await page.getByRole("button", { name: /^1\./ }).click();
-  await page.getByRole("button", { name: "Create edited copies" }).waitFor({ timeout: 30000 });
+  await page.getByRole("button", { name: /^Create \d+ edited cop(?:y|ies)$/ }).waitFor({ timeout: 30000 });
   await page.locator("img[alt^='Before and after']").first().waitFor();
   await page.waitForFunction(() => Array.from(document.images).every((i) => i.complete));
   // The previews rise in and the scroll to them is smooth.
@@ -73,7 +73,7 @@ try {
   await page.keyboard.press("Escape");
 
   // 5. Copies created.
-  await page.getByRole("button", { name: "Create edited copies" }).click();
+  await page.getByRole("button", { name: /^Create \d+ edited cop(?:y|ies)$/ }).click();
   await page.getByText("Your edited copies").waitFor({ timeout: 30000 });
   await page.waitForTimeout(900);
   await shot(page, "conversation-done");
@@ -156,7 +156,7 @@ try {
   await scenario("preview");
   await page.setViewportSize({ width: 1000, height: 700 });
   await page.reload();
-  await page.getByRole("button", { name: "Create edited copies" }).waitFor();
+  await page.getByRole("button", { name: /^Create \d+ edited cop(?:y|ies)$/ }).waitFor();
   await page.waitForFunction(() => Array.from(document.images).every((i) => i.complete));
   await page.waitForTimeout(1000);
   await shot(page, "narrow-1000");

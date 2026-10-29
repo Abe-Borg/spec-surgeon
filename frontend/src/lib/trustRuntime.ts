@@ -355,8 +355,11 @@ export const RUNTIME_CARDS: RuntimeCard[] = [
   {
     covers: ["A7"],
     title: "Marking a preview",
-    you: "The ✓ or ✗ on a document's preview.",
-    runs: "A ✗ marks the document to be set aside when you create the copies; it goes on your to-do list instead.",
+    you: "The ✓ or ✗ on a document's preview, or Include all beside the button.",
+    runs:
+      "Every preview starts with its ✓: the document gets its copy, with nothing to tick. A ✗ marks it to be set " +
+      "aside when you create the copies; it goes on your to-do list instead, and the button counts one copy fewer. " +
+      "The ✓, a second ✗, or Include all (every ✗ at once) takes it back.",
     sent: "Nothing.",
     ai: NONE,
     bounds: "Only the page remembers the mark, until you press the button.",
@@ -364,7 +367,9 @@ export const RUNTIME_CARDS: RuntimeCard[] = [
   {
     covers: ["A8", "B9", "B13", "B18"],
     title: "Create edited copies",
-    you: "Create edited copies (or “I reviewed the flagged pages — create copies”).",
+    you:
+      "Create edited copies (or “I reviewed the flagged pages — create copies”), its label counting the copies it " +
+      "makes: the documents without a preview of their own too, less those marked ✗.",
     runs:
       "The click approves exactly the plan and files on screen: if a file or the plan changed since the preview, it " +
       "is refused. In Safe and Default modes a document whose preview failed a check is left as it is, under Left " +

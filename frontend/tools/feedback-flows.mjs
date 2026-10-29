@@ -19,7 +19,7 @@ try {
   assert.equal(await failures.count(), 1);
   assert.match(await failures.innerText(), /wording does not match.*\(V2\)/s);
   assert.ok(await page.getByText("Checked", { exact: true }).count() > 0);
-  const create = page.getByRole("button", { name: "Create edited copies", exact: true });
+  const create = page.getByRole("button", { name: /^Create \d+ edited cop(?:y|ies)$/ });
   assert.equal(await create.isDisabled(), false);
   assert.equal(await page.getByRole("group", { name: /^Review / }).count(), 1);   // the failed preview carries no marks
   await page.getByText("Left untouched: it did not pass its checks", { exact: false }).waitFor();
@@ -34,7 +34,7 @@ try {
   await page.reload();
   await page.getByRole("list", { name: /^Failed checks for / }).first().waitFor();
   assert.equal(await page.getByRole("list", { name: /^Failed checks for / }).count(), 2);
-  assert.equal(await page.getByRole("button", { name: "Create edited copies", exact: true }).isDisabled(), true);
+  assert.equal(await page.getByRole("button", { name: /^Create \d+ edited cop(?:y|ies)$/ }).isDisabled(), true);
   await page.getByText("Create is unavailable:", { exact: false }).first().waitFor();
   assert.deepEqual(errors, []);
   console.log("PASS Create stays blocked when no preview passed, and there are no feedback browser errors");

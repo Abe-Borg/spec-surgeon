@@ -1,13 +1,15 @@
 /**
- * The review of the previews (lib/review.ts): the marks belong to one set of
- * previews, a second tap clears a mark, the X'd sources are what `hold` sends,
- * and marks can be given only while the plan awaits approval.
+ * The review of the previews (lib/review.ts): every preview starts with its
+ * checkmark (it gets its copy), the X sets one aside and the checkmark or a
+ * second X takes it back, the marks belong to one set of previews, the X'd
+ * sources are what `hold` sends, and marks can be given only while the plan
+ * awaits approval and Create is available.
  */
 import assert from "node:assert/strict";
 import test from "node:test";
 
 import type { View } from "../src/types.ts";
-import { canReview, heldSources, keptAcrossTour, reviewCounts, reviewKey, setAsideCount, setMark } from "../src/lib/review.ts";
+import { canReview, heldSources, keptAcrossTour, markOf, reviewKey, setAsideCount, setMark } from "../src/lib/review.ts";
 import { EMPTY_VIEW } from "../src/lib/view.ts";
 
 const sample = (source: string) => ({ source, name: source, images: [], pages_before: 1, pages_after: 1, passed: true });
@@ -16,21 +18,27 @@ function view(overrides: Partial<View> = {}): View {
   return { ...EMPTY_VIEW, ...overrides };
 }
 
-test("a mark is set, replaced by the other, and cleared by a second tap of the same", () => {
+test("every preview starts with the checkmark; the X sets it aside, and the checkmark or a second X takes it back", () => {
+  // nothing needs ticking: a preview with no X gets its copy
+  assert.equal(markOf({}, "a"), "good");
   let reviews = setMark({}, "a", "good");
-  assert.deepEqual(reviews, { a: "good" });
+  assert.deepEqual(reviews, {});
   reviews = setMark(reviews, "a", "hold");
   assert.deepEqual(reviews, { a: "hold" });
+  assert.equal(markOf(reviews, "a"), "hold");
+  assert.equal(markOf(reviews, "b"), "good");
+  // the checkmark takes the X back
+  assert.deepEqual(setMark(reviews, "a", "good"), {});
+  // and so does the X a second time
   reviews = setMark(reviews, "b", "hold");
   reviews = setMark(reviews, "a", "hold");
   assert.deepEqual(reviews, { b: "hold" });
 });
 
 test("the held sources are the X'd previews, in preview order, among the previews shown", () => {
-  const reviews = { a: "hold" as const, b: "good" as const, c: "hold" as const, gone: "hold" as const };
+  const reviews = { a: "hold" as const, c: "hold" as const, gone: "hold" as const };
   assert.deepEqual(heldSources(reviews, [sample("c"), sample("a"), sample("b")]), ["c", "a"]);
   assert.deepEqual(heldSources({}, [sample("a")]), []);
-  assert.deepEqual(reviewCounts(reviews, [sample("a"), sample("b"), sample("c"), sample("d")]), { good: 1, hold: 2, unmarked: 1 });
 });
 
 test("a preview the server set aside is never sent as held, and is counted apart", () => {
@@ -49,11 +57,14 @@ test("the review key follows the action token and the samples: a new plan or pre
   assert.notEqual(reviewKey(first), reviewKey({ ...first, samples: [sample("a"), sample("b")] }));
 });
 
-test("marks can be given only while an approvable plan says so, and never while a job runs", () => {
+test("marks can be given only while an approvable plan says so, never while a job runs or Create is unavailable", () => {
   assert.equal(canReview(view({ action: { label: "", token: "t", kind: "approve", can_hold: true } }), false), true);
   assert.equal(canReview(view({ action: { label: "", token: "t", kind: "approve", can_hold: true } }), true), false);
   assert.equal(canReview(view({ action: { label: "", token: "t", kind: "approve" } }), false), false);
   assert.equal(canReview(view({ action: { label: "", token: "t", kind: "save", can_hold: true } }), false), false);
+  // a card says it gets its copy only when Create can make one
+  const blocked = { label: "", token: "t", kind: "approve" as const, can_hold: true, disabled_reason: "Create is unavailable: x." };
+  assert.equal(canReview(view({ action: blocked }), false), false);
 });
 
 test("marks set aside for the guided tour come back with the previews they belong to, and only those", () => {

@@ -100,7 +100,7 @@ try {
   await page.getByRole("button", { name: "Just the body" }).click();
   await page.waitForTimeout(300);
   check("chips are cleared on send", (await page.getByRole("button", { name: "Just the body" }).count()) === 0);
-  await page.getByRole("button", { name: "Create edited copies" }).waitFor({ timeout: 20000 });
+  await page.getByRole("button", { name: /^Create \d+ edited cop(?:y|ies)$/ }).waitFor({ timeout: 20000 });
   check("the chip's text became the user bubble", (await userBubbles().last().innerText()) === "Just the body");
 
   // 4b. Claude's drafted wording is editable before it is picked; the edit is what the pick approves.
@@ -119,14 +119,14 @@ try {
   check("a line break cannot be sent", await page.getByRole("button", { name: "Use this wording" }).isDisabled());
   await wordingBox.fill("Riverside Medical Center — Issued for Permit");
   await page.getByRole("button", { name: "Use this wording" }).click();
-  await page.getByRole("button", { name: "Create edited copies" }).waitFor({ timeout: 20000 });
+  await page.getByRole("button", { name: /^Create \d+ edited cop(?:y|ies)$/ }).waitFor({ timeout: 20000 });
   check("the edited wording is the user's pick",
     (await userBubbles().last().innerText()) === "Everything, and reword the footer — “Riverside Medical Center — Issued for Permit”");
 
   // 5. A draft holds the action button and says why.
   await box.fill("hmm");
   await page.waitForTimeout(100);
-  const create = page.getByRole("button", { name: "Create edited copies" });
+  const create = page.getByRole("button", { name: /^Create \d+ edited cop(?:y|ies)$/ });
   check("an unsent draft disables the action button", !(await create.isEnabled()));
   const tip = await create.locator("xpath=..").getAttribute("title");
   check("…and says why", tip === "Send your new message before approving a plan.", tip ?? "");
@@ -376,25 +376,44 @@ try {
   // 13. The one button lives in the conversation pane; the workbench carries none, and no plan card; there is no Hide plan button.
   await scenario("preview");
   await page.reload();
-  const createBtn = page.getByRole("button", { name: "Create edited copies" });
+  const createBtn = page.getByRole("button", { name: /^Create \d+ edited cop(?:y|ies)$/ });
   await createBtn.waitFor();
   check("no Hide plan button", (await page.getByRole("button", { name: /Hide plan|Show plan/ }).count()) === 0);
-  check("the action button is in the conversation pane", (await page.locator("section[aria-label='Conversation']").getByRole("button", { name: "Create edited copies" }).count()) === 1);
-  check("the workbench has no button", (await page.locator("section[aria-label='Your documents and the pages']").getByRole("button", { name: "Create edited copies" }).count()) === 0);
+  check("the action button is in the conversation pane", (await page.locator("section[aria-label='Conversation']").getByRole("button", { name: /^Create \d+ edited cop(?:y|ies)$/ }).count()) === 1);
+  check("the workbench has no button", (await page.locator("section[aria-label='Your documents and the pages']").getByRole("button", { name: /^Create \d+ edited cop(?:y|ies)$/ }).count()) === 0);
   check("no plan card", (await page.getByText("Here’s what will change").count()) === 0);
 
   // 14. Markdown renders in both panes (the chat's reply and the findings on the pages).
   check("the chat renders markdown", (await page.locator("section[aria-label='Conversation'] .md").count()) > 0);
   check("the findings render markdown", (await page.locator(".paper .md").count()) > 0);
 
-  // 15. The red X on a preview counts on the button; approving sets that document aside; the to-do card offers the pass.
-  const holdBtn = page.getByRole("button", { name: /Needs more work · 21 05 00/ });
+  // 15. Every preview starts with its checkmark: it gets its copy, and Create counts them all. The red X on a preview
+  // takes it off the count; the checkmark or Include all takes it back; approving sets that document aside; the to-do
+  // card offers the pass.
+  const keepBtn = page.getByRole("button", { name: /Gets a copy · 21 05 00/ });
+  const holdBtn = page.getByRole("button", { name: /Set aside · 21 05 00/ });
+  check("every preview starts with its checkmark", (await keepBtn.getAttribute("aria-pressed")) === "true" &&
+    (await page.getByRole("button", { name: /Gets a copy · 21 13 13/ }).getAttribute("aria-pressed")) === "true");
+  check("…and says it gets its copy", (await page.getByText("Gets a copy when you create the edited copies.").count()) === 2);
+  const allLabel = await createBtn.innerText();
+  const all = Number(/^Create (\d+) edited copies$/.exec(allLabel)?.[1] ?? 0);
+  check("Create counts every copy it makes", all >= 2, allLabel);
+  const actionBar = page.getByRole("region", { name: "Your decision" });
+  if (all > 2) check("…and says how many have no preview of their own",
+    (await actionBar.getByText(/more documents?, not previewed, gets? the same plan\./).count()) === 1);
+  const fewer = page.getByRole("button", { name: `Create ${all - 1} edited ${all - 1 === 1 ? "copy" : "copies"} (1 set aside)` });
   await holdBtn.click();
-  check("the X marks the preview", (await holdBtn.getAttribute("aria-pressed")) === "true");
-  check("…and the button counts it", await page.getByRole("button", { name: "Create edited copies (1 set aside)" }).isVisible());
-  await page.getByRole("button", { name: /Looks good · 21 13 13/ }).click();
-  check("the checkmark marks the other", (await page.getByRole("button", { name: /Looks good · 21 13 13/ }).getAttribute("aria-pressed")) === "true");
-  await page.getByRole("button", { name: "Create edited copies (1 set aside)" }).click();
+  check("the X marks the preview", (await holdBtn.getAttribute("aria-pressed")) === "true" && (await keepBtn.getAttribute("aria-pressed")) === "false");
+  check("…and the button takes it off its count", await fewer.isVisible());
+  const includeAll = actionBar.getByRole("button", { name: "Include all" });
+  await includeAll.click();
+  check("Include all takes every X back", (await holdBtn.getAttribute("aria-pressed")) === "false" &&
+    (await page.getByRole("button", { name: allLabel, exact: true }).isVisible()) && (await includeAll.count()) === 0);
+  await holdBtn.click();
+  await keepBtn.click();
+  check("the checkmark takes the X back too", (await holdBtn.getAttribute("aria-pressed")) === "false" && (await keepBtn.getAttribute("aria-pressed")) === "true");
+  await holdBtn.click();
+  await fewer.click();
   await page.getByText("Your edited copies").waitFor({ timeout: 20000 });
   await page.getByRole("button", { name: "Work on it now" }).waitFor({ timeout: 20000 });   // the job's final view
   const todoCard = page.locator("[aria-label='Your to-do list']");
@@ -458,7 +477,7 @@ try {
   await page.getByLabel("Replace with, row 1").fill("Contoso");
   check("a filled form can", await previewBtn.isEnabled());
   // Changing your mind: Discard beside Create, All buttons while a preview waits, the form kept, Undo after Create.
-  const createCopies = page.getByRole("button", { name: "Create edited copies" });
+  const createCopies = page.getByRole("button", { name: /^Create \d+ edited cop(?:y|ies)$/ });
   const discarded = page.getByText("Preview discarded; nothing was created.");
   await previewBtn.click();
   await createCopies.waitFor({ timeout: 20000 });

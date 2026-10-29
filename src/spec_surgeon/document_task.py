@@ -2227,6 +2227,13 @@ class DocumentTask:
             warnings.append("Page appearance was not checked: a rendered preview is unavailable. "
                             "Check the edited copies in Word before using them.")
         set_aside = self._left_untouched(preview)
+        # What Create makes with nothing set aside, and how many of those documents show no preview of their own (the
+        # samples are a few per layout): the page counts both on the button, less the previews marked with the red X
+        copies = unpreviewed = 0
+        if self.stage == "preview" and s.recovery is None:
+            runnable = [Path(f).resolve() for f in s.runnable_files()]
+            shown = {Path(sv.source).resolve() for sv in samples}
+            copies, unpreviewed = len(runnable), sum(1 for f in runnable if f not in shown)
         batch_plan = getattr(preview, "batch_plan", None)
         labels = {"preview": "Create edited copies", "resume": "Continue", "budget": "Continue"}
         if self.mode == "safe":
@@ -2274,6 +2281,7 @@ class DocumentTask:
                           "reason": entry.get("reason") or HELD_REASON} for path, entry in self.todo.items()],
                 "focus": list(self.focus["documents"]) if self.focus else [],
                 "can_hold": self.stage == "preview" and s.recovery is None,
+                "copies_to_create": copies, "unpreviewed": unpreviewed,
                 "attachments": [{**a.to_dict(), "current": str(self.current_of(a.path))} for a in self.attachments],
                 "groups": groups,
                 "effects": [c for g in groups for c in g["changes"]],

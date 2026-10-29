@@ -188,9 +188,10 @@ function HowToUse({ onStartTourAt }: { onStartTourAt: (chapter: string) => void 
             t: "Create edited copies",
             d: (
               <>
-                One button approves exactly what is on screen. The change is made on copies, every copy is checked
-                before it is delivered, and your originals are never written. <Tag>Your edited copies</Tag> lists them;
-                click one to open it in Word.
+                One button approves exactly what is on screen, and its label counts the copies it makes: the
+                documents without a preview of their own too, less any you set aside with the red X. The change is
+                made on copies, every copy is checked before it is delivered, and your originals are never written.{" "}
+                <Tag>Your edited copies</Tag> lists them; click one to open it in Word.
               </>
             ),
           },

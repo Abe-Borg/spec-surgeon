@@ -50,8 +50,8 @@ npm install
 Start the mock server in one terminal. It answers every route with canned data and scripted jobs; the
 job a request runs is chosen by its text: `question` asks one thing with choices and chips (in two model calls, as
 the real server streams them: the first says what it will do and reads, the second writes the reply), `fail` ends in an
-error, `pause` ends in a budget pause, anything else plans and previews, and the primary action creates
-copies (the previews marked with the red X are sent as `hold` and land on the to-do list; the reply "Work on the
+error, `pause` ends in a budget pause, anything else plans and previews (Create counted as the server counts it,
+`action.copies` and `action.unpreviewed`), and the primary action creates copies (the previews marked with the red X are sent as `hold` and land on the to-do list; the reply "Work on the
 documents I set aside" begins the pass over them).
 
 ```
@@ -100,8 +100,8 @@ npm test
 
 The paths the screenshots do not show — a failed job, a pause and its Continue, Stop now mid-job, typing
 ahead, a chip click, the draft hold on the action button, the folding documents tray, the file-chooser fallback,
-a drop, Settings and a colour scheme kept across a reload, About, the update banner, Start over, the red X on a
-preview and the to-do list's pass — run
+a drop, Settings and a colour scheme kept across a reload, About, the update banner, Start over, the checkmark every
+preview starts with, the red X on a preview (Create's count, Include all) and the to-do list's pass — run
 in a real browser against the mock, one PASS/FAIL line each (build first):
 
 ```

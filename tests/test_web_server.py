@@ -534,6 +534,7 @@ def test_the_primary_action_takes_the_documents_the_user_set_aside(tmp_path):
     with client.stream("POST", "/api/send", json={"text": REQUEST}) as response:
         done = frames(response)[-1]["state"]
     assert done["action"]["kind"] == "approve" and done["action"]["can_hold"] is True
+    assert (done["action"]["copies"], done["action"]["unpreviewed"]) == (2, 0)   # what Create makes, all previewed
     assert done["todo"] == [] and done["focus"] == []
     bad = client.post("/api/primary", json={"token": done["action"]["token"], "hold": "B.docx"})
     assert bad.status_code == 400
@@ -543,7 +544,7 @@ def test_the_primary_action_takes_the_documents_the_user_set_aside(tmp_path):
     assert done["stage"] == "done" and [r["name"] for r in done["results"]] == ["A.docx"]
     assert done["todo"] == [{"path": str(second), "name": "B.docx", "why": "held",
                              "reason": "You marked its preview as needing more work."}]
-    assert done["action"]["can_hold"] is False
+    assert done["action"]["can_hold"] is False and done["action"]["copies"] == 0
     assert done["chips"][0] == WORK_TODO
     with client.stream("POST", "/api/send", json={"text": WORK_TODO, "chip": True}) as response:
         done = frames(response)[-1]["state"]

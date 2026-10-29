@@ -2,9 +2,11 @@
  * The one button (docs/WEB_API.md, `action.kind`; docs/CONVERSATIONAL_DESKTOP.md,
  * "One action"). It lives in the conversation pane, above the composer. Every
  * path ends in the same spot: while a job runs the composer shows "Stop now";
- * otherwise the server's action, with its label, or nothing. A document the
- * user marked with the red X on its preview is counted in the label: it is set
- * aside when the copies are created.
+ * otherwise the server's action, with its label, or nothing. Create counts the
+ * copies it makes (`action.copies`: the documents without a preview of their
+ * own too); a document the user marked with the red X on its preview is taken
+ * off that count and named in the label: it is set aside when the copies are
+ * created.
  *
  * Pure, so `node --test` can pin every label.
  */
@@ -19,6 +21,10 @@ export type ActionButton =
       /** Clicking does nothing while true; `tip` says why. */
       disabled: boolean;
       tip: string;
+      /** Approve: the documents Create runs without a preview of their own (`action.unpreviewed`). */
+      unpreviewed?: number;
+      /** Approve: every document Create would run carries the red X, so no copy is made. */
+      none?: boolean;
     };
 
 export const STOP_TIP =
@@ -33,6 +39,13 @@ export const CONTINUE_TIP =
 export const SAVE_TIP = "Saves the copies that are already verified while a question is still open.";
 export const UNTICKS_TIP =
   "Update the preview first: the plan and pages shown here still change the find-and-replace occurrences you unticked.";
+
+/** Include all, after the approve sentence while a preview carries the red X. */
+export const INCLUDE_ALL_TIP = "Takes back every red X: every document gets its copy.";
+
+/** The approve tip when every document Create would run carries the red X. */
+export const NONE_TIP =
+  "Every document this plan would edit carries the red X: no copy is created, and they go on your to-do list. Your originals stay intact.";
 
 /** The approve tip when `held` previews carry the red X. */
 export function heldTip(held: number): string {
@@ -54,11 +67,27 @@ export function defaultLabel(kind: "approve" | "continue" | "save", blocking: bo
   return DEFAULT_LABELS[kind];
 }
 
+/** The approve label with the number of copies Create makes: "Create 30 edited copies", the blocking variant too. */
+export function countedLabel(copies: number, blocking: boolean): string {
+  const what = copies === 0 ? "no copies" : `${copies} ${blocking ? "" : "edited "}${copies === 1 ? "copy" : "copies"}`;
+  return blocking ? `I reviewed the flagged pages — create ${what}` : `Create ${what}`;
+}
+
+/** The copies the server counts for Create, or null when it counts none (recovery, an older server). */
+function serverCopies(action: View["action"]): number | null {
+  return typeof action.copies === "number" && Number.isInteger(action.copies) && action.copies > 0 ? action.copies : null;
+}
+
+/** A count the server sends, or 0. */
+function count(value: unknown): number {
+  return typeof value === "number" && Number.isInteger(value) && value > 0 ? value : 0;
+}
+
 /**
  * @param view the server's view
  * @param busy a job is running (the page's own flag; `view.busy` while attached to a stream)
  * @param draft the composer holds an unsent message
- * @param held how many previews carry the red X (counted on the approve label only)
+ * @param held how many previews carry the red X (taken off the approve label's count, and named on it)
  * @param unticksPending the find-and-replace ticks on the page differ from the previewed plan's (lib/occurrences.ts)
  */
 export function actionButton(view: View, busy: boolean, draft: boolean, held = 0, unticksPending = false): ActionButton | null {
@@ -69,21 +98,29 @@ export function actionButton(view: View, busy: boolean, draft: boolean, held = 0
   if (kind !== "approve" && kind !== "continue" && kind !== "save") return null;
   let label = (action.label ?? "").trim() || defaultLabel(kind, view.blocking);
   const counted = kind === "approve" && held > 0;
+  const copies = kind === "approve" ? serverCopies(action) : null;
+  const left = copies === null ? null : Math.max(0, copies - held);
+  if (left !== null) label = countedLabel(left, view.blocking);
   if (counted) label = `${label} (${held} set aside)`;
-  if (draft) return { kind, label, token: action.token, disabled: true, tip: DRAFT_TIP };
-  if (unticksPending && kind === "approve") return { kind, label, token: action.token, disabled: true, tip: UNTICKS_TIP };
-  if (action.disabled_reason) return { kind, label, token: action.token, disabled: true, tip: action.disabled_reason };
+  const counts = kind === "approve" ? { unpreviewed: count(action.unpreviewed), none: left === 0 && counted } : {};
+  if (draft) return { kind, label, token: action.token, disabled: true, tip: DRAFT_TIP, ...counts };
+  if (unticksPending && kind === "approve")
+    return { kind, label, token: action.token, disabled: true, tip: UNTICKS_TIP, ...counts };
+  if (action.disabled_reason)
+    return { kind, label, token: action.token, disabled: true, tip: action.disabled_reason, ...counts };
   const tip =
     kind === "approve"
       ? view.blocking
         ? BLOCKING_TIP
         : counted
-          ? heldTip(held)
+          ? left === 0
+            ? NONE_TIP
+            : heldTip(held)
           : APPROVE_TIP
       : kind === "continue"
         ? CONTINUE_TIP
         : SAVE_TIP;
-  return { kind, label, token: action.token, disabled: !action.token, tip };
+  return { kind, label, token: action.token, disabled: !action.token, tip, ...counts };
 }
 
 /** What the approve sentence adds when `aside` previews did not pass while others did: they stay as they are. */
@@ -96,15 +133,27 @@ export function asideSentence(aside: number): string {
   );
 }
 
+/** What the approve sentence adds when Create also runs `unpreviewed` documents that show no preview of their own. */
+export function unpreviewedSentence(unpreviewed: number): string {
+  if (unpreviewed <= 0) return "";
+  return unpreviewed === 1
+    ? " One more document, not previewed, gets the same plan."
+    : ` ${unpreviewed} more documents, not previewed, get the same plan.`;
+}
+
 /** The sentence beside the button, in the conversation pane. `aside`: previews the server set aside (`set_aside`). */
 export function actionSentence(button: ActionButton, held: number, aside = 0): string {
   if (button.kind !== "stop" && button.disabled) return button.tip;
   switch (button.kind) {
     case "approve":
       return (
-        (held > 0
-          ? `${held === 1 ? "One document" : `${held} documents`} marked with the red X ${held === 1 ? "goes" : "go"} on your to-do list; the rest get their copies now.`
-          : "If the pages look right, create the edited copies.") + asideSentence(aside)
+        (button.none
+          ? `${held === 1 ? "Its preview carries" : "Every preview carries"} the red X: no copy is created, and ${held === 1 ? "it goes" : "they go"} on your to-do list.`
+          : held > 0
+            ? `${held === 1 ? "One document" : `${held} documents`} marked with the red X ${held === 1 ? "goes" : "go"} on your to-do list; the rest get their copies now.`
+            : "If the pages look right, create the edited copies.") +
+        unpreviewedSentence(button.unpreviewed ?? 0) +
+        asideSentence(aside)
       );
     case "continue":
       return "The documents are checked against your request again before anything can be approved.";

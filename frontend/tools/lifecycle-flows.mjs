@@ -13,7 +13,7 @@ try {
   const mode = (name) => page.getByRole("group", { name: "Mode" }).getByRole("button", { name, exact: true });
   const box = page.getByLabel("Describe a change or answer a question");
   const watermark = page.getByPlaceholder("NOT FOR CONSTRUCTION");
-  const create = page.getByRole("button", { name: "Create edited copies", exact: true });
+  const create = page.getByRole("button", { name: /^Create \d+ edited cop(?:y|ies)$/ });
   const load = async (scenario) => {
     await mock.scenario(scenario);
     await page.goto(`${mock.base}/?token=${TOKEN}`);

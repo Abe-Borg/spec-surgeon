@@ -56,7 +56,7 @@ that ends a job is authoritative.
   "pdf": {"available": true, "renderer": "Microsoft Word | LibreOffice", "reason": ""},
   "export": {"folder": "", "unsaved": 2, "copies": 2},
   "action": {"label": "Create edited copies", "token": "…", "kind": "approve | continue | save | none",
-             "can_hold": true},
+             "can_hold": true, "copies": 3, "unpreviewed": 1},
   "todo": [{"path": "C:/Specs/21 05 00.docx", "name": "21 05 00.docx", "why": "held | asked | refused | failed",
             "reason": "You marked its preview as needing more work."}],
   "focus": [],
@@ -183,9 +183,19 @@ Rules the page relies on:
   In Safe mode, `results` contains only the current button's copies; earlier copies remain in the working set and
   on disk, so a later failed or refused button cannot present them as its results.
   `action.can_hold` is true when the previews can be marked: each preview card then carries a green checkmark
-  (looks good) and a red X (needs more work). The page sends the X'd previews' `source` paths as `hold` with the
-  primary action: those documents go on the to-do list and the others get their copies. It is false during a
-  recovery's "Save N ready copies".
+  (it gets its copy: where every preview starts, so nothing needs ticking) and a red X (needs more work); the
+  checkmark, a second X, or **Include all** beside the button takes an X back. The page sends the X'd previews'
+  `source` paths as `hold` with the primary action: those documents go on the to-do list and the others get their
+  copies. It is false during a recovery's "Save N ready copies"; the page also shows no marks while
+  `disabled_reason` holds Create back.
+  `action.copies` (approve only) is how many copies Create makes with nothing set aside: every document it runs
+  (`Session.runnable_files`: the plan's documents less those under Left untouched and the samples set aside), the
+  documents without a preview of their own included; `action.unpreviewed` is how many of those have no preview card
+  (the previews are a sample, `review.sample_files`). The page writes the count on the label, less the X'd previews
+  ("Create 27 edited copies (3 set aside)", "Create no copies (3 set aside)" when every one carries the X), and says
+  the documents without a preview beside the button ("22 more documents, not previewed, get the same plan."). Both
+  are 0 when nothing is counted (recovery, any other kind); an older server sends neither, and the page keeps the
+  label as given.
 - `todo` lists the documents waiting on the to-do list (attached originals), each with `why` and a `reason`
   sentence the page shows as written: `held` (the red X above), `asked` (the user asked the assistant to set it aside,
   its `set_aside` tool), `refused` (the plan could not be applied to it; it goes on the list once the others run) or
