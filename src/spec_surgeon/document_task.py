@@ -388,7 +388,7 @@ class DocumentTask:
         self._failed_said_for = None        # the preview whose samples set aside as failed the chat has said
         self._budget = self._new_budget()
         self._request_budget = self._new_request()
-        # the top bar's context gauge: the conversation's last reading (``Conversation.context``) and the id of the
+        # the top bar's context gauge: the conversation's last reading (``Conversation.context_reading``) and the id of the
         # conversation it came from; never journalled, so a restored window shows none until the next step
         self._context: Optional[Dict[str, Any]] = None
         self.session.context_observer = self._on_context
@@ -1141,7 +1141,7 @@ class DocumentTask:
     def _on_context(self, conversation) -> None:
         """A step of the conversation measured its context (``Conversation._measure_context``): the gauge follows at
         once, on the live channel's ``cost`` event, rather than waiting for the job to end."""
-        self._context = dict(conversation.context, conversation=conversation.id)
+        self._context = dict(conversation.context_reading, conversation=conversation.id)
         self._emit({"type": "cost", "cost": self._cost()})
 
     def _context_view(self) -> Optional[Dict[str, Any]]:

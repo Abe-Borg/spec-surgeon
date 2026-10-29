@@ -109,7 +109,7 @@ def test_an_unknown_model_has_its_tokens_and_no_window(tmp_path):
     conversation = Conversation(REQUEST, [document(tmp_path / "Spec.docx")], client=FakeClient(submit(write=7)),
                                 model="claude-unlisted", work_dir=tmp_path / "chat", on_context=seen.append)
     conversation.start()
-    assert conversation.context == {"tokens": 127, "window": None, "rollover": DEFAULT_CONTEXT_TOKENS}
+    assert conversation.context_reading == {"tokens": 127, "window": None, "rollover": DEFAULT_CONTEXT_TOKENS}
     assert seen == [conversation]
 
 
@@ -119,4 +119,17 @@ def test_an_observer_that_fails_never_affects_the_conversation(tmp_path):
     conversation = Conversation(REQUEST, [document(tmp_path / "Spec.docx")], client=FakeClient(submit()),
                                 work_dir=tmp_path / "chat", on_context=broken)
     turn = conversation.start()
-    assert turn.status == "ok" and conversation.context["tokens"] == 120
+    assert turn.status == "ok" and conversation.context_reading["tokens"] == 120
+
+
+def test_the_reading_never_takes_the_place_of_the_conversations_own_context(tmp_path):
+    """``Conversation.context`` is the app's account of how the documents come to be planned (set aside after a
+    preview, say), which the first message carries; the gauge's reading is ``context_reading`` and leaves it be."""
+    note = "SET ASIDE AFTER A PREVIEW: the plan they saw."
+    fake = FakeClient(submit(write=9))
+    conversation = Conversation(REQUEST, [document(tmp_path / "Spec.docx")], client=fake, context=note,
+                                work_dir=tmp_path / "chat")
+    assert conversation.context == note
+    conversation.start()
+    assert conversation.context == note and conversation.context_reading["tokens"] == 129
+    assert note in str(fake.requests[0]["messages"][0]["content"])

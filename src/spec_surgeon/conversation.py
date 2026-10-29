@@ -369,8 +369,9 @@ class Conversation:
         self._reply_mark: Optional[tuple] = None   # (the user message a reply sent, the state before it): see _take_back
         self.usage = llm.Usage()
         # the context gauge (``_measure_context``): {"tokens", "window", "rollover"} at the last answer that joined the
-        # history, None before one; ``on_context`` (the window) hears of each. Never recorded, never sent to Claude
-        self.context: Optional[Dict[str, Any]] = None
+        # history, None before one; ``on_context`` (the window) hears of each. Never recorded, never sent to Claude.
+        # Not ``context``: that is the app's account of how the documents come to be planned, which the request carries
+        self.context_reading: Optional[Dict[str, Any]] = None
         self.on_context = on_context
         self.tool_calls: List[Dict[str, Any]] = []
         self.turn: Optional[Turn] = None
@@ -848,7 +849,7 @@ class Conversation:
         tokens = llm.context_tokens(resp)
         if tokens is None:
             return
-        self.context = {"tokens": tokens, "window": llm.CONTEXT_WINDOWS.get(self.model),
+        self.context_reading = {"tokens": tokens, "window": llm.CONTEXT_WINDOWS.get(self.model),
                         "rollover": self.max_context_tokens}
         if self.on_context is None:
             return
