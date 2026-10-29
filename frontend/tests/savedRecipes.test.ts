@@ -31,6 +31,7 @@ import {
   recipeMeta,
   runPicks,
   runProblem,
+  runStale,
   safeRecipes,
   savableRuns,
   stepShort,
@@ -191,4 +192,16 @@ test("changes added to a saved recipe move it to the mode of its steps", () => {
   assert.equal(addedMode(safeOne, [button("title_property")]), "safe");
   assert.equal(addedMode(safeOne, [plan()]), "default");
   assert.equal(addedMode(saved([plan()]), [plan(true)]), "obliterate");
+});
+
+test("a run form opened before the recipe's steps were edited cannot preview or save its forms", () => {
+  const recipe = saved([button("title_property", { pattern: "SECTION {number}" }), button("accept_changes", { action: "accept" })], { rev: "v1" });
+  const run = openRun(recipe, CATALOG, attached());
+  assert.equal(run.rev, "v1");
+  assert.equal(runStale(recipe, run), false);
+  const reordered = { ...recipe, rev: "v2", steps: [recipe.steps[1], recipe.steps[0]] };
+  assert.equal(runStale(reordered, run), true);
+  assert.equal(runProblem(reordered, run, CATALOG, attached()), "The recipe changed since its form was opened; open it again.");
+  assert.equal(runProblem(reordered, openRun(reordered, CATALOG, attached()), CATALOG, attached()), "");
+  assert.equal(runStale({ ...recipe, rev: undefined }, run), false);          // an older server sends no revision
 });

@@ -124,7 +124,8 @@ given another form for the fields that read nothing attached (a template's place
 table are chosen in the run form). A step saved from a request is moved or removed whole and never rewritten: its words
 and plan are what the user approved (invariant 7). The edit is refused when the recipe's `revision` (name, note, steps)
 moved since the editor opened, so a second window's change is never written over; a run noted by `Store.ran` is not an
-edit. **Save as a recipe…** can instead add the ticked runs to the end of a saved recipe (**Add to a saved recipe**,
+edit. A run form's skips and forms are by position, so a run form opened before an edit carries the revision it opened
+on and is refused (`choose_steps`, `Store.update_inputs`) instead of applied to another step. **Save as a recipe…** can instead add the ticked runs to the end of a saved recipe (**Add to a saved recipe**,
 `Store.append`); the chat says so, and names the mode the recipe moves to when a step moves it. The mode is always its
 steps' (`recipe_mode`, recomputed on every edit).
 

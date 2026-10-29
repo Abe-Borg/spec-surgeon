@@ -136,9 +136,11 @@ export function formChips(button: Recipe | undefined, inputs: RecipeInputs | und
 }
 
 /** A recipe's run form: per saved step, skipped this time or not, and the form a button step runs with; which step's
- *  form is open; and the forms as saved, to tell what changed. */
+ *  form is open; the forms as saved, to tell what changed; and `rev`, the recipe as the form opened it (its picks are
+ *  by position, so a recipe whose steps were moved, removed or added since cannot take them). */
 export interface RecipeRunState {
   id: string;
+  rev: string;
   skip: boolean[];
   inputs: (RecipeInputs | null)[];
   saved: (RecipeInputs | null)[];
@@ -155,7 +157,12 @@ export function openRun(recipe: SavedRecipe, catalog: Recipe[], view: Attached):
     const button = catalog.find((b) => b.id === step.button);
     return button ? refreshInputs(button, step.inputs ?? {}, view) : { ...(step.inputs ?? {}) };
   });
-  return { id: recipe.id, skip: recipe.steps.map(() => false), inputs, saved: inputs.map((i) => (i ? { ...i } : null)), open: null };
+  return { id: recipe.id, rev: recipe.rev ?? "", skip: recipe.steps.map(() => false), inputs, saved: inputs.map((i) => (i ? { ...i } : null)), open: null };
+}
+
+/** The recipe was edited (here or in another window) since its run form opened: the form's picks no longer line up. */
+export function runStale(recipe: SavedRecipe, run: RecipeRunState): boolean {
+  return !!recipe.rev && !!run.rev && recipe.rev !== run.rev;
 }
 
 /** Why a step cannot run with what is attached and its form as it is; "" when it can. */
@@ -179,6 +186,7 @@ export function stepProblem(step: RecipeStep, inputs: RecipeInputs | null, catal
 
 /** What the run form still needs before Preview, in one sentence naming the step; "" when it can be sent. */
 export function runProblem(recipe: SavedRecipe, run: RecipeRunState, catalog: Recipe[], view: Attached): string {
+  if (runStale(recipe, run)) return "The recipe changed since its form was opened; open it again.";
   if (!recipe.runs_here) return recipe.why_not_here;
   if (!usableDocuments(view)) return "Add the Word documents first.";
   const kept = recipe.steps.map((_, i) => !run.skip[i]);

@@ -779,7 +779,8 @@ def create_app(state: WindowState, *, dev: bool = False) -> FastAPI:
     @app.post("/api/saved-recipes/run")
     async def run_saved_recipe(request: Request):
         """A saved recipe as one plan, previewed (a job, as a button's ``/api/recipe``): ``id``, and ``steps`` — one
-        entry per saved step, ``{"skip": bool, "inputs": {…}}``, the form a button step runs with this time."""
+        entry per saved step, ``{"skip": bool, "inputs": {…}}``, the form a button step runs with this time; ``rev``,
+        the recipe as the run form opened it (refused when its steps were edited since)."""
         try:
             body = await json_object(request)
         except ValueError as e:
@@ -787,7 +788,9 @@ def create_app(state: WindowState, *, dev: bool = False) -> FastAPI:
         steps = body.get("steps")
         if steps is not None and (not isinstance(steps, list) or not all(isinstance(p, dict) for p in steps)):
             return error("The recipe's steps could not be read.")
-        return stream("saved_recipe", recipe=str(body.get("id") or ""), steps=steps)
+        rev = body.get("rev")
+        return stream("saved_recipe", recipe=str(body.get("id") or ""), steps=steps,
+                      rev=rev if isinstance(rev, str) else None)
 
     @app.post("/api/saved-recipes/save")
     async def save_recipe(request: Request):

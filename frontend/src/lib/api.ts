@@ -266,7 +266,8 @@ export const recipe = (id: string, inputs: RecipeInputs) => streamJob("/api/reci
 export const occurrences = (skip: string[]) => streamJob("/api/occurrences", { skip });
 /** A saved recipe as one plan, previewed with no AI call (docs/WEB_API.md, `POST /api/saved-recipes/run`): one entry
  *  per saved step — skipped this time, and the form a button step runs with. */
-export const runSavedRecipe = (id: string, steps: RecipeRunPick[]) => streamJob("/api/saved-recipes/run", { id, steps });
+export const runSavedRecipe = (id: string, steps: RecipeRunPick[], rev?: string) =>
+  streamJob("/api/saved-recipes/run", { id, steps, ...(rev ? { rev } : {}) });
 
 // --- Saved recipes -----------------------------------------------------------
 
@@ -304,8 +305,8 @@ export async function changeRecipe(
 }
 
 /** A Safe recipe's buttons take the forms its run form holds: one entry per step, null to leave one as it is. */
-export async function saveRecipeForms(id: string, inputs: (RecipeInputs | null)[]): Promise<View> {
-  return normalizeView(await post<unknown>("/api/saved-recipes/change", { action: "inputs", id, inputs }));
+export async function saveRecipeForms(id: string, inputs: (RecipeInputs | null)[], rev?: string): Promise<View> {
+  return normalizeView(await post<unknown>("/api/saved-recipes/change", { action: "inputs", id, inputs, ...(rev ? { rev } : {}) }));
 }
 
 // --- Settings, about, updates, logs ---------------------------------------

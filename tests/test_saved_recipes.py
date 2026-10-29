@@ -153,6 +153,24 @@ def test_a_recipe_is_edited_whole_its_steps_removed_reordered_or_given_another_f
     assert saved_recipes.revision(store.get(record["id"])) == rev
 
 
+def test_a_run_form_opened_before_the_steps_were_reordered_is_refused_not_applied_to_the_wrong_step(tmp_path, store):
+    """Run-form picks and saved forms are by position: once Edit reorders a recipe of the same length, the form opened
+    before it is refused (its ``rev``) instead of giving a skip or a form meant for one step to another."""
+    record = store.add("Two", "", [saved_recipes.button_step("title_property", TITLE, "x"), STEP])
+    opened = saved_recipes.revision(record)
+    store.edit(record["id"], opened, "Two", "", [{"step": 1}, {"step": 0}])
+    with pytest.raises(RecipeRunError, match="changed since its form was opened"):
+        store.update_inputs(record["id"], [{"pattern": "{number}"}, None], rev=opened)
+    assert store.get(record["id"])["steps"][1]["inputs"] == TITLE                      # nothing written
+    task = safe(tmp_path, store)
+    task.attach(specs(tmp_path / "b", (("21 05 00", "COMMON WORK RESULTS"),)))
+    task.perform("saved_recipe", recipe=record["id"], steps=[{"skip": True}, {}], rev=opened)
+    assert task.session.spec is None and "changed since its form was opened" in task.messages[-1]["text"]
+    now = saved_recipes.revision(store.get(record["id"]))
+    view = task.perform("saved_recipe", recipe=record["id"], steps=[{"skip": True}, {}], rev=now)
+    assert view["stage"] == "preview" and [o["op"] for o in task.session.spec["ops"]] == ["set_document_properties"]
+
+
 @pytest.mark.parametrize("steps, said", [([], "Keep at least one step"),
                                          ([{"step": 0}, {"step": 0}], "could not be read"),
                                          ([{"step": 3}], "could not be read"),
@@ -546,6 +564,13 @@ def test_the_routes_save_change_and_run_a_recipe(tmp_path, store, monkeypatch):
     with client.stream("POST", "/api/saved-recipes/run", json={"id": recipe["id"], "steps": [{"skip": False}]}) as r:
         last = frames(r)[-1]
     assert last["type"] == "done" and last["state"]["stage"] == "preview"
+    with client.stream("POST", "/api/saved-recipes/run", json={"id": recipe["id"], "rev": "stale",
+                                                                "steps": [{"skip": False}]}) as r:
+        last = frames(r)[-1]
+    assert last["type"] == "done" and "changed since its form was opened" in last["state"]["messages"][-1]["text"]
+    assert client.post("/api/saved-recipes/change", json={"action": "inputs", "id": recipe["id"], "rev": "stale",
+                                                          "inputs": [None]}).json() == {
+        "error": "The recipe changed since its form was opened; open it again."}
     assert client.post("/api/saved-recipes/run", json={"id": recipe["id"], "steps": "all"}).json() == {
         "error": "The recipe's steps could not be read."}
     view = client.post("/api/saved-recipes/change", json={"action": "delete", "id": recipe["id"]}).json()

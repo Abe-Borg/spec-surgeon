@@ -1450,6 +1450,7 @@ async function handle(req, res) {
       if (!record.runs_here) return json(res, 400, { error: `${record.name}: ${record.why_not_here}` });
       const blocked = recipeBlockedOf(view);
       if (blocked) return json(res, 400, { error: blocked });
+      if (body.rev && body.rev !== record.rev) return json(res, 400, { error: "The recipe changed since its form was opened; open it again." });
       const picks = Array.isArray(body.steps) ? body.steps : record.steps.map(() => ({ skip: false }));
       if (picks.length !== record.steps.length) return json(res, 400, { error: "The recipe changed since its form was opened; open it again." });
       const kept = record.steps.flatMap((st, i) => (picks[i]?.skip ? [] : [st.kind === "button" && picks[i]?.inputs ? { ...st, inputs: picks[i].inputs } : st]));
@@ -1507,6 +1508,7 @@ async function handle(req, res) {
       } else if (body.action === "delete") {
         savedRecipes.splice(i, 1);
       } else if (body.action === "inputs") {
+        if (body.rev && body.rev !== revOf(savedRecipes[i])) return json(res, 400, { error: "The recipe changed since its form was opened; open it again." });
         const forms = Array.isArray(body.inputs) ? body.inputs : [];
         savedRecipes[i] = { ...savedRecipes[i], steps: savedRecipes[i].steps.map((st, j) => (forms[j] && st.kind === "button" ? { ...st, inputs: forms[j] } : st)) };
       } else return json(res, 400, { error: "Unknown recipe change." });

@@ -44,8 +44,8 @@ interface Props {
   onAddKey: () => void;
   /** A saved recipe previewed as one plan (`POST /api/saved-recipes/run`); its changed forms kept in it; the dialog
    *  that edits, duplicates and deletes recipes. */
-  onRunRecipe: (recipe: SavedRecipe, picks: RecipeRunPick[]) => void;
-  onSaveRecipeForms: (recipe: SavedRecipe, forms: (RecipeInputs | null)[]) => Promise<boolean>;
+  onRunRecipe: (recipe: SavedRecipe, picks: RecipeRunPick[], rev?: string) => void;
+  onSaveRecipeForms: (recipe: SavedRecipe, forms: (RecipeInputs | null)[], rev?: string) => Promise<string | null>;
   onManageRecipes: () => void;
 }
 
@@ -273,8 +273,8 @@ function SafePanel({
         busy={busy}
         run={run}
         onRunChange={setRun}
-        onPreview={(picks) => onRunRecipe(running, picks)}
-        onSaveForms={(forms) => onSaveRecipeForms(running, forms)}
+        onPreview={(picks) => onRunRecipe(running, picks, run.rev)}
+        onSaveForms={(forms) => onSaveRecipeForms(running, forms, run.rev)}
         onBack={() => {
           if (view.stage === "preview") onDiscard();
           setRun(null);

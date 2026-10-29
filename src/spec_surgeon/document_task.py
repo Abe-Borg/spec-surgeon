@@ -1185,14 +1185,14 @@ class DocumentTask:
         return None
 
     def perform(self, action, *, text="", token="", choice_id="", chip=False, hold=(), wording=None, recipe="",
-                inputs=None, skip=(), kind="", folder="", steps=None, log=lambda _: None, events=None):
+                inputs=None, skip=(), kind="", folder="", steps=None, rev=None, log=lambda _: None, events=None):
         """Worker entry point. One ledger covers every nested model call and every turn. ``events`` is the window's
         live channel (docs/WEB_API.md: status, activity, text_delta, thinking_delta, message, plan, samples, results,
         question, cost); without one the job runs silently and the view says everything at the end. ``hold`` (the
         primary action) names the previewed documents the user set aside: they go on the to-do list, the others run.
         ``recipe`` and ``inputs`` (the ``recipe`` action) are a Safe-mode button and its form; ``recipe`` and ``steps``
         (the ``saved_recipe`` action) a saved recipe and, per step, whether it is skipped and the form a button step
-        runs with this time (``saved_recipes.choose_steps``). ``skip`` (the
+        runs with this time (``saved_recipes.choose_steps``; ``rev``, the recipe as its run form opened). ``skip`` (the
         ``occurrences`` action) names, by key, the find-and-replace occurrences the user unticked in the preview.
         ``kind`` and ``folder`` (the ``export`` action) are a clean export's kind and the folder it writes into: it is
         no request, so the request open, its spending and the stage are left as they are (``_export_job``)."""
@@ -1224,7 +1224,7 @@ class DocumentTask:
                 elif action == "recipe":
                     self._recipe(recipe, inputs, checkpointed_log)
                 elif action == "saved_recipe":
-                    self._saved_recipe(recipe, steps, checkpointed_log)
+                    self._saved_recipe(recipe, steps, checkpointed_log, rev=rev)
                 elif action == "occurrences":
                     self._occurrences(skip, checkpointed_log)
                 else:
@@ -1495,7 +1495,7 @@ class DocumentTask:
             return "Drop the request that is open first, or finish it."
         return ""
 
-    def _saved_recipe(self, recipe_id, picks, log):
+    def _saved_recipe(self, recipe_id, picks, log, rev=None):
         """A saved recipe (``saved_recipes``): every step it keeps this time built from the documents attached now,
         each through the one gate, composed in order into one plan and through the gate again (``build_run``), then
         the ordinary preview. No AI call (``Session.model_free``). A step that cannot be used, or a recipe that does
@@ -1513,7 +1513,7 @@ class DocumentTask:
             raise ValueError(f"{record['name']}: {here['why_not_here']}")
         s = self.session
         try:
-            chosen = saved_recipes.choose_steps(record, picks)
+            chosen = saved_recipes.choose_steps(record, picks, rev=rev)
             files = s.files(outcome=False)
             ctx = recipes.Context(files, self.template(), self.references())
             self._emit({"type": "status", "kind": "checking", "text": "Checking the documents…"})
@@ -1647,7 +1647,7 @@ class DocumentTask:
             elif action == "delete":
                 self.recipes.delete(str(recipe_id))
             elif action == "inputs":
-                self.recipes.update_inputs(str(recipe_id), inputs)
+                self.recipes.update_inputs(str(recipe_id), inputs, rev=rev)
             else:
                 raise ValueError("Unknown recipe change.")
         except saved_recipes.RecipeRunError as e:
