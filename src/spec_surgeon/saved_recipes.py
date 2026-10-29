@@ -208,7 +208,8 @@ def _label(step: Dict[str, Any]) -> str:
         from .recipes import BY_ID
         recipe = BY_ID.get(str(step.get("button")))
         return recipe.label if recipe else str(step.get("button"))
-    return "Your request"
+    from .ui_feedback import REQUEST_STEP           # a refusal at this step is named by the request's own words
+    return REQUEST_STEP
 
 
 def step_needs(step: Dict[str, Any]) -> List[str]:

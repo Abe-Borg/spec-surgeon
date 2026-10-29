@@ -802,6 +802,33 @@ def test_fills_keep_the_documents_own_characters_on_both_sides():
     assert extract_fill(two, "T", pa) == fill_value(VPackage(two.data), "T", pa) == "WET-PIPE SPRINKLER SYSTEMS"
 
 
+def test_a_fill_no_rule_can_read_says_why_in_the_documents_own_words():
+    """What the window's Left untouched line names (``ui_feedback.refusal_message``): the document's first line when
+    nothing matched, and every value when one rule found several — a first_match chain reports that ambiguity, not
+    the later rule that found nothing (two SECTION lines, two titles under them: neither title is guessed)."""
+    from spec_surgeon.ops.slots import REFERENCE_FILLS
+
+    def two_sections(root):
+        body = root.find(W + "body")
+        pars = body.findall(W + "p")
+        p = etree.Element(W + "p"); etree.SubElement(etree.SubElement(p, W + "r"), W + "t").text = "SECTION 21 13 13"
+        p2 = etree.Element(W + "p"); etree.SubElement(etree.SubElement(p2, W + "r"), W + "t").text = "STANDPIPES"
+        pars[6].addnext(p); p.addnext(p2)
+    two = DocxPackage(mutate_xml(build("21 13 13", "WET-PIPE SPRINKLER SYSTEMS"), "word/document.xml", two_sections))
+    with pytest.raises(JobException) as e:
+        extract_fill(two, "SECTION_TITLE", REFERENCE_FILLS["SECTION_TITLE"])
+    assert e.value.code == "ambiguous" and e.value.details["values"] == ["WET-PIPE SPRINKLER SYSTEMS", "STANDPIPES"]
+
+    def no_section_line(root):
+        for t in root.iter(W + "t"):
+            t.text = (t.text or "").replace("SECTION 21 13 13", "DIVISION 21 - 211313")
+    other = DocxPackage(mutate_xml(build("21 13 13", "WET-PIPE SPRINKLER SYSTEMS"), "word/document.xml", no_section_line))
+    for name in ("SECTION_NUMBER", "SECTION_TITLE"):
+        with pytest.raises(JobException) as e:
+            extract_fill(other, name, REFERENCE_FILLS[name])
+        assert e.value.code == "not-found" and e.value.details["first_line"] == "DIVISION 21 - 211313"
+
+
 def _spec(mode, ops):
     return {"request": "x", "summary": "x", "assumptions": [], "questions": [], "applies_to": {"or": "all"},
             "mode": mode, "ops": ops}

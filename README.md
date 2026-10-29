@@ -123,6 +123,9 @@ it was, and once you have finished it the chip stops inviting. Help → How to u
    in two steps.
 5. **Look at the pages.** The chat says in plain words what will change. Beside it: rendered before/after pages for
    sample documents with their page counts, and **Left untouched**: any file the plan cannot cover, with the reason.
+   The reason is specific: the step that refused the file ("Step 1 of 2 (Match headers and footers to template):"),
+   what it looked for (the words to find, the document's SECTION line, a setting the template differs on) and what
+   the document holds instead (its first line, or the two section numbers it gives).
    When a change is kept to one place and the same words remain elsewhere (the footer renamed while the first page
    keeps the old title, a header filled with a title the document does not have), a note under **Worth knowing**,
    beside the pages, names the document and where; Spec Surgeon offers to change those too when you reply, and

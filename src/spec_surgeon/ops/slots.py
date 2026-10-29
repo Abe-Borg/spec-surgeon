@@ -47,7 +47,9 @@ Fill rules, evaluated on the TARGET (source package):
   next paragraph whose display text is not blank (when multiple anchors match, allowed if all following non-blank
   paragraphs have identical text or ``occurrence: "first"``);
 * ``first_match`` (or ``{"rules": [...]}``) — tries each rule in ``rules`` in order and returns the first one that
-  extracts a non-empty fill (syntax/bad-params errors in any sub-rule are raised immediately).
+  extracts a non-empty fill (syntax/bad-params errors in any sub-rule are raised immediately); when none does, the
+  refusal is a sub-rule's ``ambiguous`` one if any found several different values (the truer reason), else the
+  last sub-rule's.
 
 ``case_insensitive`` (default false) controls regex and anchor matching. With ``flexible_whitespace`` (default true),
 matching can use a whitespace-normalized view, but captures map back to exact source spans: internal spaces, NBSPs
@@ -529,6 +531,20 @@ def _source_paragraphs(pkg: DocxPackage, source: str, section: Optional[int]) ->
     return [p for part in _source_parts(pkg, source, section) for p in paragraphs(pkg.xml(part))]
 
 
+# How much of a paragraph a refusal quotes: enough to recognise the line, never a page of text
+FIRST_LINE_CHARS = 120
+
+
+def _first_line(pars: List[Any]) -> str:
+    """The first paragraph with words among those a fill rule searched, as a refusal quotes it (the window says what
+    the document starts with when nothing matched); "" when none has any."""
+    for p in pars:
+        text = _norm_ws(display_text(p)).strip()
+        if text:
+            return text[:FIRST_LINE_CHARS]
+    return ""
+
+
 def _source_parts(pkg: DocxPackage, source: str, section: Optional[int]) -> List[str]:
     """The parts a fill rule's ``source`` reads, in order (their paragraphs, in this order, are what it searches)."""
     if source == "document":
@@ -655,6 +671,7 @@ def extract_fill(pkg: DocxPackage, name: str, rule: Dict[str, Any]) -> str:
     _validate_rule_syntax(name, rule)
     if rule.get("rule") == "first_match" or ("rules" in rule and rule.get("rule") in (None, "first_match")):
         last_err: Optional[JobException] = None
+        ambiguous: Optional[JobException] = None
         for sub in rule["rules"]:
             try:
                 return extract_fill(pkg, name, sub)
@@ -662,7 +679,12 @@ def extract_fill(pkg: DocxPackage, name: str, rule: Dict[str, Any]) -> str:
                 if e.code == "bad-params":
                     raise
                 last_err = e
-        raise last_err or JobException(f"slot {name!r}: no rule in fallback chain matched", "not-found", {"slot": name})
+                if e.code == "ambiguous" and ambiguous is None:
+                    ambiguous = e
+        # several different values found by one rule says more than another rule finding nothing (the window names
+        # them under Left untouched, ui_feedback.refusal_message)
+        raise ambiguous or last_err or JobException(f"slot {name!r}: no rule in fallback chain matched", "not-found",
+                                                    {"slot": name})
 
     kind = rule.get("rule")
     strip = rule.get("strip", True)
@@ -705,7 +727,7 @@ def extract_fill(pkg: DocxPackage, name: str, rule: Dict[str, Any]) -> str:
             first = display_text(pars[0]) if pars else "(empty)"
             raise JobException(f"slot {name!r}: pattern {rule['pattern']!r} matches nothing in {rule.get('source', 'document')}; "
                                f"first line: {first!r}",
-                               "not-found", {"slot": name, "rule": rule})
+                               "not-found", {"slot": name, "rule": rule, "first_line": _first_line(pars)})
         if occ == "first":
             value = values[0]
         else:
@@ -713,7 +735,7 @@ def extract_fill(pkg: DocxPackage, name: str, rule: Dict[str, Any]) -> str:
             normed = [_norm_ws(v).strip() if flex_ws else v for v in values]
             if len(set(normed)) > 1:
                 raise JobException(f"slot {name!r}: pattern matches different values {sorted(set(values))}", "ambiguous",
-                                   {"slot": name, "values": sorted(set(values))})
+                                   {"slot": name, "values": sorted(set(values)), "rule": rule})
             value = values[0]
     elif kind == "paragraph_after":
         rx = compile_pattern(rule["anchor_regex"], re.IGNORECASE if rule.get("case_insensitive", False) else 0,
@@ -724,18 +746,21 @@ def extract_fill(pkg: DocxPackage, name: str, rule: Dict[str, Any]) -> str:
         if not hits:
             raise JobException(f"slot {name!r}: anchor {rule['anchor_regex']!r} matches 0 paragraph(s); "
                                f"exactly one needed; first line: {texts[0] if texts else '(empty)'!r}",
-                               "not-found", {"slot": name, "matches": hits})
+                               "not-found", {"slot": name, "matches": hits, "rule": rule, "first_line": _first_line(pars)})
         candidates = []                   # the following paragraphs' own text (verbatim)
         for h in hits:
             nxt = [t for t in texts[h + 1:] if t.strip()]
             if nxt:
                 candidates.append(nxt[0])
         if not candidates:
-            raise JobException(f"slot {name!r}: nothing follows the anchor paragraph", "not-found", {"slot": name})
+            raise JobException(f"slot {name!r}: nothing follows the anchor paragraph", "not-found",
+                               {"slot": name, "rule": rule, "anchor": texts[hits[-1]].strip()[:FIRST_LINE_CHARS]})
         keys = [_norm_ws(c).strip() if flex_ws else c for c in candidates]
         if len(hits) > 1 and occ != "first" and len(set(keys)) > 1:
             raise JobException(f"slot {name!r}: anchor {rule['anchor_regex']!r} matches {len(hits)} paragraph(s); "
-                               f"exactly one needed", "ambiguous", {"slot": name, "matches": hits})
+                               f"exactly one needed", "ambiguous",
+                               {"slot": name, "matches": hits, "rule": rule,
+                                "values": list(dict.fromkeys(c.strip()[:FIRST_LINE_CHARS] for c in candidates))})
         value = candidates[0]
     else:
         raise JobException(f"slot {name!r}: rule must be literal | regex | paragraph_after | first_match, got {kind!r}",
@@ -745,5 +770,5 @@ def extract_fill(pkg: DocxPackage, name: str, rule: Dict[str, Any]) -> str:
     if strip:
         value = value.strip()
     if not value:
-        raise JobException(f"slot {name!r}: the fill is empty", "not-found", {"slot": name})
+        raise JobException(f"slot {name!r}: the fill is empty", "not-found", {"slot": name, "rule": rule, "empty": True})
     return value

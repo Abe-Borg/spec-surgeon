@@ -491,7 +491,9 @@ class ReplaceText(Op):
                                + (f" as a whole word; {_inside_text(find, inside)}" if inside else "")
                                + (f"; it occurs in {places_text(left)}" if left else ""), "not-found",
                                {"scope": scope, "parts_searched": parts, "inside_longer_words": len(inside),
-                                "occurs_elsewhere": len(left)})
+                                "occurs_elsewhere": len(left), "find": find, "whole_word": whole,
+                                "longer_words": list(dict.fromkeys(inside))[:3],
+                                "elsewhere": places_text(left) if left else ""})
 
         plan.transform_data = {
             "edits": edits,
