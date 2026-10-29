@@ -62,6 +62,7 @@ from .ops import JobException
 from .ooxml import paragraphs
 from .ops.effective import PropResolver
 from .ops.patterns import compile_pattern
+from . import schemes
 from .ops.selectors import StyleSheet
 from .ops.slots import display_text, nearest_p
 from .package import W, DocxPackage
@@ -603,6 +604,14 @@ CHAT_BASICS = """
 reply.
 - view_pages shows you rendered pages (of a batch file or the template) when what the user means depends on how the \
 pages look; the profiles cannot show you lines, boxes, logos or layout.
+- read_outline gives one file's outline when a role the plan needs has no selector in its profile: the reader's \
+roles, and Claude's proposals for paragraphs the reader could not place. Use the selector it returns as it is; for \
+several files in one plan, merge their indices_by_document entries into one selector. Say in your message which \
+roles rest on Claude's reading (proposed_by_claude) so the user checks them in the preview. Matching a template's \
+look never carries the template's theme or compatibility settings: say so when the user asks for the template's look.
+- """ + schemes.prompt_note() + """ To change only the numbers and keep each paragraph's look (the usual wish with \
+no template of the user's), convert_numbering takes styles "keep"; typed CSI numbers ("A.", "1.01") convert with \
+convert_typed_numbers, typed_as "csi" and match "counters". Numbers stay automatic: never write a number as text.
 """
 
 
@@ -622,8 +631,10 @@ def _chat_ask_user() -> Dict[str, Any]:
     """ask_user as the conversation offers it: a defined-term capitalization choice carries the proposal it approves."""
     tool = copy.deepcopy(next(t for t in TOOLS if t["name"] == "ask_user"))
     choice = tool["input_schema"]["properties"]["choices"]["items"]
-    choice["properties"]["kind"]["enum"] = ["clarify", "alternative", "rephrase", "capitalization"]
+    choice["properties"]["kind"]["enum"] = ["clarify", "alternative", "rephrase", "capitalization", "scheme"]
     choice["properties"]["proposal_id"] = {"type": "string", "description": "kind capitalization: exact id returned by propose_defined_terms"}
+    choice["properties"]["scheme"] = {"type": "string", "enum": ["csc", "csi"],
+                                      "description": "kind scheme: the bundled numbering scheme the choice attaches"}
     return tool
 
 
@@ -634,6 +645,16 @@ PROPOSE_TERMS_TOOL = {
     "input_schema": {"type": "object", "properties": {"file": {"type": "string"},
         "terms": {"type": "array", "items": {"type": "string"}}, "start": {"type": "integer", "minimum": 0},
         "count": {"type": "integer", "minimum": 1, "maximum": 40}}, "required": ["file", "terms"]}}
+READ_OUTLINE_TOOL = {
+    "name": "read_outline", "description": "The outline of one batch file: every body paragraph's role (section "
+    "number line, title, PART, article, paragraph, subparagraph levels, END OF SECTION) as the structure reader reads "
+    "it — Canadian CSC PageFormat numbering included — and, for the paragraphs the reader cannot place, Claude's "
+    "proposal from a separate classification call (a call only when the reader leaves paragraphs; asking again for the "
+    "same file costs nothing). Returns per role the paragraph numbers and a selector for them. Use it when a role the "
+    "plan needs has no selector in the file's profile (its paragraphs share no style or typed shape, Canadian numbers, "
+    "unmarked headings), never for a role the profile already selects.",
+    "input_schema": {"type": "object", "properties": {
+        "file": {"type": "string", "description": "a file label from THE BATCH"}}, "required": ["file"]}}
 SET_ASIDE_TOOL = {
     "name": "set_aside", "description": "Put documents on the user's to-do list at their word (\"set 20 aside for "
     "later\", \"park the Michigan one\", \"I'll come back to 23\"): they leave this request at once, and every later "
@@ -658,10 +679,10 @@ def _streamed(tool: Dict[str, Any]) -> Dict[str, Any]:
     return {**tool, "eager_input_streaming": True} if tool["name"] in STREAMED_TOOLS else tool
 
 
-# the conversation's tools (a chat adds view_pages, propose_defined_terms and set_aside); the advisor and the transform
-# writer never get these
+# the conversation's tools (a chat adds view_pages, propose_defined_terms, set_aside and read_outline); the advisor and
+# the transform writer never get these
 CHAT_TOOLS = ([_streamed(ASK_USER_CHAT if t["name"] == "ask_user" else t) for t in TOOLS]
-              + [VIEW_PAGES_TOOL, PROPOSE_TERMS_TOOL, SET_ASIDE_TOOL])
+              + [VIEW_PAGES_TOOL, PROPOSE_TERMS_TOOL, SET_ASIDE_TOOL, READ_OUTLINE_TOOL])
 
 
 UNGUARDED_PROMPT = """
@@ -936,6 +957,7 @@ class _Batch:
         self.template = Path(template) if template else None
         self._pkgs: Dict[str, DocxPackage] = {}
         self.capitalization_proposals: Dict[str, Dict[str, Any]] = {}
+        self.outlines: Dict[str, Dict[str, Any]] = {}  # read_outline's answers by file SHA-256: asked again, no call
         self.work_dir: Optional[Path] = None      # where a conversation keeps its page renders (chat only)
         self.artifact_dir: Optional[Path] = None  # stable investigation root across recovery passes
         self.analysis_limits = None              # host-configured investigation.AnalysisLimits

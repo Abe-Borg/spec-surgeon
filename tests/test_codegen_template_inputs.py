@@ -170,6 +170,9 @@ def test_governed_method_can_complete_template_graph_with_independent_verificati
     method = re.sub(r"from \. import [\w, ]+\n", "", method).replace("@register\n", "")
     method = re.sub(r"_SOURCE_TYPE_WORDS = .*?(?=class ApplyHeaderFooterTemplate)", "", method, flags=re.S)
     method = re.sub(r"\n    def describe\(.*?(?=\n    def plan\()", "", method, flags=re.S)
+    # the even/odd switch (even_odd "template", docs/SPEC_FORMATTER_MODES_DESIGN.md N3) is outside this contract: a
+    # writer leaves out the branch it does not use, and with it the settings-order import the whitelist does not offer
+    method = method.replace("    from .docprops import settings_rank\n", "")
     method = method.replace("from ..", "from spec_surgeon.")
     method = re.sub(r"from \.(\w+)", r"from spec_surgeon.ops.\1", method)
     method = method.replace("hashlib.md5", "md5").replace("posixpath.", "")

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "spec-surgeon"
-version = "1.15.0"
+version = "1.16.0"
 description = "Surgical edits to Word (.docx) specifications with independent verification records."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -43,7 +43,7 @@ where = ["src"]
 
 [tool.setuptools.package-data]
 spec_surgeon = ["schemas/**/*.xsd", "skill/**/*.md", "legal/*.txt", "web/static/**/*", "examples/specs/*.json",
-                "examples/tutorial/*"]
+                "examples/tutorial/*", "examples/schemes/*.docx"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -1,0 +1,41 @@
+{
+  "request": "These specs have typed CSI numbers (PART 1 - GENERAL, 1.01, A., 1., a.); give them Canadian PageFormat automatic numbering",
+  "summary": "Every unnumbered paragraph that starts with a typed CSI number gets the matching level style of the bundled CSC PageFormat scheme (imported with its list) and loses the typed number and the space after it; the list then shows the same counters in PageFormat ('A.' as '.1', '1.01' as '1.1'). A typo, a skipped letter or a duplicate sets the document aside.",
+  "assumptions": [
+    "the scheme is the bundled CSC PageFormat scheme the user picked, attached as the template",
+    "a typed number is read in CSI's shapes (typed_as csi) and converts only where its values are the list's counters at that place",
+    "typed numbers in table cells stay as typed; paragraphs already numbered are never touched",
+    "the typed numbers are removed outright (untracked, clean copies); nothing is written"
+  ],
+  "questions": [],
+  "applies_to": {
+    "or": "all"
+  },
+  "mode": "untracked",
+  "ops": [
+    {
+      "op": "convert_typed_numbers",
+      "params": {
+        "template": "../templates/CSC PageFormat scheme.docx",
+        "levels": [
+          "PageFormatPart",
+          "PageFormatArticle",
+          "PageFormatLevel3",
+          "PageFormatLevel4",
+          "PageFormatLevel5"
+        ],
+        "typed_as": "csi",
+        "match": "counters",
+        "tracked": false
+      },
+      "expect": {
+        "members_added": 0,
+        "members_removed": 0
+      }
+    }
+  ],
+  "review": {
+    "sample_files": 2,
+    "geometry_reference": "none"
+  }
+}

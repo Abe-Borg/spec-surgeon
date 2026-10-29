@@ -15,7 +15,12 @@ noted; a numbered style's unnumbered paragraphs — ``numId`` 0 — are left alo
 (apply_style's: clear_direct_formatting's DEFAULT rules on the paragraph, its runs and its mark); ``tracked`` (§14.1:
 plain — a whole-document conversion — unless asked), ``author``; ``allow_missing`` (default true: a file with no numbered
 paragraph to convert is a no-op with a note; false → ``not-found``); ``counters``: ``flag`` (default: a converted
-paragraph whose counters change is flagged) | ``keep`` (refused instead, below). ``select``: ``include_tables`` (default
+paragraph whose counters change is flagged) | ``keep`` (refused instead, below); ``styles``: ``scheme`` (default: the
+level's style, below) | ``keep`` (docs/SPEC_FORMATTER_MODES_DESIGN.md N5: the paragraph keeps its own ``w:pStyle`` and
+its own ``w:numPr`` becomes ``w:ilvl`` = its level, ``w:numId`` = the destination list, at its CT_PPr place —
+``renumber_edit``; already exactly so and nothing to clear: untouched; no restyle, so no F9 caps flag, a flag that the
+paragraphs keep their own styles' indents instead, and a note that the imported level styles stay unused; touches
+``pPr`` and ``numPr``, never ``pStyle`` or a style's ``uses``). ``select``: ``include_tables`` (default
 true: a numbered paragraph in a table cell is converted like any; false → left out, and F7 then holds for it).
 
 Definitions (the verifier's own reading is verify/numberingconvert.py):
@@ -85,7 +90,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from lxml import etree
 
-from ..ooxml import RevisionStamp, file_uses_date_utc, max_revision_id, paragraphs
+from ..ooxml import PPR_ORDER, RevisionStamp, file_uses_date_utc, insert_in_order, max_revision_id, paragraphs
 from ..package import W, DocxPackage
 from . import lists, prose, register
 from .base import JobException, Op, PlanFragment
@@ -104,10 +109,12 @@ from .style_import import apply_import, check_template_unchanged, resolve_style
 from .textedit import RunText, run_text
 
 PARAM_KEYS = {"from", "level_map", "template", "levels", "existing", "direct_formatting", "tracked", "author",
-              "allow_missing", "counters"}
+              "allow_missing", "counters", "styles"}
 USER_PARAMS = ("from", "level_map", "template", "levels", "existing", "direct_formatting", "tracked", "allow_missing",
-               "counters")
+               "counters", "styles")
+STYLE_MODES = ("scheme", "keep")
 REFLOW_REASON = "the paragraphs take the scheme's styles and list: numbers, indents and spacing change, text reflows"
+KEEP_REFLOW_REASON = "the paragraphs take the scheme's list: numbers and list indents change, text reflows"
 REVISION_IN_NUMPR = {W + "ins", W + "del", W + "moveFrom", W + "moveTo", W + "numberingChange"}
 
 
@@ -124,6 +131,29 @@ def restyle_edit(style_id: str):
         for numpr in ppr.findall(W + "numPr"):
             ppr.remove(numpr)
     return edit
+
+
+def renumber_edit(num_id: int, ilvl: int):
+    """A ``ppr_edit`` for ``clear_paragraph`` (``styles: "keep"``, docs/SPEC_FORMATTER_MODES_DESIGN.md N5): the
+    paragraph's own ``w:numPr`` becomes ``<w:ilvl w:val=ilvl/><w:numId w:val=num_id/>`` at its CT_PPr place (any own
+    numPr it had removed first); its ``w:pStyle`` is left as it is."""
+    def edit(ppr) -> None:
+        for numpr in ppr.findall(W + "numPr"):
+            ppr.remove(numpr)
+        numpr = etree.Element(W + "numPr")
+        etree.SubElement(numpr, W + "ilvl").set(W + "val", str(ilvl))
+        etree.SubElement(numpr, W + "numId").set(W + "val", str(num_id))
+        insert_in_order(ppr, numpr, PPR_ORDER)
+    return edit
+
+
+def numbered_as(p, num_id: int, ilvl: int) -> bool:
+    """``styles: "keep"``: the paragraph's own ``w:numPr`` is already exactly ``ilvl`` then ``numId`` with those values
+    (as written), nothing else in it."""
+    numpr = p.find(f"{W}pPr/{W}numPr")
+    if numpr is None or [c.tag for c in numpr] != [W + "ilvl", W + "numId"]:
+        return False
+    return numpr[0].get(W + "val") == str(ilvl) and numpr[1].get(W + "val") == str(num_id)
 
 
 def clean_from(frm: Any, n_levels: int) -> Any:
@@ -280,7 +310,11 @@ class ConvertNumbering(Op):
                           "description": "a file with nothing numbered to convert is a no-op (false: set aside)"},
         "counters": {"type": "string", "enum": ["flag", "keep"], "default": "flag",
                      "description": "flag: a converted paragraph whose number counts differently is flagged; keep: "
-                                    "the file is set aside instead (every number keeps its values)"}}}
+                                    "the file is set aside instead (every number keeps its values)"},
+        "styles": {"type": "string", "enum": list(STYLE_MODES), "default": "scheme",
+                   "description": "scheme: each converted paragraph takes the scheme level's paragraph style; keep: it "
+                                  "keeps its own style and only its numbering changes (its own list numbering points "
+                                  "at your list's level) — the numbers change, the look stays"}}}
     select_schema = {"type": "object", "properties": {
         "include_tables": {"type": "boolean", "default": True,
                            "description": "numbered paragraphs in table cells too (false: left as they are; a cell "
@@ -298,22 +332,32 @@ class ConvertNumbering(Op):
         levels = params.get("levels")
         level_map = level_map_pairs(params.get("level_map"))
         frm = params.get("from", "main")
+        keep_styles = params.get("styles") == "keep"
         if isinstance(frm, dict) and isinstance(frm.get("styles"), list) and frm["styles"]:
             moves: List[str] = []
             for k, refs in enumerate(frm["styles"]):
                 refs = refs if isinstance(refs, list) else [refs]
                 group = prose.styles(refs) if refs else "no style"
                 target = level_style(levels, level_map.get(k, k))
-                moves.append(f"the numbered paragraphs in {group} take {target}" if k == 0
-                             else f"those in {group} {target}")
-            source = prose.join(moves) + ", each losing its own list numbering, so your list numbers it"
+                if keep_styles:
+                    moves.append(f"the numbered paragraphs in {group} are numbered at the level of {target}" if k == 0
+                                 else f"those in {group} at the level of {target}")
+                else:
+                    moves.append(f"the numbered paragraphs in {group} take {target}" if k == 0
+                                 else f"those in {group} {target}")
+            source = prose.join(moves) + (", keeping each paragraph's own style" if keep_styles
+                                          else ", each losing its own list numbering, so your list numbers it")
         else:
             mapped = ""
             if level_map:
                 mapped = " (" + prose.join(f"level {k + 1} of the list going to {level_style(levels, v)}"
                                            for k, v in sorted(level_map.items())) + ")"
-            source = ("every paragraph numbered by the document's main list takes the paragraph style of its level"
-                      + mapped + " and loses its own list numbering, so your list numbers it")
+            if keep_styles:
+                source = ("every paragraph numbered by the document's main list is numbered by your list at the level "
+                          "of its scheme style" + mapped + ", keeping each paragraph's own style")
+            else:
+                source = ("every paragraph numbered by the document's main list takes the paragraph style of its level"
+                          + mapped + " and loses its own list numbering, so your list numbers it")
         how = f", {tracked_words(params)}" if params.get("tracked") is True else ""
         first = prose.sentence(f"Convert the document's numbering to {scheme_phrase(params)}{how}: {source}")
         extras = []
@@ -346,6 +390,10 @@ class ConvertNumbering(Op):
         if keep not in ("flag", "keep"):
             raise JobException("counters must be 'flag' or 'keep'", "bad-params")
         keep = keep == "keep"
+        style_mode = params.get("styles", "scheme")
+        if style_mode not in STYLE_MODES:
+            raise JobException("styles must be 'scheme' or 'keep'", "bad-params")
+        keep_styles = style_mode == "keep"
         frm = clean_from(params.get("from", "main"), len(levels))
         level_map = clean_level_map(params.get("level_map"), len(levels))
         tracked = bool(params.get("tracked", False))
@@ -508,8 +556,13 @@ class ConvertNumbering(Op):
             sid = dest.sids[lvl]
             ps = p.find(f"{W}pPr/{W}pStyle")
             old = ps.get(W + "val") if ps is not None else sheet.defaults.get("paragraph")
-            restyle = old != sid
-            own = p.find(f"{W}pPr/{W}numPr") is not None
+            if keep_styles:
+                # its own style stays; its own numPr is written to the destination list's level (``own``: it changes)
+                restyle = False
+                own = not numbered_as(p, dest.scheme.num_id, lvl)
+            else:
+                restyle = old != sid
+                own = p.find(f"{W}pPr/{W}numPr") is not None
             d = paragraph_clearing(p, groups[bi], sheet, settings) if settings else ParagraphClearing()
             if not restyle and not own and not d.changed:
                 already += 1
@@ -559,6 +612,7 @@ class ConvertNumbering(Op):
             "expected_paragraphs": n_paras, "expected_restyled": n_restyled, "expected_runs": n_runs,
             "expected_marks": n_marks, "predicted": [row(y) for y in predicted]})
         frag.transform_data = {"part": main, "changed": changed, "styles": list(dest.sids), "tracked": tracked,
+                               "keep_styles": keep_styles, "num_id": dest.scheme.num_id,
                                "author": author, "import": imp.transform_data() if imp is not None and imp.changes else None,
                                "template": dest.tpl.path if dest.tpl is not None else None,
                                "template_md5": dest.tpl.md5 if dest.tpl is not None else None}
@@ -577,20 +631,30 @@ class ConvertNumbering(Op):
             frag.rev_id_base = max_revision_id(pkg) + 1
             frag.transform_data["use_date_utc"] = file_uses_date_utc(pkg)
         if changed or (imp is not None and imp.changes):
-            frag.geometry_reference, frag.geometry_reason = "none", REFLOW_REASON
+            frag.geometry_reference = "none"
+            frag.geometry_reason = KEEP_REFLOW_REASON if keep_styles else REFLOW_REASON
 
         # ---- notes and flags ----
         frag.notes += notes
         frag.notes.append(f"scheme: {dest.sids} numbered by list {dest.scheme.num_id} "
                           f"({'this file’s own' if dest.held else 'imported from the example file'}): "
                           + ", ".join(f"level {k} {sl.level.text!r}" for k, sl in enumerate(dest.scheme.levels)))
-        frag.notes.append(f"{len(converted)} numbered paragraph(s) converted: {n_restyled} restyled, "
-                          f"{sum(1 for c in changed if c[3])} lose their own numbering"
+        frag.notes.append(f"{len(converted)} numbered paragraph(s) converted: "
+                          + (f"each keeps its own style, {sum(1 for c in changed if c[3])} take their own numbering "
+                             f"from list {dest.scheme.num_id}" if keep_styles else
+                             f"{n_restyled} restyled, {sum(1 for c in changed if c[3])} lose their own numbering")
                           + (f"; direct formatting cleared on {sum(1 for c in changed if c[6])} paragraph(s), "
                              f"{n_runs} run(s), {n_marks} mark(s)" if settings else "")
                           + f"; {'tracked' if tracked else 'plain'}")
         if already:
             frag.notes.append(f"already as asked, left alone: {already} paragraph(s)")
+        if keep_styles and imp is not None and imp.changes:
+            frag.notes.append(f"the scheme's level styles {dest.sids} are imported with their list and stay unused: "
+                              f"each converted paragraph keeps its own style (styles 'keep')")
+        if keep_styles and any(c[3] for c in changed):
+            frag.flags.append(f"{sum(1 for c in changed if c[3])} converted paragraph(s) keep their own style: where "
+                              f"that style sets its own indents or spacing, those stay, and the list level's indent "
+                              f"may not show — check the outline's indents in the preview")
         if not converted:
             frag.notes.append("nothing numbered to convert in this file; no change")
         self._flags(frag, root, pars, src, predicted, converted, dest, main,
@@ -744,6 +808,9 @@ class ConvertNumbering(Op):
         groups = runs_by_paragraph(root, pars)
         for bi, lvl, restyle, own, runs_, mark, ppr in td["changed"]:
             d = ParagraphClearing(runs=[(ri, list(n)) for ri, n in runs_], mark=mark, ppr=list(ppr))
-            next_id = clear_paragraph(pars[bi], groups[bi], d, stamp, next_id,
-                                      ppr_edit=restyle_edit(td["styles"][lvl]) if (restyle or own) else None)
+            if td.get("keep_styles"):
+                ppr_edit = renumber_edit(td["num_id"], lvl) if own else None
+            else:
+                ppr_edit = restyle_edit(td["styles"][lvl]) if (restyle or own) else None
+            next_id = clear_paragraph(pars[bi], groups[bi], d, stamp, next_id, ppr_edit=ppr_edit)
         pkg.write_xml(td["part"], root)

@@ -41,7 +41,8 @@ if not page.is_file():
 
 datas = collect_data_files("spec_surgeon", include_py_files=True,
                            includes=["schemas/**/*.xsd", "skill/**/*.md", "legal/*.txt", "ops/*.py", "web/static/**/*",
-                                     "examples/specs/*.json", "examples/tutorial/*"])
+                                     "examples/specs/*.json", "examples/tutorial/*",
+                                     "examples/schemes/*.docx"])
 datas += copy_metadata("anthropic", recursive=True)
 for dist in ("fastapi", "uvicorn", "pywebview"):           # the diagnostics report their versions from the metadata
     try:

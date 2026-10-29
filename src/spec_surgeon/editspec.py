@@ -95,9 +95,51 @@ def _schema_errors(value: Any, schema: Dict[str, Any], path: str) -> List[str]:
     return errs
 
 
+_SHA256 = re.compile(r"[0-9a-f]{64}")
+
+
+def _check_document_indices(label: str, select: Any) -> None:
+    """A spec names chosen paragraphs per document (docs/SPEC_FORMATTER_MODES_DESIGN.md N2): ``indices_by_document``
+    maps each document's SHA-256 (of its bytes, as read_outline returns it) to that document's paragraph numbers, and
+    ``resolve_document_select`` gives each document its own list when it is planned. A bare ``indices`` (or the
+    ``document_sha256`` the resolution adds) in a spec would apply one document's numbers to every document the spec
+    covers, so a spec cannot carry it."""
+    pred = select.get("paragraphs") if isinstance(select, dict) else None
+    if not isinstance(pred, dict):
+        return
+    if "indices" in pred or "document_sha256" in pred:
+        raise SpecError(f"{label}: chosen paragraphs belong to one document: name them as indices_by_document "
+                        "{document SHA-256: [paragraph numbers]}, as read_outline returns them", "spec")
+    if "indices_by_document" in pred:
+        table = pred["indices_by_document"]
+        if (not isinstance(table, dict) or not table
+                or not all(isinstance(k, str) and _SHA256.fullmatch(k) for k in table)):
+            raise SpecError(f"{label}: indices_by_document maps each document's SHA-256 (64 lowercase hex digits) to "
+                            "its paragraph numbers", "spec")
+
+
+def resolve_document_select(pkg: DocxPackage, select: Any) -> Any:
+    """``select`` as ``pkg`` is planned with: an ``indices_by_document`` predicate becomes this document's own
+    ``indices`` and its ``document_sha256`` (which the verifier compares with the source it reads itself); a document
+    the table does not name is refused — its paragraphs were never chosen."""
+    pred = select.get("paragraphs") if isinstance(select, dict) else None
+    if not isinstance(pred, dict) or "indices_by_document" not in pred:
+        return select
+    digest = hashlib.sha256(pkg.data).hexdigest()
+    table = pred["indices_by_document"]
+    chosen = table.get(digest) if isinstance(table, dict) else None
+    if chosen is None:
+        raise JobException("the chosen paragraphs were read from other documents (or from this one before it "
+                           "changed): read this document's outline and choose its own", "not-outlined",
+                           {"document_sha256": digest})
+    rest = {k: v for k, v in pred.items() if k != "indices_by_document"}
+    return {**select, "paragraphs": {**rest, "indices": chosen, "document_sha256": digest}}
+
+
 def _check_op_against_schemas(i: int, o: Dict[str, Any]) -> None:
     cls = OPS[o["op"]]
     label = f"op #{i} ({o['op']})"
+    _check_document_indices(label, o.get("select"))
     sel_schema = cls.select_schema or {}
     select = o.get("select") or {}
     if "properties" in sel_schema:
@@ -475,13 +517,14 @@ def plan_spec(pkg: DocxPackage, spec: Dict[str, Any], pattern_id: Optional[str] 
             params = _op_params(o)
             if o["op"] == "apply_header_footer_template" and bound_slots:
                 params = {**params, "slot_bindings": bound_slots}
-            frag = get_op(o["op"]).plan(pkg, o.get("select") or {}, params)
+            select = resolve_document_select(pkg, o.get("select") or {})
+            frag = get_op(o["op"]).plan(pkg, select, params)
         except JobException as e:
             raise JobException(f"op #{i} ({o['op']}): {e.reason}", e.code,
                                {**e.details, "op": o["op"], "op_number": i}) from e
         # what its selection read through every paragraph's style chain (rule 9, built-in batch 4): a restyle in scope
         # by another op of the spec is a plan-time conflict
-        frag.touches += selection_reads(pkg, o["op"], o.get("select") or {}, _op_params(o), frag.touches)
+        frag.touches += selection_reads(pkg, o["op"], select, _op_params(o), frag.touches)
         _check_expect(i, o, frag, expect_notes)
         frags.append(frag)
         if trace:
@@ -580,11 +623,12 @@ def _plan_fragments(pkg: DocxPackage, spec: Dict[str, Any]) -> List[PlanFragment
             params = _op_params(o)
             if o["op"] == "apply_header_footer_template" and bound_slots:
                 params = {**params, "slot_bindings": bound_slots}
-            frag = get_op(o["op"]).plan(pkg, o.get("select") or {}, params)
+            select = resolve_document_select(pkg, o.get("select") or {})
+            frag = get_op(o["op"]).plan(pkg, select, params)
         except JobException as e:
             raise JobException(f"op #{i} ({o['op']}): {e.reason}", e.code,
                                {**e.details, "op": o["op"], "op_number": i}) from e
-        frag.touches += selection_reads(pkg, o["op"], o.get("select") or {}, _op_params(o), frag.touches)
+        frag.touches += selection_reads(pkg, o["op"], select, _op_params(o), frag.touches)
         frag.op_index = i - 1
         frags.append(frag)
     return frags

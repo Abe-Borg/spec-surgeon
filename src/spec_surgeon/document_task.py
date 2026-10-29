@@ -96,6 +96,7 @@ TOOL_ACTIVITY = {
     "run_analysis": "Analysing the documents", "read_analysis_result": "Reading the analysis",
     "propose_defined_terms": "Finding defined terms", "read_context_archive": "Looking back at the conversation",
     "submit_editspec": "Writing the plan", "ask_user": "", "set_aside": "Setting documents aside",
+    "read_outline": "Reading the outline",
 }
 # The tools whose input carries the model's words to the user in a top-level "message": the reply joins them to its
 # plain text (``conversation._ask_turn``, ``_spec_turn``), so the window shows them as they are written.
@@ -1372,6 +1373,9 @@ class DocumentTask:
     def _take(self, chosen, log, edited=None):
         """A choice the user picked: its label is a decision, its exact words are approved wording — or, ``edited``,
         the user's own edit of them, and the draft is not."""
+        if chosen.kind == "scheme":
+            self._take_scheme(chosen, log)
+            return
         words = [edited] if edited is not None else list(chosen.words)
         self.decisions.append(chosen.label)
         self.decisions.extend(words)
@@ -1379,6 +1383,22 @@ class DocumentTask:
         self.save(in_progress=True)
         with self._conversation():
             self.session.reply(choice_id=chosen.id, render=self.render, log=log, wording=edited)
+
+    def _take_scheme(self, chosen, log):
+        """A bundled numbering scheme the user picked (schemes.py, docs/SPEC_FORMATTER_MODES_DESIGN.md N5): its file is
+        copied into the scratch folder's ``attachments/`` and attached as the template — replacing one the user
+        attached, as the choice said — and the request is planned again with the decisions so far, the pick among
+        them. The pick is a decision, never wording: nothing is added to the approved words."""
+        from . import schemes
+        scheme = (chosen.snapshot or {}).get("scheme")
+        source = schemes.scheme_file(scheme)
+        folder = Path(self.session.out_root) / "attachments" / ("scheme-" + time.strftime("%Y%m%d-%H%M%S"))
+        folder.mkdir(parents=True, exist_ok=True)
+        target = folder / source.name
+        target.write_bytes(source.read_bytes())
+        self.decisions.append(chosen.label)
+        self.attach([target], template=True)
+        self._compile(log)
 
     # ---- Safe mode ----
     def set_mode(self, mode: str, acknowledged: bool = False) -> None:

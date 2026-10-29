@@ -37,10 +37,19 @@ equals the source's; and the output's numbers equal the prediction.
 for a CONVERTED paragraph "reads the same" is its typed values (``v_typed_values``) equal to the counters the number
 (predicted, then counted in the output) holds at the levels they name, its number evaluated, and its run text after the
 prefix unchanged; every other counted paragraph keeps its exact visible line.
+
+``typed_as: "csi"`` (only with ``match: "counters"``; anything else the op must refuse, ``bad-params``): the typed numbers
+are found and valued by this module's own reading of CSI's typed numbers (``_v_csi_typed``, ``_v_csi_values``), level by
+level whatever the destination list writes there — level 0 the word PART, spaces, digits and an optional dash or colon;
+level 1 digits, a full stop, digits; levels 2–8 an upper-case letter run, digits, a lower-case letter run each with a
+full stop, then digits and a lower-case run each closed by ")", then each in parentheses — letters valued as letters
+(the same letter repeated: 27 is "AA"), never as Roman numerals; an article's values are its PART's and its own, every
+other level's its own alone. The guarantee is the counters one above with those values.
 """
 from __future__ import annotations
 
 import copy
+import re
 from typing import Any, Dict, List, Optional, Set, Tuple
 
 from .reader import W
@@ -50,7 +59,7 @@ from .clearing import (V_DEFAULT_PRESERVE, check_cleared_ppr, check_cleared_rpr,
                        v_expected_ppr, v_with_pstyle)
 from .edits import check_edited_paragraph, part_revision_ids, v_items, v_paragraph_text
 from .markup import v_toggle
-from .lists import VNumbered, v_count, v_counted, v_list_defs, v_paragraph_numbering, v_paragraph_style, \
+from .lists import VNumbered, VTyped, v_count, v_counted, v_list_defs, v_paragraph_numbering, v_paragraph_style, \
     v_typed_number, v_typed_values
 from .numberingconvert import V_NUMPR_REVISIONS, v_destination, v_first_difference, v_row, v_visible
 from .template import _v_field_runs
@@ -221,6 +230,78 @@ def _v_cleared_copy(p, runs: List[Any], cleared: Dict[int, Set[str]]):
     return c
 
 
+# CSI's typed numbers, written here from the words of the design (N6), not from the transform side's table: per level,
+# the pieces in order — a literal, or ("n", level) digits / ("A", level) upper-case letters / ("a", level) lower-case
+# letters naming that level's value.
+_V_CSI_LEVELS: Tuple[Tuple[Any, ...], ...] = (
+    ("PART", "sp", ("n", 0), "dash?"),
+    (("n", 0), ".", ("n", 1)),
+    (("A", 2), "."),
+    (("n", 3), "."),
+    (("a", 4), "."),
+    (("n", 5), ")"),
+    (("a", 6), ")"),
+    ("(", ("n", 7), ")"),
+    ("(", ("a", 8), ")"),
+)
+_V_CSI_PIECE = {"n": "([0-9]+)", "A": "([A-Z]+)", "a": "([a-z]+)", "sp": "[ \u00a0]+",
+                "dash?": "(?:[ \u00a0]*[-\u2013\u2014:])?"}
+
+
+def _v_csi_regex(k: int) -> str:
+    out = []
+    for piece in _V_CSI_LEVELS[k]:
+        if isinstance(piece, tuple):
+            out.append(_V_CSI_PIECE[piece[0]])
+        elif piece in _V_CSI_PIECE:
+            out.append(_V_CSI_PIECE[piece])
+        else:
+            out.append(re.escape(piece))
+    return "".join(out)
+
+
+def _v_letters(s: str) -> Optional[int]:
+    """A run of one letter repeated: 26 per repetition before the last, plus its place in the alphabet."""
+    if not s or any(c != s[0] for c in s) or not ("a" <= s[0].lower() <= "z"):
+        return None
+    return 26 * (len(s) - 1) + (ord(s[0].lower()) - ord("a") + 1)
+
+
+def _v_csi_values(token: str, k: int) -> Optional[Dict[int, int]]:
+    """The values the typed CSI number ``token`` of level ``k`` names, by level; None when it is not one."""
+    if not 0 <= k < len(_V_CSI_LEVELS):
+        return None
+    m = re.compile(_v_csi_regex(k)).fullmatch(token)
+    if m is None:
+        return None
+    named = [piece for piece in _V_CSI_LEVELS[k] if isinstance(piece, tuple)]
+    values: Dict[int, int] = {}
+    for n, (kind, level) in enumerate(named, start=1):
+        text = m.group(n)
+        value = int(text) if kind == "n" else _v_letters(text)
+        if value is None:
+            return None
+        values[level] = value
+    return values
+
+
+def _v_csi_typed(run_text: str, scheme) -> Optional[VTyped]:
+    """The typed CSI number at the start of ``run_text`` at every level the scheme has that CSI defines: spaces/tabs, a
+    non-empty match of the level's CSI number, then spaces/tabs/NBSPs or the end."""
+    found = []
+    for row in scheme.levels:
+        if row.ilvl >= len(_V_CSI_LEVELS):
+            continue
+        m = re.compile("[ \t]*(" + _v_csi_regex(row.ilvl) + ")(?:[ \t\u00a0]+|\\Z)").match(run_text)
+        if m is not None and m.end(1) > m.start(1):
+            found.append((row.ilvl, m))
+    if not found:
+        return None
+    first = found[0][1]
+    return VTyped(found[0][0] if len(found) == 1 else None, first.group(1), first.start(1), first.end(),
+                  tuple(k for k, _ in found))
+
+
 def _v_counts_as_typed(values: Optional[Dict[int, int]], y: Optional[VNumbered]) -> bool:
     """``match: "counters"``: the number holds the typed values at every level they name."""
     if values is None or y is None or y.not_evaluated is not None or y.counters is None:
@@ -244,6 +325,12 @@ def _typed_numbers(ctx: Ctx, a: Dict[str, Any], errs: List[str]) -> str:
     if match not in ("exact", "counters"):
         raise ValueError(f"match {match!r} (the op must refuse: bad-params)")
     lenient = match == "counters"
+    typed_as = params.get("typed_as")
+    if typed_as is not None and typed_as != "csi":
+        raise ValueError(f"typed_as {typed_as!r} (the op must refuse: bad-params)")
+    csi = typed_as == "csi"
+    if csi and not lenient:
+        raise ValueError("typed_as 'csi' without match 'counters' (the op must refuse: bad-params)")
     pred = sel.get("paragraphs", "all")
     tables = bool(sel.get("include_tables", False))
     author = a.get("author")
@@ -277,7 +364,7 @@ def _typed_numbers(ctx: Ctx, a: Dict[str, Any], errs: List[str]) -> str:
             continue
         if not para_matches(pred, p, i, sv, ctx.src_styles):
             continue
-        tn = v_typed_number(texts[i], dest.scheme, lenient)
+        tn = _v_csi_typed(texts[i], dest.scheme) if csi else v_typed_number(texts[i], dest.scheme, lenient)
         if tn is None:
             continue
         if tn.ambiguous:
@@ -328,7 +415,8 @@ def _typed_numbers(ctx: Ctx, a: Dict[str, Any], errs: List[str]) -> str:
     by_src = {x.index: x for x in src_count}
     by_pred = {y.index: y for y in predicted}
     ends = {i: tn.end for i, tn in found}
-    values = {i: v_typed_values(tn.token, dest.scheme, tn.level) for i, tn in found} if lenient else {}
+    values = ({i: (_v_csi_values(tn.token, tn.level) if csi else v_typed_values(tn.token, dest.scheme, tn.level))
+               for i, tn in found} if lenient else {})
     for i, p in enumerate(sv.pars):
         if i in values:
             if not _v_counts_as_typed(values[i], by_pred.get(i)):

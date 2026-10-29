@@ -17,6 +17,18 @@ them was built; `git log --all -- 'docs/PLAN-*'` finds them, with their findings
 | S4 — what a run left open | Over test-set-2 (13 specifications, eight owners): the reference rules find no section number in seven of them (VA, Wisconsin, Port of Portland, Michigan layouts); a chain preview repeats the spec's summary and assumptions for each step; after an outcome-planner question the next reply still goes to that planner, not the assistant (seen again over test-set-3) | Reference rules for those layouts; a chain preview that says its summary once; the reply after an outcome-planner question goes back to the assistant |
 | Font button: documents built alike at two body sizes | **Match font to template** plans per body size (one layout per size, `recipes._font_layouts`), and a layout routes by structure pattern (`layouts.route`): two documents of one pattern whose body sizes differ cannot take two sizes in one press, so the size most of them have wins and the rest wait under Left untouched with the reason, to be pressed alone | A layout that names its documents beside its patterns (`validate_layout_plan`, `route`, the `applies_to` pin and the approval token), so one press covers them — only if the owner's runs meet the case |
 
+### What the Specification Formatter's lessons found (from N1–N7's audit)
+
+Spec Surgeon was audited against the Formatter's list of common mistakes and its hardening program. Its CT_Settings and
+CT_PPr order tables match the Formatter's schema-checked ones element for element, pictures (an SVG's DOCTYPE) are kept
+out of the revision-id scan, template parts with tracked changes are refused, and revision ids start above every
+annotation id. The typed headings the reader misreads were fixed for the outline tool (N1). Left open:
+
+| Item | What the audit found | What to build |
+| --- | --- | --- |
+| X1 — Word 2010 text effects on import | `style_import` and the header template copy a template style without its extension markup (`apply_header_footer_template.strip_foreign`, mirrored by `verify/template.strip_extensions`): a `w14:textFill`, `w14:glow`, `w14:shadow` or `w14:ligatures` in the template's style is dropped, so a coloured text fill or glow does not arrive and nothing says so. The Formatter carries them, keyed by expanded name, with their namespaces declared | Carry them (both sides, the prefixes declared on the target's root, a prefix bound elsewhere refused) — or at least flag each dropped property by name |
+| X2 — the structure reader's typed headings | Safe mode's reading (`structure.analyze_structure`) still takes "1.5 times the pipe diameter shall be maintained." for an article and "PART 1 of the Contract Documents shall govern." for a PART; the outline tool holds them to a heading's shape (`outline.demote_unshaped`), Safe mode's body-formatting button does not | The same rule in the reader itself, which changes what Safe mode matches: the owner's decision |
+
 ### Safe mode, the second round of buttons (M1, M3)
 
 The owner's go-ahead of 2026-10-28 built the Safe mode proposal's first round (twelve buttons, Reject beside Accept,
@@ -137,6 +149,16 @@ specifications, Windows and Word, and only the owner can do them. Record what a 
   untouched with the reason, and **Try these in Default mode** removes that note when asked. The copies open in Word
   without a repair prompt. Then, in Default mode on those copies, one request cuts the placeholders and deletes the
   copyright line.
+- **The Specification Formatter's modes in Default mode (N1–N7, built 2026-10-29;
+  [docs/SPEC_FORMATTER_MODES_DESIGN.md](SPEC_FORMATTER_MODES_DESIGN.md)):** with Word, a consultant's CSI
+  specification formatted to a real architect template: the outline from the reader and Claude's reading (its message
+  names the parts that rest on Claude's reading; a misread one is seen in the preview), the template's headers with its
+  even/odd switch ("with the template's odd and even page headers"). A CSI batch converted to CSC PageFormat with an
+  architect's Canadian template, then with the built-in scheme picked in the chat, keeping each paragraph's look; a
+  typed CSI set ("PART 1 - GENERAL", "1.01", "A.") converted the same way; a PageFormat document converted back to CSI.
+  Every copy opens in Word without a repair prompt, its numbers read as the source's counters in the new scheme, and
+  Word's indents look right where a paragraph kept its own style. Record a misread outline, a refusal that should not
+  have happened or a spending surprise as a new item above.
 - **Left untouched says what was looked for; Remove all documents on the title line (the owner's Safe-mode run of
   2026-10-29; built 2026-10-29):** the recipe "DIV 21 IFP" (Match headers and footers to template, then Find and
   replace) over the same 28 documents with the template attached, with Word: no line under Left untouched reads

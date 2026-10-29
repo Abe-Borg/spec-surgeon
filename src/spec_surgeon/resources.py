@@ -30,6 +30,10 @@ DEFAULT_ANALYSIS_INPUT_BYTES = 128 * 1024 * 1024
 # after it go back to their own effort.
 DEFAULT_EFFORT = "high"
 CODEGEN_EFFORT = "xhigh"
+# Claude's reading of the paragraphs the structure reader cannot place (the chat's read_outline tool,
+# docs/SPEC_FORMATTER_MODES_DESIGN.md N1): a classification whose answer restyles paragraphs, so it thinks at "high",
+# as outcome planning does.
+OUTLINE_EFFORT = "high"
 EFFORTS = ("low", "medium", "high", "xhigh")
 DEFAULT_STALL_REPETITIONS = 3
 
