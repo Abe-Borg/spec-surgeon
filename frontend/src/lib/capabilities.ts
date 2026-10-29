@@ -43,6 +43,7 @@ export const END_USER_CAPABILITIES = [
   "preview.pages",
   "preview.marks",
   "preview.occurrences",
+  "preview.occurrences-all",
   "preview.left-untouched",
   "action.primary",
   "action.discard",

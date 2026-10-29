@@ -300,6 +300,12 @@ specifications, Windows and Word, and only the owner can do them. Record what a 
   as it was (its journal untouched, its mode and folders unchanged), a reload mid-tour resumes at the same step, New
   conversation during a tour ends it first, and after Finish the chip reads "Take the guided tour again" across a
   restart. Record a chapter whose card sits badly at 1280 px wide as a new item above.
+- **The top bar at 1280 px wide (built 2026-10-29):** in the installed app (WebView2, Segoe UI) at 1280 px, the title,
+  the help topics, the mode switch and the right-hand buttons never overlap and the gear stays inside the window: with
+  documents attached, after a run with copies unsaved, in Safe mode before and after a button, while a Default request
+  runs (Stop and "this request ≈ … of $20.00" in the pill), with Obliterate shown, and with an update set aside with
+  **Not now**; a wider window brings the context line and the full words back, and hovering a one-word help topic
+  names it in full.
 - **The installed app:** a walkthrough in WebView2 (window states and errors, a frozen page's diagnostics, nothing
   outliving the window, fast responses, files side by side, the colour schemes), and the private real-file corpus
   (`tests/real`, `SPEC_SURGEON_REAL_CORPUS`, `SPEC_SURGEON_REAL_RENDERER=word`).

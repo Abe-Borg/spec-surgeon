@@ -92,7 +92,7 @@ export const TOUR: readonly TourChapter[] = [
         placement: "bottom",
         title: "The top bar",
         body:
-          "Beside the title, a quiet line says what the conversation works on: how many documents, a template, a picture, whether the next request builds on copies. Then the guide: How to use, Workflows, How it works, Why trust it and About, one dialog with a tab strip, and Tour, which starts this tour again at any time.",
+          "Beside the title, when the window has room, a quiet line says what the conversation works on: how many documents, a template, a picture, whether the next request builds on copies. Then the guide: How to use, Workflows, How it works, Why trust it and About, one dialog with a tab strip, and Tour, which starts this tour again at any time. On a narrower window the bar says the same in fewer words; hover one for the rest.",
       },
       {
         id: "modes",
@@ -348,14 +348,14 @@ export const TOUR: readonly TourChapter[] = [
     steps: [
       {
         id: "occurrences",
-        capabilities: ["preview.occurrences"],
+        capabilities: ["preview.occurrences", "preview.occurrences-all"],
         mode: "explanatory",
         anchor: "occurrences",
         needs: "occurrences",
         placement: "left",
         title: "Every occurrence, with a checkbox",
         body:
-          "The Find and replace button lists every occurrence it found, in every document of the plan, with the words around it and the article it sits under. Untick one to leave it as it is: a historical reference, a line that should keep the old wording. Update the preview makes the plan and the pages again with the unticked ones left out, and Create edited copies waits until you do. The checker confirms that each unticked occurrence was left untouched and that nothing else was skipped. Here one occurrence in the second document is already unticked. A document the plan set aside lists what it found too, so the occurrence its reason names can be unticked and the document then goes ahead.",
+          "The Find and replace button lists every occurrence it found, in every document of the plan, with the words around it. Untick one to leave it as it is: a historical reference, a line that should keep the old wording. The box above the list ticks or unticks them all at once (and the box beside a document's name, that document's). Update the preview makes the plan and pages again with the unticked ones left out, and Create edited copies waits until you do. The checker confirms each unticked occurrence was left untouched. Here one in the second document is already unticked. A document the plan set aside lists what it found too, so the occurrence its reason names can be unticked.",
       },
     ],
   },

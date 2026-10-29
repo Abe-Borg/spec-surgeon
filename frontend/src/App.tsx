@@ -6,7 +6,7 @@ import * as api from "./lib/api";
 import { actionButton, discardButton } from "./lib/action";
 import { composerState, transcript } from "./lib/chat";
 import { canReview, heldSources, keptAcrossTour, reviewKey, setAsideCount, setMark, type KeptReviews, type Mark, type Reviews } from "./lib/review";
-import { canUntick, occurrencesKey, previewedUnticks, toggleUntick, untickedKeys, unticksPending, type Unticks } from "./lib/occurrences";
+import { canUntick, occurrencesKey, previewedUnticks, setTicks, toggleUntick, untickedKeys, unticksPending, type Unticks } from "./lib/occurrences";
 import { INITIAL_STATE, reduce } from "./lib/view";
 import { ACCEPT } from "./lib/workbench";
 import { checkSettled, updatePill, type HelpTopic } from "./lib/help";
@@ -187,6 +187,7 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [occKey]);
   const onToggleUntick = useCallback((key: string) => setUnticks((u) => toggleUntick(u, key)), []);
+  const onSetTicks = useCallback((keys: string[], ticked: boolean) => setUnticks((u) => setTicks(u, keys, ticked)), []);
   const unticking = canUntick(view, busy);
   const pendingUnticks = unticking && unticksPending(unticks, view);
   const onUpdateOccurrences = useCallback(
@@ -651,6 +652,7 @@ export default function App() {
           canUntick={unticking}
           unticksPending={pendingUnticks}
           onToggleUntick={onToggleUntick}
+          onSetTicks={onSetTicks}
           onUpdateOccurrences={onUpdateOccurrences}
           onAdd={onAddKind}
           onAddFolder={onAddFolder}

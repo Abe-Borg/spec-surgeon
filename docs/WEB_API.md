@@ -50,7 +50,8 @@ that ends a job is authoritative.
                    "items": [{"key": "…", "part": "word/document.xml", "paragraph": 11, "start": 30, "end": 38, "where": "the body",
                               "heading": "2.01", "before": "H. See the", "match": "2022 CBC", "after": "portal.",
                               "find": "2022 CBC", "replace": "2025 CBC", "skipped": false, "op_index": 0}]}],
-  "warnings": ["…"], "blocking": false,
+  "warnings": ["…"], "worth_knowing": [{"name": "21 13 13.docx", "text": "“WET-PIPE SPRINKLER SYSTEMS” also occurs in the body (1×); …"}],
+  "blocking": false,
   "results": [{"source": "…", "output": "…", "name": "21 13 13.docx", "unverified": [], "saved_to": "",
                "changed_since_saved": false, "saved_file_changed": false}],
   "pdf": {"available": true, "renderer": "Microsoft Word | LibreOffice", "reason": ""},
@@ -169,7 +170,15 @@ Rules the page relies on:
   older server sends no `occurrences`.
 - `samples` are the pages of the plan waiting for the user (stages `preview` and `question`), less any document
   whose copy a partial save already delivered; every other stage sends none, so a finished run takes its
-  pages along. The visual check's findings in `warnings`, and `blocking`, follow the same rule.
+  pages along. The visual check's findings in `warnings`, and `blocking`, follow the same rule. The page lists
+  `warnings` only when `blocking` is true (under **Please check**); otherwise they are kept for diagnostics and
+  not shown.
+- `worth_knowing` is the part of `warnings` worth reading before the copies are made, listed under **Worth knowing**
+  (hidden while `blocking`, when **Please check** lists them with the rest): the same words a change leaves
+  elsewhere and a header/footer fill in another case than the template (C3, C4; at most six of each kind, then a
+  count of the rest), a layout no attached document has, and an input that changed while the preview was made.
+  `name` is the document's file name, `""` for a note about the whole plan. They follow the rule of `samples`. An
+  older server sends no `worth_knowing`.
 - `action.kind`: `approve` → the one button "Create edited copies" (or "I reviewed the flagged pages — create
   copies" when `blocking`), `continue` → "Continue" (stage `resume`: a request is open and the documents or the plan
   changed, or work stopped; never after an answer that ended the request), `save` → "Save N ready copies", `none` →
@@ -333,7 +342,7 @@ Any report is a sign of life: a showing page (`visible`) that sends nothing for 
 | `text_delta` | `text` | a chunk of the assistant's reply as it is written: the model's plain text, then the `message` of its question or submission (read from the tool call's input as it streams, nothing else of it), a paragraph apart, as the reply joins them |
 | `message` | `message` | a complete message object (assistant or app) to append; the streaming bubble is finalized with it, and the page carries the reply on from the words already shown |
 | `plan` | `plan` | the plan became available (before previews render); the page drops the pages of the plan before it |
-| `samples` | `samples`, `occurrences`, `warnings`, `blocking` | previews are in (`occurrences` as the view carries them; absent from an older server) |
+| `samples` | `samples`, `occurrences`, `warnings`, `worth_knowing`, `blocking` | previews are in (`occurrences` and `worth_knowing` as the view carries them; absent from an older server) |
 | `results` | `results` | copies were written |
 | `question` | `questions`, `choices`, `chips` | the model needs the user |
 | `cost` | `cost` | the running spend |

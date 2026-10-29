@@ -22,7 +22,7 @@ from spec_surgeon.editspec import apply_spec, plan_spec
 from spec_surgeon.ops import JobException
 from spec_surgeon.ops.base import LEFT_ELSEWHERE
 from spec_surgeon.package import DocxPackage
-from spec_surgeon.planner import LEFT_WARNINGS, left_elsewhere_warnings, plan_batch
+from spec_surgeon.planner import LEFT_WARNINGS, left_elsewhere_notes, left_elsewhere_warnings, plan_batch
 from spec_surgeon.preview import make_preview
 from spec_surgeon.verify import run_suite
 
@@ -190,9 +190,51 @@ def test_every_file_reaches_the_preview_text_and_the_window(tmp_path):
     assert len(warnings) == LEFT_WARNINGS + 1
     assert warnings[0] == f"21 05 50.docx: “{TITLE}” also occurs in the body (1×); this change leaves it as it is."
     assert warnings[-1].startswith("2 more place(s) like these keep the old words")
+    # the window's Worth knowing card: the same notes, by file, the count of the rest about no file
+    notes = left_elsewhere_notes(bp)
+    assert [f"{n['name']}: {n['text']}" if n["name"] else n["text"] for n in notes] == warnings
+    assert notes[0] == {"name": "21 05 50.docx", "text": f"“{TITLE}” also occurs in the body (1×); this change leaves "
+                                                         f"it as it is."}
+    assert notes[-1]["name"] == "" and notes[-1]["text"].startswith("2 more place(s)")
     pv = make_preview(spec, [str(f) for f in files[:2]], tmp_path / "preview", do_render=False)
     assert f"21 05 51.docx: “{TITLE}” also occurs in the body (1×); this change leaves it as it is." in pv.warnings
+    assert {"name": "21 05 51.docx", "text": f"“{TITLE}” also occurs in the body (1×); this change leaves it as it "
+                                             f"is."} in pv.worth_knowing
+    assert "rendering skipped: plan summaries and verification only" in pv.warnings     # a note the window keeps back
+    assert not any("rendering skipped" in n["text"] for n in pv.worth_knowing)
     assert "WORDING LEFT ELSEWHERE" in pv.to_text()
+
+
+def test_a_note_starts_with_a_capital_under_its_file_name(tmp_path):
+    src = tmp_path / "21 05 53.docx"
+    src.write_bytes(spec_doc())
+    spec = spec_of(rename())
+    bp = plan_batch([str(src)], spec)
+    bp.left_elsewhere = lambda: [("21 05 53.docx", "the headers/footers get the words given for the section title")]
+    bp.case_notes = lambda: []
+    assert left_elsewhere_warnings(bp) == ["21 05 53.docx: the headers/footers get the words given for the section "
+                                           "title"]
+    assert left_elsewhere_notes(bp) == [{"name": "21 05 53.docx",
+                                         "text": "The headers/footers get the words given for the section title"}]
+
+
+def test_the_window_lists_the_notes_once_each_and_keeps_every_other_warning_back(tmp_path):
+    from spec_surgeon.document_task import DocumentTask
+    from spec_surgeon.gui import Session
+    src = tmp_path / "21 05 53.docx"
+    src.write_bytes(spec_doc())
+    task = DocumentTask(Session(out_root=tmp_path / "out", visual_check=False), render=False, mode="safe")
+    task.attach([src])
+    view = task.perform("recipe", recipe="remove_highlight", inputs={})
+    assert view["stage"] == "preview" and view["worth_knowing"] == []
+    pv = task.session.outcome().preview
+    note = {"name": "21 05 53.docx", "text": f"“{TITLE}” also occurs in the body (1×); this change leaves it as it is."}
+    pv.worth_knowing += [note, dict(note), {"name": "", "text": "A file changed while this preview was being made."}]
+    pv.warnings += ["preview rendered with libreoffice; Word's layout can differ"]
+    view = task.view()
+    assert view["worth_knowing"] == [note, {"name": "", "text": "A file changed while this preview was being made."}]
+    assert "preview rendered with libreoffice; Word's layout can differ" in view["warnings"]
+    assert task._samples_view()["worth_knowing"] == view["worth_knowing"]          # the samples frame carries the same
 
 
 def test_the_prompt_says_to_name_them_with_an_offer():

@@ -14,6 +14,8 @@ import {
   occurrencesKey,
   placeLabel,
   previewedUnticks,
+  setTicks,
+  tickState,
   toggleUntick,
   untickedKeys,
   unticksPending,
@@ -52,6 +54,22 @@ test("a tap unticks, a second tap puts back, and the unticked keys follow the li
   unticks = toggleUntick(unticks, "b1");
   assert.deepEqual(untickedKeys(unticks, docs), ["a1"]);
   assert.deepEqual(untickedKeys({ gone: true }, docs), []);
+});
+
+test("a select-all box ticks or unticks every key it holds at once, and reads mixed while only some are ticked", () => {
+  const all = ["a1", "a2", "b1"];
+  let unticks = setTicks({ a2: true }, all, false);
+  assert.deepEqual(untickedKeys(unticks, docs), ["a1", "a2", "b1"]);
+  assert.equal(tickState(unticks, all), "none");
+  unticks = setTicks(unticks, ["a1", "a2"], true);                             // one document's box
+  assert.deepEqual(untickedKeys(unticks, docs), ["b1"]);
+  assert.equal(tickState(unticks, all), "some");
+  assert.equal(tickState(unticks, ["a1", "a2"]), "all");
+  unticks = setTicks(unticks, all, true);
+  assert.deepEqual(unticks, {});
+  assert.equal(tickState(unticks, all), "all");
+  const v = view();
+  assert.equal(unticksPending(setTicks(previewedUnticks(v), all, false), v), true);   // the button waits for the update
 });
 
 test("the ticks are pending while they differ from the previewed plan's, in either direction", () => {

@@ -11,13 +11,16 @@ import { kindTag } from "./workbench.ts";
 /** The help topics the top bar opens. */
 export type HelpTopic = "how-to-use" | "workflows" | "how-it-works" | "why-trust-it" | "about";
 
-/** One list for the top bar's buttons and the help dialog's tab strip. */
-export const HELP_TOPICS: { id: HelpTopic; label: string }[] = [
-  { id: "how-to-use", label: "How to use" },
-  { id: "workflows", label: "Workflows" },
-  { id: "how-it-works", label: "How it works" },
-  { id: "why-trust-it", label: "Why trust it" },
-  { id: "about", label: "About" },
+/**
+ * One list for the top bar's buttons and the help dialog's tab strip. `short` is the top bar's one word for a topic
+ * when the bar has given way that far (Header.tsx), its full label then on hover.
+ */
+export const HELP_TOPICS: { id: HelpTopic; label: string; short: string }[] = [
+  { id: "how-to-use", label: "How to use", short: "Guide" },
+  { id: "workflows", label: "Workflows", short: "Workflows" },
+  { id: "how-it-works", label: "How it works", short: "Mechanics" },
+  { id: "why-trust-it", label: "Why trust it", short: "Trust" },
+  { id: "about", label: "About", short: "About" },
 ];
 
 export const HELP_TITLES: Record<HelpTopic, string> = {
