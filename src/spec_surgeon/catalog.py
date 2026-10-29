@@ -155,6 +155,9 @@ COMMON_ASSUMPTIONS: Dict[str, List[str]] = {
         "direct_formatting 'replace_style_owned' removes only eligible direct properties supplied by the destination "
         "style and its basedOn chain; unrelated properties and unsupported partial overrides are preserved. "
         "The preview names retained overrides; symbol fonts, hidden text and superscripts stay protected",
+        "the template's theme and compatibility settings are never carried into the document (the theme is out of "
+        "reach by decision): a style the template draws from its theme fonts arrives with those fonts resolved and "
+        "pinned, never with the theme itself",
     ],
     "add_review_comments": [
         "adds exactly the user's approved text and optional literal source as Word review comments; never invents "
@@ -319,6 +322,10 @@ COMMON_ASSUMPTIONS: Dict[str, List[str]] = {
         "(from 'main'), or the paragraphs of named styles per level (from.styles); level_map when the levels differ",
         "each converted paragraph gets its level's style and loses its own list numbering; its own indents and fonts "
         "stay unless direct_formatting is 'clear'",
+        "styles 'keep': each converted paragraph keeps its own style and only its numbering changes (its own list "
+        "numbering points at your list's level; the scheme's styles come in unused) — the numbers change, the look "
+        "stays, as the Specification Formatter's conversion with no template did; use it when the user wants the "
+        "numbering converted without restyling the document, and say the indents the paragraphs' own styles set stay",
         "every paragraph's new number is predicted and checked; numbers that shift (a glitch in the source corrected), "
         "cross-reference fields and written references such as 'as specified in 1.05' are flagged, never edited",
         "a list whose old numbers the engine cannot predict (Word's 'Restart numbering', shared list definitions, "
@@ -343,6 +350,11 @@ COMMON_ASSUMPTIONS: Dict[str, List[str]] = {
         "match 'counters' converts a typed number whose VALUES are the list's at that place even when the list writes "
         "it otherwise ('1.01' into a '1.1' list, 'PART 1 –' into 'PART 1 -'), each flagged; a typo, skip or duplicate "
         "still sets the file aside",
+        "typed_as 'csi' (with match 'counters') reads the typed numbers as CSI's — PART 1, 1.1 or 1.01, A., 1., a., 1), "
+        "a), (1), (a) for levels 0-8 — whatever your list writes, so typed CSI numbers become another list's numbers "
+        "with the same values: a typed 'A.' shows as a PageFormat list's '.1', a typed '1.01' as its '1.1'; letters are "
+        "letters there, never Roman numerals; a typed Canadian '.1' is never converted (it carries no depth: '.1' is "
+        "the same at every level below the article)",
         "the list number must LOOK like the typed one: a hidden or capitalised typed number ('a.' in All Caps), a "
         "paragraph mark that would make the number hidden, coloured, sized, raised, struck or in a symbol font sets the "
         "file aside; 'PART 1 -', '1.1', 'A.' in capitals are fine; a bold/italic/underline/font difference is flagged",
@@ -568,6 +580,13 @@ COMMON_ASSUMPTIONS: Dict[str, List[str]] = {
         "a spec binding's typed wording is the user's own words for that one document's slot (title case like the "
         "template, say), placed exactly as approved and pinned to the document's bytes; every document the spec "
         "covers gets its own, and the copy is untracked",
+        "Word's document-wide 'Different Odd & Even Pages' switch must already be the template's: a document set "
+        "otherwise is set aside (even_odd 'refuse', the default). even_odd 'template' gives it the template's switch "
+        "with its headers and footers, only when the user asks for the template's odd/even pages and both kinds are "
+        "templated (one kind alone, or a document with no settings part, is refused); the preview says it",
+        "the template's theme and compatibility settings are never carried into the document (the theme is out of "
+        "reach by decision); the copied headers and footers render as in the template because their effective "
+        "fonts and sizes are pinned as resolved values",
     ],
     # ---- built-in batch 6 (docs/BUILTIN_OPS_BATCH6_DESIGN.md §2) ----
     "remove_footnotes": [
@@ -767,7 +786,9 @@ SELECTOR_GRAMMAR = {
     "scope": "part kinds: document | headers | footers | footnotes | endnotes | comments (resolved via rels)",
     "paragraphs": "'all' or AND of: style_in [styleIds] (no pStyle = default paragraph style), text_regex (Python "
                   "re.search on the block text), in_table (bool), is_empty (bool: no text and no picture, object, text "
-                  "box or field), index_range [start, end), "
+                  "box or field), index_range [start, end), indices_by_document {document SHA-256: [paragraph "
+                  "numbers from 0]} (the chosen paragraphs of each document, exactly as read_outline returns them; a "
+                  "document it does not name is refused), "
                   "has_bold (bool), is_all_caps (bool), after_heading_regex (str), "
                   "case_insensitive (bool, default false), flexible_whitespace (bool, default false; literal whitespace "
                   "outside regex character classes matches one or more whitespace characters), "

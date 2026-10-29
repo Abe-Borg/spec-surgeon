@@ -1,0 +1,41 @@
+{
+  "request": "Convert these CSI specs to Canadian PageFormat numbering; keep how everything looks",
+  "summary": "Every paragraph numbered by the document's main list moves onto the bundled CSC PageFormat list at its own level (PART 1, 1.1, .1, .1, …) and keeps its own paragraph style, so only the numbers change; every number keeps its counters (a CSI 'A.' becomes '.1', '1.01' becomes '1.1'), and a paragraph whose counters would change sets the document aside.",
+  "assumptions": [
+    "with no Canadian template attached, the scheme is the bundled CSC PageFormat scheme, picked by the user in the chat and attached as the template",
+    "each paragraph keeps its own style, fonts and indents (styles keep): only its list numbering changes",
+    "every number keeps its counters; written cross-references are flagged, never edited",
+    "a whole-document numbering change is plain formatting"
+  ],
+  "questions": [],
+  "applies_to": {
+    "or": "all"
+  },
+  "mode": "formatting",
+  "ops": [
+    {
+      "op": "convert_numbering",
+      "params": {
+        "template": "../templates/CSC PageFormat scheme.docx",
+        "levels": [
+          "PageFormatPart",
+          "PageFormatArticle",
+          "PageFormatLevel3",
+          "PageFormatLevel4",
+          "PageFormatLevel5"
+        ],
+        "styles": "keep",
+        "counters": "keep"
+      },
+      "expect": {
+        "text_diffs": 0,
+        "members_added": 0,
+        "members_removed": 0
+      }
+    }
+  ],
+  "review": {
+    "sample_files": 2,
+    "geometry_reference": "none"
+  }
+}

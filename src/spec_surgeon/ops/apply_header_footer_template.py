@@ -20,7 +20,12 @@ evenAndOddHeaders) the template part is copied into the target as a NEW part:
   and a document relationship added per part;
 * the target's old header/footer parts of the selected kinds go (with their rels, overrides, orphaned media);
   pending revisions in them are flagged by name;
-* optionally the target's titlePg and header/footer distances follow the template section.
+* optionally the target's titlePg and header/footer distances follow the template section;
+* the document-wide even/odd page switch (``w:evenAndOddHeaders``, Word's "Different Odd & Even Pages") is the
+  template's, or the document is refused (``even-odd``): it is never changed silently. ``even_odd: "template"`` (the
+  user's request, both kinds templated) changes it in the settings part the document relates — inserted at its place
+  in CT_Settings (``docprops.SETTINGS_ORDER``), a switch written off turned on by removing its ``w:val``, or removed —
+  predicted here and re-read by the verifier (``hf_even_odd``); the rest of the settings part is V10's member residual.
 
 Everything is predicted from the source and the template: members removed/added, every deleted and inserted
 block's exact text, the fills, the pins, the new references; V10 re-derives the slots, fills, effective
@@ -55,6 +60,58 @@ KEEP_NS = {NS["w"], NS["r"], "http://www.w3.org/XML/1998/namespace"}
 FORBIDDEN = ("bookmarkStart", "commentRangeStart", "commentReference", "footnoteReference", "endnoteReference",
              "altChunk", "subDoc", "object", "numPr")
 PIN_SLOTS = ("ascii", "hAnsi")
+EVEN_ODD = ("refuse", "template")
+EVEN_ODD_TAG = W + "evenAndOddHeaders"
+
+
+def even_odd_switch(pkg: DocxPackage) -> bool:
+    """Word's document-wide "Different Odd & Even Pages" switch, read from the settings part the document relates."""
+    return pkg.settings_flag("evenAndOddHeaders")
+
+
+def plan_even_odd(pkg: DocxPackage, value: bool, kinds: List[str]) -> Dict[str, Any]:
+    """The settings edit that gives the document the template's even/odd switch (``even_odd: "template"``), or a
+    refusal: the switch governs headers and footers alike, so one kind templated alone would leave the other kind's
+    even pages empty or dormant; a document that relates no settings part has nowhere to keep it; two switches in one
+    settings part are not one setting to change."""
+    if set(kinds) != set(KINDS):
+        raise JobException("the even/odd page switch governs headers and footers alike: template both kinds to give "
+                           "the document the template's switch", "even-odd",
+                           {"template_even_odd": value, "why": "one kind"})
+    member = pkg.settings_part()
+    if member is None:
+        raise JobException("this document relates no settings part, so its even/odd page switch cannot be set — save "
+                           "it from Word once and run again", "even-odd",
+                           {"template_even_odd": value, "why": "no settings part"})
+    els = [c for c in pkg.xml(member) if isinstance(c.tag, str) and c.tag == EVEN_ODD_TAG]
+    if len(els) > 1:
+        raise JobException(f"{member} holds {len(els)} evenAndOddHeaders elements", "malformed-properties",
+                           {"part": member})
+    op = ("turn_on" if els else "insert") if value else "off"
+    return {"member": member, "op": op, "value": value}
+
+
+def apply_even_odd(pkg: DocxPackage, edit: Dict[str, Any]) -> None:
+    """``plan_even_odd``'s edit, through the overlay: removed, its ``w:val`` dropped, or inserted at its CT_Settings
+    place (``docprops.settings_rank``)."""
+    from .docprops import settings_rank
+    root = pkg.xml(edit["member"])
+    els = [c for c in root if isinstance(c.tag, str) and c.tag == EVEN_ODD_TAG]
+    if edit["op"] == "off":
+        for el in els:
+            root.remove(el)
+    elif edit["op"] == "turn_on":
+        els[0].attrib.pop(W + "val", None)
+    else:
+        new = etree.Element(EVEN_ODD_TAG)
+        rank = settings_rank(new)
+        for i, c in enumerate(root):
+            if isinstance(c.tag, str) and settings_rank(c) > rank:
+                root.insert(i, new)
+                break
+        else:
+            root.append(new)
+    pkg.write_xml(edit["member"], root)
 
 
 def _top_level(root) -> List[Tuple[int, Any]]:
@@ -310,6 +367,11 @@ class ApplyHeaderFooterTemplate(Op):
                                   "description": "Automatically reuse equivalent styles across Word languages; "
                                                  "import only genuinely missing dependencies. False still allows "
                                                  "reusing equivalent existing styles, but disallows new definitions."},
+        "even_odd": {"type": "string", "enum": list(EVEN_ODD), "default": "refuse",
+                     "description": "Word's document-wide 'Different Odd & Even Pages' switch, when the template's "
+                                    "differs from the document's: 'refuse' sets the document aside (default); "
+                                    "'template' gives the document the template's switch with its headers and "
+                                    "footers (both kinds templated; only when the user asks for it)"},
         "tracked": {"type": "boolean", "enum": [False], "description": "not tracked (only false is accepted)"}},
         "required": ["template", "template_sections", "slot_fills"]}
     select_schema = {"type": "object", "properties": {"sections": {"enum": ["all"], "description": "'all' only"}}}
@@ -317,7 +379,8 @@ class ApplyHeaderFooterTemplate(Op):
         "V1": "members removed (old parts, rels, orphaned media) and added (new parts, rels, media) exact",
         "V2": "old parts' blocks deleted, new parts' blocks inserted with the filled text",
         "V5a": "added parts validated against the template's own baseline",
-        "V10": "hf_template_refs, template_parts (slots, fills re-derived, effective properties, skeleton), styles_added",
+        "V10": "hf_template_refs, template_parts (slots, fills re-derived, effective properties, skeleton), styles_added, "
+               "hf_even_odd (even_odd 'template': the settings part's even/odd switch is the template's)",
         "V7": "template reference: header/footer anchor words vs the template render",
     }
 
@@ -379,6 +442,8 @@ class ApplyHeaderFooterTemplate(Op):
             extras.append("first-page settings are left as they are")
         if params.get("import_missing_styles") is False:
             extras.append("no new styles are added")
+        if params.get("even_odd") == "template":
+            extras.append("Word's “Different Odd & Even Pages” setting follows the template's")
         second = f"The old {kind_words} are removed; " + prose.join(["the new ones keep the template's look"] + extras)
         return prose.sentence(head + ", " + what) + " " + prose.sentence(second)
 
@@ -434,11 +499,17 @@ class ApplyHeaderFooterTemplate(Op):
         if bad:
             raise JobException(f"template has {len(tsect)} section(s); no {bad}", "bad-params")
         tmap = [ts["all"] if "all" in ts else (ts["cover"] if i == 0 else ts["body"]) for i in range(len(secs))]
-        t_even = tpkg.settings_flag("evenAndOddHeaders")
-        if t_even != pkg.settings_flag("evenAndOddHeaders"):
-            raise JobException(f"evenAndOddHeaders is {'on' if t_even else 'off'} in the template and "
-                               f"{'off' if t_even else 'on'} in this document; it is a document-wide setting — "
-                               f"not changed silently", "even-odd", {"template_even_odd": bool(t_even)})
+        even_odd = params.get("even_odd", "refuse")
+        if even_odd not in EVEN_ODD:
+            raise JobException("even_odd must be 'refuse' or 'template'", "bad-params")
+        t_even = even_odd_switch(tpkg)
+        even_edit = None
+        if t_even != even_odd_switch(pkg):
+            if even_odd != "template":
+                raise JobException(f"evenAndOddHeaders is {'on' if t_even else 'off'} in the template and "
+                                   f"{'off' if t_even else 'on'} in this document; it is a document-wide setting — "
+                                   f"not changed silently", "even-odd", {"template_even_odd": bool(t_even)})
+            even_edit = plan_even_odd(pkg, bool(t_even), kinds)
         t_title = [sp.find(W + "titlePg") is not None and sp.find(W + "titlePg").get(W + "val") not in ("0", "false", "off")
                    for sp in tsect]
         title = [sp.find(W + "titlePg") is not None and sp.find(W + "titlePg").get(W + "val") not in ("0", "false", "off")
@@ -719,6 +790,9 @@ class ApplyHeaderFooterTemplate(Op):
                          for part, ordinal in fill_reads(pkg, rule)]
         frag.touches += [(pkg.rels_path_for(main), "*", "rels"), (CT_PART, "*", "ct")]
         frag.touches += [(styles_part, f"style:{sid}", "add") for sid in imported]
+        if even_edit is not None:
+            frag.intended_parts.append(even_edit["member"])
+            frag.touches.append((even_edit["member"], "evenAndOddHeaders", "value"))
         # What the plan READS from the target (rule 9: a change of it by another op in this spec is a plan-time
         # conflict, never a V10 failure after apply): the pins are the diff of template-effective vs TARGET-effective
         # properties, resolved over the target's whole styles part (every chain, docDefaults) and theme; every copy's
@@ -757,6 +831,11 @@ class ApplyHeaderFooterTemplate(Op):
                                              "template": str(Path(tpath).resolve()), "template_md5": tmd5,
                                              "style_map": style_map, "style_parts": style_parts,
                                              "import_missing_styles": import_missing})
+        if even_odd == "template":
+            frag.property_assertions.append({
+                "kind": "hf_even_odd", "even_odd": even_odd, "kinds": kinds, "template": str(Path(tpath).resolve()),
+                "template_md5": tmd5, "value": bool(t_even),
+                "changed": [f"{even_edit['member']}|{EVEN_ODD_TAG}"] if even_edit else []})
         for i, d in dist_changes.items():
             frag.property_assertions.append({"kind": "section_props", "part": main, "sections": [i],
                                              "elements": {"pgMar": {"set": d}}, "expected_sections": 1})
@@ -777,6 +856,7 @@ class ApplyHeaderFooterTemplate(Op):
             "removal": {"rids": rp.gone_rids, "members": rp.members, "media": rp.media},
             "media_ct": {m: (t_overrides.get(m) or t_defaults.get(posixpath.splitext(m)[1].lstrip(".").lower()))
                          for m in media_map},
+            "even_odd": even_edit,
         }
         # ---- the record ----
         frag.notes.append(f"template {Path(tpath).name} (md5 {tmd5[:12]}…), sections mapped {tmap}; "
@@ -808,6 +888,11 @@ class ApplyHeaderFooterTemplate(Op):
             frag.notes.append(f"titlePg set to the template's on sections {sorted(title_changes)}")
         if dist_changes:
             frag.notes.append(f"header/footer distance set to the template's on sections {sorted(dist_changes)}")
+        if even_edit is not None:
+            frag.notes.append(f"the even/odd page switch (evenAndOddHeaders) turned {'on' if t_even else 'off'} "
+                              f"in {even_edit['member']}, as the template has it")
+        elif even_odd == "template":
+            frag.notes.append("the even/odd page switch is already the template's; unchanged")
         if literal:
             frag.flags.append(f"literal fill(s) {literal} are user-supplied words placed untracked: "
                               + "; ".join(f"{n} = {fills[n]!r}" for n in literal))
@@ -906,3 +991,5 @@ class ApplyHeaderFooterTemplate(Op):
         pkg.write_xml(main, root)
         rm = td["removal"]
         apply_removal(pkg, main, rm["rids"], rm["members"], rm["media"])
+        if td.get("even_odd"):
+            apply_even_odd(pkg, td["even_odd"])

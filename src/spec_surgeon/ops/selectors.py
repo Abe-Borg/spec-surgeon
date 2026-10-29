@@ -12,6 +12,11 @@ Grammar:
                   is_empty bool        (block text == "" and no picture, drawing, embedded object, text box or
                                         field in it: ``holds_object``)
                   index_range [a, b]   (a ≤ block index < b, over the part's w:p in document order)
+                  indices [i, …]       (the block index is one of these: distinct whole numbers ≥ 0, at most
+                                        MAX_INDICES — the outline tool's chosen paragraphs, N2); a spec names them
+                                        per document (``indices_by_document``), and ``editspec.
+                                        resolve_document_select`` gives each document its own list with its
+                                        ``document_sha256``, which the verifier compares with the source
                   has_bold bool        (has a non-empty live run with effective bold on)
                   is_all_caps bool     (live display text is all uppercase letters or has w:caps on)
                   after_heading_regex "…" (comes after the first paragraph matching the regex)
@@ -44,11 +49,12 @@ from .patterns import BoundedPattern, compile_pattern
 
 STYLES_REL = REL_TYPE_BASE + "styles"
 SCOPE_KINDS = ("document", "headers", "footers", "footnotes", "endnotes", "comments")
-PARAGRAPH_KEYS = ("style_in", "text_regex", "in_table", "is_empty", "index_range",
+PARAGRAPH_KEYS = ("style_in", "text_regex", "in_table", "is_empty", "index_range", "indices", "document_sha256",
                   "has_bold", "is_all_caps", "after_heading_regex", "between_paragraphs",
                   "case_insensitive", "flexible_whitespace")
 RUN_KEYS = ("has_direct_font", "font_in", "not_in_revisions", "color_in")
 REVISION_WRAPPERS = (W + "ins", W + "del", W + "moveFrom", W + "moveTo")
+MAX_INDICES = 20000          # paragraph ordinals one ``indices`` predicate may list (docs/SPEC_FORMATTER_MODES_DESIGN.md N2)
 FALSY = ("0", "false", "off")
 
 # Fonts whose glyphs are pictures, not letters: changing them changes what the reader sees.
@@ -119,6 +125,17 @@ def check_paragraph_selector(pred) -> None:
     if "index_range" in pred and (not isinstance(pred["index_range"], (list, tuple)) or len(pred["index_range"]) != 2
                                   or not all(isinstance(x, int) and not isinstance(x, bool) for x in pred["index_range"])):
         raise JobException("index_range must be [start, end) — two whole numbers", "bad-params")
+    if "indices" in pred:
+        ix = pred["indices"]
+        if (not isinstance(ix, (list, tuple)) or not ix or len(ix) > MAX_INDICES
+                or not all(isinstance(x, int) and not isinstance(x, bool) and x >= 0 for x in ix)
+                or len(set(ix)) != len(ix)):
+            raise JobException(f"indices must be a list of 1 to {MAX_INDICES} distinct paragraph numbers (whole "
+                               f"numbers from 0, counted over the part's paragraphs in document order)", "bad-params")
+    if "document_sha256" in pred and ("indices" not in pred or not isinstance(pred["document_sha256"], str)
+                                      or not re.fullmatch(r"[0-9a-f]{64}", pred["document_sha256"])):
+        raise JobException("document_sha256 names the document an indices list was read from (64 hex digits)",
+                           "bad-params")
     if "has_bold" in pred and not isinstance(pred["has_bold"], bool):
         raise JobException("has_bold must be true or false", "bad-params")
     if "is_all_caps" in pred and not isinstance(pred["is_all_caps"], bool):
@@ -506,6 +523,8 @@ def paragraph_selected(pred, p: etree._Element, index: int, text: str, sheet: St
         lo, hi = pred["index_range"]
         if index < lo or index >= hi:
             return False
+    if "indices" in pred and index not in set(pred["indices"]):
+        return False
     if "has_bold" in pred and _paragraph_has_bold(p, sheet) != bool(pred["has_bold"]):
         return False
     if "is_all_caps" in pred and _paragraph_is_all_caps(p, sheet) != bool(pred["is_all_caps"]):
@@ -683,7 +702,7 @@ def section_reads(pkg: DocxPackage, sections) -> List[Touch]:
     paragraph's words could change which sections are chosen); ``containing`` reads the style families its predicate
     reads through every paragraph's chain as whole-member soft reads (``selection_families``: ``style_in`` → pStyle;
     ``has_bold``/``is_all_caps`` → pStyle, rStyle, tblPr). ``with_tables``, ``index_range`` and the paragraph predicates
-    ``in_table``/``index_range`` read where paragraphs, tables and section breaks are, which only a whole-member change
+    ``in_table``/``index_range``/``indices`` read where paragraphs, tables and section breaks are, which only a whole-member change
     of the main part moves (a paragraph inserted or deleted untracked: a conflict with any touch of it already) — no
     text read for them (batch 5's review: ``with_tables`` refused every replace_text beside it, though no text edit moves
     a table)."""

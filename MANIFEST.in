@@ -9,5 +9,6 @@ recursive-include src/spec_surgeon/web/static *
 recursive-include frontend *.ts *.tsx *.json *.css *.html *.mjs *.md
 prune frontend/node_modules
 recursive-include src/spec_surgeon/examples/specs *.json
+recursive-include src/spec_surgeon/examples/schemes *.docx
 include packaging/installed_wheel_smoke.py
 include packaging/check_wheel_install.py

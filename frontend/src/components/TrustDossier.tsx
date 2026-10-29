@@ -364,6 +364,14 @@ function Dossier() {
               "Looking at pages.",
             ],
             [
+              "Reading the parts of an outline the structure reader leaves",
+              <>
+                {MODEL_NAME}, {F.outlineEffort} effort, inside the turn that asks for it; nothing is sent when the
+                reader places every paragraph
+              </>,
+              "A paragraph’s part in the outline decides which paragraphs a plan restyles: it gets more thought than the chat.",
+            ],
+            [
               "Writing a custom method",
               <>
                 {MODEL_NAME}, {F.codegenEffort} effort while it writes the method, here or in recovery; the calls

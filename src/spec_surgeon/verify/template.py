@@ -25,6 +25,11 @@
     - ``wp:docPr`` ids of the part unique in the whole output.
 * ``styles_added`` — independently derive equivalent styles and the missing dependency closure; exactly those
   definitions may be added, with checked reference/identity remapping and extension markup removed.
+* ``hf_even_odd`` — with ``even_odd: "template"``: Word's even/odd page switch (``w:evenAndOddHeaders``) read here
+  from the template file and from the settings part the source relates; where they differ (both kinds templated,
+  a settings part related, one switch in it — else the op must refuse) the output's reads as the template's: exactly
+  ``<w:evenAndOddHeaders/>``, an inserted one at its CT_Settings place, or none. The checked element leaves the
+  settings part's member residual (``Ctx.member_strip``); the change derived must be the plan's (``changed``).
 
 Definitions shared with the transform side (slot detection, display text, fill rules, effective properties,
 tab rescaling) are restated in CLAUDE.md and implemented here separately.
@@ -39,7 +44,7 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 
 from lxml import etree
 
-from .reader import VPackage, W, R, STYLES_REL, THEME_REL
+from .reader import VPackage, W, R, SETTINGS_REL, STYLES_REL, THEME_REL
 from .textcheck import blocks
 from .patterns import v_compile
 
@@ -991,8 +996,88 @@ def check_styles_added(ctx, a: Dict[str, Any], errs: List[str]) -> str:
     return f"styles_added: {a.get('ids')}"
 
 
+_SWITCH = W + "evenAndOddHeaders"
+_BOTH_KINDS = {"header", "footer"}
+
+
+def _switches(pkg: VPackage, member: Optional[str]) -> List[Any]:
+    """The top-level ``w:evenAndOddHeaders`` children of a settings member (none without one)."""
+    if member is None or member not in pkg.names:
+        return []
+    return [c for c in pkg.xml(member) if isinstance(c.tag, str) and c.tag == _SWITCH]
+
+
+def _switch_on(els: List[Any]) -> bool:
+    """Word reads the first switch; on unless its ``w:val`` says off (CT_OnOff)."""
+    return bool(els) and (els[0].get(W + "val") or "true").lower() not in FALSY
+
+
+def check_hf_even_odd(ctx, a: Dict[str, Any], errs: List[str]) -> str:
+    tag = "hf_even_odd"
+    md5, tpl = _template(a["template"])
+    if md5 != a.get("template_md5"):
+        errs.append(f"{tag}: template file changed since planning (md5 {md5} ≠ {a.get('template_md5')})")
+        return tag
+    t_on = _switch_on(_switches(tpl, tpl.related(SETTINGS_REL)))
+    member = ctx.src.related(SETTINGS_REL)
+    s_els = _switches(ctx.src, member)
+    s_on = _switch_on(s_els)
+    changed: List[str] = []
+    if t_on != s_on:
+        if a.get("even_odd") != "template":
+            errs.append(f"{tag}: the switch is {'on' if t_on else 'off'} in the template and "
+                        f"{'on' if s_on else 'off'} in the document, and the spec did not ask to change it — the op "
+                        f"must refuse")
+        elif set(a.get("kinds") or []) != _BOTH_KINDS:
+            errs.append(f"{tag}: the switch would change with only {a.get('kinds')} templated — the op must refuse")
+        elif member is None:
+            errs.append(f"{tag}: the document relates no settings part — the op must refuse")
+        elif len(s_els) > 1:
+            errs.append(f"{tag}: {member} holds {len(s_els)} evenAndOddHeaders — the op must refuse")
+        else:
+            changed.append(f"{member}|{_SWITCH}")
+            ctx.member_strip.setdefault(member, set()).add(_SWITCH)
+            o_els = _switches(ctx.out, member)
+            if not t_on and o_els:
+                errs.append(f"{tag}: the output settings still hold w:evenAndOddHeaders; the template's switch is off")
+            elif t_on and (len(o_els) != 1 or o_els[0].attrib or len(o_els[0])):
+                errs.append(f"{tag}: the output settings hold {len(o_els)} w:evenAndOddHeaders, expected exactly "
+                            f"<w:evenAndOddHeaders/> (the template's switch is on)")
+            elif t_on and not s_els:
+                from .docprops import _in_order        # the verifier's own CT_Settings order, read from the schema
+                if not _in_order(o_els[0]):
+                    errs.append(f"{tag}: the inserted w:evenAndOddHeaders is not where CT_Settings' schema order "
+                                f"puts it")
+    if _switch_on(_switches(ctx.out, ctx.out.related(SETTINGS_REL))) != t_on:
+        errs.append(f"{tag}: the output's even/odd switch is not the template's ({'on' if t_on else 'off'})")
+    if sorted(changed) != sorted(a.get("changed") or []):
+        errs.append(f"{tag}: changes {sorted(changed)} found here, the plan predicted {sorted(a.get('changed') or [])}")
+    return (f"{tag}: the even/odd page switch is the template's ({'on' if t_on else 'off'})"
+            + (", changed" if changed else ", already as asked"))
+
+
 TEMPLATE_KINDS = {
     "hf_template_refs": check_hf_template_refs,
     "template_parts": check_template_part,
     "styles_added": check_styles_added,
+    "hf_even_odd": check_hf_even_odd,
 }
+
+
+from .props import KIND_CONTRACTS, KIND_EXAMPLES  # noqa: E402
+
+KIND_CONTRACTS["hf_even_odd"] = (
+    'Word\'s document-wide even/odd page switch (w:evenAndOddHeaders) taken from a header/footer template '
+    '(apply_header_footer_template with even_odd "template"). Keys: "template" and "template_md5": the template file '
+    'and its md5 when planned; "even_odd": "template"; "kinds": the templated kinds (both, header and footer); '
+    '"value": the template\'s switch; "changed": ["<settings member>|<w:evenAndOddHeaders in Clark notation>"] when '
+    'the document\'s switch differs, else []. Compared: the switch read here from the template file and from the '
+    'settings part the source relates; where they differ (both kinds templated, a settings part related, one switch '
+    'in it — else the op must refuse) the output\'s switch reads as the template\'s: exactly <w:evenAndOddHeaders/>, '
+    'an inserted one at its CT_Settings place, or none when the template\'s is off. The checked element leaves the '
+    'settings part\'s member residual, everything else in it must be identical, and the change derived here must be '
+    'the plan\'s.')
+KIND_EXAMPLES["hf_even_odd"] = {
+    "kind": "hf_even_odd", "even_odd": "template", "kinds": ["header", "footer"],
+    "template": "C:/Projects/hf-template.docx", "template_md5": "0123456789abcdef0123456789abcdef", "value": True,
+    "changed": ["word/settings.xml|{http://schemas.openxmlformats.org/wordprocessingml/2006/main}evenAndOddHeaders"]}
