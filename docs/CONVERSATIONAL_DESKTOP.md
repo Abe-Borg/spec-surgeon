@@ -83,8 +83,12 @@ Obliterate, below under "The conversation"):
   (`_advance_generation`); the points are kept in the saved conversation (`undo`), so they survive a restart. Undo
   waits while a preview is open ("Discard the preview first") and refuses when a copy it would go back to is no longer
   where it was saved. No file is written or deleted: the copies an undone button made stay in the scratch folder until the window closes. Start
-  over and removing the last working copy clear the points; a run whose approval took none (it resumed after a
-  restart) clears them too, so no undo reaches past a step it did not record.
+  over and removing the last working copy clear the points; a run whose approval took none (it resumed from a
+  journal that kept none) clears them too, so no undo reaches past a step it did not record. A run whose documents
+  recovery fixes after it (Default mode) is one change: the save of its recovered copies keeps the point and the
+  recipe steps its approval took (`_primary`), journalled while recovery waits (`pending_undo`, `pending_steps`,
+  read back only with that recovery, `_restore_pending`), and they end with the request (`_invalidate`, `_compile`,
+  a run that delivered nothing); an outcome plan the user picks takes its own at its first save.
 
 **What you've done so far** (`DocumentTask.runs`, `_done_view`; the view's `working.done`), under the copies, lists
 every run that delivered copies since the originals, oldest first, in every mode: the button's sentence (your line in

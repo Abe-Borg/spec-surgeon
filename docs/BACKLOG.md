@@ -194,6 +194,13 @@ specifications, Windows and Word, and only the owner can do them. Record what a 
   a request added, that it is now a Default-mode recipe (its tile leaves My recipes in Safe mode). With two windows
   open, an Edit opened in one and saved after the other renamed the recipe is refused with the reason and nothing is
   written over; `recipes.json` shows the edited steps. The editor reads well at 1280 px wide.
+- **A run recovery finishes, undone and saved whole (built 2026-10-29):** in Default mode with Word rendering over a
+  real batch, a request whose run sends a document to recovery (a check fails and the chat says it is checking the
+  files that still need work), then Create on recovery's preview: What you've done so far lists the request once, and
+  **Save as a recipe…** keeps it (no "What it ran was not kept"), the step's plan the one approved at the first
+  Create. **Undo the last change** then shows the copies from before the request, not its first copies, and the next
+  request builds on those. Again with the window closed from Task Manager while recovery's preview waits: after the
+  restart and Continue, the same holds, and the earlier changes in the list can still be undone one by one.
 - **What you've done so far (built 2026-10-29):** over a real batch in Safe mode, Remove all comments, Accept all
   tracked changes and Match headers and footers to the template, each created in turn; the list under the copies
   names the three in order, the newest marked LATEST, with "All N documents" or which documents did not get one and
