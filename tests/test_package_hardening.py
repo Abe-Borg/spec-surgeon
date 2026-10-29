@@ -128,6 +128,21 @@ def test_a_renamed_settings_part_is_read_through_the_relationship():
     assert VPackage(data).related(V_SETTINGS_REL) == "word/docSettings.xml"                   # the verifier's own reading
 
 
+def test_the_verifiers_reader_decompresses_a_member_once_and_hands_out_exactly_its_bytes(monkeypatch):
+    pkg = VPackage(RICH)
+    reads = []
+    real = pkg.zip.read
+    monkeypatch.setattr(pkg.zip, "read", lambda name, *a: reads.append(name) or real(name, *a))
+    archive = zipfile.ZipFile(io.BytesIO(RICH))
+    for _ in range(3):
+        assert {n: pkg.read(n) for n in pkg.names} == {n: archive.read(n) for n in pkg.names}
+        assert pkg.xml("word/document.xml") is not pkg.xml("word/document.xml")    # a tree is parsed for each caller
+    assert sorted(reads) == sorted(pkg.names)                                        # each member came out once
+    office = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument"
+    assert pkg.package_related(office) == "word/document.xml" == pkg.package_related(office)
+    assert VPackage(RICH).package_related("http://example.test/no-such-relationship") is None
+
+
 def test_a_stray_settings_part_the_document_does_not_relate_is_not_read():
     rels = etree.fromstring(_read(RICH, "word/_rels/document.xml.rels"))
     for rel in list(rels):

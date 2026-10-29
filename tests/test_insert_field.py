@@ -643,6 +643,7 @@ def test_a_spec_runs_through_the_batch_pipeline(src, tmp_path):
     assert f.status == "PASS", f.record.to_markdown() if f.record else f.exception
 
 
+@pytest.mark.render
 @pytest.mark.skipif(shutil.which("soffice") is None or shutil.which("pdftotext") is None,
                     reason="LibreOffice or pdftotext not installed")
 def test_libreoffice_renders_the_page_numbers(src, tmp_path):

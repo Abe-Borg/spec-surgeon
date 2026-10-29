@@ -157,7 +157,7 @@ def expected() -> dict:
         "processMinFiles": const("batch.py", "PROCESS_MIN_FILES"),
         "maxProcessWorkers": const("batch.py", "MAX_PROCESS_WORKERS"),
         "planProcessMinFiles": const("planner.py", "PLAN_PROCESS_MIN_FILES"),
-        "libreOfficeTimeoutSeconds": default("render/libreoffice.py", "render_pdfs", "timeout"),
+        "libreOfficeTimeoutSeconds": default("render/libreoffice.py", "render_groups", "timeout"),
         "credentialTarget": const("credentials.py", "TARGET"),
         "appLogMB": int(one(r"maxBytes=(\d+) \* 2 \*\* 20", source("diagnostics.py"), "the app log's size")),
         "appLogBackups": int(one(r"maxBytes=\d+ \* 2 \*\* 20, backupCount=(\d+)", source("diagnostics.py"),

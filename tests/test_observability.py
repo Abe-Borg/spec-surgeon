@@ -111,6 +111,80 @@ def test_credentials_and_payloads_are_not_written(tmp_path, monkeypatch):
     assert row["request_id"] == "request-123"
 
 
+def _redact_as_before(value: str) -> str:
+    """``telemetry.redact_text`` as it was before it looked for what each pattern needs: every pattern on every text,
+    the environment read for each one. The scrub may get faster; it may never scrub differently."""
+    import os
+    text = str(value)
+    for name in ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "OPENAI_API_KEY"):
+        secret = os.environ.get(name)
+        if secret and len(secret) >= 8:
+            text = text.replace(secret, "[REDACTED]")
+    text = telemetry._TOKEN.sub("[REDACTED]", text)
+    text = telemetry._BEARER.sub(lambda m: m.group(1) + " [REDACTED]", text)
+    text = telemetry._ASSIGNMENT.sub(lambda m: m.group(1) + "[REDACTED]", text)
+    return telemetry._URL_USER.sub(r"\1[REDACTED]@", text)
+
+
+REDACTION_CASES = [
+    "", "plain words", "/tmp/specs/21 13 13 – WET-PIPE SPRINKLER SYSTEMS.docx", r"C:\Users\me\Specs\a.docx",
+    "sk-ant-api03-abcDEF_123", "key sk-0123456789abcdefXYZ end", "task-sk-short", "Bearer abc.def", "BASIC dXNlcjpw",
+    "bearer\tTOKEN", "Basıc x", "BAſIC tok", "BASİC tok", "api_key=abc", "API-KEY: 'quoted secret'",
+    'password="two words"', "passwd:abc;next", "client_secret = x", "Access_Token=1", "refresh-token:2", "auth_token=3",
+    "cookie: a=b", "Authorization: Bearer abc", "api_Key=kelvin", "api_\u212aey=kelvin", "pa\u017f\u017fword=x",
+    "https://user:pw@host/x", "HTTP://u:p@h", "ftp://u:p@h", "mail me@x.org at https://x.org", "x=1 y:2 no words",
+    "the key is: value", "token=abc https://u:p@h Bearer z sk-ant-q", "İ ı K ſ – and nothing else",
+]
+
+
+@pytest.mark.parametrize("text", REDACTION_CASES)
+def test_the_quicker_scrub_scrubs_exactly_what_every_pattern_did(text, monkeypatch):
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "active-provider-credential")
+    for value in (text, text + " active-provider-credential", "active-provider-credential:" + text):
+        assert telemetry.redact_text(value) == _redact_as_before(value)
+        assert telemetry.redact_text(value, telemetry._secrets()) == _redact_as_before(value)
+
+
+def test_random_texts_are_scrubbed_exactly_as_every_pattern_did(monkeypatch):
+    import random
+    monkeypatch.setenv("OPENAI_API_KEY", "openai-credential-1234")
+    pieces = ["sk-", "ant-", "abcdefghij", "0123456789", "Bearer", "basic", "BAS", "IC", "\u017f", "\u0130", "\u0131",
+              "\u212a", "api", "_", "-", "key", "Key", "auth", "orization", "pass", "word", "wd", "client", "secret",
+              "access", "refresh", "token", "cookie", "credential", "=", ":", " ", "\t", "\n", '"', "'", ",", ";", "&",
+              "}", "]", "http", "s", "://", "@", "/", "user", "pw", ".", "–", "é", "openai-credential-1234"]
+    rng = random.Random(20261029)
+    for _ in range(4000):
+        text = "".join(rng.choice(pieces) for _ in range(rng.randint(1, 14)))
+        assert telemetry.redact_text(text) == _redact_as_before(text), text
+
+
+def test_the_letters_folded_for_the_quick_check_are_every_one_re_matches_to_an_ascii_letter():
+    import re
+    letters = re.compile("(?i)(?:" + "|".join("abcdefghijklmnopqrstuvwxyz") + ")")
+    found = {}
+    for code in range(0x80, sys.maxunicode + 1):
+        char = chr(code)
+        if letters.fullmatch(char):
+            found[char] = next(a for a in "abcdefghijklmnopqrstuvwxyz" if re.fullmatch("(?i)" + a, char))
+    assert found == {char: ascii_letter for char, ascii_letter in
+                     (("\u0130", "i"), ("\u0131", "i"), ("\u212a", "k"), ("\u017f", "s"))}
+    assert {char: char.translate(telemetry._FOLD) for char in found} == found
+
+
+def test_a_record_reads_the_environment_once_and_a_journal_whose_folder_went_is_made_again(tmp_path, monkeypatch):
+    reads = []
+    real = telemetry._secrets
+    monkeypatch.setattr(telemetry, "_secrets", lambda: reads.append(1) or real())
+    path = tmp_path / "gone" / "events.jsonl"
+    with diag.scope(path, run_id="r1"):
+        diag.event("one", source="/tmp/a.docx", nested={"a": ["x", "y"], "b": "z"})
+        assert len(reads) == 1
+        path.unlink()
+        path.parent.rmdir()
+        diag.event("two")
+    assert [r["event"] for r in records(path)] == ["two"]
+
+
 def test_oversized_cyclic_and_unserializable_fields_do_not_break_events(tmp_path):
     path = tmp_path / "events.jsonl"
     cycle = {}

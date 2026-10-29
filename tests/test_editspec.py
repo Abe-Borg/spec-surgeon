@@ -156,6 +156,7 @@ def test_run_spec_in_place_guarded(tmp_path):
     assert all(not s.header_refs and not s.footer_refs for s in DocxPackage.from_path(f).sections())
 
 
+@pytest.mark.render
 @pytest.mark.skipif(shutil.which("soffice") is None, reason="LibreOffice not installed")
 def test_remove_all_rendered_geometry_unchanged(tmp_path):
     """V7 keeps the source render as reference for header/footer removal: body text must not move."""

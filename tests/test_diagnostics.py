@@ -29,6 +29,7 @@ from spec_surgeon.batch import run_batch
 from spec_surgeon.editspec import load_spec
 from spec_surgeon.report import FAILURE_EXPLANATIONS, explain_failure
 from spec_surgeon.verify.explain import failure_details, text_change, visible
+from fake_render import per_group
 
 SPECS = Path(__file__).resolve().parent.parent / "examples" / "specs"
 AUTHOR = "Abraham Borg"
@@ -318,7 +319,7 @@ def test_a_comparison_that_fails_is_this_files_v6_never_a_crashed_batch(tmp_path
             out[Path(f)] = pdf
         return out
     monkeypatch.setattr(render_mod, "pick", lambda prefer="auto": "libreoffice")
-    monkeypatch.setattr(render_mod, "render_pdfs", fake_render)
+    monkeypatch.setattr(render_mod, "render_pdf_groups", per_group(fake_render))
     monkeypatch.setattr(render_mod, "describe", lambda backend: "a fake renderer")
     f = _folder(tmp_path, ["A"]) / "21 00 00 – A.docx"
     out = tmp_path / "out"
@@ -483,7 +484,7 @@ def test_a_failing_page_comparison_is_a_warning_not_a_lost_preview(tmp_path, mon
         raise RuntimeError("planted")
     monkeypatch.setattr(render_mod, "pick", lambda prefer="auto": "libreoffice")
     monkeypatch.setattr(render_mod, "describe", lambda backend: "fake renderer")
-    monkeypatch.setattr(render_mod, "render_pdfs", fake_render)
+    monkeypatch.setattr(render_mod, "render_pdf_groups", per_group(fake_render))
     monkeypatch.setattr(geom, "compare_pdfs", boom)
     pv = make_preview(spec, [str(d)], tmp_path / "pv", do_render=True)
     s = pv.samples[0]
