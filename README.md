@@ -75,7 +75,9 @@ are your documents (optionally with one template) and the before/after pages. Th
 the usual jobs), **How it works** and **About** (the version, the model, the release notes, the license,
 **Check for updates**, **Open diagnostic logs** and **Save a diagnostic bundle**) — beside a line saying what the conversation works on ("3
 documents · 1 template · building on your copies"), the estimated spending, the connection, **New conversation**
-and Settings.
+and Settings. On a narrower window (1280 px wide, say) the top bar says the same in fewer words, one step at a time
+until it fits on one line: the context line goes first, then words such as "this conversation", and the help topics
+become **Guide**, **Workflows**, **Mechanics**, **Trust** and **About** (the full name on hover).
 
 **New to the window? Take the guided tour.** **Tour** in the top bar, the chip at the top of an empty conversation,
 or **Help → How to use → Start the guided tour** walks through every part of the window, chapter by chapter, on

@@ -156,6 +156,7 @@ test("spending reads as the window says it: an estimate, never a bill", () => {
   // beside it while a request runs: this request's spending against the check, nothing with the check off
   assert.equal(requestPill({ usd: 3, text: "", calls: 3, request: 0.4, limit: 20 }), "this request ≈ $0.40 of $20.00");
   assert.equal(requestPill({ usd: 3, text: "", calls: 3, request: null, limit: 20 }), "this request ≈ ? of $20.00");
+  assert.equal(requestPill({ usd: 3, text: "", calls: 3, request: 0.4, limit: 20 }, true), "≈ $0.40 of $20.00");
   assert.equal(requestPill({ usd: 3, text: "", calls: 3, request: 0.4, limit: null }), "");
   assert.equal(requestPill({ usd: 3, text: "", calls: 3 }), "");
 });
