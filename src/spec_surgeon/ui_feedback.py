@@ -1,5 +1,6 @@
 """Plain-language presentation of existing results. Raw exceptions and verification records stay in diagnostics."""
 import re
+from pathlib import Path
 
 
 CHECK_MESSAGES = {
@@ -32,6 +33,33 @@ def failed_preview_checks(sample):
         return [{"check": "Preview", "reason": "The preview could not complete its checks. The diagnostic record has the details."}]
     return [{"check": key, "reason": CHECK_MESSAGES.get(key, "A verification check did not pass. The diagnostic record has the details.")}
             for key in sorted(failed)]
+
+
+PREVIEW_FAILED = "Its preview did not pass its checks"
+
+
+def failed_sample_message(sample):
+    """Why a sample set aside by its failed preview (``preview.failed_samples``) gets no copy, in the words of its
+    failed checks: the sentence under Left untouched and on the to-do list."""
+    reasons = [f"{f['reason'].rstrip('.')} ({f['check']})" if f["check"] != "Preview" else f["reason"].rstrip(".")
+               for f in failed_preview_checks(sample)]
+    return f"{PREVIEW_FAILED}, so no copy of it is made: " + "; ".join(reasons) + "."
+
+
+def failed_samples_sentence(samples, labels=None):
+    """What the chat says of the samples set aside because they failed (``preview.failed_samples``), in the app's
+    words, before the button: each named (``labels``: ``str(source)`` → how the preview names it) with its failed
+    checks, and that the others' copies can be created."""
+    labels = labels or {}
+    named = []
+    for sample in samples:
+        checks = [f["check"] for f in failed_preview_checks(sample) if f["check"] != "Preview"]
+        name = labels.get(str(sample.source)) or Path(sample.source).name
+        named.append(f"{name} ({', '.join(checks)})" if checks else name)
+    several = len(named) > 1
+    return (f"{', '.join(named)} did not pass {'their' if several else 'its'} preview checks, so no copy of "
+            f"{'them' if several else 'it'} will be made: {'they wait' if several else 'it waits'} under Left "
+            f"untouched, and the other documents' copies can be created.")
 
 
 def refusal_message(exception):

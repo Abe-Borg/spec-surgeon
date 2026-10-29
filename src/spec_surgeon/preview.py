@@ -320,6 +320,27 @@ def sample_refused(sv: Any) -> bool:
     return (getattr(sv, "exception", None) or {}).get("kind") == "refusal"
 
 
+def sample_failed(sv: Any, unguarded: bool = False) -> bool:
+    """A sample that did not get through and was not refused: its copy failed a check, or the engine failed on it.
+    In Obliterate mode (``unguarded``) a copy that was made but failed its checks is delivered marked UNVERIFIED, so
+    only a sample with no copy (an engine failure) counts there."""
+    if sample_refused(sv) or getattr(sv, "passed", None) is True:
+        return False
+    return not (unguarded and getattr(sv, "exception", None) is None)
+
+
+def failed_samples(pv: Any, unguarded: bool = False) -> List[Any]:
+    """The samples a preview sets aside because they failed (``sample_failed``) while another sample got through: the
+    preview of the others stands, and they wait under Left untouched with their failed checks, as a refused file does
+    (the owner's Safe-mode run of 2026-10-28: one twelve-file batch's sample failed V7 and Create was unavailable for
+    all twelve). When no sample got through there is nothing to set them aside from: [] — the preview cannot stand,
+    and Create stays unavailable, or Default mode's outcome planning takes the request."""
+    samples = list(getattr(pv, "samples", None) or [])
+    failed = [sv for sv in samples if sample_failed(sv, unguarded)]
+    through = [sv for sv in samples if not sample_refused(sv) and not sample_failed(sv, unguarded)]
+    return failed if through else []
+
+
 def refusals(pv: Any) -> List[Tuple[Path, Dict[str, Any]]]:
     """The documents a preview refused, each with its refusal: every one the plan refused — at any step of a chain,
     every step being planned on every file — then any sample a step refused when it ran. They wait under Left

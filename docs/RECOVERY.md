@@ -15,8 +15,9 @@ required capability is unavailable.
 ## In the conversation window
 
 Recovery runs inside the conversation and needs no setup. When **Create edited copies** leaves a
-file that did not pass, or a sample fails during the preview, the app investigates those files on
-copies in the same conversation. It shares the conversation's ledger and the request's spending check
+file that did not pass, or no sample passes during the preview, the app investigates those files on
+copies in the same conversation. A sample that fails while another passes is not investigated: it
+waits under Left untouched, and on the to-do list once the others are created, until you work on it. It shares the conversation's ledger and the request's spending check
 (Settings → Spending check: an AI step that could take the request past it is not started, and Continue allows the
 amount again; 128,000 output tokens per call; its own call cap `resources.DEFAULT_MAX_CALLS`), up to eight candidate
 attempts per problem group and high reasoning effort (`xhigh` while it writes a custom method:

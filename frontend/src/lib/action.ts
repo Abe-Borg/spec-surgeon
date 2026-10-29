@@ -94,16 +94,28 @@ export function actionButton(view: View, busy: boolean, draft: boolean, held = 0
   return { kind, label, token: action.token, disabled: !action.token, tip, ...(pdf ? { pdf } : {}) };
 }
 
-/** The sentence beside the button, in the conversation pane. */
-export function actionSentence(button: ActionButton, held: number): string {
+/** What the approve sentence adds when `aside` previews did not pass while others did: they stay as they are. */
+export function asideSentence(aside: number, pdf = false): string {
+  if (aside <= 0) return "";
+  const one = aside === 1;
+  return (
+    ` ${one ? "One document" : `${aside} documents`} whose preview did not pass ${one ? "gets" : "get"} no ` +
+    `${pdf ? "PDF" : "copy"}: ${one ? "it stays as it is" : "they stay as they are"}, under Left untouched.`
+  );
+}
+
+/** The sentence beside the button, in the conversation pane. `aside`: previews the server set aside (`set_aside`). */
+export function actionSentence(button: ActionButton, held: number, aside = 0): string {
   if (button.kind !== "stop" && button.disabled) return button.tip;
   switch (button.kind) {
     case "approve":
-      return held > 0
-        ? `${held === 1 ? "One document" : `${held} documents`} marked with the red X ${held === 1 ? "goes" : "go"} on your to-do list; the rest get their ${button.pdf ? "PDFs" : "copies"} now.`
-        : button.pdf
-          ? "If the pages look right, save the clean PDFs."
-          : "If the pages look right, create the edited copies.";
+      return (
+        (held > 0
+          ? `${held === 1 ? "One document" : `${held} documents`} marked with the red X ${held === 1 ? "goes" : "go"} on your to-do list; the rest get their ${button.pdf ? "PDFs" : "copies"} now.`
+          : button.pdf
+            ? "If the pages look right, save the clean PDFs."
+            : "If the pages look right, create the edited copies.") + asideSentence(aside, button.pdf)
+      );
     case "continue":
       return "The documents are checked against your request again before anything can be approved.";
     case "save":

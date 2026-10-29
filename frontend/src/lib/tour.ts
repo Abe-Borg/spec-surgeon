@@ -264,7 +264,7 @@ export const TOUR: readonly TourChapter[] = [
         placement: "left",
         title: "Left untouched, with the reason",
         body:
-          "One of the four specifications is built the way another firm writes them, with no SECTION line, so the template's placeholders cannot be read from it. Rather than guess, the engine leaves it out before anything runs and says why, in plain words. The preview of the others stands. In Default mode a document you leave out of a request by name is listed here too.",
+          "One of the four specifications is built the way another firm writes them, with no SECTION line, so the template's placeholders cannot be read from it. Rather than guess, the engine leaves it out before anything runs and says why, in plain words. The preview of the others stands. A document whose preview did not pass its checks while the others' did is listed here too, its pages still shown so you see why: it gets no copy, and never holds back the others. In Default mode a document you leave out of a request by name is listed here as well.",
       },
       {
         id: "action",
