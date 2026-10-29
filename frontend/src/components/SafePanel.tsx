@@ -43,7 +43,7 @@ interface Props {
   onDefaultMode: () => void;
   onAddKey: () => void;
   /** A saved recipe previewed as one plan (`POST /api/saved-recipes/run`); its changed forms kept in it; the dialog
-   *  that renames, duplicates and deletes recipes. */
+   *  that edits, duplicates and deletes recipes. */
   onRunRecipe: (recipe: SavedRecipe, picks: RecipeRunPick[]) => void;
   onSaveRecipeForms: (recipe: SavedRecipe, forms: (RecipeInputs | null)[]) => Promise<boolean>;
   onManageRecipes: () => void;
@@ -144,7 +144,7 @@ function MyRecipes({
           My recipes{mine.length ? ` · ${mine.length}` : ""}
         </h3>
         <span aria-hidden className="h-px min-w-0 flex-1 bg-edge" />
-        <Tip tip={tourActive ? TOUR_HOLD : "Rename, duplicate or delete your recipes"}>
+        <Tip tip={tourActive ? TOUR_HOLD : "Edit, duplicate or delete your recipes"}>
           <button
             type="button"
             disabled={busy || tourActive}

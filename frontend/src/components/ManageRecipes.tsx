@@ -1,13 +1,17 @@
 import { useState } from "react";
-import type { RecipeMode, SavedRecipe } from "../types";
-import { MODE_BADGE, dateText, needsText, stepsText } from "../lib/savedRecipes";
+import type { Recipe, RecipeInputs, RecipeMode, SavedRecipe, View } from "../types";
+import { MODE_BADGE, dateText, editPayload, needsText, openEdit, stepsText, type RecipeEditState } from "../lib/savedRecipes";
 import { ModalShell, quietBtn } from "./ModalShell";
+import RecipeEditor from "./RecipeEditor";
 
 interface Props {
   recipes: SavedRecipe[];
+  /** Safe mode's buttons (GET /api/recipes): the editor changes a button step's form. */
+  catalog: Recipe[];
+  view: Pick<View, "attachments" | "template">;
   busy: boolean;
   /** Each change answers with the view (`POST /api/saved-recipes/change`); false when it was refused (said by a notice). */
-  onRename: (recipe: SavedRecipe, name: string, note: string) => Promise<boolean>;
+  onEdit: (recipe: SavedRecipe, rev: string, name: string, note: string, steps: { step: number; inputs?: RecipeInputs }[]) => Promise<boolean>;
   onDuplicate: (recipe: SavedRecipe) => Promise<boolean>;
   onDelete: (recipe: SavedRecipe) => Promise<boolean>;
   onClose: () => void;
@@ -19,20 +23,18 @@ const BADGE: Record<RecipeMode, string> = {
   obliterate: "border-err/70 text-err",
 };
 
-const inputClass =
-  "w-full rounded-lg border border-edge bg-bg px-2.5 py-1.5 text-sm text-ink outline-none transition-colors focus:border-accent";
-
 const small =
   "rounded-lg border border-edge bg-raised px-2.5 py-1 text-xs text-ink transition-colors hover:border-accent hover:text-accent " +
   "disabled:pointer-events-none disabled:opacity-40";
 
 /**
  * Your recipes: every recipe the window lists, with the mode it belongs to, its steps, when it was saved and last ran,
- * and Rename, Duplicate and Delete (asked once). Kept on this computer, beside the settings; nothing else is offered.
+ * and Edit (its name, what it is for, and its steps moved, removed or, for a button, given another form), Duplicate
+ * and Delete (asked once). Kept on this computer, beside the settings; nothing else is offered.
  */
-export default function ManageRecipes({ recipes, busy, onRename, onDuplicate, onDelete, onClose }: Props) {
+export default function ManageRecipes({ recipes, catalog, view, busy, onEdit, onDuplicate, onDelete, onClose }: Props) {
   const [open, setOpen] = useState<string | null>(null);
-  const [editing, setEditing] = useState<{ id: string; name: string; note: string } | null>(null);
+  const [editing, setEditing] = useState<RecipeEditState | null>(null);
   const [deleting, setDeleting] = useState<string | null>(null);
   return (
     <ModalShell title="Your recipes" onClose={onClose} wide>
@@ -48,30 +50,20 @@ export default function ManageRecipes({ recipes, busy, onRename, onDuplicate, on
           return (
             <div key={recipe.id} className="rounded-xl border border-edge bg-raised px-3 py-2.5">
               {editingThis && editing ? (
-                <form
-                  className="flex flex-col gap-2"
-                  onSubmit={(e) => {
-                    e.preventDefault();
-                    void onRename(recipe, editing.name, editing.note).then((ok) => ok && setEditing(null));
-                  }}
-                >
-                  <label className="block">
-                    <span className="mb-1 block text-[12px] font-medium text-ink-dim">Name</span>
-                    <input className={inputClass} value={editing.name} maxLength={120} onChange={(e) => setEditing({ ...editing, name: e.target.value })} />
-                  </label>
-                  <label className="block">
-                    <span className="mb-1 block text-[12px] font-medium text-ink-dim">What it’s for</span>
-                    <input className={inputClass} value={editing.note} maxLength={300} onChange={(e) => setEditing({ ...editing, note: e.target.value })} />
-                  </label>
-                  <div className="flex justify-end gap-2">
-                    <button type="button" className={small} onClick={() => setEditing(null)}>
-                      Cancel
-                    </button>
-                    <button type="submit" className={small} disabled={busy || !editing.name.trim()}>
-                      Save
-                    </button>
-                  </div>
-                </form>
+                <RecipeEditor
+                  recipe={recipe}
+                  catalog={catalog}
+                  view={view}
+                  edit={editing}
+                  busy={busy}
+                  onChange={setEditing}
+                  onCancel={() => setEditing(null)}
+                  onSave={() =>
+                    void onEdit(recipe, editing.rev, editing.name.trim(), editing.note.trim(), editPayload(editing, recipe, catalog)).then(
+                      (ok) => ok && setEditing(null),
+                    )
+                  }
+                />
               ) : (
                 <div className="flex items-start gap-3">
                   <button
@@ -104,8 +96,14 @@ export default function ManageRecipes({ recipes, busy, onRename, onDuplicate, on
               {!recipe.runs_here && !editingThis && <p className="mt-1 text-xs text-ink-dim">{recipe.why_not_here}</p>}
               {!editingThis && (
                 <div className="mt-2 flex flex-wrap items-center gap-1.5">
-                  <button type="button" className={small} disabled={busy} onClick={() => setEditing({ id: recipe.id, name: recipe.name, note: recipe.note })}>
-                    Rename
+                  <button
+                    type="button"
+                    className={small}
+                    disabled={busy}
+                    onClick={() => setEditing(openEdit(recipe))}
+                    data-capability="recipes.edit"
+                  >
+                    Edit
                   </button>
                   <button type="button" className={small} disabled={busy} onClick={() => void onDuplicate(recipe)}>
                     Duplicate

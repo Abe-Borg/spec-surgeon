@@ -118,7 +118,15 @@ more (`runs_in`): Safe recipes everywhere, Default ones in Default and Obliterat
 plans are its own buttons'), Obliterate ones only in Obliterate and listed only while Obliterate mode is shown. Safe
 mode lists its recipes under **My recipes** above the buttons, each a tile with its steps in order (greyed with the
 reason while a step needs a file that is not attached); Default and Obliterate list theirs beside the message box: the
-two last run as chips and **All recipes** with every one. **Manage** renames, duplicates and deletes them.
+two last run as chips and **All recipes** with every one. **Manage** duplicates and deletes them, and **Edit**
+changes one (`saved_recipes.Store.edit`): its name, what it is for, and its steps moved, removed or, for a button,
+given another form for the fields that read nothing attached (a template's placeholders and styles, a picture or a
+table are chosen in the run form). A step saved from a request is moved or removed whole and never rewritten: its words
+and plan are what the user approved (invariant 7). The edit is refused when the recipe's `revision` (name, note, steps)
+moved since the editor opened, so a second window's change is never written over; a run noted by `Store.ran` is not an
+edit. **Save as a recipe…** can instead add the ticked runs to the end of a saved recipe (**Add to a saved recipe**,
+`Store.append`); the chat says so, and names the mode the recipe moves to when a step moves it. The mode is always its
+steps' (`recipe_mode`, recomputed on every edit).
 
 Opening a recipe shows its run form: each step with what it keeps, whether what it needs is attached, **Change** (a
 button step's form, for this run) and **Run** (untick to skip a step this time); **Save these changes to the recipe**

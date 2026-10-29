@@ -226,6 +226,9 @@ jobs). Details: `docs/CONVERSATIONAL_DESKTOP.md`.
     (`runs_in`): a Default recipe is never offered in Safe mode, an Obliterate one runs only in Obliterate. A document a
     step cannot take is left untouched in Safe mode and goes on the to-do list in Default and Obliterate (no AI
     re-plans it); a recipe's run is never handed to Claude as a request (`_invalidate`, the journal's `recipe_run`).
+    Edited in Manage (`Store.edit`: name, note, steps kept in a new order, removed, or a button's form changed; a
+    plan step is moved or removed whole, never rewritten; refused when the recipe's `revision` moved since the editor
+    opened) and grown from the save dialog (`Store.append`, **Add to a saved recipe**); the mode is always its steps'.
     No export or import of recipe files (the owner's decision, 2026-10-29). Pinned by `tests/test_saved_recipes.py`.
   - `tutorial.py` — the guided tour's practice workspace (`docs/CONVERSATIONAL_DESKTOP.md`, "The guided tour"):
     `TutorialTask` (a `DocumentTask` without a journal over the bundled showcase in `examples/tutorial/`, which

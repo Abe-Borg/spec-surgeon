@@ -651,6 +651,13 @@ let savedRecipes = [
   },
 ];
 const RANK = { safe: 0, default: 1, obliterate: 2 };
+/** What an editor opened on (saved_recipes.revision): its name, note and steps, never when it last ran. */
+function revOf(r) {
+  const text = JSON.stringify({ name: r.name, note: r.note, steps: r.steps });
+  let h = 0;
+  for (let i = 0; i < text.length; i++) h = (h * 31 + text.charCodeAt(i)) | 0;
+  return (h >>> 0).toString(16);
+}
 function recipesOf(v) {
   return savedRecipes
     .map((r) => ({ ...r, mode: modeOfSteps(r.steps) }))
@@ -658,7 +665,7 @@ function recipesOf(v) {
     .map((r) => {
       const here = RANK[v.mode] >= RANK[r.mode];
       return {
-        ...r, needs: [...new Set(r.steps.flatMap((st) => st.needs))], runs_here: here,
+        ...r, rev: revOf(r), needs: [...new Set(r.steps.flatMap((st) => st.needs))], runs_here: here,
         why_not_here: here ? "" : r.mode === "obliterate" ? "It was saved in Obliterate mode and runs only there." : "It was saved in Default mode: Safe mode runs only recipes made of its own buttons.",
       };
     });
@@ -1453,10 +1460,20 @@ async function handle(req, res) {
       if (view.busy) return busyRefusal();
       const body = await readJson(req);
       const name = typeof body.name === "string" ? body.name.trim() : "";
-      if (!name) return json(res, 400, { error: "Type a name for the recipe." });
+      const target = body.into ? savedRecipes.find((r) => r.id === body.into) : null;
+      if (body.into && !target) return json(res, 400, { error: "There is no such recipe; it may have been deleted in another window." });
+      if (!name && !target) return json(res, 400, { error: "Type a name for the recipe." });
       const runs = (view.working.done ?? []).filter((d) => Array.isArray(body.runs) && body.runs.includes(d.id));
       if (!runs.length) return json(res, 400, { error: "Tick the changes to save; the list changed since the dialog opened." });
       const steps = runs.flatMap((d) => d.steps ?? []);
+      if (target) {
+        const before = modeOfSteps(target.steps);
+        target.steps = [...target.steps, ...steps];
+        const after = modeOfSteps(target.steps);
+        const moved = after === before ? "" : after === "default" ? " It is now a Default-mode recipe: it runs in Default and Obliterate mode." : after === "obliterate" ? " It is now an Obliterate recipe: it runs only in Obliterate mode." : "";
+        view.messages.push(msg("app", `Added ${steps.length} step${steps.length === 1 ? "" : "s"} to the recipe “${target.name}”: it has ${target.steps.length} now.${moved}`));
+        return json(res, 200, view);
+      }
       savedRecipes.push({ id: `r-${++seq}`, name, note: typeof body.note === "string" ? body.note.trim() : "", saved: new Date().toISOString(), last_run: "", last_documents: 0, steps });
       view.messages.push(msg("app", `Saved the recipe “${name}”: ${steps.length} step${steps.length === 1 ? "" : "s"}.`));
       return json(res, 200, view);
@@ -1469,6 +1486,22 @@ async function handle(req, res) {
       if (body.action === "rename") {
         if (typeof body.name !== "string" || !body.name.trim()) return json(res, 400, { error: "Type a name for the recipe." });
         savedRecipes[i] = { ...savedRecipes[i], name: body.name.trim(), note: typeof body.note === "string" ? body.note.trim() : savedRecipes[i].note };
+      } else if (body.action === "edit") {
+        const record = savedRecipes[i];
+        if (body.rev !== revOf(record)) return json(res, 400, { error: "The recipe changed since you opened it, perhaps in another window; open it again." });
+        if (typeof body.name !== "string" || !body.name.trim()) return json(res, 400, { error: "Type a name for the recipe." });
+        const entries = Array.isArray(body.steps) ? body.steps : [];
+        if (!entries.length) return json(res, 400, { error: "Keep at least one step, or delete the recipe." });
+        const seen = new Set();
+        const steps = [];
+        for (const entry of entries) {
+          const st = record.steps[entry?.step];
+          if (!st || seen.has(entry.step)) return json(res, 400, { error: "The recipe's steps could not be read." });
+          seen.add(entry.step);
+          if (entry.inputs && st.kind !== "button") return json(res, 400, { error: `Step ${entry.step + 1} was saved from a request and runs as you approved it; only a button's form can be changed.` });
+          steps.push(entry.inputs ? { ...st, inputs: entry.inputs } : st);
+        }
+        savedRecipes[i] = { ...record, name: body.name.trim(), note: typeof body.note === "string" ? body.note.trim() : record.note, steps };
       } else if (body.action === "duplicate") {
         savedRecipes.push({ ...savedRecipes[i], id: `r-${++seq}`, name: `${savedRecipes[i].name} (copy)`, saved: new Date().toISOString(), last_run: "", last_documents: 0 });
       } else if (body.action === "delete") {

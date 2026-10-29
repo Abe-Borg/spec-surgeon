@@ -137,6 +137,32 @@ try {
   await manage.getByText("(copy)", { exact: false }).waitFor();
   console.log("PASS Default mode runs a recipe from beside the message box and manages them");
 
+  // Edit: a recipe's steps reordered and one removed; the list then shows the edit.
+  await manage.getByRole("button", { name: "Edit" }).first().click();
+  const editor = manage.getByRole("form", { name: /^Edit / });
+  await editor.getByLabel("Name").fill("IFC, comments first");
+  await editor.getByRole("button", { name: "Move step 3 up" }).click();
+  await editor.getByRole("button", { name: "Remove" }).nth(2).click();
+  await editor.getByText("Removed when you save").waitFor();
+  if (process.env.SHOTS) await page.screenshot({ path: `${process.env.SHOTS}/recipe-editor.png` });
+  await editor.getByRole("button", { name: "Save" }).click();
+  await manage.getByRole("button", { name: /IFC, comments first/ }).click();
+  const listed = await manage.locator("ol").first().innerText();
+  assert.match(listed, /1\s*Match headers[\s\S]*2\s*Remove all comments/);
+  assert.doesNotMatch(listed, /Accept all/);
+  await manage.getByRole("button", { name: "Close" }).last().click();
+  console.log("PASS Edit reorders and removes a recipe's steps");
+
+  // Add to a saved recipe: the history's changes after a recipe's own steps.
+  await page.getByRole("button", { name: /Save as a recipe/ }).click();
+  const addDialog = page.getByRole("dialog", { name: "Save as a recipe" });
+  await addDialog.getByLabel("Add to a saved recipe").check();
+  await addDialog.getByLabel("The recipe to add them to").selectOption({ label: "IFC, comments first · 2 steps · SAFE" });
+  if (process.env.SHOTS) await page.screenshot({ path: `${process.env.SHOTS}/recipe-add-to.png` });
+  await addDialog.getByRole("button", { name: "Add to recipe" }).click();
+  await page.getByText("to the recipe “IFC, comments first”", { exact: false }).waitFor();
+  console.log("PASS Save as a recipe adds the changes to a saved recipe");
+
   assert.deepEqual(errors, []);
   console.log("PASS no lifecycle browser errors");
 } finally {

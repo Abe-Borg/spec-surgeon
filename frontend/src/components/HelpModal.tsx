@@ -134,7 +134,9 @@ function HowToUse({ onStartTourAt }: { onStartTourAt: (chapter: string) => void 
                 <Tag>Save as a recipe…</Tag>, on What you've done so far, names the buttons you ran and keeps them
                 with what you filled in. The recipe joins <Tag>My recipes</Tag> above the buttons: open it on other
                 documents, change a step's form or skip a step for this run, and one preview shows the pages after
-                every step. <Tag>Manage</Tag> renames, duplicates or deletes recipes.
+                every step. <Tag>Manage</Tag> duplicates or deletes recipes, and <Tag>Edit</Tag> changes one: its name,
+                what it is for, and its steps moved, removed or given another form. <Tag>Add to a saved recipe</Tag>,
+                in the save dialog, puts new changes after a recipe's steps.
               </>
             ),
           },
@@ -437,7 +439,8 @@ function Workflows() {
           "A recipe runs as one plan: every step is built from the documents attached now, checked by the same gate as any plan, and previewed once, with the pages after every step; one Create makes the copies, and Undo takes the whole recipe off. No AI is called.",
           "A step that needs a template, picture or table uses the one attached when it runs. A document a step cannot take is left untouched in Safe mode, and waits on your to-do list in Default and Obliterate, where you can ask the assistant about it.",
           "A recipe runs in its own mode and in any with fewer guardrails: Safe recipes everywhere, Default ones in Default and Obliterate, Obliterate ones only in Obliterate. A change Claude wrote a custom method for, or planned with values read from particular documents, cannot be kept, and the dialog says why.",
-          "Recipes are kept on this computer beside your settings, never with a document; Manage renames, duplicates or deletes them.",
+          "Recipes are kept on this computer beside your settings, never with a document; Manage duplicates or deletes them, and Edit changes one's name, what it is for and its steps (moved up or down, removed, or for a button given another form). A step saved from a request runs as you approved it: it is moved or removed whole, never rewritten.",
+          "Save as a recipe can also add the changes you tick to the end of a recipe you already have (Add to a saved recipe).",
         ]}
       />
       <Recipe

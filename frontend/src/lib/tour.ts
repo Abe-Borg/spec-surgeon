@@ -240,13 +240,13 @@ export const TOUR: readonly TourChapter[] = [
       },
       {
         id: "recipes",
-        capabilities: ["recipes.mine", "recipes.form", "recipes.manage"],
+        capabilities: ["recipes.mine", "recipes.form", "recipes.manage", "recipes.edit"],
         mode: "explanatory",
         anchor: "safe-recipes",
         placement: "right",
         title: "Your recipes, above the buttons",
         body:
-          "A recipe is changes you already ran, saved under a name; here, buttons and what you filled in. Its tile shows the steps in order. Open it to see each step's values, change one or skip a step for this run only; Preview then shows one set of pages after every step, and one Create makes the copies. No AI is called. In Default and Obliterate mode your recipes sit above the message box, where those saved from requests keep your words and the plans you approved. Manage renames, duplicates or deletes them. The practice workspace keeps none.",
+          "A recipe is changes you already ran, saved under a name; here, buttons and what you filled in. Its tile shows the steps in order. Open it to see each step's values, change one or skip a step for this run only; Preview then shows one set of pages after every step, and one Create makes the copies. No AI is called. In Default and Obliterate mode your recipes sit above the message box, where those saved from requests keep your words and the plans you approved. Manage duplicates or deletes them; Edit changes a name, a note, or the steps: moved, removed, or a button given another form. A step saved from a request is moved or removed whole. The practice workspace keeps none.",
       },
       {
         id: "form",
@@ -341,14 +341,14 @@ export const TOUR: readonly TourChapter[] = [
       },
       {
         id: "save-recipe",
-        capabilities: ["recipes.save"],
+        capabilities: ["recipes.save", "recipes.add"],
         mode: "explanatory",
         anchor: "save-recipe",
         needs: "done",
         placement: "left",
         title: "Save what you've done as a recipe",
         body:
-          "Save as a recipe keeps the changes this list holds under a name, oldest first, to run again on other documents: each button with its form, or each request with the plan you approved and the words it places. Untick one to leave it out. A change Claude wrote a custom method for, or one planned with values read from particular documents, cannot be kept and says why. A recipe keeps no document, template or picture: a step that needs one uses what is attached when it runs. It is kept on this computer, beside your settings. The practice changes are not yours, so the button is held still during the tour.",
+          "Save as a recipe keeps the changes this list holds under a name, oldest first, to run again on other documents: each button with its form, or each request with the plan you approved and the words it places. Untick one to leave it out; Add to a saved recipe puts them after a recipe's own steps. A change Claude wrote a custom method for, or one planned with values read from particular documents, cannot be kept and says why. A recipe keeps no document, template or picture: a step that needs one uses what is attached when it runs. It is kept on this computer, beside your settings. The practice changes are not yours, so the button is held still during the tour.",
       },
       {
         id: "export",

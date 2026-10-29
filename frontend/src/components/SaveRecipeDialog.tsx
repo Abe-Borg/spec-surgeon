@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
-import type { DoneStep, Recipe } from "../types";
-import { formChips, modeNote, modeOfSteps, needsText, savableRuns } from "../lib/savedRecipes";
+import type { DoneStep, Recipe, SavedRecipe } from "../types";
+import { MODE_BADGE, addedMode, formChips, modeNote, modeOfSteps, needsText, savableRuns, stepsText } from "../lib/savedRecipes";
 import { ModalShell, primaryBtn, quietBtn } from "./ModalShell";
 
 interface Props {
@@ -8,8 +8,11 @@ interface Props {
   done: DoneStep[];
   /** Safe mode's buttons, to say what a button step's form holds. */
   catalog: Recipe[];
+  /** The recipes already saved: the ticked changes can be added to the end of one instead. */
+  recipes: SavedRecipe[];
   busy: boolean;
-  onSave: (name: string, note: string, runs: string[]) => Promise<boolean>;
+  /** `into`: a saved recipe's id, to add the ticked changes to its end (the name and note are then its own). */
+  onSave: (name: string, note: string, runs: string[], into?: string) => Promise<boolean>;
   onClose: () => void;
 }
 
@@ -19,20 +22,29 @@ const inputClass =
 
 /**
  * Save as a recipe: a name, what it is for, and the runs of What you've done so far to keep, oldest first (every run a
- * recipe can keep is ticked; one it cannot keep says why and cannot be ticked). Each run shows what the recipe keeps of
- * it: a button and what its form held, or the user's words and the plan they approved, with the words it places.
+ * recipe can keep is ticked; one it cannot keep says why and cannot be ticked) — or, with **Add to a saved recipe**,
+ * those runs added to the end of a recipe already saved. Each run shows what the recipe keeps of it: a button and what
+ * its form held, or the user's words and the plan they approved, with the words it places.
  */
-export default function SaveRecipeDialog({ done, catalog, busy, onSave, onClose }: Props) {
+export default function SaveRecipeDialog({ done, catalog, recipes, busy, onSave, onClose }: Props) {
   const savable = useMemo(() => savableRuns(done), [done]);
   const [name, setName] = useState("");
   const [note, setNote] = useState("");
   const [ticked, setTicked] = useState<Set<string>>(() => new Set(savable.map((d) => d.id as string)));
   const [saving, setSaving] = useState(false);
+  const [into, setInto] = useState<string>("");
+  const target = into ? recipes.find((r) => r.id === into) : undefined;
   const chosen = done.filter((d) => d.id && ticked.has(d.id));
   const steps = chosen.flatMap((d) => d.steps ?? []);
-  const mode = modeOfSteps(steps);
+  const mode = target ? addedMode(target, steps) : modeOfSteps(steps);
   const places = [...new Set(steps.flatMap((s) => s.places))];
-  const reason = !name.trim() ? "Type a name for the recipe." : steps.length === 0 ? "Tick at least one change to save." : "";
+  const reason = into && !target
+    ? "Choose the recipe to add them to."
+    : !into && !name.trim()
+      ? "Type a name for the recipe."
+      : steps.length === 0
+        ? "Tick at least one change to save."
+        : "";
   const toggle = (id: string) =>
     setTicked((t) => {
       const next = new Set(t);
@@ -44,7 +56,7 @@ export default function SaveRecipeDialog({ done, catalog, busy, onSave, onClose 
     if (reason || saving) return;
     setSaving(true);
     try {
-      if (await onSave(name.trim(), note.trim(), chosen.map((d) => d.id as string))) onClose();
+      if (await onSave(name.trim(), note.trim(), chosen.map((d) => d.id as string), target?.id)) onClose();
     } finally {
       setSaving(false);
     }
@@ -59,16 +71,46 @@ export default function SaveRecipeDialog({ done, catalog, busy, onSave, onClose 
           void save();
         }}
       >
-        <label className="block">
-          <span className="mb-1.5 block text-[12.5px] font-semibold text-ink">Name</span>
-          <input className={inputClass} value={name} maxLength={120} placeholder="Division 21 · Issued for Construction" onChange={(e) => setName(e.target.value)} />
-        </label>
-        <label className="block">
-          <span className="mb-1.5 block text-[12.5px] font-semibold text-ink">
-            What it’s for <span className="font-normal text-ink-dim">(optional)</span>
-          </span>
-          <input className={inputClass} value={note} maxLength={300} onChange={(e) => setNote(e.target.value)} />
-        </label>
+        {recipes.length > 0 && (
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 text-[13px] text-ink" role="radiogroup" aria-label="Save as">
+            <label className="flex cursor-pointer items-center gap-1.5">
+              <input type="radio" name="save-as" className="accent-[var(--color-accent)]" checked={!into} onChange={() => setInto("")} />
+              A new recipe
+            </label>
+            <label className="flex cursor-pointer items-center gap-1.5" data-capability="recipes.add">
+              <input type="radio" name="save-as" className="accent-[var(--color-accent)]" checked={!!into} onChange={() => setInto(recipes[0].id)} />
+              Add to a saved recipe
+            </label>
+          </div>
+        )}
+        {into ? (
+          <label className="block">
+            <span className="mb-1.5 block text-[12.5px] font-semibold text-ink">Recipe</span>
+            <select className={inputClass} aria-label="The recipe to add them to" value={into} onChange={(e) => setInto(e.target.value)}>
+              {recipes.map((r) => (
+                <option key={r.id} value={r.id}>
+                  {r.name} · {stepsText(r.steps.length)} · {MODE_BADGE[r.mode]}
+                </option>
+              ))}
+            </select>
+            <span className="mt-1 block text-[12px] leading-snug text-ink-dim">
+              The ticked changes are added after its steps, in the order you ran them. Edit in Manage reorders or removes any.
+            </span>
+          </label>
+        ) : (
+          <>
+            <label className="block">
+              <span className="mb-1.5 block text-[12.5px] font-semibold text-ink">Name</span>
+              <input className={inputClass} value={name} maxLength={120} placeholder="Division 21 · Issued for Construction" onChange={(e) => setName(e.target.value)} />
+            </label>
+            <label className="block">
+              <span className="mb-1.5 block text-[12.5px] font-semibold text-ink">
+                What it’s for <span className="font-normal text-ink-dim">(optional)</span>
+              </span>
+              <input className={inputClass} value={note} maxLength={300} onChange={(e) => setNote(e.target.value)} />
+            </label>
+          </>
+        )}
 
         <div>
           <div className="mb-2 flex items-baseline justify-between gap-3">
@@ -147,6 +189,7 @@ export default function SaveRecipeDialog({ done, catalog, busy, onSave, onClose 
           ) : null}
           It keeps the buttons and what you filled in, or your words and the plans you approved — never your documents, the
           template or a picture. Kept on this computer, beside your settings. {steps.length > 0 ? modeNote(mode) : ""}
+          {target && steps.length > 0 && mode !== target.mode ? ` “${target.name}” becomes ${MODE_BADGE[mode]} with them.` : ""}
         </p>
 
         <div className="flex items-center justify-end gap-2 border-t border-edge pt-3">
@@ -155,7 +198,7 @@ export default function SaveRecipeDialog({ done, catalog, busy, onSave, onClose 
             Cancel
           </button>
           <button type="submit" className={primaryBtn} disabled={!!reason || saving || busy} data-capability="recipes.save">
-            Save recipe
+            {into ? "Add to recipe" : "Save recipe"}
           </button>
         </div>
       </form>

@@ -246,3 +246,110 @@ export function changedForms(recipe: SavedRecipe, run: RecipeRunState, catalog: 
     return button ? payload(button, inputs) : inputs;
   });
 }
+
+// --- Editing a saved recipe (Manage → Edit; `POST /api/saved-recipes/change`, action `edit`) -------------------------
+
+/** The editor: the name, what it is for, and every saved step in the order it will have — each with the step it was
+ *  (`from`, counted from 0), the form a button step keeps, and whether it is removed (greyed until saved, put back with
+ *  one click); which step's form is open; and `rev`, the recipe as the editor opened it (an edit made after another
+ *  window changed it is refused). */
+export interface RecipeEditState {
+  id: string;
+  rev: string;
+  name: string;
+  note: string;
+  steps: { from: number; inputs: RecipeInputs | null; removed: boolean }[];
+  open: number | null;
+}
+
+/** The kinds of field the editor changes: the ones that read nothing attached. A template's placeholders and styles,
+ *  and a picture or table, are chosen among the files attached, so they are changed in the recipe's run form. */
+const EDITABLE_KINDS = new Set(["text", "lines", "pairs", "choice", "check"]);
+
+/** A button's fields the editor shows to change. */
+export function editableFields(button: Recipe): Recipe["fields"] {
+  return button.fields.filter((f) => EDITABLE_KINDS.has(f.kind));
+}
+
+/** A button has fields the editor leaves to the run form (the template, picture or table it reads). */
+export function attachedFields(button: Recipe): boolean {
+  return button.fields.some((f) => !EDITABLE_KINDS.has(f.kind));
+}
+
+/** The editor a recipe opens with: every step as saved, in its order. */
+export function openEdit(recipe: SavedRecipe): RecipeEditState {
+  return {
+    id: recipe.id,
+    rev: recipe.rev ?? "",
+    name: recipe.name,
+    note: recipe.note,
+    steps: recipe.steps.map((step, from) => ({ from, inputs: step.kind === "button" ? { ...(step.inputs ?? {}) } : null, removed: false })),
+    open: null,
+  };
+}
+
+/** The step at `i` moved one place up (`-1`) or down (`1`); the open form follows its step. */
+export function moveStep(edit: RecipeEditState, i: number, by: -1 | 1): RecipeEditState {
+  const j = i + by;
+  if (i < 0 || j < 0 || i >= edit.steps.length || j >= edit.steps.length) return edit;
+  const steps = edit.steps.slice();
+  [steps[i], steps[j]] = [steps[j], steps[i]];
+  const open = edit.open === i ? j : edit.open === j ? i : edit.open;
+  return { ...edit, steps, open };
+}
+
+/** The step at `i` removed, or put back. */
+export function setRemoved(edit: RecipeEditState, i: number, removed: boolean): RecipeEditState {
+  return {
+    ...edit,
+    steps: edit.steps.map((s, j) => (j === i ? { ...s, removed } : s)),
+    open: removed && edit.open === i ? null : edit.open,
+  };
+}
+
+/** The steps the recipe keeps after the edit, as `RecipeStep`s in their new order (to say its mode and what it needs). */
+export function editedSteps(edit: RecipeEditState, recipe: SavedRecipe): RecipeStep[] {
+  return edit.steps.filter((s) => !s.removed && recipe.steps[s.from]).map((s) => recipe.steps[s.from]);
+}
+
+/** Why the edit cannot be saved, in one sentence naming the step; "" when it can. */
+export function editProblem(edit: RecipeEditState, recipe: SavedRecipe, catalog: Recipe[]): string {
+  if (recipe.rev && edit.rev && recipe.rev !== edit.rev) return "The recipe changed since you opened it, perhaps in another window; cancel and open it again.";
+  if (!edit.name.trim()) return "Type a name for the recipe.";
+  if (!edit.steps.some((s) => !s.removed)) return "Keep at least one step, or delete the recipe.";
+  for (let i = 0; i < edit.steps.length; i++) {
+    const { from, inputs, removed } = edit.steps[i];
+    const step = recipe.steps[from];
+    if (removed || !step || step.kind !== "button" || !inputs) continue;
+    const button = catalog.find((b) => b.id === step.button);
+    if (!button) continue;
+    const problem = missing({ ...button, fields: editableFields(button) }, inputs);
+    if (problem) return `Step ${i + 1}: ${problem}`;
+  }
+  return "";
+}
+
+/** The edit differs from the recipe as saved: a name, a note, a step's place, a removed step or a changed form. */
+export function editChanged(edit: RecipeEditState, recipe: SavedRecipe): boolean {
+  if (edit.name.trim() !== recipe.name || edit.note.trim() !== recipe.note) return true;
+  if (edit.steps.some((s, i) => s.removed || s.from !== i)) return true;
+  return edit.steps.some((s) => s.inputs && JSON.stringify(s.inputs) !== JSON.stringify(recipe.steps[s.from]?.inputs ?? {}));
+}
+
+/** What Save sends: the kept steps in their new order, each with the step it was and, for a button whose form changed,
+ *  that form (empty rows dropped). */
+export function editPayload(edit: RecipeEditState, recipe: SavedRecipe, catalog: Recipe[]): { step: number; inputs?: RecipeInputs }[] {
+  return edit.steps
+    .filter((s) => !s.removed)
+    .map(({ from, inputs }) => {
+      const step = recipe.steps[from];
+      if (!step || step.kind !== "button" || !inputs || JSON.stringify(inputs) === JSON.stringify(step.inputs ?? {})) return { step: from };
+      const button = catalog.find((b) => b.id === step.button);
+      return { step: from, inputs: button ? payload(button, inputs) : inputs };
+    });
+}
+
+/** The mode a saved recipe would belong to with these steps added to its end (Save as a recipe → Add to). */
+export function addedMode(target: SavedRecipe, steps: RecipeStep[]): RecipeMode {
+  return modeOfSteps([...target.steps, ...steps]);
+}

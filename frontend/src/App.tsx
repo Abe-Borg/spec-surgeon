@@ -429,13 +429,14 @@ export default function App() {
     [answered],
   );
   const onSaveRecipe = useCallback(
-    (name: string, note: string, runs: string[]) => answered(api.saveRecipe(name, note, runs)),
+    (name: string, note: string, runs: string[], into?: string) => answered(api.saveRecipe(name, note, runs, into)),
     [answered],
   );
   const onOpenSaveRecipe = useCallback(() => setSavingRecipe(true), []);
   const onManageRecipes = useCallback(() => setManagingRecipes(true), []);
-  const onRenameRecipe = useCallback(
-    (recipe: SavedRecipe, name: string, note: string) => answered(api.changeRecipe("rename", recipe.id, { name, note })),
+  const onEditRecipe = useCallback(
+    (recipe: SavedRecipe, rev: string, name: string, note: string, steps: { step: number; inputs?: RecipeInputs }[]) =>
+      answered(api.editRecipe(recipe.id, rev, name, note, steps)),
     [answered],
   );
   const onDuplicateRecipe = useCallback((recipe: SavedRecipe) => answered(api.changeRecipe("duplicate", recipe.id)), [answered]);
@@ -798,6 +799,7 @@ export default function App() {
         <SaveRecipeDialog
           done={view.working.done ?? []}
           catalog={recipes}
+          recipes={view.saved_recipes}
           busy={busy}
           onSave={onSaveRecipe}
           onClose={() => setSavingRecipe(false)}
@@ -806,8 +808,10 @@ export default function App() {
       {managingRecipes && (
         <ManageRecipes
           recipes={view.saved_recipes}
+          catalog={recipes}
+          view={view}
           busy={busy}
-          onRename={onRenameRecipe}
+          onEdit={onEditRecipe}
           onDuplicate={onDuplicateRecipe}
           onDelete={onDeleteRecipe}
           onClose={() => setManagingRecipes(false)}

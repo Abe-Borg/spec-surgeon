@@ -402,6 +402,9 @@ export interface RecipeStep {
 /** A saved recipe as the window lists it (docs/WEB_API.md, `saved_recipes`). */
 export interface SavedRecipe {
   id: string;
+  /** The recipe as listed (its name, what it is for and its steps): an edit sends it back and is refused when another
+   *  window changed the recipe since (`saved_recipes.revision`). */
+  rev?: string;
   name: string;
   /** What it is for, as the user typed it; "" when nothing was. */
   note: string;

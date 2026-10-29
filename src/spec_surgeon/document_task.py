@@ -1579,9 +1579,10 @@ class DocumentTask:
         return [saved_recipes.recipe_view(r, self.mode) for r in self.recipes.all()
                 if r["mode"] != saved_recipes.OBLITERATE or self.obliterate_allowed]
 
-    def save_recipe(self, name, note, run_ids) -> Dict[str, Any]:
+    def save_recipe(self, name, note, run_ids, into=None) -> Dict[str, Any]:
         """Save as a recipe: the runs of What you've done so far the user ticked, oldest first, as one recipe of their
-        steps (a recipe's run is its steps again). Every ticked run must be one a recipe can keep."""
+        steps (a recipe's run is its steps again), or (``into``, a saved recipe's id) added to the end of that recipe.
+        Every ticked run must be one a recipe can keep."""
         if self.recipes is None:
             raise ValueError("Recipes are not available here.")
         if not isinstance(run_ids, list) or not all(isinstance(i, str) for i in run_ids):
@@ -1599,6 +1600,8 @@ class DocumentTask:
                 raise ValueError(f"“{run['request']}” cannot be saved: "
                                  f"{kept.get('why_not') or saved_recipes.WHY_NOT_KEPT}")
             steps += [dict(st) for st in kept["steps"]]
+        if into:
+            return self._add_to_recipe(str(into), steps)
         try:
             record = self.recipes.add(name, note, steps)
         except saved_recipes.RecipeRunError as e:
@@ -1611,14 +1614,34 @@ class DocumentTask:
         self.save()
         return record
 
-    def change_recipe(self, action: str, recipe_id: str, *, name=None, note=None, inputs=None) -> None:
-        """Manage recipes: ``rename`` (and what it is for), ``duplicate``, ``delete``, or ``inputs`` (a Safe recipe's
-        buttons take the forms its run form holds)."""
+    def _add_to_recipe(self, recipe_id: str, steps: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """The ticked runs' steps added to the end of a saved recipe; the chat says how many it has now, and the mode
+        it belongs to when a step moved it to one with fewer guardrails."""
+        try:
+            before = self.recipes.get(recipe_id)
+            record = self.recipes.append(recipe_id, steps)
+        except saved_recipes.RecipeRunError as e:
+            raise ValueError(str(e)) from e
+        total = len(record["steps"])
+        moved = {saved_recipes.DEFAULT: " It is now a Default-mode recipe: it runs in Default and Obliterate mode.",
+                 saved_recipes.OBLITERATE: " It is now an Obliterate recipe: it runs only in Obliterate mode."}
+        self.say(f"Added {len(steps)} step{'s' if len(steps) != 1 else ''} to the recipe “{record['name']}”: it has "
+                 f"{total} now." + (moved.get(record["mode"], "") if record["mode"] != before["mode"] else ""))
+        self.save()
+        return record
+
+    def change_recipe(self, action: str, recipe_id: str, *, name=None, note=None, inputs=None, steps=None,
+                      rev=None) -> None:
+        """Manage recipes: ``rename`` (and what it is for), ``edit`` (name, what it is for and ``steps``, on the
+        recipe as the editor opened it, ``rev``: ``saved_recipes.Store.edit``), ``duplicate``, ``delete``, or ``inputs``
+        (a Safe recipe's buttons take the forms its run form holds)."""
         if self.recipes is None:
             raise ValueError("Recipes are not available here.")
         try:
             if action == "rename":
                 self.recipes.rename(str(recipe_id), name, note)
+            elif action == "edit":
+                self.recipes.edit(str(recipe_id), rev, name, note, steps)
             elif action == "duplicate":
                 self.recipes.duplicate(str(recipe_id))
             elif action == "delete":
