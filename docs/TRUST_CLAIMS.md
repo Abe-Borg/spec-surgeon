@@ -60,6 +60,8 @@ PDF (Clean), the clean ones a fixed plan the menu choice approves, run over the 
 copy (A32 now Export's clean kinds, A34, T1, T8, T59, B19, T31, 1e, 1f, 1g); Export ready whenever the window lists
 copies, those a run still in recovery delivered included (A34); Safe mode's Save clean PDFs button retired for it
 (A24's buttons); and the assistants told that Export makes the PDFs.
+Updated 2026-10-29 with **Remove all documents** (A38): every Word document out of the conversation at once, after
+the page asks once; the template, the pictures and tables and the files themselves stay.
 Paths are relative to `src/spec_surgeon/` unless they start with `frontend/`, `tests/` or `docs/`.
 
 **Verification column:**
@@ -117,6 +119,7 @@ Paths are relative to `src/spec_surgeon/` unless they start with `frontend/`, `t
 | A35 | Untick a find-and-replace occurrence in the preview's list, then **Update the preview** | page state until the button; then `POST /api/occurrences` → `DocumentTask._occurrences`: every `replace_table` op of the previewed spec gets the unticked occurrences of its own as its `skip` list, the spec passes the gate again with those keys as the ones recorded from the unticks (`compiler.compose_submission(skips=)`), and the preview is made again on the same documents (`Session.make_preview`; in Safe mode with no AI step). The one button is held back on the page while the ticks differ from the preview's | none in Safe mode; in Default mode the preview's visual check, as any preview |
 | A37 | In Safe mode, the note above the buttons: **Hide** (it folds to one line) and **What is Safe mode?** (it opens again); **Add a Claude API key** (no key yet) and **Switch to Default mode**, in the note and in the line under the buttons | `POST /api/settings` `{safe_note_hidden}` → `Settings.safe_note_hidden`, kept in `settings.json` and carried by every view (`safe_note_hidden`); Add a Claude API key opens Settings (A1 adds the key); Switch to Default mode is `POST /api/mode` as A23. The note's words: `frontend/src/lib/safeNote.ts`, which depend only on whether a key is set (the view's `connection.ready`) | none |
 | A36 | **Add a folder of documents** | `POST /api/attach-folder` → the native folder dialog (`shell.pick_folder`) → `DocumentTask.attach_folder`: the folder's own `.docx` files attached through `attach` (lock files skipped, subfolders not entered, the app's own folders refused) | none |
+| A38 | **Remove all documents** (with two or more documents listed), then **Remove all** in the confirmation | `POST /api/remove-documents` → `DocumentTask.remove_documents`: each Word document (a refused one too) through `DocumentTask.remove`, as its ✕ would; the template and the pictures and tables stay; one app message says how many; refused while work runs | none |
 
 Count: 33 actions.
 

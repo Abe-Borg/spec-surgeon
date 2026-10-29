@@ -33,6 +33,8 @@ interface Props {
   /** Add a folder of documents (the native folder dialog). */
   onAddFolder: () => void;
   onRemove: (attachment: Attachment) => void;
+  /** Remove all documents: every Word document out of this conversation (the template and pictures stay). */
+  onRemoveAll: () => void;
   onOpen: (path: string) => void;
   onStartOver: () => void;
   /** Undo the last button (Safe) or change (Default, Obliterate): the working set back to the copies from before it. */
@@ -108,6 +110,7 @@ function Workbench({
   onAdd,
   onAddFolder,
   onRemove,
+  onRemoveAll,
   onOpen,
   onStartOver,
   onUndo,
@@ -157,6 +160,8 @@ function Workbench({
           onAdd={onAdd}
           onAddFolder={onAddFolder}
           onRemove={onRemove}
+          onRemoveAll={onRemoveAll}
+          hasCopies={(view.working?.generation ?? 0) > 0}
         />
 
         {view.samples.length === 0 && view.results.length === 0 && (busy || !hasPlan) && (
