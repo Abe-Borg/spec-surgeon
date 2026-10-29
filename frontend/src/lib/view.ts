@@ -83,7 +83,9 @@ export type UiAction =
   /** The stream ended without `done` or `error` (a dropped connection); the caller refetches the view. */
   | { type: "job_ended" }
   /** The job could not even start, or the stream broke with an exception. */
-  | { type: "job_failed"; message: string };
+  | { type: "job_failed"; message: string }
+  /** New conversation or Start over was accepted: the last job's failure belonged to what was reset. */
+  | { type: "reset" };
 
 export const EMPTY_VIEW: View = {
   version: "",
@@ -296,6 +298,8 @@ export function reduce(state: UiState, action: UiAction): UiState {
         error: action.message || "The work could not finish.",
         view: { ...state.view, busy: false },
       };
+    case "reset":
+      return { ...state, error: null };
     case "event":
       return reduceEvent(state, action.event);
     default:

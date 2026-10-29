@@ -7,6 +7,7 @@ import test from "node:test";
 
 import type { JobEvent, Message, View } from "../src/types.ts";
 import { EMPTY_VIEW, INITIAL_STATE, normalizeView, notesOf, reduce, type UiState } from "../src/lib/view.ts";
+import { transcript } from "../src/lib/chat.ts";
 
 const message = (id: string, role: Message["role"], text: string): Message => ({ id, role, text, at: 1 });
 
@@ -238,6 +239,19 @@ test("a job that fails to start reports its message and leaves the page idle", (
   assert.equal(state.error, "busy");
   assert.equal(state.view.busy, false);
   assert.equal(state.live, null);
+});
+
+test("a failure stays through later views, and a New conversation or Start over takes it away", () => {
+  let state = reduce(loaded({ mode: "safe" }), { type: "job_started", userText: null });
+  state = reduce(state, { type: "job_failed", message: "a file or the plan changed since the preview" });
+  // the view fetched after the failure keeps the note: it belongs to the job, not to the view
+  state = reduce(state, { type: "view", view: view({ mode: "safe" }) });
+  assert.equal(state.error, "a file or the plan changed since the preview");
+  // the page resets, then the reset's view arrives (App.tsx applyView: onApplied first)
+  state = reduce(state, { type: "reset" });
+  state = reduce(state, { type: "view", view: view({ mode: "safe" }) });
+  assert.equal(state.error, null);
+  assert.deepEqual(transcript(state).filter((item) => item.kind === "error"), []);
 });
 
 test("asides survive the authoritative view, keyed by message id", () => {

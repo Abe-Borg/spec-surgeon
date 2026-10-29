@@ -53,6 +53,25 @@ try {
   assert.equal(await box.inputValue(), "");
   console.log("PASS New conversation clears both modes only after the server accepts the reset");
 
+  // A saved recipe's run form open and its run refused: New conversation takes both away, as the owner saw they did not.
+  await load("safe");
+  await page.getByRole("region", { name: "My recipes" }).getByRole("button", { name: /Division 21/ }).click();
+  const runForm = page.getByLabel("Division 21 · Issued for Construction", { exact: true });
+  await runForm.waitFor();
+  await runForm.getByRole("checkbox", { name: "Run" }).first().uncheck(); // its template's slots are not filled in
+  const refused = "a file or the plan changed since the preview — check the documents again";
+  await page.route("**/api/saved-recipes/run", (route) => route.fulfill({
+    status: 409, contentType: "application/json", body: JSON.stringify({ error: refused }),
+  }));
+  await runForm.getByRole("button", { name: /^Preview / }).click();
+  await page.getByText(refused).waitFor();
+  await page.unroute("**/api/saved-recipes/run");
+  await reset.click();
+  await page.getByRole("button", { name: "Find and replace", exact: true }).waitFor();
+  assert.equal(await runForm.count(), 0, "New conversation closes a saved recipe's run form");
+  assert.equal(await page.getByText(refused).count(), 0, "New conversation clears the last job's failure");
+  console.log("PASS New conversation closes a saved recipe's run form and clears the last failure");
+
   await load("safe-done");
   await page.getByRole("button", { name: "Add or remove a watermark", exact: true }).click();
   await watermark.fill("DRAFT3");
