@@ -15,6 +15,7 @@ export const END_USER_CAPABILITIES = [
   "help.topics",
   "header.modes",
   "header.spending",
+  "header.context",
   "header.stop",
   "header.connection",
   "header.export",

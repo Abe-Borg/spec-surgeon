@@ -141,6 +141,8 @@ class Session:
     recovery_attempts: Optional[int] = None       # candidate attempts per problem group in the recovery an approved
                                                   # outcome plan runs (the window's); None: the conversation's own
     conversation: Any = None                      # conversation.Conversation of the current request
+    context_observer: Any = None                  # hears each of its context readings (``Conversation.on_context``):
+                                                  # the window's top-bar gauge (DocumentTask)
     turn: Any = None                              # its last conversation.Turn
     chat_dir: Optional[Path] = None               # the session folder holding the conversation's records
                                                   # (conversation.json, compile.json); it follows each new folder
@@ -337,7 +339,8 @@ class Session:
                                          work_dir=out / "chat", log=log, continuous_recovery=True,
                                          word_sources=self.replay_word_sources, input_files=self.inputs,
                                          history=list(history or []), fresh=list(fresh or []), context=context or "",
-                                         todo=list(todo or []), earlier=list(earlier or []), unguarded=self.unguarded)
+                                         todo=list(todo or []), earlier=list(earlier or []), unguarded=self.unguarded,
+                                         on_context=self.context_observer)
         try:
             turn = self.conversation.start()
         except Exception:

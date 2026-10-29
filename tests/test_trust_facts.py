@@ -106,6 +106,9 @@ def expected() -> dict:
     return {
         "model": one(r'os\.environ\.get\("SPEC_SURGEON_MODEL", "([^"]+)"\)', llm_src, "llm.DEFAULT_MODEL"),
         "maxOutputTokens": const("resources.py", "DEFAULT_MAX_OUTPUT_TOKENS"),
+        "contextWindowTokens": const("llm.py", "CONTEXT_WINDOWS")[
+            one(r'os\.environ\.get\("SPEC_SURGEON_MODEL", "([^"]+)"\)', llm_src, "llm.DEFAULT_MODEL")],
+        "contextRolloverTokens": const("resources.py", "DEFAULT_CONTEXT_TOKENS"),
         "conversationEffort": const("document_task.py", "CONVERSATION_EFFORT"),
         "recoveryEffort": const("document_task.py", "RECOVERY_EFFORT"),
         "codegenEffort": const("resources.py", "CODEGEN_EFFORT"),
@@ -270,7 +273,8 @@ def test_the_ledger_covers_the_facts_and_the_rule():
     assert "The trust surfaces are a contract" in claude
     for key in ("DEFAULT_SPENDING_LIMIT_USD", "AUTO_STEPS", "CHECK_INTERVAL", "SANDBOX_TIMEOUT", "DEFAULT_MEMORY_MB",
                 "MAX_CASES", "STOPPED_OUTPUT_RATE", "RETRY_DELAYS", "CONVERSATION_EFFORT", "RECOVERY_EFFORT",
-                "CODEGEN_EFFORT", "UNGUARDED_CHECK_ROUNDS", "STREAMED_TOOLS", "REGEX_TIMEOUT_S", "MAX_PATTERN_CHARS"):
+                "CODEGEN_EFFORT", "UNGUARDED_CHECK_ROUNDS", "STREAMED_TOOLS", "REGEX_TIMEOUT_S", "MAX_PATTERN_CHARS",
+                "CONTEXT_WINDOWS", "DEFAULT_CONTEXT_TOKENS"):
         assert key in ledger, f"the ledger names no source for {key}"
 
 

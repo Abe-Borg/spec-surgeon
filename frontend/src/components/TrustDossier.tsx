@@ -414,7 +414,12 @@ function Dossier() {
           as it is written; the app checks that what arrived is complete before acting on it, and asks again when it
           is not. The app sends no temperature (randomness) setting, so the model’s defaults apply. The instructions and the operation
           catalog are cached by Anthropic for an hour, and the growing conversation for the default five minutes, so a
-          follow-up reads them instead of paying full price again.
+          follow-up reads them instead of paying full price again. A pill in the top bar counts the context the
+          conversation holds, as Anthropic counted it at its last step, against the model’s{" "}
+          {grouped(F.contextWindowTokens)}-token window: a measurement from what each answer reports, never an extra
+          call. Past about {grouped(F.contextRolloverTokens)} tokens by the app’s own estimate, the conversation is
+          sealed on your computer and goes on in a fresh one that carries your request, your decisions and the approved
+          words; Claude can still read the sealed part, and nothing in it approves anything.
         </P>
         <Note title="Four things about the model you should know" tone="warn">
           <Bullets

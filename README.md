@@ -74,10 +74,11 @@ are your documents (optionally with one template) and the before/after pages. Th
 **How to use**, **Workflows** (the typical operations of each mode, with whether the app can do each, and recipes for
 the usual jobs), **How it works** and **About** (the version, the model, the release notes, the license,
 **Check for updates**, **Open diagnostic logs** and **Save a diagnostic bundle**) — beside a line saying what the conversation works on ("3
-documents · 1 template · building on your copies"), the estimated spending, the connection, **New conversation**
-and Settings. On a narrower window (1280 px wide, say) the top bar says the same in fewer words, one step at a time
-until it fits on one line: the context line goes first, then words such as "this conversation", and the help topics
-become **Guide**, **Workflows**, **Mechanics**, **Trust** and **About** (the full name on hover).
+documents · 1 template · building on your copies"), the estimated spending, the context the assistant's conversation
+holds (below), the connection, **New conversation** and Settings. On a narrower window (1280 px wide, say) the top bar says the same in fewer words, one step at a time
+until it fits on one line: the context line goes first, then words such as "this conversation" and "context", and the
+help topics become **Guide**, **Workflows**, **Mechanics**, **Trust** and **About** (the full name on hover); on a
+narrow window the context pill goes too.
 
 **New to the window? Take the guided tour.** **Tour** in the top bar, the chip at the top of an empty conversation,
 or **Help → How to use → Start the guided tour** walks through every part of the window, chapter by chapter, on
@@ -310,7 +311,16 @@ hour, so a follow-up request reads it instead of paying for it again). While Cla
 plan, its words reach the chat as they are written. The
 header shows the estimated spending as it accrues, and while work runs a **Stop** button beside it is the kill
 switch: it cuts off the AI step that is running at once and starts no other (the stop button in the chat does the
-same). **Settings → Spending check** is the most one request (a message, a pick, an approval) may spend, as the app
+same). Beside them, once the assistant has worked, a pill such as **142k / 1M context** (adapted from Build-a-Spec's)
+counts the context its conversation holds, as Anthropic counted it at the last step (the whole prompt plus Claude's
+answer), against the model's context window; hover it for the exact count, the share of the window, and what happens
+to a long conversation: past about 900,000 tokens by the app's own estimate it is sealed on your computer and goes on
+in a fresh conversation that carries your request, your decisions and the approved words, and Claude can still read
+the sealed part. Only the conversation you talk to moves it (writing a custom method, outcome planning, recovery and
+the visual check keep contexts of their own). Each request starts the assistant on a fresh conversation, so once a
+request ends the pill turns faint and stands for the one before until your next message. It is a measurement read
+from what each answer already reports: no extra call, nothing spent, nothing kept. Safe mode, which calls no AI,
+shows none. **Settings → Spending check** is the most one request (a message, a pick, an approval) may spend, as the app
 estimates it: $20 until you type another amount, or **Turn off** for none. Before each AI step the app adds the most
 that step could cost to what the request has spent, and a step that could pass the amount is not started: the work
 pauses with its progress saved, and **Continue** allows the amount again and picks the request up where it stopped.

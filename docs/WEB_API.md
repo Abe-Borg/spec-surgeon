@@ -22,7 +22,8 @@ that ends a job is authoritative.
   "busy": false,
   "stage": "empty | question | preview | done | budget | resume",
   "connection": {"ready": true, "origin": "saved | environment | session | none"},
-  "cost": {"usd": 0.12, "text": "about $0.12", "calls": 3, "fast": false, "request": 0.04, "limit": 20.0},
+  "cost": {"usd": 0.12, "text": "about $0.12", "calls": 3, "fast": false, "request": 0.04, "limit": 20.0,
+           "context": {"tokens": 142304, "window": 1000000, "rollover": 900000, "live": true}},
   "attachments": [
     {"path": "C:/Specs/21 13 13.docx", "name": "21 13 13.docx", "kind": "document | template | reference",
      "state": "ok | note | refused", "notes": ["Numbers are typed by hand, not automatic list numbering."],
@@ -247,6 +248,15 @@ Rules the page relies on:
 - `cost.fast` is true while fast mode is in effect (`llm.fast_for(llm.DEFAULT_MODEL)`: Settings → Fast responses
   is on, the model is served fast, and Anthropic has not refused fast mode for this key): the spending pill then says
   "Fast". An older server leaves it out.
+- `cost.context` is the context gauge beside the spending (`DocumentTask._context_view`; a measurement, never
+  spending): `tokens`, the conversation's context at its last step as Anthropic counted it (`llm.context_tokens`: the
+  request's input, cache writes and cache reads plus the answer's output, which the history keeps); `window`, the
+  model's context window (`llm.CONTEXT_WINDOWS`; `null` for a model the table lacks); `rollover`, the app's estimate past
+  which the history is sealed and goes on in a fresh epoch (`Conversation.max_context_tokens`); `live`, whether that
+  conversation is still the open request's (a request that ends ends its conversation, and the reading then stands for
+  the one before until the next step). Only the chat's own calls move it, and a `cost` event carries it as each step
+  ends. `null` before the first step of this window's conversation (a New conversation, a restored window); an older
+  server leaves it out. The page shows it as "142k / 1M context", none in Safe mode.
 - `update.manual_result` is the answer to the last check the user asked for (About → Check for updates): "You're up
   to date — …", "No release has been published yet." or "Couldn't check for updates: …". `POST /api/update/check`
   clears it when the check starts, so About shows "Checking for updates…" until it is written again or `state`
@@ -344,7 +354,7 @@ Any report is a sign of life: a showing page (`visible`) that sends nothing for 
 | `samples` | `samples`, `occurrences`, `warnings`, `worth_knowing`, `blocking` | previews are in (`occurrences` and `worth_knowing` as the view carries them; absent from an older server) |
 | `results` | `results` | copies were written |
 | `question` | `questions`, `choices`, `chips` | the model needs the user |
-| `cost` | `cost` | the running spend |
+| `cost` | `cost` | the running spend, and the context gauge (`cost.context`) as each step of the conversation ends |
 | `done` | `state` | the job ended; `state` is the full view |
 | `error` | `message`, `state`, `resend`? | the job failed; `state` is the full view after the failure (safe to retry); `resend` is the request's text when it was refused before it was recorded (no API key yet) — the composer takes it back |
 
