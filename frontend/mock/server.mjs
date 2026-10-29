@@ -280,7 +280,7 @@ function emptyView() {
     chips: [],
     samples: [],
     warnings: [],
-    notes: [],
+    worth_knowing: [],
     blocking: false,
     results: [],
     pdf: { available: true, renderer: "Microsoft Word", reason: "" },

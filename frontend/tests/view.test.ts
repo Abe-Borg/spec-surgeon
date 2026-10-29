@@ -67,12 +67,12 @@ const SAMPLE = { source: "a", name: "a.docx", images: ["/api/image?path=a"], pag
 const NOTE = { name: "a.docx", text: "“TITLE” also occurs in the body (1×); this change leaves it as it is." };
 
 test("a message sent over a preview takes the old plan and pages off the workbench at once", () => {
-  const before = loaded({ stage: "preview", plan: PLAN, samples: [SAMPLE], warnings: ["Advisory"], notes: [NOTE], blocking: true });
+  const before = loaded({ stage: "preview", plan: PLAN, samples: [SAMPLE], warnings: ["Advisory"], worth_knowing: [NOTE], blocking: true });
   const state = reduce(before, { type: "job_started", userText: "Also make it italic" });
   assert.equal(state.view.plan, null);
   assert.deepEqual(state.view.samples, []);
   assert.deepEqual(state.view.warnings, []);
-  assert.deepEqual(state.view.notes, []);
+  assert.deepEqual(state.view.worth_knowing, []);
   assert.equal(state.view.blocking, false);
 });
 
@@ -87,19 +87,19 @@ test("creating copies keeps the approved plan and pages on screen until the job'
 test("a new plan clears the pages of the plan before it; its own pages follow", () => {
   const next = { ...PLAN, stages: 2 };
   const fresh = { ...SAMPLE, source: "b", name: "b.docx" };
-  let state = reduce(loaded({ stage: "preview", plan: PLAN, samples: [SAMPLE], warnings: ["Old finding"], notes: [NOTE], blocking: true }),
+  let state = reduce(loaded({ stage: "preview", plan: PLAN, samples: [SAMPLE], warnings: ["Old finding"], worth_knowing: [NOTE], blocking: true }),
     { type: "job_started", userText: null });
   state = run(state, { type: "plan", plan: next });
   assert.deepEqual(state.view.plan, next);
   assert.deepEqual(state.view.samples, []);
   assert.deepEqual(state.view.warnings, []);
-  assert.deepEqual(state.view.notes, []);
+  assert.deepEqual(state.view.worth_knowing, []);
   assert.equal(state.view.blocking, false);
   state = run(state, { type: "samples", samples: [fresh], warnings: [], blocking: false });
   assert.deepEqual(state.view.samples, [fresh]);
-  assert.deepEqual(state.view.notes, []); // an older server's frame carries none
-  state = run(state, { type: "samples", samples: [fresh], warnings: ["x"], notes: [NOTE], blocking: false });
-  assert.deepEqual(state.view.notes, [NOTE]);
+  assert.deepEqual(state.view.worth_knowing, []); // an older server's frame carries none
+  state = run(state, { type: "samples", samples: [fresh], warnings: ["x"], worth_knowing: [NOTE], blocking: false });
+  assert.deepEqual(state.view.worth_knowing, [NOTE]);
 });
 
 test("the Worth knowing notes keep their text and document name, and drop what is not a note", () => {
@@ -108,7 +108,7 @@ test("the Worth knowing notes keep their text and document name, and drop what i
     [NOTE, plan, { name: "", text: "No name" }]);
   assert.deepEqual(notesOf(undefined), []);
   assert.deepEqual(notesOf({ text: "not a list" }), []);
-  assert.deepEqual(normalizeView({ notes: [NOTE, { bad: 1 }] }).notes, [NOTE]);
+  assert.deepEqual(normalizeView({ worth_knowing: [NOTE, { bad: 1 }] }).worth_knowing, [NOTE]);
 });
 
 test("local user bubbles never reuse an id", () => {
@@ -273,7 +273,7 @@ test("normalizeView fills every list and block a server might leave out", () => 
   assert.equal(v.stage, "preview");
   assert.deepEqual(v.attachments, []);
   assert.deepEqual(v.messages, []);
-  assert.deepEqual(v.notes, []);
+  assert.deepEqual(v.worth_knowing, []);
   assert.deepEqual(v.plan?.targets, []);
   assert.equal(v.plan?.stages, 1);
   assert.equal(v.cost.usd, 1);

@@ -287,11 +287,11 @@ def answer_line(text: str) -> str:
     return first
 
 
-def preview_notes(preview) -> List[Dict[str, str]]:
-    """The notes the window lists under Worth knowing (``Preview.notes``), once each: the one part of a preview's
+def worth_knowing(preview) -> List[Dict[str, str]]:
+    """The notes the window lists under Worth knowing (``Preview.worth_knowing``), once each: the one part of a preview's
     warnings it shows; the rest stay in the records and the log (none for a preview that keeps none)."""
     seen, out = set(), []
-    for note in getattr(preview, "notes", None) or []:
+    for note in getattr(preview, "worth_knowing", None) or []:
         key = (str(note.get("name") or ""), str(note.get("text") or ""))
         if key[1] and key not in seen:
             seen.add(key)
@@ -2188,7 +2188,7 @@ class DocumentTask:
                             for sv in samples],
                 "occurrences": self._occurrences_view(preview),
                 "warnings": list(dict.fromkeys(getattr(preview, "warnings", []) or [])),
-                "notes": preview_notes(preview),
+                "worth_knowing": worth_knowing(preview),
                 "blocking": any(f.get("severity") == "block"
                                 for f in self._undelivered_findings(getattr(preview, "review", None)))}
 
@@ -2299,7 +2299,7 @@ class DocumentTask:
                 "samples": samples, "set_aside": set_aside,
                 "samples_set_aside": self._samples_set_aside() if pages is not None else [],
                 "occurrences": self._occurrences_view(pages) if pages is not None else [],
-                "warnings": list(dict.fromkeys(warnings)), "notes": preview_notes(pages),
+                "warnings": list(dict.fromkeys(warnings)), "worth_knowing": worth_knowing(pages),
                 "results": dict(self.results),
                 "unverified": {k: list(v) for k, v in self.unverified.items()},
                 "exported": {k: dict(v) for k, v in self.exported.items()}, "export_folder": self.export_folder,

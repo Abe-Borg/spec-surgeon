@@ -227,13 +227,13 @@ function Workbench({
 
         {/* The notes worth reading before the copies are made, as Left untouched lists its documents; under Please
             check they are among the warnings already. */}
-        {!view.blocking && view.notes.length > 0 && (
+        {!view.blocking && view.worth_knowing.length > 0 && (
           <PaperCard
             title="Worth knowing"
             subtitle="Notes on this change to read before you create the copies."
           >
             <ul className="divide-y divide-paper-edge">
-              {view.notes.map((note, index) => (
+              {view.worth_knowing.map((note, index) => (
                 <li key={`${index}-${note.name}-${note.text}`} className="py-2 first:pt-0 last:pb-0">
                   {note.name && <p className="text-sm font-medium text-paper-ink">{note.name}</p>}
                   <p className="text-[12px] leading-relaxed text-paper-dim">

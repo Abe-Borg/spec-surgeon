@@ -387,7 +387,7 @@ export interface View {
   warnings: string[];
   /** The notes worth reading before the copies are made: the one part of `warnings` the page lists, under Worth
    *  knowing. Absent from an older server. */
-  notes: PreviewNote[];
+  worth_knowing: PreviewNote[];
   blocking: boolean;
   results: Result[];
   /** Whether Export → PDF (Clean) can run on this computer. */
@@ -445,7 +445,7 @@ export type JobEvent =
   | { type: "text_delta"; text: string }
   | { type: "message"; message: Message }
   | { type: "plan"; plan: Plan }
-  | { type: "samples"; samples: Sample[]; occurrences?: OccurrenceDoc[]; warnings: string[]; notes?: PreviewNote[]; blocking: boolean }
+  | { type: "samples"; samples: Sample[]; occurrences?: OccurrenceDoc[]; warnings: string[]; worth_knowing?: PreviewNote[]; blocking: boolean }
   | { type: "results"; results: Result[] }
   | { type: "question"; questions: string[]; choices: Choice[]; chips: string[] }
   | { type: "cost"; cost: Cost }

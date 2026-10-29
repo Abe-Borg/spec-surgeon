@@ -379,7 +379,7 @@ overview is computed whenever a batch is, so a request after a run reads the cop
 A change kept to one place says where the same words remain: a replacement whose words also occur outside its scope or
 selection (and no other replacement of the plan changes them), or a literal header/footer fill of the section number or
 title that differs from the document's own (C3). The window lists these notes under **Worth knowing**, beside the
-pages, each under its document's name as **Left untouched** lists its documents (`Preview.notes`), and the text the
+pages, each under its document's name as **Left untouched** lists its documents (`Preview.worth_knowing`), and the text the
 assistant reads lists them for every file (`WORDING LEFT ELSEWHERE`), which then offers to change them too; nothing
 changes unasked. The check's findings describe the file, not the edit: a file with any of them
 is edited like any other, and a file with none can still be set aside at plan time.

@@ -333,7 +333,7 @@ How each is labelled:
 - Claude's visual findings are kept as warnings with file and page in the preview's records and log; the window lists
   them only under **Please check**, when one is blocking (`Workbench.tsx`).
 - Notes that a change kept to one place leaves the same words elsewhere, or that a header/footer fill will show in
-  another case than the template, are listed under **Worth knowing** with the file (`Preview.notes`); the plan
+  another case than the template, are listed under **Worth knowing** with the file (`Preview.worth_knowing`); the plan
   writes them, not Claude
   (`ops/elsewhere.py`, `planner.left_elsewhere_warnings`, from #80 and C4). So is a deletion over someone's pending
   tracked changes, naming whose (re-audit, C6: `ops/deletion.pending_flag`).

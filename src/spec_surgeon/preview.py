@@ -366,7 +366,7 @@ class Preview:
     warnings: List[str] = field(default_factory=list)
     # the warnings worth reading before the copies are made, as the window lists them under Worth knowing: the same
     # words left elsewhere (C3), a fill in another case than the template (C4), an input that changed under the preview
-    notes: List[Dict[str, str]] = field(default_factory=list)
+    worth_knowing: List[Dict[str, str]] = field(default_factory=list)
     review: Any = None                            # vision.VisualReview — Claude's visual check (advisory)
     review_ack: str = ""                          # the token whose blocking findings the user acknowledged
     token_inputs: Dict[str, Any] = field(default_factory=dict)   # approval_inputs at preview time
@@ -934,7 +934,7 @@ INPUT_CHANGED_NOTE = ("A file changed while this preview was being made: make th
 def _input_changed(pv: Preview) -> None:
     """An input that changed under the preview: its warning, and the note the window lists under Worth knowing."""
     pv.warnings.append(INPUT_CHANGED)
-    pv.notes.append({"name": "", "text": INPUT_CHANGED_NOTE})
+    pv.worth_knowing.append({"name": "", "text": INPUT_CHANGED_NOTE})
 
 
 def make_preview(spec: Dict[str, Any], inputs: Sequence[str], out_dir: Path, renderer: str = "auto",
@@ -1030,7 +1030,7 @@ def _make_preview(spec: Dict[str, Any], inputs: Sequence[str], out_dir: Path, re
         pv = Preview(out_dir=out_dir, batch_plan=bp, log_path=log.path, token=token, token_inputs=token_inputs,
                      input_snapshots=snapshots)
         pv.warnings += left_elsewhere_warnings(bp)     # the same words where this plan does not change them (C3)
-        pv.notes += left_elsewhere_notes(bp)
+        pv.worth_knowing += left_elsewhere_notes(bp)
         input_changed = (changed_since_preview(spec, planned, token, token_inputs) is not None or
                          bool(changed_inputs(snapshots)) or
                          {str(f.source.resolve()) for f in bp.files} != set(token_inputs["files"]) or
@@ -1196,7 +1196,7 @@ def _make_chain_preview(chain: Dict[str, Any], inputs: Sequence[str], out_dir: P
             pv = ChainPreview(out_dir=out_dir, batch_plan=bp, chain=chain, log_path=log.path,
                               token=token, token_inputs=token_inputs, input_snapshots=snapshots)
             pv.warnings += left_elsewhere_warnings(bp)     # stage 1's, on every file, as far as they hold (C3)
-            pv.notes += left_elsewhere_notes(bp)
+            pv.worth_knowing += left_elsewhere_notes(bp)
             input_changed = (changed_since_preview(key, files, token, token_inputs) is not None or
                              bool(changed_inputs(snapshots)) or
                              {str(f.source.resolve()) for f in bp.files} != set(token_inputs["files"]) or

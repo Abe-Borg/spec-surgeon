@@ -107,7 +107,7 @@ def test_a_layout_with_no_files_warns_instead_of_failing(batch, tmp_path):
     pv = layouts.make_layout_preview(plan, [str(typed)], tmp_path / "preview", do_render=False)
     assert [layout["id"] for layout, _ in pv.previews] == ["A"]
     assert any("styled articles" in w for w in pv.warnings)
-    none = [n for n in pv.notes if "styled articles" in n["text"]]          # listed under Worth knowing, once
+    none = [n for n in pv.worth_knowing if "styled articles" in n["text"]]          # listed under Worth knowing, once
     assert len(none) == 1 and none[0]["name"] == "" and none[0]["text"].endswith("that part of the plan changes nothing.")
 
 
