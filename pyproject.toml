@@ -43,7 +43,7 @@ where = ["src"]
 
 [tool.setuptools.package-data]
 spec_surgeon = ["schemas/**/*.xsd", "skill/**/*.md", "legal/*.txt", "web/static/**/*", "examples/specs/*.json",
-                "examples/tutorial/*"]
+                "examples/tutorial/*", "examples/schemes/*.docx"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

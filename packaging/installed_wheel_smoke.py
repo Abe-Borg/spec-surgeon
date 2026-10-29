@@ -37,6 +37,12 @@ def check(source: Path, expected_prompts=None):
     checkout_showcase = source.resolve().parents[1] / "src" / "spec_surgeon" / "examples" / "tutorial"
     source_showcase = {p.name: p.read_bytes() for p in checkout_showcase.iterdir() if p.is_file()}
     assert showcase == source_showcase, "Installed tour showcase differs from the source inventory"
+    # the bundled numbering schemes the chat offers (examples/schemes/, schemes.py)
+    from spec_surgeon import schemes
+    installed_schemes = {s: schemes.scheme_file(s).read_bytes() for s in schemes.SCHEMES}
+    checkout_schemes = source.resolve().parents[1] / "src" / "spec_surgeon" / "examples" / "schemes"
+    assert installed_schemes == {s: (checkout_schemes / schemes.SCHEMES[s][0]).read_bytes() for s in schemes.SCHEMES}, \
+        "Installed numbering schemes differ from the source inventory"
     prompts = prompt_fingerprints()
     if expected_prompts is not None:
         assert prompts == expected_prompts, "Installed compiler prompts differ from the source checkout"

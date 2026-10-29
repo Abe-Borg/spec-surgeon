@@ -57,6 +57,17 @@ WORDING_REVISIONS = frozenset({"ins", "del", "moveFrom", "moveTo", "rPrChange", 
 # every change rejected, inserted and moved-in wording is.
 _LEFT_OUT = {None: (), "accept": (W + "del", W + "moveFrom"), "reject": (W + "ins", W + "moveTo")}
 _MARKER_LIKE = re.compile(r"^(?:[A-Z]|[0-9]+)[.)]\s|^\([A-Za-z0-9]+\)")
+# Canadian CSC PageFormat (docs/SPEC_FORMATTER_MODES_DESIGN.md N4), read only when a caller asks (``canadian=True``:
+# the outline tool; Safe mode, the profile and template_roles keep the reading above). PageFormat numbers PART and the
+# article as CSI does ("PART 1", "1.1") and every level below the article as a dot and a number (".1"): the same shape
+# at every depth, so an AUTOMATIC ".1" takes its depth from the nearest placed paragraph of the same list one list
+# level up, and a TYPED ".1" carries no depth at all.
+_CANADIAN_LEVEL = re.compile(r"\.([1-9][0-9]*)")
+_CANADIAN_TYPED = re.compile(r"^\.[0-9]+\s+\S")
+CANADIAN_TYPED = "a typed Canadian number (\".1\") carries no depth: it is the same at every level below the article"
+CANADIAN_NO_PARENT = ("an automatic Canadian number has no placed paragraph of its list one level up (its article or "
+                      "the paragraph above it)")
+CANADIAN_TOO_DEEP = "an automatic Canadian number deeper than the reader's seven numbered levels"
 
 
 def _paragraph_text(p, view=None):
@@ -185,8 +196,11 @@ def _reading(line, num, first_nonblank, previous):
     return ("provision", depth, label, ambiguity, title)
 
 
-def analyze_structure(pkg: DocxPackage) -> dict:
+def analyze_structure(pkg: DocxPackage, canadian: bool = False) -> dict:
     """Analyze immutable source bytes; analysis is evidence for a reviewed proposal.
+
+    ``canadian``: also read Canadian CSC PageFormat numbering (``_CANADIAN_LEVEL``; the outline tool's reading,
+    docs/SPEC_FORMATTER_MODES_DESIGN.md N4). Off, the reading is exactly what it was before N4.
 
     ``paragraph`` and ``parent`` are zero-based main-part paragraph ordinals. A
     parent is an occurrence, not a potentially repeated label. ``reference_id``
@@ -320,6 +334,30 @@ def analyze_structure(pkg: DocxPackage) -> dict:
                                content=text if num else article_match[2], hierarchy_reliable=True)
                     stack = {k: v for k, v in stack.items() if k < 2} | {2: index}
                 pending_title = None
+            elif canadian and num is not None and _CANADIAN_LEVEL.fullmatch((num.text or "").strip()):
+                # one list level below the nearest placed paragraph of the same list on the current path
+                pending_title = None
+                parent = next((v for k, v in sorted(stack.items(), reverse=True)
+                               if k >= 2 and (rows[v].get("numbering") or {}).get("num_id") == num.num_id
+                               and (rows[v].get("numbering") or {}).get("level") == num.ilvl - 1), None)
+                depth = rows[parent]["depth"] + 1 if parent is not None else None
+                if parent is None:
+                    row["reason"] = CANADIAN_NO_PARENT
+                    stack = {k: v for k, v in stack.items() if k < 3}
+                elif depth not in _DEPTH_ROLES:
+                    row["reason"] = CANADIAN_TOO_DEEP
+                    stack = {k: v for k, v in stack.items() if k < depth}
+                else:
+                    label = _CANADIAN_LEVEL.fullmatch(num.text.strip())[1]
+                    ref = rows[parent]["reference_id"]
+                    row.update(role=_DEPTH_ROLES[depth], depth=depth, label=label, parent=parent, content=text,
+                               reference_id=f"{ref}.{label}" if ref else None,
+                               hierarchy_reliable=rows[parent]["hierarchy_reliable"])
+                    stack = {k: v for k, v in stack.items() if k < depth} | {depth: index}
+            elif canadian and num is None and _CANADIAN_TYPED.match(line):
+                pending_title = None
+                row["reason"] = CANADIAN_TYPED
+                stack = {k: v for k, v in stack.items() if k < 3}
             elif (pending_title is not None and num is None and line.isupper() and any(c.isalpha() for c in line)
                   and not _MARKER_LIKE.match(line)):
                 # A title is the next nonblank, plain uppercase line, not an
@@ -503,8 +541,10 @@ def _something_else(row) -> bool:
     return row["disposition"] == "unresolved" and row["reason"] in (NO_MARKER, UNSUPPORTED_LIST)
 
 
-def role_summary(pkg: DocxPackage) -> dict:
+def role_summary(pkg: DocxPackage, canadian: bool = False) -> dict:
     """How THIS file encodes each role, for a planner that must write concrete selectors per layout.
+
+    ``canadian``: ``analyze_structure``'s Canadian PageFormat reading (the outline tool's; off by default).
 
     ``roles``: per role present (in hierarchy order) its paragraph count, the paragraph styles it uses with counts,
     its numbering (``typed`` markers in the text, ``automatic`` list markers, ``mixed``, or ``none`` for a title), the
@@ -516,7 +556,7 @@ def role_summary(pkg: DocxPackage) -> dict:
     no such paragraph; a role with neither is left out. Either gets ``in_table: false`` when a table cell would
     otherwise be selected too (tables are outside the analyzer's coverage). Descriptive only: nothing here plans an
     edit, and the analysis is read-only source evidence (``analyze_structure``)."""
-    rows = analyze_structure(pkg)["paragraphs"]
+    rows = analyze_structure(pkg, canadian=canadian)["paragraphs"]
     by_role: dict = {}
     for row in rows:
         if row["role"]:

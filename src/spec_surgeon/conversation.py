@@ -44,6 +44,7 @@ from __future__ import annotations
 import copy
 import json
 import re
+import hashlib
 import time
 import unicodedata
 import uuid
@@ -57,7 +58,7 @@ from .resources import (DEFAULT_CONTEXT_TOKENS, DEFAULT_EFFORT, DEFAULT_MAX_ATTE
                         DEFAULT_STALL_REPETITIONS, InvestigationProgress, positive_integer)
 
 CHOICE_KINDS_FROM_CLAUDE = ("clarify", "alternative", "rephrase")   # built from Claude's own label and wording
-APP_CHOICE_KINDS = ("custom_transform", "recovery_plan", "recovery_target")   # carried out by the app, never sent to
+APP_CHOICE_KINDS = ("custom_transform", "recovery_plan", "recovery_target", "scheme")   # carried out by the app, never sent to
 # Claude as a reply: a custom transform the app takes on its own, an outcome plan once the user picks it (its words
 # beneath the choice), a recovery target by the window's numbered question
 MAX_CALLS_PER_TURN = compiler.MAX_TURNS
@@ -692,13 +693,51 @@ class Conversation:
             with diag.span("conversation.tool", tool=name, tool_use_id=tid, model_turn=self.calls):
                 if name not in allowed:
                     raise KeyError(f"unknown tool {name}")
-                out = getattr(self.batch, name)(**inp)
+                out = self._read_outline(**inp) if name == "read_outline" else getattr(self.batch, name)(**inp)
                 if isinstance(out, dict) and out.get("_content_blocks"):
                     images += [str(p) for p in out.get("_images", [])]
                     return {"type": "tool_result", "tool_use_id": tid, "content": out["_content_blocks"]}
                 return {"type": "tool_result", "tool_use_id": tid, "content": json.dumps(out, ensure_ascii=False)}
         except Exception as e:  # noqa: BLE001 — every call gets an answer, or the next request is refused
             return {"type": "tool_result", "tool_use_id": tid, "is_error": True, "content": f"{type(e).__name__}: {e}"[:2000]}
+
+    def _read_outline(self, file: str) -> Dict[str, Any]:
+        """The chat's read_outline (outline.py, docs/SPEC_FORMATTER_MODES_DESIGN.md N1): the structure reader's roles
+        and, for what it leaves, Claude's reading in one-shot calls on this conversation's model at
+        ``resources.OUTLINE_EFFORT``, inside the request's spending check and Stop; their usage joins the
+        conversation's and their exchange its record. An API error ends Claude's reading with what it read; Stop or
+        the spending check propagates (the tool call is answered with it, and the next call stops the turn). The answer
+        is kept by the file's SHA-256: asking again for the same bytes makes no call."""
+        from . import outline
+        from .resources import OUTLINE_EFFORT
+        pkg = self.batch.pkg(file)
+        digest = hashlib.sha256(pkg.data).hexdigest()
+        kept = self.batch.outlines.get(digest)
+        if kept is not None:
+            return {**kept, "claude_calls": 0, "note": "Read earlier in this conversation: no new call. " + kept["note"]}
+
+        def call(message: str):
+            t0 = time.perf_counter()
+            with llm.effort_scope(OUTLINE_EFFORT):
+                resp = llm.call(self._client_now(), model=self.model, system=outline.CLASSIFY_SYSTEM,
+                                tools=outline.CLASSIFY_TOOLS, messages=[{"role": "user", "content": message}],
+                                max_output_tokens=outline.OUTLINE_MAX_OUTPUT_TOKENS, effort=OUTLINE_EFFORT,
+                                one_shot=True)
+            self.usage.add(resp, self.model)
+            self.exchange.append({"outline": file, "request": llm.transcript_content(message),
+                                  **llm.response_entry(self.calls, resp, time.perf_counter() - t0)})
+            return resp
+
+        def failed(e: BaseException) -> Optional[str]:
+            if not llm.is_api_error(e):
+                return None
+            self.exchange.append({"outline": file, **llm.error_entry(self.calls, e, 0.0)})
+            return llm.failure_text(e)
+
+        answer = outline.result(outline.classify(file, pkg, call, failed=failed))
+        if not answer["unplaced"] or all("could not be made" not in u["why"] for u in answer["unplaced"]):
+            self.batch.outlines[digest] = answer
+        return answer
 
     def _advance(self) -> Turn:
         t0 = time.perf_counter()
@@ -958,6 +997,18 @@ class Conversation:
                          f"Context: {record['context']}")
                 out.append(Choice(self._next_choice_id(), label, kind, wording=record["after"],
                                   detail="Approves only this occurrence in this source file.", snapshot=copy.deepcopy(record)))
+                continue
+            if kind == "scheme":
+                # a bundled numbering scheme (schemes.py, docs/SPEC_FORMATTER_MODES_DESIGN.md N5): the app writes the
+                # label and the window carries the pick out (it attaches the file as the template)
+                from . import schemes
+                sid = str(c.get("scheme") or "").strip().lower()
+                if self.mode != "chat" or sid not in schemes.SCHEMES:
+                    errors.append('a scheme choice was dropped: scheme must be "csc" or "csi" (and only in a chat)')
+                    continue
+                out.append(Choice(self._next_choice_id(), schemes.label(sid), kind,
+                                  detail=schemes.detail(sid, self.batch.template is not None),
+                                  snapshot={"scheme": sid}))
                 continue
             if kind in ("recipe", "operation", "snippet"):
                 errors.append("Choose the implementation internally; ask the user only about the document result.")

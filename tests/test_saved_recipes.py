@@ -214,6 +214,9 @@ def test_a_plan_keeps_no_unticked_occurrences_and_refuses_what_is_bound_to_parti
     assert saved_recipes.portable_plan(capitals) == (None, saved_recipes.WHY_CAPITALS)
     chain = {"stages": [{"spec": SPEC}, {"spec": bound}]}
     assert saved_recipes.portable_plan(chain)[1] == saved_recipes.WHY_BOUND
+    chosen = {**SPEC, "ops": [{"op": "apply_style", "params": {"style": "Heading1"}, "select": {
+        "scope": ["document"], "paragraphs": {"indices_by_document": {"0" * 64: [3]}}}}]}
+    assert saved_recipes.portable_plan(chosen) == (None, saved_recipes.WHY_CHOSEN)      # read_outline's, per document
 
 
 def test_a_recipe_runs_in_its_own_mode_and_in_any_with_fewer_guardrails():

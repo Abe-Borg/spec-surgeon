@@ -1,0 +1,43 @@
+{
+  "request": "Give the PART headings the architect template's PART style",
+  "summary": "The PART headings take the template's PRT style (imported when the document lacks it). Where the file's profile gives the PART headings no selector, read_outline gives each document's own: the structure reader's PART headings and the ones Claude's reading proposes, named by paragraph number under the document's SHA-256 (indices_by_document; this example's digest stands for one).",
+  "assumptions": [
+    "the PART headings are the paragraphs read_outline returned for the role part, the reader's and Claude's proposals together; the message names which rest on Claude's reading",
+    "a document the selector does not name is set aside, never given another document's paragraphs",
+    "the template's theme and compatibility settings are not carried; only the style"
+  ],
+  "questions": [],
+  "applies_to": {
+    "or": "all"
+  },
+  "mode": "formatting",
+  "ops": [
+    {
+      "op": "apply_style",
+      "select": {
+        "scope": [
+          "document"
+        ],
+        "paragraphs": {
+          "indices_by_document": {
+            "0f1e2d3c4b5a69788796a5b4c3d2e1f00f1e2d3c4b5a69788796a5b4c3d2e1f0": [
+              10,
+              74,
+              131
+            ]
+          }
+        }
+      },
+      "params": {
+        "style": "PRT",
+        "template": "../templates/NUMBERING SCHEME.docx"
+      },
+      "expect": {
+        "text_diffs": 0
+      }
+    }
+  ],
+  "review": {
+    "sample_files": 2
+  }
+}

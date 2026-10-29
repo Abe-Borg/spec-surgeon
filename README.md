@@ -271,6 +271,24 @@ mode you last used (Safe the first time; never Obliterate).
 - **Default — a conversation.** What you control: any change you can describe, from one word to whole tables,
   sections and pictures, on documents built in different ways. What it costs: an Anthropic API key and the AI's
   spending, and the AI can misread a request, so you read what it plans and look at the pages before you approve.
+
+  Default mode also does what the Specification Formatter did, under the same checks as every other request:
+  - **Format a consultant's specification to an architect's template.** The template's role styles, page, headers and
+    footers go onto each document. Claude reads each document's outline (the section number line, the title, PART,
+    articles, paragraph levels, END OF SECTION) with the app's own structure reader first; only the paragraphs the
+    reader cannot place, and typed "PART 1" or "1.5" openings whose words read as a requirement rather than a heading,
+    go to a separate Claude reading. Claude's message names the parts of the outline that rest on its reading, so you
+    check them in the preview. The plan names each document's own paragraphs, so one document's choice can never land
+    on another's. Ask for the template's even/odd page headers and the switch that shows them comes with them. The
+    template's theme and compatibility settings are never carried; its fonts reach the copied styles as their own
+    values.
+  - **Convert CSI numbering to Canadian CSC PageFormat, or back.** With an architect's Canadian or CSI template, the
+    outline moves onto its list. With no template, Claude offers a built-in scheme (CSC PageFormat, nine levels:
+    PART 1, 1.1, .1 … .1; or CSI: PART 1, 1.1, A., 1., a., 1), a), (1), (a)) as a choice; picking it attaches it as
+    the template. Every number keeps its value ("A." becomes ".1", "1.01" becomes "1.1") or the document is set aside,
+    and you can keep each paragraph's own look so only the numbers change. Typed CSI numbers ("PART 1 - GENERAL",
+    "1.01", "A.") become automatic PageFormat numbers. Numbers stay automatic both ways: no number is ever typed into
+    the text. A typed Canadian ".1" is not converted, because it does not say which level it is.
 - **Obliterate — the conversation without guardrails (hidden).** Off the switch until Settings → **Advanced** →
   *Show Obliterate mode* is on, and chosen only after its warning, every time (tick *I understand*, then **Turn on
   Obliterate**). What you control: Claude may write wording itself (every word it places must be in its reply to
@@ -529,6 +547,9 @@ recorded for the requests that follow.
   [docs/CONVERSATIONAL_DESKTOP.md](docs/CONVERSATIONAL_DESKTOP.md)).
 - The installer is unsigned: the checksum checks prove the download is the file the release lists, not who published it.
 - Costs shown for Claude calls are estimates from a built-in price table.
+- The structure reader knows seven numbered levels (PART, article and five below); PageFormat's eighth and ninth
+  levels convert by list level but are not given a role. A typed Canadian ".1" is never converted. An imported
+  template style leaves out Word 2010's text effects (a text fill, glow, shadow, ligatures).
 
 ## Where everything else is
 
