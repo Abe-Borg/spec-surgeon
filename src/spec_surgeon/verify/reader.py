@@ -86,12 +86,17 @@ class VPackage:
         self.infos = self.zip.infolist()
         self.names = [i.filename for i in self.infos]
         self._memo: Dict[tuple, object] = {}     # derived, immutable lookups only (never parsed trees)
+        self._bytes: Dict[str, bytes] = {}       # each member as it came out of the archive (bytes are immutable)
 
     def hashes(self) -> Dict[str, str]:
-        return {n: hashlib.md5(self.zip.read(n)).hexdigest() for n in self.names}
+        return {n: hashlib.md5(self.read(n)).hexdigest() for n in self.names}
 
     def read(self, name: str) -> bytes:
-        return self.zip.read(name)
+        """The member's bytes, decompressed once per package: the checks read the same members again and again."""
+        data = self._bytes.get(name)
+        if data is None:
+            data = self._bytes[name] = self.zip.read(name)
+        return data
 
     def metadata_changes(self, output: "VPackage", removed=()) -> List[str]:
         """Independently check safe ZIP metadata on every retained member occurrence.
@@ -235,6 +240,9 @@ class VPackage:
 
     def package_related(self, rel_type: str) -> Optional[str]:
         """The member the package relationships (``_rels/.rels``) give for ``rel_type``, or None."""
+        return self._cached(("pkgrel", rel_type), lambda: self._package_related(rel_type))
+
+    def _package_related(self, rel_type: str) -> Optional[str]:
         if "_rels/.rels" not in self.names:
             return None
         for rel in self.xml("_rels/.rels").findall(REL + "Relationship"):
