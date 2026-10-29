@@ -184,6 +184,26 @@ def test_a_plain_reply_shows_in_the_chat_and_never_again_in_the_card(tmp_path):
     assert view["chips"] == ["Fix the sizes"]           # the card keeps only what the user can tap
 
 
+def test_each_answer_shows_once_a_suggested_reply_that_restates_a_choice_is_not_offered(tmp_path):
+    # the owner's report (2026-10-29): both choices came back as chips in other words, so every answer showed twice
+    everything = ("Do everything else on all four now; leave the tracked changes in the three files for me to "
+                  "accept in Word")
+    reattach = "I'll accept the changes in Word first and attach the files again"
+    ask = {"message": "The three refused files are the ones that still have tracked changes.",
+           "choices": [{"label": everything, "kind": "alternative",
+                        "detail": "The tracked changes in 21 05 23, 21 05 29 and 21 05 53 stay pending."},
+                       {"label": reattach, "kind": "clarify"}],
+           "suggested_replies": ["Do everything else now, I'll accept in Word",
+                                 "I'll accept in Word first and re-attach", "Leave out 21 05 29 for now"]}
+    task = task_for(tmp_path, FakeClient(resp(tool("ask_user", ask))))
+    task.attach([document(tmp_path / "Spec.docx")])
+    view = task.perform("send", text=REQUEST)
+    assert view["stage"] == "question"
+    assert [c["label"] for c in view["choices"]] == [everything, reattach]
+    assert view["chips"] == ["Leave out 21 05 29 for now"]       # what no choice offers stays
+    assert any("restating a choice" in e for e in task.session.turn.errors)
+
+
 def test_a_question_of_several_lines_shows_whole_in_the_card_and_never_in_the_chat(tmp_path):
     question = "Which one should change?\n\n- the header\n- the footer"
     task = task_for(tmp_path, FakeClient(resp(tool("ask_user", {"message": "I checked both.", "questions": [question]}))))

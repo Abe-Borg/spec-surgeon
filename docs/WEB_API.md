@@ -88,7 +88,9 @@ Rules the page relies on:
   `question`, under the latest assistant message. Choices with `words` show the words beneath the button.
   Each of the model's words shows once: the assistant message carries its reply without the questions, and
   `questions` never repeats that message (a reply with nothing to pick, plain words or a failure, is in `messages`
-  only; `questions` carries it only when the chat did not say it, as a recovery turn's). A reply that is an answer
+  only; `questions` carries it only when the chat did not say it, as a recovery turn's), and `chips` never repeat a
+  choice: a suggested reply that only says a choice again in other words is dropped (`conversation.restates`; one
+  that names another document or number, or says the opposite, stays). A reply that is an answer
   with nothing pending (words alone: no question, choice, suggested reply, plan or custom method, and no plan the gate
   refused on the way) ends the request: the stage is `done` when copies exist, else `empty`, `action.kind` is `none`,
   and the next `send` is a new request, told the exchange as context (docs/CONVERSATIONAL_DESKTOP.md, "When a request
