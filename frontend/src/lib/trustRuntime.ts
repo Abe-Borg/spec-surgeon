@@ -365,7 +365,9 @@ export const RUNTIME_CARDS: RuntimeCard[] = [
     you:
       "Save as a recipe, on What you've done so far: a name, what it is for, and the changes to keep. Run one from My " +
       "recipes (Safe mode) or beside the message box (Default and Obliterate): change a button's form or skip a step " +
-      "for this run, then Preview and Create edited copies. Manage renames, duplicates or deletes them.",
+      "for this run, then Preview and Create edited copies. Manage duplicates or deletes them, and Edit changes a " +
+      "recipe's name, what it is for and its steps: moved, removed, or a button given another form. Save as a " +
+      "recipe can add the changes you tick to the end of a recipe you already have.",
     runs:
       "Saving keeps what the window noted of each change you ticked when you approved it: a button and its form, or " +
       "your request with the plan you approved, the sentences it was shown with and the words it places. It writes " +
@@ -374,8 +376,10 @@ export const RUNTIME_CARDS: RuntimeCard[] = [
       "form; a plan as approved, reading the template, picture or table attached now), passes each through the gate " +
       "every plan passes (a step that changes what an earlier one made is planned on the copies the earlier steps " +
       "make), puts them in your order into one plan, passes that through the gate again and makes the " +
-      "ordinary preview. Create runs it as one checked run, and Undo takes it off as one.",
-    sent: "Nothing. Saving, running and managing a recipe never reach the network.",
+      "ordinary preview. Create runs it as one checked run, and Undo takes it off as one. An edit reads " +
+      "recipes.json again under the same lock and is refused when the recipe changed since you opened it, so it " +
+      "never writes over another window's change.",
+    sent: "Nothing. Saving, running, editing and managing a recipe never reach the network.",
     ai: NONE,
     bounds:
       "A recipe keeps no document, template, picture or table, only their kind and name. A change Claude wrote a " +
@@ -383,7 +387,9 @@ export const RUNTIME_CARDS: RuntimeCard[] = [
       "recipe runs in its own mode and in any with fewer guardrails, never in one with more: Safe recipes everywhere, " +
       "Default ones in Default and Obliterate, Obliterate ones only in Obliterate. Every word it places passes the " +
       "gate again, and the chat names them before Create. A document a step cannot take is left untouched (Safe " +
-      "mode) or waits on your to-do list (Default and Obliterate); nothing an AI does follows.",
+      "mode) or waits on your to-do list (Default and Obliterate); nothing an AI does follows. Editing never " +
+      "rewrites a step saved from a request: its words and plan are the ones you approved, so it is moved or " +
+      "removed whole, and an edited recipe is previewed and approved like any other.",
   },
   {
     covers: ["A7"],

@@ -153,6 +153,15 @@ specifications, Windows and Word, and only the owner can do them. Record what a 
   open at once each see the other's saved recipe after reopening its list; `%APPDATA%\Spec Surgeon\recipes.json` holds
   the steps and words and no document text beyond the user's own words. The tiles, the strip and the dialogs read well
   at 1280 px wide.
+- **Editing saved recipes (built 2026-10-29):** in Manage, **Edit** on the three-step Safe recipe above: move Accept
+  all tracked changes to the top, remove Remove all comments, change the stamp step's wording, **Save**; the tile shows
+  the two steps in their new order, and running it on a real batch previews and creates copies after those two in that
+  order, with the new wording. In Default mode, **Edit** on a recipe saved from two requests: a request step offers
+  only moving and removing (never its words); removing it leaves the other running as approved. Run one more change,
+  **Save as a recipe…** → **Add to a saved recipe** onto the Safe recipe: the chat says it has three steps now and, for
+  a request added, that it is now a Default-mode recipe (its tile leaves My recipes in Safe mode). With two windows
+  open, an Edit opened in one and saved after the other renamed the recipe is refused with the reason and nothing is
+  written over; `recipes.json` shows the edited steps. The editor reads well at 1280 px wide.
 - **What you've done so far (built 2026-10-29):** over a real batch in Safe mode, Remove all comments, Accept all
   tracked changes and Match headers and footers to the template, each created in turn; the list under the copies
   names the three in order, the newest marked LATEST, with "All N documents" or which documents did not get one and

@@ -12,8 +12,8 @@ interface Props {
   catalog: Recipe[];
   busy: boolean;
   tourActive: boolean;
-  onRun: (recipe: SavedRecipe, picks: RecipeRunPick[]) => void;
-  onSaveForms: (recipe: SavedRecipe, forms: (RecipeInputs | null)[]) => Promise<boolean>;
+  onRun: (recipe: SavedRecipe, picks: RecipeRunPick[], rev?: string) => void;
+  onSaveForms: (recipe: SavedRecipe, forms: (RecipeInputs | null)[], rev?: string) => Promise<string | null>;
   onManage: () => void;
 }
 
@@ -140,9 +140,9 @@ export default function RecipesStrip({ view, catalog, busy, tourActive, onRun, o
             onRunChange={setRun}
             onPreview={(picks) => {
               setRun(null);
-              onRun(running, picks);
+              onRun(running, picks, run.rev);
             }}
-            onSaveForms={(forms) => onSaveForms(running, forms)}
+            onSaveForms={(forms) => onSaveForms(running, forms, run.rev)}
             tourActive={tourActive}
           />
         </ModalShell>
