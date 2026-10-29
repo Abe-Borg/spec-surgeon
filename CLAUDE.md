@@ -168,11 +168,26 @@ jobs). Details: `docs/CONVERSATIONAL_DESKTOP.md`.
     number, count and name — then what was looked for and what the document holds instead, from the record's
     details; the record itself never changes).
   - `catalog.py` (op catalog, `COMMON_ASSUMPTIONS`, `op_sheet`), `profile.py`, `planner.py`, `structure.py`, `triage.py`.
+    `structure.analyze_structure(canadian=)` also reads Canadian CSC PageFormat numbering when asked (the outline tool
+    asks; Safe mode, the profile and `template_roles` never do: their reading is unchanged).
+  - `outline.py` — the chat's `read_outline` (docs/SPEC_FORMATTER_MODES_DESIGN.md N1): the structure reader's roles,
+    final except a typed PART/article/section reading that is not shaped like a heading (`demote_unshaped`, the
+    Specification Formatter's close negatives), and Claude's reading of the rest in one-shot calls at
+    `resources.OUTLINE_EFFORT` (`Conversation._read_outline`: the conversation's model, usage, spending check and Stop),
+    every paragraph asked about answered once or left unplaced with why, kept by the file's SHA-256 (`_Batch.outlines`).
+    Its selectors name each document's paragraphs under that document's SHA-256 (`indices_by_document`):
+    `editspec.resolve_document_select` gives each document its own `indices` and `document_sha256` at planning and
+    refuses a document it does not name (`not-outlined`); the verifier hashes the source itself (`verify/props._v_pins`).
+    A spec never carries a bare `indices` (`editspec._check_document_indices`).
+  - `schemes.py` — the bundled numbering schemes (`examples/schemes/`: CSC PageFormat and CSI, built byte-stable by
+    `tests/make_scheme_examples.py`), offered by the chat as an app choice of kind `scheme` whose label the app writes;
+    the window attaches a copy as the template and plans again (`DocumentTask._take_scheme`).
   - `compiler.py`, `conversation.py`, `llm.py`, `vision.py` — request → EditSpec. `llm.call` is the one call site: the
     system prompt carries its own 1-hour cache breakpoint, the history the automatic 5-minute one, and a `one_shot`
     call caches nothing after the system prompt; keep system prompts and tools byte-stable. No call runs at effort
     `max` (the owner's decision, 2026-10-22): `resources.EFFORTS` refuses it. The window's chat and its visual check
-    run at medium, outcome planning and recovery at high, and the custom-method writer at `xhigh`
+    run at medium, outcome planning and recovery at high, the outline tool's reading at high
+    (`resources.OUTLINE_EFFORT`, through `llm.effort_scope`), and the custom-method writer at `xhigh`
     (`resources.CODEGEN_EFFORT`, 2026-10-26: `generate_op` enters `llm.effort_scope`, after which calls are back at
     their own effort). The chat's `ask_user` and `submit_editspec` stream their input unbuffered
     (`compiler.STREAMED_TOOLS`, `eager_input_streaming`); `llm` checks it and re-sends a call whose input is broken.
@@ -340,3 +355,10 @@ Standing decisions from the earlier rounds (their plans are in the git history):
   that work lives (its rule-set CSV loads as the attached table), with every occurrence listed to untick (backlog F1,
   built), the occurrence log in the records (F2) and a folder of documents attached at once (F3). Text boxes, editing
   in place over the originals and re-scanning replaced text stay out, as decided above and by T1.
+- The Specification Formatter (`Abe-Borg/spec-template-normalizer`) is not merged as code; what it does lives in
+  Default mode, rebuilt under these invariants (the owner's decision, 2026-10-29;
+  docs/SPEC_FORMATTER_MODES_DESIGN.md): the outline tool, per-document chosen paragraphs, the header template's
+  even/odd switch (`even_odd: "template"`), the bundled schemes, `convert_numbering` `styles: "keep"` and
+  `convert_typed_numbers` `typed_as: "csi"`. Safe mode is untouched by it. Numbers stay automatic: no literal CSI
+  marker is written (a real job that needs typed numbers gets its own design first), and a typed Canadian ".1" is not
+  converted. The template's theme and compatibility settings are never carried.

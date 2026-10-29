@@ -557,6 +557,24 @@ delivered file still has exactly one specification, and the independent verifier
 The preview covers at least one sample per layout, and one button approves all of them. A document whose structure no layout covers is listed under **Left untouched** with a
 sentence: attach it on its own, or ask for a plan that covers it.
 
+## A document's outline, and the built-in numbering schemes
+
+When a request depends on the parts of a specification (restyle the PART headings, give the articles the template's
+style, convert the numbering) and a document gives one of those parts no style or typed shape the app can select it by,
+the assistant reads that document's outline (`read_outline`, docs/SPEC_FORMATTER_MODES_DESIGN.md). The structure
+reader, code on your computer, places every paragraph it can, Canadian CSC PageFormat numbering included; the
+paragraphs it cannot place, and typed "PART 1" or "1.5" openings whose words read as a requirement, go to a separate
+Claude reading, a few at a time with the paragraphs around them. The status line reads "Reading the outline". The
+assistant's message says which parts rest on Claude's reading: those are the ones to check in the preview. The plan
+names each document's own paragraphs, so a document the outline was not read for is left untouched with the reason,
+never given another document's. Asking again about the same document costs nothing.
+
+A numbering conversion with no template of yours (CSI to Canadian PageFormat, or back) needs a scheme. The assistant
+offers a built-in one as a choice, **Use the built-in CSC PageFormat scheme as the template** or **Use the built-in
+CSI SectionFormat scheme as the template**; picking it attaches that file, which ships with the app, as the template (in
+place of one you attached, as the choice says) and plans the request again. The numbers stay automatic Word numbering,
+each keeping its value, and each paragraph can keep its own look so only the numbers change.
+
 ## Previews and page counts
 
 Each sample document gets a card **Preview · name** with rendered before/after pages; click a page to enlarge
