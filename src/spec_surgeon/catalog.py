@@ -322,6 +322,10 @@ COMMON_ASSUMPTIONS: Dict[str, List[str]] = {
         "(from 'main'), or the paragraphs of named styles per level (from.styles); level_map when the levels differ",
         "each converted paragraph gets its level's style and loses its own list numbering; its own indents and fonts "
         "stay unless direct_formatting is 'clear'",
+        "styles 'keep': each converted paragraph keeps its own style and only its numbering changes (its own list "
+        "numbering points at your list's level; the scheme's styles come in unused) — the numbers change, the look "
+        "stays, as the Specification Formatter's conversion with no template did; use it when the user wants the "
+        "numbering converted without restyling the document, and say the indents the paragraphs' own styles set stay",
         "every paragraph's new number is predicted and checked; numbers that shift (a glitch in the source corrected), "
         "cross-reference fields and written references such as 'as specified in 1.05' are flagged, never edited",
         "a list whose old numbers the engine cannot predict (Word's 'Restart numbering', shared list definitions, "

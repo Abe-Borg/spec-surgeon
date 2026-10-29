@@ -40,6 +40,12 @@ children gone, the ``w:pPrChange`` by the shared rules (``clearing.check_cleared
 (``clearing.check_runs_and_mark``). It strips ``pStyle``, ``pPrChange``, ``numPr`` (own) and the cleared names of the
 changed paragraphs (``strip_ppr``) after comparing the whole pPr.
 
+``styles: "keep"`` (``scheme`` by default; docs/SPEC_FORMATTER_MODES_DESIGN.md N5): no paragraph is restyled; a
+converted paragraph changes when its own ``w:numPr`` is not already exactly ``w:ilvl`` = its level then ``w:numId`` = the
+destination list (as written, nothing else in it), and its pPr is then the source's with that ``w:numPr`` in its CT_PPr
+place (``_V_PPR_BASE``, this module's own copy of the order) and everything else — its ``w:pStyle`` first of all —
+exactly as it was; ``numPr`` and ``pPrChange`` are stripped for the residual, never ``pStyle``.
+
 ``select.include_tables`` false (true by default) leaves out of the chosen paragraphs every one with a ``w:tc`` among
 its ancestors, before the refusals. ``counters: "keep"`` (``flag`` by default): the op must refuse a converted
 paragraph whose number the source or the prediction does not evaluate (``numbering-unsupported``) and one whose
@@ -51,9 +57,12 @@ import copy
 import re
 from typing import Any, Dict, List, NamedTuple, Optional, Sequence, Set, Tuple
 
+from lxml import etree
+
 from .reader import STYLES_REL, W
-from .props import Ctx, Styles
-from .clearing import check_cleared_ppr, check_runs_and_mark, v_cleared_sets, v_decide, v_expected_ppr, v_with_pstyle
+from .props import Ctx, Styles, sig
+from .clearing import (MARK, check_cleared_ppr, check_runs_and_mark, v_cleared_sets, v_decide, v_expected_ppr,
+                       v_with_pstyle)
 from .lists import (V_OFF, VListDefs, VNumbered, VScheme, _v_int, _v_placeholders, v_count, v_list_defs,
                     v_list_is_clean, v_main_abstract, v_paragraph_style, v_resolve_scheme, v_visible_line)
 from .restyle import v_resolve_style
@@ -61,6 +70,46 @@ from .styleimport import NUMBERING_REL, check_requested, v_derive_import, v_used
 
 V_NUMPR_REVISIONS = {W + "ins", W + "del", W + "moveFrom", W + "moveTo", W + "numberingChange"}
 V_LEVEL_KNOWN = {"shared", "start-override", "skipped", "override"}   # not evaluated, the level known
+# CT_PPrBase in the schema's order, then the mark's rPr, sectPr and pPrChange (CT_PPr): where a written w:numPr stands
+_V_PPR_BASE = ("pStyle", "keepNext", "keepLines", "pageBreakBefore", "framePr", "widowControl", "numPr",
+               "suppressLineNumbers", "pBdr", "shd", "tabs", "suppressAutoHyphens", "kinsoku", "wordWrap",
+               "overflowPunct", "topLinePunct", "autoSpaceDE", "autoSpaceDN", "bidi", "adjustRightInd", "snapToGrid",
+               "spacing", "ind", "contextualSpacing", "mirrorIndents", "suppressOverlap", "jc", "textDirection",
+               "textAlignment", "textboxTightWrap", "outlineLvl", "divId", "cnfStyle", "rPr", "sectPr", "pPrChange")
+
+
+def _v_numpr_sig(num_id: int, ilvl: int):
+    """The signature of ``<w:numPr><w:ilvl w:val=ilvl/><w:numId w:val=num_id/></w:numPr>``."""
+    el = etree.Element(W + "numPr")
+    etree.SubElement(el, W + "ilvl").set(W + "val", str(ilvl))
+    etree.SubElement(el, W + "numId").set(W + "val", str(num_id))
+    return sig(el)
+
+
+def _v_rank(item) -> int:
+    """Where an item of an expected pPr sequence stands in ``_V_PPR_BASE`` (the mark ``MARK`` is the rPr); an element
+    the order does not name ranks after every one it does."""
+    if item == MARK:
+        return _V_PPR_BASE.index("rPr")
+    tag = item[0] if isinstance(item, tuple) and item and isinstance(item[0], str) else ""
+    local = tag[len(W):] if tag.startswith(W) else ""
+    return _V_PPR_BASE.index(local) if local in _V_PPR_BASE else len(_V_PPR_BASE)
+
+
+def v_with_numpr(seq: List[Any], num_id: int, ilvl: int) -> List[Any]:
+    """``seq`` (an expected pPr sequence) with its numPr replaced by the destination's, at its CT_PPr place."""
+    rest = [x for x in seq if not (isinstance(x, tuple) and x and x[0] == W + "numPr")]
+    at = next((i for i, x in enumerate(rest) if _v_rank(x) > _V_PPR_BASE.index("numPr")), len(rest))
+    return rest[:at] + [_v_numpr_sig(num_id, ilvl)] + rest[at:]
+
+
+def _v_numbered_as(p, num_id: int, ilvl: int) -> bool:
+    """The paragraph's own numPr is exactly ilvl then numId with these values as written, nothing else in it."""
+    numpr = p.find(W + "pPr/" + W + "numPr")
+    kids = list(numpr) if numpr is not None else []
+    if numpr is None or [c.tag for c in kids] != [W + "ilvl", W + "numId"]:
+        return False
+    return kids[0].get(W + "val") == str(ilvl) and kids[1].get(W + "val") == str(num_id)
 
 
 class VDest(NamedTuple):
@@ -275,6 +324,10 @@ def _converted_numbering(ctx: Ctx, a: Dict[str, Any], errs: List[str]) -> str:
     keep = params.get("counters", "flag")
     if keep not in ("flag", "keep"):
         raise ValueError(f"counters {keep!r} (the op must refuse: bad-params)")
+    style_mode = params.get("styles", "scheme")
+    if style_mode not in ("scheme", "keep"):
+        raise ValueError(f"styles {style_mode!r} (the op must refuse: bad-params)")
+    keep_styles = style_mode == "keep"
     levels, template, existing = _v_scheme_params(params)
     direct = params.get("direct_formatting", "keep")
     if direct not in ("keep", "clear"):
@@ -408,8 +461,12 @@ def _converted_numbering(ctx: Ctx, a: Dict[str, Any], errs: List[str]) -> str:
         sid = dest.sids[lvl]
         ps = p.find(W + "pPr/" + W + "pStyle")
         current = ps.get(W + "val") if ps is not None else ctx.src_styles.default.get("paragraph")
-        restyle = current != sid
-        own = p.find(W + "pPr/" + W + "numPr") is not None
+        if keep_styles:
+            restyle = False                          # its own style stays; its own numPr names the destination
+            own = not _v_numbered_as(p, dest.scheme.num_id, lvl)
+        else:
+            restyle = current != sid
+            own = p.find(W + "pPr/" + W + "numPr") is not None
         d = v_decide(p, sv.runs[bi], ctx.src_styles, run_names, para_names) if direct == "clear" else None
         if not restyle and not own and not (d is not None and d.changed):
             continue
@@ -433,14 +490,16 @@ def _converted_numbering(ctx: Ctx, a: Dict[str, Any], errs: List[str]) -> str:
         ppr_change = restyle or own or bool(gone)
         if ppr_change or mark:
             expected = v_expected_ppr(S, gone | ({"numPr"} if own else set()), mark_stays, mark=mark)
-            if restyle or own:
+            if keep_styles and own:
+                expected = v_with_numpr(expected, dest.scheme.num_id, lvl)
+            elif not keep_styles and (restyle or own):
                 expected = v_with_pstyle(expected, sid)
             check_cleared_ppr(S, O, expected, tracked, author, where, errs, changed=ppr_change, mark=mark)
         if ppr_change:
             n_paras += 1
             n_restyled += int(restyle)
             ctx.strip_ppr.setdefault(main, {}).setdefault(bi, set()).update(
-                gone | {"pStyle", "pPrChange"} | ({"numPr"} if own else set()))
+                gone | {"pPrChange"} | (set() if keep_styles else {"pStyle"}) | ({"numPr"} if own else set()))
     for n, key, what in ((n_paras, "expected_paragraphs", "paragraph(s) changed"),
                          (n_restyled, "expected_restyled", "paragraph(s) restyled"),
                          (n_runs, "expected_runs", "run(s) cleared"), (n_marks, "expected_marks", "mark(s) cleared")):
@@ -449,8 +508,9 @@ def _converted_numbering(ctx: Ctx, a: Dict[str, Any], errs: List[str]) -> str:
     if changed != [list(c) for c in a.get("changed") or []]:
         errs.append(f"{tag}: the paragraphs that change here {changed[:12]} are not the plan's "
                     f"{(a.get('changed') or [])[:12]}")
-    return (f"{tag}: {len(converted)} paragraph(s) → list {dest.scheme.num_id} ({', '.join(dest.sids)}); "
-            f"{len(predicted)} counted number(s) predicted and found" + (" (tracked)" if tracked else ""))
+    return (f"{tag}: {len(converted)} paragraph(s) → list {dest.scheme.num_id} ({', '.join(dest.sids)})"
+            + (", each keeping its own style" if keep_styles else "")
+            + f"; {len(predicted)} counted number(s) predicted and found" + (" (tracked)" if tracked else ""))
 
 
 CONVERT_KINDS = {"converted_numbering": _converted_numbering}

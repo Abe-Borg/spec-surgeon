@@ -22,6 +22,11 @@ CASES = {
         # table cells left as they are, every number keeping its values
         ({"include_tables": False}, {"levels": ["PRT", "ART", "PR1"], "template": "T.docx", "counters": "keep"},
          ["main list", "table cells are left as they are", "would count differently is set aside"]),
+        # every paragraph keeping its own style: only the numbering changes (the Formatter's template-free conversion)
+        ({}, {"levels": ["CaPart", "CaArt", "CaPara"], "template": "PageFormat.docx", "styles": "keep",
+              "counters": "keep"},
+         ["main list", "numbered by your list at the level of its scheme style", "keeping each paragraph's own style",
+          "example file “PageFormat.docx”", "would count differently is set aside"]),
     ],
     "convert_typed_numbers": [
         # the typical call: every paragraph, tracked (its default), the scheme from an example file
