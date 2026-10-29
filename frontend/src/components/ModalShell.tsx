@@ -35,6 +35,7 @@ export function ModalShell({
       onClick={onClose}
       role="dialog"
       aria-modal="true"
+      aria-label={title}
       data-dialog={marker}
     >
       <div

@@ -1,5 +1,5 @@
 // Adapted from Build-a-Spec's frontend/src/components/Composer.tsx (copy-based reuse).
-import { memo, useEffect, useRef } from "react";
+import { memo, useEffect, useRef, type ReactNode } from "react";
 import { TOUR_HOLD } from "../lib/tour";
 import Tip from "./Tip";
 
@@ -20,6 +20,8 @@ interface Props {
   onChange: (text: string) => void;
   /** The guided tour runs: Send is held still (its conversation is a recording). */
   tourActive?: boolean;
+  /** What sits above the message box, inside its band: the saved recipes (RecipesStrip). */
+  above?: ReactNode;
 }
 
 const MAX_HEIGHT = 220; // about nine lines
@@ -34,6 +36,7 @@ function Composer({
   value,
   onChange,
   tourActive = false,
+  above,
 }: Props) {
   const ref = useRef<HTMLTextAreaElement>(null);
 
@@ -79,6 +82,7 @@ function Composer({
   return (
     <div className="border-t border-edge bg-surface p-4" data-tour="composer">
       <div className="mx-auto max-w-3xl">
+        {above}
         <div className="flex items-end gap-2 rounded-2xl border border-edge bg-bg p-2 focus-within:border-accent/70">
           <textarea
             ref={ref}

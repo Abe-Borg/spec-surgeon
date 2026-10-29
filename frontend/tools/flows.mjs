@@ -383,9 +383,13 @@ try {
   check("the workbench has no button", (await page.locator("section[aria-label='Your documents and the pages']").getByRole("button", { name: /^Create \d+ edited cop(?:y|ies)$/ }).count()) === 0);
   check("no plan card", (await page.getByText("Here’s what will change").count()) === 0);
 
-  // 14. Markdown renders in both panes (the chat's reply and the findings on the pages).
+  // 14. Markdown renders in both panes (the chat's reply, and the note under Worth knowing beside the pages); the
+  // visual check's advisory findings stay off the page while none blocks.
   check("the chat renders markdown", (await page.locator("section[aria-label='Conversation'] .md").count()) > 0);
-  check("the findings render markdown", (await page.locator(".paper .md").count()) > 0);
+  const worthKnowing = page.locator("section[aria-label='Worth knowing'] .md");
+  check("the Worth knowing note renders markdown",
+    (await worthKnowing.count()) === 1 && (await worthKnowing.innerText()).includes("also occurs in the body (1×)"));
+  check("the advisory findings are not on the page", (await page.getByText("the last line of article 1.4 moved").count()) === 0);
 
   // 15. Every preview starts with its checkmark: it gets its copy, and Create counts them all. The red X on a preview
   // takes it off the count; the checkmark or Include all takes it back; approving sets that document aside; the to-do
@@ -526,8 +530,11 @@ try {
       "Word (Tracked Changes ON) | Word (Tracked Changes OFF) | PDF (Clean)");
   await exportMenu.getByRole("menuitem", { name: /PDF \(Clean\)/ }).click();
   await page.getByText(/clean PDFs? to C:/).first().waitFor({ timeout: 20000 });
+  // the message comes before the job's final view; Undo waits for it
+  const undoBack = await page.getByRole("button", { name: "Undo the last button", disabled: false })
+    .waitFor({ timeout: 5000 }).then(() => true).catch(() => false);
   check("…and PDF (Clean) leaves the edited copies as they were",
-    (await page.getByRole("heading", { name: "Your edited copies" }).isVisible()) && (await undoBtn.isEnabled()));
+    (await page.getByRole("heading", { name: "Your edited copies" }).isVisible()) && undoBack);
   await page.getByRole("button", { name: "All buttons" }).click();
   await page.getByRole("button", { name: "Find and replace" }).click();
   await previewBtn.click();

@@ -38,6 +38,8 @@ interface Props {
   /** Safe mode: the buttons (``panel``) take the composer's place, and nothing here talks to the model. */
   mode: Mode;
   panel?: ReactNode;
+  /** Default and Obliterate: the saved recipes, above the message box (RecipesStrip; nothing when there are none). */
+  recipes?: ReactNode;
   onMode: (mode: Mode) => void;
   /** Discard, beside the one button: a waiting preview, or a conversation's open request (``lib/action.discardButton``). */
   discard?: DiscardButton | null;
@@ -69,6 +71,7 @@ export default function Chat({
   draft,
   mode,
   panel,
+  recipes,
   onMode,
   discard,
   onDiscard,
@@ -348,6 +351,7 @@ export default function Chat({
           busy={busy}
           canSend={canSend}
           tourActive={tourActive}
+          above={recipes}
           reason={sendReason}
           onSend={onSend}
           onStop={onStop}

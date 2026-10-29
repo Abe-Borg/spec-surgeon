@@ -19,6 +19,7 @@ import type {
   JobEvent,
   Message,
   PreviewNote,
+  SavedRecipe,
   Status,
   View,
 } from "../types.ts";
@@ -118,6 +119,8 @@ export const EMPTY_VIEW: View = {
   left_untouched: [],
   tutorial: { active: false, id: null, scenario: null, finished_version: 0 },
   safe_note_hidden: false,
+  saved_recipes: [],
+  recipe_blocked: "",
 };
 
 export const INITIAL_STATE: UiState = {
@@ -189,6 +192,10 @@ export function normalizeView(raw: unknown): View {
     left_untouched: list(v.left_untouched),
     tutorial: normalizeTutorial(v.tutorial),
     safe_note_hidden: v.safe_note_hidden === true,
+    saved_recipes: list<SavedRecipe>(v.saved_recipes).filter(
+      (r) => !!r && typeof r === "object" && typeof r.id === "string" && Array.isArray(r.steps),
+    ),
+    recipe_blocked: typeof v.recipe_blocked === "string" ? v.recipe_blocked : "",
   };
 }
 

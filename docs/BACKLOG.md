@@ -127,6 +127,20 @@ write-back over the originals unless asked for (T1 is the claim most of the trus
 Everything else is built and tested on fixtures; nothing is done on fixtures alone. These runs need real
 specifications, Windows and Word, and only the owner can do them. Record what a run finds as a new item above.
 
+- **Saved recipes (built 2026-10-29):** in Safe mode with Word rendering over a real Division 21 batch, Match headers
+  and footers to template, Change the issue stamp and Accept all tracked changes, then **Save as a recipe…** with all
+  three ticked; the recipe's tile under **My recipes** shows the three steps; on a second real batch from another
+  project, with the office template attached, opening it shows each step's form, **Change** on the stamp step takes
+  another wording for this run, **Preview 3 steps** shows one set of pages after all three, and Create makes copies
+  that open in Word without a repair prompt and read as asked; What you've done so far lists the recipe as one entry
+  with its steps, the three buttons carry their checkmark, and one Undo takes the whole recipe off; without the template
+  attached the tile is greyed with the reason. In Default mode, two real requests (a code-cycle replacement and a
+  formatting change) saved as a recipe and run on another project's specifications with the API key removed: the
+  spending pill stays at $0.00, a document that does not fit waits on the to-do list with the reason, and the
+  assistant plans it when asked there. A custom-method run is unticked in the save dialog with its reason. Two windows
+  open at once each see the other's saved recipe after reopening its list; `%APPDATA%\Spec Surgeon\recipes.json` holds
+  the steps and words and no document text beyond the user's own words. The tiles, the strip and the dialogs read well
+  at 1280 px wide.
 - **What you've done so far (built 2026-10-29):** over a real batch in Safe mode, Remove all comments, Accept all
   tracked changes and Match headers and footers to the template, each created in turn; the list under the copies
   names the three in order, the newest marked LATEST, with "All N documents" or which documents did not get one and

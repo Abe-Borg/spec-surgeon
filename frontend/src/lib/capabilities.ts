@@ -40,6 +40,11 @@ export const END_USER_CAPABILITIES = [
   "safe.default",
   "safe.buttons",
   "safe.form",
+  // saved recipes
+  "recipes.save",
+  "recipes.mine",
+  "recipes.form",
+  "recipes.manage",
   // the previews and the one button
   "preview.pages",
   "preview.marks",

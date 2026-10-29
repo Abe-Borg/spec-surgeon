@@ -127,6 +127,17 @@ function HowToUse({ onStartTourAt }: { onStartTourAt: (chapter: string) => void 
               </>
             ),
           },
+          {
+            t: "Save the buttons you ran as a recipe",
+            d: (
+              <>
+                <Tag>Save as a recipe…</Tag>, on What you've done so far, names the buttons you ran and keeps them
+                with what you filled in. The recipe joins <Tag>My recipes</Tag> above the buttons: open it on other
+                documents, change a step's form or skip a step for this run, and one preview shows the pages after
+                every step. <Tag>Manage</Tag> renames, duplicates or deletes recipes.
+              </>
+            ),
+          },
         ]}
       />
       <Lead>Default mode, a typical first pass:</Lead>
@@ -201,7 +212,9 @@ function HowToUse({ onStartTourAt }: { onStartTourAt: (chapter: string) => void 
             d: (
               <>
                 Ask for the next change and it is made on those copies; <Tag>What you've done so far</Tag>, under
-                them, lists every request they carry. <Tag>Undo the last change</Tag> goes back to
+                them, lists every request they carry, and <Tag>Save as a recipe…</Tag> keeps your requests with the
+                plans you approved, to run again on other documents from <Tag>Recipes</Tag> beside the message box,
+                with no AI. <Tag>Undo the last change</Tag> goes back to
                 the copies from before it, one run at a time, and nothing is deleted;{" "}
                 <Tag>Start over from the originals</Tag> is one tap away, and <Tag>New conversation</Tag> in the top bar
                 starts an empty one. The copies live in the
@@ -413,6 +426,18 @@ function Workflows() {
           "What you've done so far, under the copies, lists each button or request the copies carry since the originals, oldest first, with how many of the documents carry it and why any other does not. Undo takes the newest off and Start over clears it; in Safe mode a button you already ran carries a checkmark.",
           "Changed your mind before the copies exist? Discard preview withdraws a waiting preview in every mode, and in Default and Obliterate Drop this request ends a request that is still open (the assistant's question, a pause at the spending check, a reply waiting to continue). Nothing is created, and your next message starts a new request; the assistant is told the last one was withdrawn.",
           "A document attached after a run is an original beside the copies, and gets only the next change.",
+        ]}
+      />
+      <Recipe
+        title="Saved recipes"
+        tagline="The same changes on the next set of documents, in one preview."
+        steps={[
+          "Save as a recipe, on What you've done so far, keeps the changes you tick under a name, oldest first: in Safe mode each button with what you filled in its form; in Default and Obliterate each request in your words with the plan you approved and the words it places.",
+          "Safe mode lists your recipes under My recipes, above the buttons; Default and Obliterate beside the message box (All recipes lists every one). Opening one shows its steps: change a button's form or skip a step for this run, then Preview.",
+          "A recipe runs as one plan: every step is built from the documents attached now, checked by the same gate as any plan, and previewed once, with the pages after every step; one Create makes the copies, and Undo takes the whole recipe off. No AI is called.",
+          "A step that needs a template, picture or table uses the one attached when it runs. A document a step cannot take is left untouched in Safe mode, and waits on your to-do list in Default and Obliterate, where you can ask the assistant about it.",
+          "A recipe runs in its own mode and in any with fewer guardrails: Safe recipes everywhere, Default ones in Default and Obliterate, Obliterate ones only in Obliterate. A change Claude wrote a custom method for, or planned with values read from particular documents, cannot be kept, and the dialog says why.",
+          "Recipes are kept on this computer beside your settings, never with a document; Manage renames, duplicates or deletes them.",
         ]}
       />
       <Recipe

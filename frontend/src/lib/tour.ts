@@ -17,7 +17,7 @@ import { TRUST_FACTS as F } from "./trustFacts.ts";
  * Bump whenever chapter or step ORDER changes: the resume record (lib/tourStorage.ts) keeps numeric indexes, and a
  * stale one would land a reload on another chapter than the one it was left at. A bump discards it.
  */
-export const TOUR_VERSION = 4;
+export const TOUR_VERSION = 5;
 
 /** The version a finished tour is recorded as (settings.json `tutorial_version`); bump it when the tour changes
  *  enough that someone who finished the old one should be invited again. */
@@ -216,6 +216,16 @@ export const TOUR: readonly TourChapter[] = [
           "Headers and footers from your template, a watermark, the logo; fonts, page size and margins; find and replace, the issue stamp, END OF SECTION, units kept on their line; accepting or rejecting tracked changes, removing comments, highlighting, hidden text, blank lines, links and unused styles, tidying spaces, quotes and fields; file names and properties, the proofing language and Track Changes. A button that cannot be used yet says why when the pointer rests on it, such as no template attached. No model is called by any of them.",
       },
       {
+        id: "recipes",
+        capabilities: ["recipes.mine", "recipes.form", "recipes.manage"],
+        mode: "explanatory",
+        anchor: "safe-recipes",
+        placement: "right",
+        title: "Your recipes, above the buttons",
+        body:
+          "A recipe is changes you already ran, saved under a name; here, buttons and what you filled in. Its tile shows the steps in order. Open it to see each step's values, change one or skip a step for this run only; Preview then shows one set of pages after every step, and one Create makes the copies. No AI is called. In Default and Obliterate mode your recipes sit above the message box, where those saved from requests keep your words and the plans you approved. Manage renames, duplicates or deletes them. The practice workspace keeps none.",
+      },
+      {
         id: "form",
         capabilities: ["safe.form"],
         mode: "explanatory",
@@ -305,6 +315,17 @@ export const TOUR: readonly TourChapter[] = [
         title: "What you've done so far",
         body:
           "Each button you ran since the originals is listed here, oldest first, in the words of your line in the chat (in Default and Obliterate, each request). Under each, how many of the documents attached now carry it, and why any other does not: left untouched, set aside on your to-do list, or attached later. Undo the last button takes the newest off; Start over clears the list. In Safe mode a button you already ran carries a checkmark, so there is nothing to remember. The list is kept in the saved conversation.",
+      },
+      {
+        id: "save-recipe",
+        capabilities: ["recipes.save"],
+        mode: "explanatory",
+        anchor: "save-recipe",
+        needs: "done",
+        placement: "left",
+        title: "Save what you've done as a recipe",
+        body:
+          "Save as a recipe keeps the changes this list holds under a name, oldest first, to run again on other documents: each button with its form, or each request with the plan you approved and the words it places. Untick one to leave it out. A change Claude wrote a custom method for, or one planned with values read from particular documents, cannot be kept and says why. A recipe keeps no document, template or picture: a step that needs one uses what is attached when it runs. It is kept on this computer, beside your settings. The practice changes are not yours, so the button is held still during the tour.",
       },
       {
         id: "export",

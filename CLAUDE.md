@@ -212,6 +212,21 @@ jobs). Details: `docs/CONVERSATIONAL_DESKTOP.md`.
     `template_roles.py` (a template's style per role, page and font, read without a model) and `body_match.py` (match
     body formatting: one plan per document from its own structure, one layout per agreeing pattern, each through the
     gate; what it cannot match is left out with the reason, `Session.left_out_reasons`).
+  - `saved_recipes.py` — saved recipes: the runs of What you've done so far kept under a name (`Store`,
+    `config_dir()\recipes.json`, each change read, made and written atomically under `recipes.json.lock`, which every
+    window takes). A step is a Safe-mode button and
+    its form, or the user's words and the plan they approved (`portable_plan`: a custom method, bindings, typed or bound
+    slot fills and per-occurrence capitalisation are refused with the reason; unticked occurrences dropped), with the
+    words it places (`compiler.placed_words` at approval). Taken at approval (`DocumentTask._steps_now` → `run_steps`,
+    journalled beside `runs`). A run (`build_run`, `DocumentTask._saved_recipe`) builds every kept step from the
+    documents attached now (a plan's template, picture or table remapped onto the attached one, `remap` — the owner's
+    decision), passes each through the gate, composes them in the user's order into ONE plan (`combine`: a chain, or a
+    plan per layout of chains) and through the gate again: one preview, one approval, one checked run, `outcome_source`
+    `"saved"` (`Session.model_free`: no AI anywhere). A recipe runs in its own mode or one with fewer guardrails
+    (`runs_in`): a Default recipe is never offered in Safe mode, an Obliterate one runs only in Obliterate. A document a
+    step cannot take is left untouched in Safe mode and goes on the to-do list in Default and Obliterate (no AI
+    re-plans it); a recipe's run is never handed to Claude as a request (`_invalidate`, the journal's `recipe_run`).
+    No export or import of recipe files (the owner's decision, 2026-10-29). Pinned by `tests/test_saved_recipes.py`.
   - `tutorial.py` — the guided tour's practice workspace (`docs/CONVERSATIONAL_DESKTOP.md`, "The guided tour"):
     `TutorialTask` (a `DocumentTask` without a journal over the bundled showcase in `examples/tutorial/`, which
     `tests/make_tutorial_showcase.py` builds byte-stable; `send`/`choose` refused, `NO_CONVERSATION`) and `Tutorial`

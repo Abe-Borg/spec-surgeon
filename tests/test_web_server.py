@@ -692,8 +692,12 @@ def test_safe_mode_routes_discard_and_undo(tmp_path, monkeypatch):
         view = frames(r)[-1]["state"]
     assert view["working"]["generation"] == 1 and view["working"]["undo"] == "Remove highlighting"
     assert view["working"]["undo_blocked"] == ""
-    assert view["working"]["done"] == [{"request": "Remove highlighting", "recipe": "remove_highlight",
-                                        "documents": 1, "of": 1, "not": []}]
+    [step] = view["working"]["done"]
+    assert {k: step[k] for k in ("request", "recipe", "documents", "of", "not", "name", "buttons", "why_not")} == {
+        "request": "Remove highlighting", "recipe": "remove_highlight", "documents": 1, "of": 1, "not": [], "name": "",
+        "buttons": ["remove_highlight"], "why_not": ""}
+    assert [(s["kind"], s["button"], s["text"]) for s in step["steps"]] == [
+        ("button", "remove_highlight", "Remove highlighting")]
     view = client.post("/api/undo").json()
     assert view["working"] == {"generation": 0, "from_originals": True, "can_start_over": False,
                                "undo": "", "undo_blocked": "", "done": []}
