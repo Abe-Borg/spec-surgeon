@@ -194,9 +194,9 @@ jobs). Details: `docs/CONVERSATIONAL_DESKTOP.md`.
   - `recipes.py` — Safe mode's buttons: each a fixed EditSpec from its form (`build`), the header/footer template's kind
     (`template_kind`); above them the note that says what Safe mode is and points to Default mode with an API key
     (`frontend/src/lib/safeNote.ts`, `SafeNote.tsx`; folded: `Settings.safe_note_hidden`); a form's `lines` field is a
-    list of one-line wordings and fields sharing a `row` sit side by side; the second round of buttons (M1–M3) is
-    designed in the backlog. The font buttons (Match font to template, Change font) group the documents by their own
-    body size, one spec per size as a layout plan when there are two (`_font_layouts`; documents built alike take the
+    list of one-line wordings and fields sharing a `row` sit side by side; the second round of buttons (M1, M3) is
+    designed in the backlog; M2, **Remove specifier notes**, is built (`_remove_notes`: a two-step chain, no form).
+    The font buttons (Match font to template, Change font) group the documents by their own body size, one spec per size as a layout plan when there are two (`_font_layouts`; documents built alike take the
     size most of them have, the rest are left out with why); the page's copy of the list (`frontend/mock/recipes.json`) is pinned to `catalog()`. Find and
     replace, occurrence by occurrence (backlog F1): `replace_table` lists every occurrence it finds in its
     `replaced_text` assertion (and in a refusal's details), `planner.FilePlan.occurrences` exposes them, the window

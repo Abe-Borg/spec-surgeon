@@ -17,11 +17,11 @@ them was built; `git log --all -- 'docs/PLAN-*'` finds them, with their findings
 | S4 — what a run left open | Over test-set-2 (13 specifications, eight owners): the reference rules find no section number in seven of them (VA, Wisconsin, Port of Portland, Michigan layouts); a chain preview repeats the spec's summary and assumptions for each step; after an outcome-planner question the next reply still goes to that planner, not the assistant (seen again over test-set-3) | Reference rules for those layouts; a chain preview that says its summary once; the reply after an outcome-planner question goes back to the assistant |
 | Font button: documents built alike at two body sizes | **Match font to template** plans per body size (one layout per size, `recipes._font_layouts`), and a layout routes by structure pattern (`layouts.route`): two documents of one pattern whose body sizes differ cannot take two sizes in one press, so the size most of them have wins and the rest wait under Left untouched with the reason, to be pressed alone | A layout that names its documents beside its patterns (`validate_layout_plan`, `route`, the `applies_to` pin and the approval token), so one press covers them — only if the owner's runs meet the case |
 
-### Safe mode, the second round of buttons (M1–M3)
+### Safe mode, the second round of buttons (M1, M3)
 
 The owner's go-ahead of 2026-10-28 built the Safe mode proposal's first round (twelve buttons, Reject beside Accept,
-and the note above the buttons). These three were proposed with it and need their forms designed before they are
-built; each is an operation the engine already has and verifies, so each is a recipe in `recipes.py`, its form, its
+and the note above the buttons). These were proposed with it and need their forms designed before they are
+built (M2, Remove specifier notes, is built: under "Waiting on the owner's machine"); each is an operation the engine already has and verifies, so each is a recipe in `recipes.py`, its form, its
 sentence and its tests, never a new operation. Every rule of the first round holds: built in code from the form, the
 one gate, no AI call, every placed word typed or read from an attached file, a capability and a tour step for any new
 control, the trust surfaces in the same change.
@@ -29,7 +29,6 @@ control, the trust surfaces in the same change.
 | Item | Operation | What to design |
 | --- | --- | --- |
 | M1 — Fill in project information | `fill_variables` | The form lists the placeholders found across the attached documents (`{{NAME}}` markers and yellow highlights), a box for each, as the template button lists a prepared template's `typed_slots`; that needs a reading step over the documents (not the template) carried by the view, like `template_kind`. Or an attached table (CSV or Excel: the names column and this project's column, chosen in the form). A placeholder with no value refuses the document (`unknown: refuse`), never left half-filled. Typed values are the sources (`compiler.placed_words` already traces `fill_variables` values) |
-| M2 — Remove specifier notes | `remove_notes` | Notes found by what the owner's masters use: the note style picked from the paragraph styles found in the documents (a field like `roles`, over the documents' styles), the opening words (Retain, Delete, Revise, Coordinate, Verify, Insert …) as a pattern the app builds from escaped literals (`ops/patterns.compile_pattern`), their colour, or Hidden. The preset words are checked on the owner's masters first, so no requirement that starts with one of them is taken; the preview's text changes and the verifier's `remove_notes` kind are the proof |
 | M3 — Make section numbers agree | `make_values_agree` | The SECTION line is the truth (`REFERENCE_FILLS["SECTION_NUMBER"]`); the places are the headers, the footers, the END OF SECTION line and the file name, each with a fixed pattern the app writes. Waits on S4: the reference rules miss the section number in some layouts, and a button that cannot read the truth sets those documents aside |
 
 ### Word as the judge of tracked changes (W1–W4)
@@ -127,6 +126,17 @@ write-back over the originals unless asked for (T1 is the claim most of the trus
 Everything else is built and tested on fixtures; nothing is done on fixtures alone. These runs need real
 specifications, Windows and Word, and only the owner can do them. Record what a run finds as a new item above.
 
+- **Remove specifier notes (M2, built 2026-10-29):** in Safe mode with Word rendering, the button over a real batch
+  from each kind of master the owner starts from (MasterSpec sections and an owner's data-center masters): every note
+  paragraph is gone (the CMT or note-style editor's notes, "NOTE TO SPECIFIER", "Retain or delete …", "Retain
+  paragraph below …", "Select one of the following …") and the hidden text with it; no requirement, heading,
+  placeholder, "to be determined", copyright or confidentiality line, red or blue requirement text, tracked change or
+  comment went. Read the preview's list of removed notes against the documents for anything that is not a note, and
+  the copies for a note the button missed (a note style by another name, an opening it does not know): either is a
+  new item here, with the words or the style name. A document a note's field or section break set aside is under Left
+  untouched with the reason, and **Try these in Default mode** removes that note when asked. The copies open in Word
+  without a repair prompt. Then, in Default mode on those copies, one request cuts the placeholders and deletes the
+  copyright line.
 - **Saved recipes (built 2026-10-29):** in Safe mode with Word rendering over a real Division 21 batch, Match headers
   and footers to template, Change the issue stamp and Accept all tracked changes, then **Save as a recipe…** with all
   three ticked; the recipe's tile under **My recipes** shows the three steps; on a second real batch from another

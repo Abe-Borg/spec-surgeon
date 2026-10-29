@@ -28,7 +28,8 @@ In Safe mode the box you type in gives way to buttons, in groups: headers and fo
 watermark, swap the logo), fonts and formatting (match body formatting to template, match font to template, change
 font, page size and margins), text (find and replace, with every occurrence listed to untick; change the issue stamp;
 add END OF SECTION where missing; keep numbers with their units), clean up (accept or reject all tracked changes,
-remove comments, highlighting, hidden text or empty paragraphs, clean up spaces, standardize quotes and dashes, remove
+remove comments, highlighting, hidden text, specifier notes or empty paragraphs, clean up spaces, standardize quotes
+and dashes, remove
 hyperlinks, freeze fields as plain text, remove unused styles) and files and properties (name the copies by section
 number and title, the document title property, Track Changes off, set author and company, set the proofing
 language). Clean PDFs are Export's, in every mode ("Export: saving the copies", below). A button that cannot be
@@ -230,6 +231,18 @@ changes** is the accept button with a choice: reject undoes every change. **Set 
 (`set_document_properties`) sets Author, Company and Subject to the words typed, or clears the author names (Author
 and Last Modified By), not both for Author. **Set proofing language** (`set_language`) sets every language, or only
 other kinds of English, to the one chosen.
+
+**Remove specifier notes** (`recipes._remove_notes`) has no form: one press is the whole clean-up. It is a chain of
+two steps, hidden text (`remove_hidden_text`, every part) and then the note paragraphs (`remove_notes` over the body,
+headers, footers, footnotes and endnotes), both untracked: a chain and not one spec of two ops because the engine
+plans a spec's ops on the source, where a hidden note still holds the field the first step takes out. A note is a
+paragraph in a note style — the documents' paragraph styles whose id or name, or a base style's, folds to CMT,
+Specifier Note, Editor's Note, Note to Specifier, Editorial Note or Coordinator Note (`NOTE_STYLE_NAMES`; an id that
+is a note style in one document and another style in the next is left out and said) — or one whose text opens as a
+specifier's instruction (`ops/hidden.SPECIFIER_OPENINGS`: SpecCleanse's whole-paragraph rules, anchored at the
+paragraph's start, headings excluded; `describe` names it in words instead of quoting it). Placeholders, copyright
+lines, "to be determined", headings, coloured text, tracked changes and comments stay; Default and Obliterate remove
+or edit those on request.
 
 Typing is not possible in Safe mode, and the server refuses a message there; the conversation and its question cards
 belong to Default mode.

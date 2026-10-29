@@ -76,6 +76,33 @@ NOTE_SCOPE = ["document"]
 RULE_KEYS = ("style_in", "text_regex", "color_in", "hidden")
 RUN_RULE_KEYS = ("color_in", "hidden")
 
+# The openings of a paragraph that IS a specifier's note, for Safe mode's Remove specifier notes button (recipes.py):
+# SpecCleanse's whole-paragraph rules, each narrowed there against requirements it once took ("Retain records of all
+# tests", "Select one of the listed manufacturers", "Provide two [retain or delete] spare filters"), and anchored here
+# at the paragraph's start — a requirement that merely contains such words keeps them. A heading never matches (END OF
+# SECTION, SECTION nn, PART n, ARTICLE n, even between asterisks). The plan carries it as an ordinary ``text_regex``,
+# which the verifier compiles and searches with its own code; ``describe`` names it in words instead of quoting it.
+_NOTE_NAMES = r"(?:note\s+to\s+specifiers?|(?:specifier|editor|coordinator)['’]?s?\s+notes?)\b"
+SPECIFIER_OPENINGS = (
+    r"(?i)^(?![\W_]*(?:end\s+of\s+section|section\s+\d|part\s+\d|article\s+\d))\s*(?:"
+    r"\[?\s*" + _NOTE_NAMES +
+    r"|\[\s*specifier\b|specifier\s*:|<\s*specifier\b"
+    r"|\[\s*(?:edit|coordinator)[^\]]*?\bnote\b[^\]]*\]"
+    r"|\*{3}.*\*{3}\s*$"
+    r"|\[?\s*retain\s+or\s+delete\b"
+    r"|\[?\s*delete\s+if\s+not\s+(?:applicable|required|used)\b"
+    r"|\[?\s*retain\s+if\s+(?:applicable|required|used)\b"
+    r"|\[?\s*delete\s+options?\s+not\s+(?:applicable|required|selected)\b"
+    r"|\[?\s*(?:delete|remove)\s+this\s+(?:paragraph|section|line)\b"
+    r"|(?:select|choose)\s+one\b(?!-)[^.]{0,40}\b(?:above|below|following|paragraphs?|subparagraphs?|options?|articles?)\b"
+    r"|(?:retain|copy)\s+(?:\w+\s+){0,4}(?:sub)?paragraphs?\b[^.]{0,60}\b(?:above|below)\b"
+    r"|\[?\s*see\s+(?:evaluations|editing\s+instructions?)\b"
+    r"|(?:-{3,}|={3,}|\*{3,})\s*optional\s*(?:-{3,}|={3,}|\*{3,})"
+    r")"
+)
+SPECIFIER_OPENINGS_WORDS = ("opens as a specifier's instruction (“NOTE TO SPECIFIER”, “Retain or delete …”, “Delete if "
+                            "not applicable”, “Retain paragraph below …”, “Select one of the following …” and the like)")
+
 # the batch-2 clean-up ops: a file with nothing to remove is a no-op by default (whole batches run them)
 CLEANUP_PARAMS = {
     **{k: v for k, v in COMMON_PARAMS.items() if k != "scope"},
@@ -121,7 +148,9 @@ def _note_paragraph_words(rule: Dict[str, Any]) -> str:
     if isinstance(rule.get("style_in"), list) and rule["style_in"]:
         head += " in " + prose.styles(list(rule["style_in"]))
     tests: List[str] = []
-    if rule.get("text_regex"):
+    if rule.get("text_regex") == SPECIFIER_OPENINGS:
+        tests.append(SPECIFIER_OPENINGS_WORDS)
+    elif rule.get("text_regex"):
         tests.append("matches the pattern " + prose.quote(rule["text_regex"]))
     if isinstance(rule.get("color_in"), list) and rule["color_in"]:
         tests.append("is all coloured " + prose.join((prose.colour(c) for c in rule["color_in"]), "or"))

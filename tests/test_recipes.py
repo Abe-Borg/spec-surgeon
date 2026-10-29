@@ -12,12 +12,14 @@ from docx import Document
 from docx.shared import Pt
 from lxml import etree
 
+from fx_removal import build_spec_notes
 from make_fixtures import DIRTY_KINDS, build, build_dirty, build_reference_spec, build_rich, build_sized, build_template
 from spec_surgeon import compiler, layouts, llm, preview, recipes, vision
 from spec_surgeon.document_task import SAFE_NO_CONVERSATION, WORK_TODO, DocumentTask
 from spec_surgeon.editspec import plan_spec
 from spec_surgeon.fingerprint import fingerprint
 from spec_surgeon.gui import Session
+from spec_surgeon.ops import hidden as hidden_ops
 from spec_surgeon.ops.selectors import StyleSheet
 from spec_surgeon.package import FOOTER_REL, DocxPackage, W
 from spec_surgeon.settings import MODES, Settings, load_settings, save_settings
@@ -75,13 +77,14 @@ def test_every_button_is_in_a_group_with_a_form_the_panel_can_render():
     assert seen == set(recipes.BY_ID)
     # the owner's list (2026-10-23): first set and second set, nothing dropped back in; and the body button; and the
     # third set (2026-10-28: N1–N12 of the Safe mode proposal, with Accept widened to reject); Save clean PDFs left
-    # for the top bar's Export → PDF (Clean), in every mode (2026-10-29)
+    # for the top bar's Export → PDF (Clean), in every mode (2026-10-29); Remove specifier notes, one press with no
+    # form (M2, 2026-10-29)
     assert seen == {"headers_footers_template", "remove_headers_footers", "watermark", "swap_logo", "font_template",
                     "find_replace", "accept_changes", "remove_comments", "remove_highlight", "remove_hidden_text",
                     "remove_empty_paragraphs", "name_files", "title_property", "track_changes_off", "body_formatting",
                     "set_font", "page_setup", "issue_stamp", "end_of_section", "nonbreaking_spaces",
                     "clean_spaces", "quotes_dashes", "remove_hyperlinks", "freeze_fields", "remove_unused_styles",
-                    "author_company", "proofing_language"}
+                    "author_company", "proofing_language", "remove_notes"}
 
 
 def test_tracking_is_offered_only_where_the_operation_can_track_and_is_off_by_default():
@@ -183,6 +186,7 @@ CASES = {
     "remove_comments": {},
     "remove_highlight": {},
     "remove_hidden_text": {},
+    "remove_notes": {},
     "remove_empty_paragraphs": {},
     "name_files": {},
     "title_property": {"pattern": "SECTION {number} - {title}"},
@@ -1013,3 +1017,180 @@ def test_the_safe_mode_note_folds_and_the_window_remembers_it(tmp_path, monkeypa
     assert client.post("/api/settings", json={"safe_note_hidden": "yes"}).status_code == 400
     assert client.post("/api/settings", json={"safe_note_hidden": False}).json()["safe_note_hidden"] is False
     assert load_settings().safe_note_hidden is False
+
+
+# ---- Remove specifier notes (M2): one press, no form ----------------------------------------------------------------
+
+NOTES_GONE = ("Retain paragraph below if the project has a fire pump.", "Coordinate the alarm with the fire alarm Section.",
+              "NOTE TO SPECIFIER: edit the list to suit the project.", "Retain or delete this article.",
+              "Select one of the following paragraphs.",
+              "[Editor's Note: verify the hazard classification with the Owner.]", "Edit to suit.",
+              "Specifier: this whole paragraph is hidden.")
+NOTES_STAY = ("SECTION 21 13 13 - WET-PIPE SPRINKLER SYSTEMS",
+              "© 2026 Owner Data Centers LLC. All rights reserved. Confidential.", "PART 1 - GENERAL",
+              "A.\tProvide a fire pump.", "Coordinate the work with the Owner's insurer.",
+              "Retain records of all tests required in Paragraph 1.6.", "ARTICLE 1.2 - SUBMITTALS",
+              "Select one of the listed manufacturers.",
+              "Provide two [Verify quantity with Owner] spare sprinklers per type.",
+              "Provide <Insert manufacturer> valves.", "System pressure: [TBD].",
+              "Hydrant flow test date to be determined.", "Provide two [retain or delete] spare heads per cabinet.",
+              "Provide galvanized pipe in the preaction zones.", "Pipe shall be Schedule 40.",
+              "END OF SECTION 21 13 13")
+
+
+def spec_notes(tmp_path, *field_notes):
+    files = []
+    for i, field_note in enumerate(field_notes or ("",)):
+        path = tmp_path / f"21 13 1{i}.docx"
+        path.write_bytes(build_spec_notes(field_note=field_note))
+        files.append(path)
+    return files
+
+
+def notes_op(built):
+    return built.spec["stages"][1]["spec"]["ops"][0]
+
+
+def body_texts(pkg):
+    out = []
+    for p in body_paragraphs(pkg):
+        text = "".join((t.text or "") if t.tag == W + "t" else "\t" for t in p.iter(W + "t", W + "tab"))
+        if text:
+            out.append(text)
+    return out
+
+
+def test_remove_specifier_notes_takes_the_notes_and_hidden_text_and_leaves_everything_else(tmp_path, monkeypatch):
+    files = spec_notes(tmp_path)
+    task, out = created(tmp_path, monkeypatch, files, "remove_notes", {})
+    body = body_texts(out[files[0].name])
+    assert body == list(NOTES_STAY), body                  # every note gone; every other paragraph, in order, as it was
+    assert all(n not in " ".join(body) for n in NOTES_GONE) and "retain for 2-inch" not in " ".join(body)
+    # clean copies: no tracked change was written
+    xml = etree.tostring(out[files[0].name].xml(out[files[0].name].main_part()))
+    assert b"<w:del " not in xml and b"<w:ins " not in xml
+
+
+def test_remove_specifier_notes_has_no_form_and_says_what_it_leaves(folder, tmp_path):
+    recipe = recipes.BY_ID["remove_notes"]
+    assert recipe.group == "Clean up" and recipe.fields == () and recipe.needs == ()
+    for stays in ("placeholders", "copyright lines", "headings"):
+        assert stays in recipe.summary
+    built, outcome, errors = built_and_gated("remove_notes", {}, spec_notes(tmp_path))
+    assert not errors and built.sources == []              # it places no words
+    ops = [st["spec"]["ops"][0] for st in built.spec["stages"]]      # two steps, hidden text first
+    assert [o["op"] for o in ops] == ["remove_hidden_text", "remove_notes"]
+    assert all(o["params"]["tracked"] is False for o in ops)
+    assert all(st["spec"]["mode"] == "untracked" for st in built.spec["stages"])
+    said = " ".join(built.spec["assumptions"])
+    for stays in ("placeholders", "to be determined", "copyright and confidentiality lines", "headings",
+                  "coloured or italic text", "tracked changes and comments stay"):
+        assert stays in said
+    assert "“CMT”, “CMTChild” and “Specifier Note”" in said   # the styles found, by the names Word shows
+    assert set(ops[1]["params"]["rules"][0]["style_in"]) == {"CMT", "CMTChild", "SpecifierNote"}
+
+
+def test_note_styles_are_found_by_name_and_base_and_one_used_otherwise_elsewhere_is_left_out(tmp_path):
+    files = spec_notes(tmp_path)
+    other = tmp_path / "other.docx"
+    doc = Document()
+    doc.styles.add_style("CMTChild", 1).base_style = doc.styles["Normal"]   # the same id, not a note here
+    doc.add_paragraph("Provide hangers.", style="CMTChild")
+    doc.save(other)
+    built = recipes.build("remove_notes", {}, recipes.Context(files + [other]))
+    assert notes_op(built)["params"]["rules"][0]["style_in"] == ["CMT", "SpecifierNote"]
+    assert any("“CMTChild” is a note style in one document and not in another" in a
+               for a in built.spec["assumptions"])
+    plain = recipes.build("remove_notes", {}, recipes.Context([other]))
+    assert notes_op(plain)["params"]["rules"] == [{"text_regex": hidden_ops.SPECIFIER_OPENINGS}]
+    assert any("no note style" in a for a in plain.spec["assumptions"])
+
+
+def test_a_hidden_note_holding_a_field_goes_and_a_visible_one_sets_only_its_document_aside(tmp_path, monkeypatch):
+    files = spec_notes(tmp_path, "hidden", "visible")
+    no_ai(monkeypatch)
+    task = DocumentTask(Session(out_root=tmp_path / "out", visual_check=False), render=False, mode="safe")
+    task.attach(files)
+    view = task.perform("recipe", recipe="remove_notes", inputs={})
+    assert view["stage"] == "preview"
+    view = task.perform("primary", token=view["token"])
+    assert view["stage"] == "done"
+    assert [Path(src).name for src in task.results] == [files[0].name]
+    assert [(e["name"], "holds a field" in e["reason"]) for e in view["left_untouched"]] == [(files[1].name, True)]
+    for record in task.session.last_batch.files:
+        assert record.status == "PASS"
+    body = body_texts(DocxPackage.from_path(next(iter(task.results.values()))))
+    assert body == list(NOTES_STAY) and "Retain with Section" not in " ".join(body)
+
+
+@pytest.mark.parametrize("text", NOTES_GONE[:-1])
+def test_every_note_the_fixture_holds_is_one_by_its_style_or_its_opening(text):
+    from spec_surgeon.ops.patterns import compile_pattern
+    from spec_surgeon.verify.patterns import v_search
+    by_text = text not in ("Retain paragraph below if the project has a fire pump.",
+                           "Coordinate the alarm with the fire alarm Section.", "Edit to suit.")
+    found = compile_pattern(hidden_ops.SPECIFIER_OPENINGS, where="t").search(text) is not None
+    assert found == by_text or (found and text.startswith("Retain paragraph below"))
+    assert (v_search(hidden_ops.SPECIFIER_OPENINGS, text) is not None) == found      # the verifier reads it alike
+
+
+@pytest.mark.parametrize("text", NOTES_STAY + (
+    "*** END OF SECTION ***", "Retain the services of a testing agency.", "Verify dimensions in the field.",
+    "Delete the existing valve and cap the pipe.", "Copyright 2024 Owner Inc.", "Select one-piece valves.",
+    "Revise as required.", "Note: provide access panels.", "Editorial review is required before issue."))
+def test_no_requirement_heading_placeholder_or_copyright_line_opens_as_a_note(text):
+    from spec_surgeon.ops.patterns import compile_pattern
+    from spec_surgeon.verify.patterns import v_search
+    assert compile_pattern(hidden_ops.SPECIFIER_OPENINGS, where="t").search(text) is None
+    assert v_search(hidden_ops.SPECIFIER_OPENINGS, text) is None
+
+
+FURTHER = ("Cut every [Insert …], <Insert …>, [Verify …] and [TBD] placeholder, delete the copyright line, change "
+           "“to be determined” to “scheduled for October 2026”, and delete the ARTICLE 1.2 heading.")
+FURTHER_SPEC = {
+    "request": FURTHER, "summary": "Cut the placeholders, the copyright line and a heading; edit one phrase",
+    "mode": "untracked", "assumptions": ["clean copies"],
+    "ops": [
+        {"op": "replace_table", "params": {"pairs": [{"find": r"\s*[\[<](?:Insert|Verify|TBD)[^\]>]*[\]>]",
+                                                      "replace": "", "regex": True, "match_case": False}],
+                                           "tracked": False}},
+        {"op": "replace_text", "params": {"find": "to be determined", "replace": "scheduled for October 2026",
+                                          "tracked": False}},
+        {"op": "delete_paragraphs", "select": {"paragraphs": {"text_regex": "©|All rights reserved"}},
+         "params": {"tracked": False}},
+        {"op": "delete_paragraphs", "select": {"paragraphs": {"text_regex": "^ARTICLE 1\\.2"}},
+         "params": {"tracked": False}},
+    ]}
+
+
+@pytest.mark.parametrize("mode", ["default", "obliterate"])
+def test_default_and_obliterate_clean_what_the_notes_button_leaves(tmp_path, monkeypatch, mode):
+    """The button leaves placeholders, copyright lines, “to be determined” and headings; a Default or Obliterate request
+    takes them, through the same gate (the one typed word traced to the request), preview and checked run."""
+    from fake_claude import FakeClient, resp, tool
+    files = spec_notes(tmp_path)
+    no_ai(monkeypatch)
+    safe_task = DocumentTask(Session(out_root=tmp_path / "out", visual_check=False), render=False, mode="safe")
+    safe_task.attach(files)
+    safe_task.perform("primary", token=safe_task.perform("recipe", recipe="remove_notes", inputs={})["token"])
+    copy = Path(next(iter(safe_task.results.values())))
+    client = FakeClient(resp(tool("submit_editspec", {"spec": FURTHER_SPEC}, "t1")))
+    task = DocumentTask(Session(client=client, out_root=tmp_path / "out2", visual_check=False), render=False,
+                        obliterate_allowed=True)
+    if mode == "obliterate":
+        task.set_mode("obliterate", acknowledged=True)
+    task.attach([copy])
+    view = task.perform("send", text=FURTHER)
+    assert view["stage"] == "preview", [m["text"] for m in task.messages][-2:]
+    view = task.perform("primary", token=view["token"])
+    assert view["stage"] == "done"
+    assert all(r.status == "PASS" for r in task.session.last_batch.files)
+    body = body_texts(DocxPackage.from_path(next(iter(task.results.values()))))
+    assert body == ["SECTION 21 13 13 - WET-PIPE SPRINKLER SYSTEMS", "PART 1 - GENERAL", "A.\tProvide a fire pump.",
+                    "Coordinate the work with the Owner's insurer.",
+                    "Retain records of all tests required in Paragraph 1.6.",
+                    "Select one of the listed manufacturers.", "Provide two spare sprinklers per type.",
+                    "Provide valves.", "System pressure:.", "Hydrant flow test date scheduled for October 2026.",
+                    "Provide two [retain or delete] spare heads per cabinet.",
+                    "Provide galvanized pipe in the preaction zones.", "Pipe shall be Schedule 40.",
+                    "END OF SECTION 21 13 13"], body

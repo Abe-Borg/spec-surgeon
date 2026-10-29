@@ -451,3 +451,69 @@ def _boxed_style(style):
     top.set(qn("w:color"), "auto")
     bdr.append(top)
     ppr.append(bdr)
+
+
+def build_spec_notes(*, field_note: str = "") -> bytes:
+    """A specification as a master leaves it, for Safe mode's Remove specifier notes button (recipes._remove_notes):
+
+    * notes by style — "Retain paragraph below …" in ``CMT`` (blue by the style); "Coordinate the alarm …" in
+      ``SpecifierNote`` (named "Specifier Note"); "Edit to suit." in ``CMTChild`` (based on CMT);
+    * notes by their opening words, in the body style — "NOTE TO SPECIFIER: …", "Retain or delete this article.",
+      "Select one of the following paragraphs.", "[Editor's Note: …]";
+    * hidden text — a paragraph whose runs and mark are hidden, and a hidden run inside a requirement;
+    * what stays — the headings (SECTION, PART, ARTICLE, END OF SECTION), requirements that open with a note's word
+      ("Retain records …", "Select one of the listed manufacturers.", "Coordinate the work …"), placeholders
+      ("[Verify quantity with Owner]", "<Insert manufacturer>", "[TBD]"), "to be determined", a copyright line, a
+      red italic requirement, a requirement holding a note marker mid-sentence;
+    * ``field_note``: a CMT note holding a REF field — "visible": remove_notes cannot delete it, so the document is
+      set aside; "hidden" (its runs, the field's and its mark hidden, as a master hides its notes): the hidden-text
+      step removes the field with the words and keeps the mark, and the notes step then deletes the empty note.
+    """
+    doc = Document()
+    cmt = doc.styles.add_style("CMT", WD_STYLE_TYPE.PARAGRAPH)
+    cmt.base_style = doc.styles["Normal"]
+    cmt.font.color.rgb = BLUE
+    child = doc.styles.add_style("CMTChild", WD_STYLE_TYPE.PARAGRAPH)
+    child.base_style = cmt
+    doc.styles.add_style("Specifier Note", WD_STYLE_TYPE.PARAGRAPH).base_style = doc.styles["Normal"]
+    doc.add_paragraph("SECTION 21 13 13 - WET-PIPE SPRINKLER SYSTEMS")
+    doc.add_paragraph("© 2026 Owner Data Centers LLC. All rights reserved. Confidential.")
+    doc.add_paragraph("PART 1 - GENERAL")
+    doc.add_paragraph("Retain paragraph below if the project has a fire pump.", style="CMT")
+    doc.add_paragraph("A.\tProvide a fire pump.")
+    doc.add_paragraph("Coordinate the alarm with the fire alarm Section.", style="Specifier Note")
+    doc.add_paragraph("Coordinate the work with the Owner's insurer.")
+    doc.add_paragraph("NOTE TO SPECIFIER: edit the list to suit the project.")
+    doc.add_paragraph("Retain records of all tests required in Paragraph 1.6.")
+    doc.add_paragraph("ARTICLE 1.2 - SUBMITTALS")
+    doc.add_paragraph("Retain or delete this article.")
+    doc.add_paragraph("Select one of the following paragraphs.")
+    doc.add_paragraph("Select one of the listed manufacturers.")
+    doc.add_paragraph("[Editor's Note: verify the hazard classification with the Owner.]")
+    doc.add_paragraph("Edit to suit.", style="CMTChild")
+    doc.add_paragraph("Provide two [Verify quantity with Owner] spare sprinklers per type.")
+    doc.add_paragraph("Provide <Insert manufacturer> valves.")
+    doc.add_paragraph("System pressure: [TBD].")
+    doc.add_paragraph("Hydrant flow test date to be determined.")
+    doc.add_paragraph("Provide two [retain or delete] spare heads per cabinet.")
+    p = doc.add_paragraph()
+    r = p.add_run("Provide galvanized pipe in the preaction zones.")
+    r.font.color.rgb = RGBColor(0xFF, 0, 0)
+    r.font.italic = True
+    p = doc.add_paragraph()
+    hide(p.add_run("Specifier: this whole paragraph is hidden."))
+    hide_mark(p)
+    p = doc.add_paragraph()
+    p.add_run("Pipe shall be Schedule 40")
+    hide(p.add_run(" (retain for 2-inch and smaller)"))
+    p.add_run(".")
+    if field_note:
+        p = doc.add_paragraph(style="CMT")
+        hidden = field_note == "hidden"
+        r = p.add_run("Retain with Section ")
+        field(p, " REF _Ref9 \\h ", "21 10 00", rpr_hidden_all=hidden)
+        if hidden:
+            hide(r)
+            hide_mark(p)
+    doc.add_paragraph("END OF SECTION 21 13 13")
+    return save(doc)

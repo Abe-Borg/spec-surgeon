@@ -921,6 +921,83 @@ def _remove_empty_paragraphs(inputs: Dict[str, Any], ctx: Context) -> Built:
                     {"mode": how}, _flag(inputs, "tracked"))
 
 
+# The paragraph styles that mark a note (SpecCleanse's list): a style is one when its id or name, or the id or name of
+# a style it is based on, folds to one of these (case, spaces, underscores, hyphens and apostrophes ignored).
+NOTE_STYLE_NAMES = ("CMT", "Specifier Note", "Specifier's Note", "Note to Specifier", "Editor Note", "Editor's Note",
+                    "Editorial Note", "Coordinator Note")
+NOTE_PARTS = ["document", "headers", "footers", "footnotes", "endnotes"]   # where the notes button looks
+
+
+def _fold_style(name: str) -> str:
+    return re.sub(r"[\s_\-'’]+", "", name).casefold()
+
+
+def _note_styles(documents: Sequence[Path]) -> Tuple[List[str], List[str], Dict[str, str]]:
+    """The note styles' ids across the documents; the ids left out because another document gives the same id to a
+    style that is not a note (a spec names style ids, and one spec covers every document); and each id's name as Word
+    shows it. A document that cannot be read is skipped here; the preview sets it aside with its reason."""
+    from .ops.selectors import StyleSheet
+    from .package import DocxPackage, W
+    wanted = {_fold_style(n) for n in NOTE_STYLE_NAMES}
+    notes, others, shown = set(), set(), {}
+    for path in documents:
+        try:
+            sheet = StyleSheet(DocxPackage.from_path(path))
+        except Exception:  # noqa: BLE001 — set aside by the preview, with its reason
+            continue
+        for sid, style in sheet.styles.items():
+            if style.get(W + "type", "paragraph") != "paragraph":
+                continue
+            names = [s.get(W + "styleId") or "" for s in sheet.lineage(sid)]
+            names += [n.get(W + "val") or "" for s in sheet.lineage(sid) for n in s.findall(W + "name")]
+            (notes if any(_fold_style(n) in wanted for n in names if n) else others).add(sid)
+            name = style.find(W + "name")
+            shown.setdefault(sid, (name.get(W + "val") if name is not None else None) or sid)
+    return sorted(notes - others), sorted(notes & others), shown
+
+
+def _remove_notes(inputs: Dict[str, Any], ctx: Context) -> Built:
+    """One press, no form, two steps in this order: the hidden text (a hidden paragraph that cannot be deleted keeps
+    its mark; a field wholly hidden goes with it), then the note paragraphs — in a note style, or opening as a
+    specifier's instruction (``SPECIFIER_OPENINGS``). A chain, not one spec of two ops: the engine would plan both ops
+    on the source, where a hidden note still holds the field the first step takes out, and the second would refuse it.
+    Placeholders, copyright lines, headings, coloured or italic text, tracked changes and comments are not touched:
+    Default mode removes those when asked. Clean copies: a tracked deletion refuses a note holding a hyperlink."""
+    from .ops.hidden import SPECIFIER_OPENINGS
+    styles, mixed, shown = _note_styles(ctx.documents)
+    rules: List[Dict[str, Any]] = ([{"style_in": styles}] if styles else []) + [{"text_regex": SPECIFIER_OPENINGS}]
+    request = "Remove specifier notes"
+    summary = ("Delete the specifier's and editor's notes — paragraphs in a note style or opening as a specifier's "
+               "instruction — and the hidden text.")
+    named = list(dict.fromkeys(shown.get(s, s) for s in styles))
+    found = (f"the note styles found in these documents: {_and([_quote(s) for s in named])}" if styles else
+             "no note style (CMT, Specifier Note, Editor's Note …) was found in these documents, so notes are found "
+             "by their opening words alone")
+    assumptions = [
+        "a note is a whole paragraph in a note style (CMT, Specifier Note, Editor's Note, Note to Specifier …) or one "
+        "that opens as a specifier's instruction (“NOTE TO SPECIFIER”, “Retain or delete …”, “Delete if not "
+        "applicable”, “Retain paragraph below …”, “Select one of the following …”)",
+        found,
+        "hidden text goes too (Word's Hidden font setting), in the body, headers, footers, footnotes and endnotes",
+        "placeholders ([Insert …], [Verify …], [TBD]), “to be determined”, copyright and confidentiality lines, "
+        "headings, coloured or italic text, tracked changes and comments stay; a note's words inside a requirement's "
+        "own paragraph stay with it",
+        "a note paragraph that holds a field or a section break sets its document aside, with the reason",
+        "clean copies (no tracked changes); every removed note and piece of hidden text is listed in the preview",
+    ]
+    if mixed:
+        assumptions.append(f"{_and([_quote(shown.get(s, s)) for s in mixed])} "
+                           f"{'is a note style' if len(mixed) == 1 else 'are note styles'} in one document and not in "
+                           f"another, so no paragraph is taken for that style alone")
+    hidden = {"op": "remove_hidden_text", "params": {"tracked": False}}
+    notes = {"op": "remove_notes", "params": {"rules": rules, "scope": list(NOTE_PARTS), "tracked": False}}
+    chain = {"summary": summary, "assumptions": assumptions, "stages": [
+        {"name": "Remove hidden text", "spec": _spec(request, "Remove the hidden text.", "untracked", [hidden], [])},
+        {"name": "Delete the note paragraphs",
+         "spec": _spec(request, "Delete the note paragraphs.", "untracked", [notes], [])}]}
+    return Built(chain, [], request)
+
+
 def _clean_spaces(inputs: Dict[str, Any], ctx: Context) -> Built:
     return _cleanup("normalize_whitespace", "Clean up spaces",
                     "Turn two or more spaces in a row into one, and remove spaces at the end of a line.",
@@ -1232,6 +1309,9 @@ RECIPES: Tuple[Recipe, ...] = (
            "Removes Word's highlighter colour from all text.", (), (), _remove_highlight),
     Recipe("remove_hidden_text", "Remove hidden text", "Clean up",
            "Removes text Word hides with its Hidden font setting.", (), (TRACKED,), _remove_hidden_text),
+    Recipe("remove_notes", "Remove specifier notes", "Clean up",
+           "Deletes specifier's and editor's notes and hidden text in one press; placeholders, copyright lines, "
+           "headings and coloured text stay.", (), (), _remove_notes),
     Recipe("remove_empty_paragraphs", "Remove empty paragraphs", "Clean up",
            "Removes blank lines from the body.", (), (EMPTY_HOW, TRACKED), _remove_empty_paragraphs),
     Recipe("clean_spaces", "Clean up spaces", "Clean up",

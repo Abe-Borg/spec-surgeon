@@ -3,6 +3,7 @@ remove_hyperlinks, remove_notes and unlink_fields — (select, params, [expected
 then non-default settings. These ops select by scope only; allow_missing defaults on for all of them (a clean-up runs
 over whole batches), the deletions (blank paragraphs, hidden text, notes) track by default, remove_highlight is plain
 by default and the rest never track."""
+from spec_surgeon.ops.hidden import SPECIFIER_OPENINGS
 
 CASES = {
     "remove_comments": [
@@ -52,6 +53,11 @@ CASES = {
         ({}, {"runs": {"color_in": ["FF0000", "accent2"], "hidden": True}, "author": "Spec Team"},
          ["Remove the inline notes (hidden text coloured red or the theme's accent 2 colour)",
           "shown as tracked changes by “Spec Team”"]),
+        # Safe mode's Remove specifier notes: its openings pattern is named in words, never quoted
+        ({}, {"rules": [{"style_in": ["CMT"]}, {"text_regex": SPECIFIER_OPENINGS}], "tracked": False,
+              "scope": ["document", "headers", "footers", "footnotes", "endnotes"]},
+         ["those in the “CMT” style or those whose text opens as a specifier's instruction (“NOTE TO SPECIFIER”, "
+          "“Retain or delete …”", "without tracked changes"]),
     ],
     "remove_highlight": [
         ({}, {}, ["Remove the highlighting of every colour from the text",
