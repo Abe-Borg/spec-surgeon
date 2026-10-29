@@ -20,10 +20,13 @@ export function runFolder(view: Pick<View, "results">): string {
   return first ? parentFolder(first) : "";
 }
 
-/** The Export button's label: "Export", with the count of working copies not saved yet when there are any. */
-export function exportLabel(view: Pick<View, "export">): string {
+/**
+ * The Export button's label: "Export", with the count of working copies not saved yet when there are any
+ * ("Export · 2 unsaved"; in the top bar's fewer words, "Export · 2").
+ */
+export function exportLabel(view: Pick<View, "export">, short = false): string {
   const unsaved = view.export?.unsaved ?? 0;
-  return unsaved > 0 ? `Export · ${unsaved} unsaved` : "Export";
+  return unsaved > 0 ? `Export · ${unsaved}${short ? "" : " unsaved"}` : "Export";
 }
 
 /** The Export button's hover text: what it does, and how many copies it would save; held still during the tour. */

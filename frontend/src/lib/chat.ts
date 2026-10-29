@@ -174,12 +174,15 @@ export function dollars(usd: number): string {
   return `$${usd.toFixed(2)}`;
 }
 
-/** Beside the cost pill while a request runs: "this request ≈ $0.40 of $20.00" ("" with the check off). */
-export function requestPill(cost: View["cost"] | null | undefined): string {
+/**
+ * Beside the cost pill while a request runs: "this request ≈ $0.40 of $20.00" (in the top bar's fewer words
+ * "≈ $0.40 of $20.00"; "" with the check off).
+ */
+export function requestPill(cost: View["cost"] | null | undefined, short = false): string {
   const limit = cost?.limit;
   if (typeof limit !== "number") return "";
   const spent = cost?.request;
-  return `this request ${typeof spent === "number" && !Number.isNaN(spent) ? `≈ ${dollars(spent)}` : "≈ ?"} of ${dollars(limit)}`;
+  return `${short ? "" : "this request "}${typeof spent === "number" && !Number.isNaN(spent) ? `≈ ${dollars(spent)}` : "≈ ?"} of ${dollars(limit)}`;
 }
 
 /** The cost pill: "≈ $0.12" (or "≈ $0.00" before anything was spent). */

@@ -1,10 +1,11 @@
 // Adapted from Build-a-Spec's frontend/src/components/Header.tsx (copy-based reuse): the title with its context
 // line, the help topics beside it, then the pills and the buttons on the right.
-import { memo } from "react";
+import { memo, useRef } from "react";
 import type { Mode, View } from "../types";
 import { costPill, dollars, requestPill } from "../lib/chat";
 import { HELP_TOPICS, sessionHeading, type HelpTopic } from "../lib/help";
 import { MODE_LABELS, MODE_TIPS } from "../lib/modes";
+import { useFit } from "../lib/useFit";
 import { exportLabel, exportTip } from "../lib/workbench";
 import Tip from "./Tip";
 
@@ -34,6 +35,30 @@ const ORIGIN_TIPS: Record<string, string> = {
   none: "No API key is available. Add one in Settings to start.",
 };
 
+/**
+ * What gives way, in this order, while the bar holds more than the window's width (lib/useFit.ts measures it, whatever
+ * the bar holds: the spending, Stop, a third mode, an update, the copies to save). The title, every help topic, the
+ * mode switch and every button stay; only room and words go, and what a control no longer says, its hover text does.
+ */
+const GIVE_WAY = [
+  "context line", // the documents tray lists the same
+  "spacing",
+  "spending words", // "this conversation"
+  "key words", // "Key available" → "Key"; a missing key keeps "Add your API key" whole
+  "help words", // one word per topic (lib/help.ts, `short`), the full label on hover
+  "button words", // "New conversation" → "New", "Export · 3 unsaved" → "Export · 3"
+  "dividers",
+  "request words", // "this request ≈ $0.40 of $20.00" → "≈ $0.40 of $20.00"
+  "update pill", // set aside with the banner's Not now, kept one click away while anything else can go; About offers it too
+] as const;
+
+/** The connection pill's words, in full and in fewer. */
+function keyWords(view: View): [string, string] {
+  if (view.mode === "safe") return ["No AI in Safe mode", "No AI"];
+  if (!view.connection?.ready) return ["Add your API key", "Add your API key"];
+  return view.connection.origin === "none" ? ["Credentials available", "Credentials"] : ["Key available", "Key"];
+}
+
 function Header({
   view,
   busy,
@@ -54,23 +79,34 @@ function Header({
   const fast = !!view.cost?.fast;
   const limit = view.cost?.limit;
   const request = busy && !safe ? requestPill(view.cost) : "";
-  // The context line steps aside for the update pill: both only fit from 1280 px, and not together.
-  const heading = updatePill ? "" : sessionHeading(view);
+  const heading = sessionHeading(view);
+  const exportFull = exportLabel(view);
+  const [keyFull, keyShort] = keyWords(view);
+
+  // Everything whose width the bar measures, in full: a change starts the giving way again from nothing.
+  const bar = useRef<HTMLElement>(null);
+  const shown = [heading, costPill(view.cost), request, fast, keyFull, exportFull, view.modes, busy, updatePill];
+  const fit = useFit(bar, JSON.stringify(shown), GIVE_WAY.length);
+  const gone = (what: (typeof GIVE_WAY)[number]) => fit > GIVE_WAY.indexOf(what);
+  const tight = gone("spacing");
 
   return (
-    <header className="flex items-center gap-4 border-b border-edge bg-surface px-5 py-3" data-tour="header">
-      {/* The one block that gives way on a narrow window: the context line truncates. */}
-      <div className="flex min-w-0 items-baseline gap-3">
-        <h1 className="flex-none font-[family-name:var(--font-display)] text-lg font-semibold tracking-tight whitespace-nowrap">
+    <header
+      ref={bar}
+      className={`flex items-center border-b border-edge bg-surface px-5 py-3 ${tight ? "gap-3" : "gap-4"}`}
+      data-tour="header"
+    >
+      <div className="flex flex-none items-baseline gap-3">
+        <h1 className="font-[family-name:var(--font-display)] text-lg font-semibold tracking-tight whitespace-nowrap">
           Spec Surgeon
         </h1>
-        {heading && (
-          <span className="hidden max-w-[22rem] min-w-0 truncate text-xs text-ink-dim xl:inline" title={heading}>
+        {heading && !gone("context line") && (
+          <span className="max-w-[22rem] truncate text-xs text-ink-dim" title={heading}>
             {heading}
           </span>
         )}
       </div>
-      <span className="h-5 w-px flex-none bg-edge" aria-hidden="true" />
+      {!gone("dividers") && <span className="h-5 w-px flex-none bg-edge" aria-hidden="true" />}
       <nav className="flex flex-none items-center gap-0.5" aria-label="Help" data-tour="help-nav" data-capability="help.topics">
         <Tip
           tip={
@@ -86,23 +122,27 @@ function Header({
             onClick={onStartTour}
             disabled={tourActive || busy}
             data-capability="tour.start"
-            className="rounded-md px-2 py-1 text-xs whitespace-nowrap text-accent transition-colors hover:bg-raised disabled:pointer-events-none disabled:opacity-60 lg:px-2.5"
+            className={`rounded-md px-2 py-1 text-xs whitespace-nowrap text-accent transition-colors hover:bg-raised disabled:pointer-events-none disabled:opacity-60 ${tight ? "" : "lg:px-2.5"}`}
           >
             Tour
           </button>
         </Tip>
-        {HELP_TOPICS.map((t) => (
-          <button
-            key={t.id}
-            type="button"
-            onClick={() => onOpenHelp(t.id)}
-            className="rounded-md px-2 py-1 text-xs whitespace-nowrap text-ink-dim transition-colors hover:bg-raised hover:text-ink lg:px-2.5"
-          >
-            {t.label}
-          </button>
-        ))}
+        {HELP_TOPICS.map((t) => {
+          const short = gone("help words") && t.short !== t.label;
+          return (
+            <button
+              key={t.id}
+              type="button"
+              onClick={() => onOpenHelp(t.id)}
+              title={short ? t.label : undefined}
+              className={`rounded-md px-2 py-1 text-xs whitespace-nowrap text-ink-dim transition-colors hover:bg-raised hover:text-ink ${tight ? "" : "lg:px-2.5"}`}
+            >
+              {short ? t.short : t.label}
+            </button>
+          );
+        })}
       </nav>
-      <span className="h-5 w-px flex-none bg-edge" aria-hidden="true" />
+      {!gone("dividers") && <span className="h-5 w-px flex-none bg-edge" aria-hidden="true" />}
       <div
         className="flex flex-none items-center rounded-lg border border-edge bg-raised p-0.5"
         role="group"
@@ -142,10 +182,8 @@ function Header({
         ))}
       </div>
       <div className="flex-1" />
-      <div className="flex flex-none items-center gap-2 lg:gap-3">
-        {/* From 1280 px; below that About offers the same update. */}
-        {updatePill && (
-          <span className="hidden xl:inline-flex">
+      <div className={`flex flex-none items-center gap-2 ${tight ? "" : "lg:gap-3"}`}>
+        {updatePill && !gone("update pill") && (
           <Tip
             tip={
               busy
@@ -162,7 +200,6 @@ function Header({
               {updatePill} — install
             </button>
           </Tip>
-          </span>
         )}
         <span
           title={
@@ -177,8 +214,10 @@ function Header({
           data-capability="header.spending"
         >
           {costPill(view.cost)}
-          <span className="ml-1 hidden text-ink-faint xl:inline">this conversation</span>
-          {request && <span className="ml-1.5 text-ink-faint">· {request}</span>}
+          {!gone("spending words") && <span className="ml-1 text-ink-faint">this conversation</span>}
+          {request && (
+            <span className="ml-1.5 text-ink-faint">· {gone("request words") ? requestPill(view.cost, true) : request}</span>
+          )}
           {fast && <span className="ml-1.5 font-medium text-accent">Fast</span>}
         </span>
         {busy && !safe && (
@@ -204,23 +243,25 @@ function Header({
                 ? "SDK credentials are available. No connection test has been run."
                 : (ORIGIN_TIPS[view.connection?.origin ?? "none"] ?? ORIGIN_TIPS.none)
           }
+          aria-label={keyFull}
           className="flex items-center gap-2 rounded-full border border-edge bg-raised px-3 py-1 text-xs whitespace-nowrap text-ink-dim transition-colors hover:border-accent hover:text-accent"
           data-tour="connection"
           data-capability="header.connection"
         >
           <span className={`h-2 w-2 rounded-full ${safe ? "bg-ink-faint" : ready ? "bg-ok" : "bg-warn"}`} aria-hidden />
-          {safe ? "No AI in Safe mode" : ready ? (view.connection?.origin === "none" ? "Credentials available" : "Key available") : "Add your API key"}
+          {gone("key words") ? keyShort : keyFull}
         </button>
         <Tip tip={exportTip(view, busy)}>
           <button
             type="button"
             onClick={onExport}
             disabled={busy || !!view.tutorial?.active || (view.export?.copies ?? 0) === 0}
+            aria-label={exportFull}
             data-tour="header-export"
             data-capability="header.export"
             className="rounded-lg border border-edge bg-raised px-3 py-1.5 text-xs whitespace-nowrap text-ink transition-colors hover:border-accent hover:text-accent disabled:pointer-events-none disabled:opacity-40"
           >
-            {exportLabel(view)}
+            {exportLabel(view, gone("button words"))}
           </button>
         </Tip>
         <Tip
@@ -234,11 +275,12 @@ function Header({
             type="button"
             onClick={onNewConversation}
             disabled={busy}
+            aria-label="New conversation"
             data-tour="new-conversation"
             data-capability="header.new-conversation"
             className="rounded-lg border border-edge bg-raised px-3 py-1.5 text-xs whitespace-nowrap text-ink transition-colors hover:border-accent hover:text-accent disabled:pointer-events-none disabled:opacity-40"
           >
-            New conversation
+            {gone("button words") ? "New" : "New conversation"}
           </button>
         </Tip>
         <button

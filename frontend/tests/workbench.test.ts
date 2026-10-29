@@ -163,6 +163,8 @@ test("Undo shows in every mode when there is something to undo, with why it wait
 test("the Export button says how many copies are not saved yet, and its hover text says what it would do", () => {
   assert.equal(exportLabel({ export: { folder: "", unsaved: 0, copies: 0 } }), "Export");
   assert.equal(exportLabel({ export: { folder: "", unsaved: 2, copies: 3 } }), "Export · 2 unsaved");
+  assert.equal(exportLabel({ export: { folder: "", unsaved: 2, copies: 3 } }, true), "Export · 2");
+  assert.equal(exportLabel({ export: { folder: "", unsaved: 0, copies: 3 } }, true), "Export");
   assert.equal(exportTip({ export: { folder: "", unsaved: 0, copies: 0 } }, true), "Finish or stop the current work first");
   assert.match(exportTip({ export: { folder: "", unsaved: 0, copies: 0 } }, false), /^Nothing to save yet/);
   assert.equal(

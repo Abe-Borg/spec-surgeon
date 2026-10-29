@@ -257,8 +257,8 @@ try {
   // 10. The top bar's help topics: one dialog, a tab strip, Escape closes it.
   const topBar = page.locator("header nav[aria-label='Help']");
   check(
-    "the top bar names the help topics, Why trust it before About",
-    JSON.stringify(await topBar.getByRole("button").allInnerTexts()) === JSON.stringify(["How to use", "Workflows", "How it works", "Why trust it", "About"]),
+    "the top bar names the tour and the help topics, Why trust it before About",
+    JSON.stringify(await topBar.getByRole("button").allInnerTexts()) === JSON.stringify(["Tour", "How to use", "Workflows", "How it works", "Why trust it", "About"]),
     JSON.stringify(await topBar.getByRole("button").allInnerTexts()),
   );
   check("the old Help menu is gone", (await page.getByRole("button", { name: "Help ▾" }).count()) === 0);

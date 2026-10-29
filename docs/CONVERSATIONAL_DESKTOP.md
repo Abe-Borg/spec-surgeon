@@ -263,9 +263,8 @@ planned under one set of rules is never created under the other (Continue plans 
 ## The top bar
 
 The top bar follows Build-a-Spec's. Beside the title, a quiet line says what the conversation works on ("3
-documents · 1 template · 1 picture · building on your copies"; files triage refused are not counted). It shows from
-1280 px wide and shortens with an ellipsis before anything else gives way. Then the in-app guide, one dialog with a
-tab strip:
+documents · 1 template · 1 picture · building on your copies"; files triage refused are not counted) while the bar has
+room for it, ending in an ellipsis past 22rem. Then the in-app guide, one dialog with a tab strip:
 
 - **How to use** — the modes (Obliterate's entry says it is hidden and how to show it), what each lets you control and what it costs, Safe mode in four steps, a Default
   first pass in eight steps, what a refused file means, and how spending, Stop now and the pause work.
@@ -291,7 +290,17 @@ tab strip:
 Before the guide's tabs, **Tour** starts the guided tour (below). On the right: the estimated spending of the
 conversation, the connection pill (it opens Settings),
 **New conversation** and the gear. An update set aside with the banner's **Not now** stays in the top bar as a pill
-("v1.7.0 available — install") from 1280 px wide; below that, About offers it.
+("v1.7.0 available — install"), and About offers it too.
+
+The bar is one line. When it holds more than the window's width (at 1280 px with copies to save, a request running,
+Obliterate shown or an update waiting), it gives way one step at a time until everything fits, measured on the page
+rather than guessed from the width (`frontend/src/lib/useFit.ts`; the steps are `GIVE_WAY` in
+`frontend/src/components/Header.tsx`): the context line goes, the spacing tightens, "this conversation" leaves the
+spending pill, the connection pill says **Key**, **No AI** or **Credentials** (**Add your API key** stays whole), the
+help topics take one word each (**Guide**, **Workflows**, **Mechanics**, **Trust**, **About**, the full name on hover),
+**New conversation** and **Export · 3 unsaved** become **New** and **Export · 3**, the dividers go, "this request"
+leaves the request's spending, and last the update pill (About still offers it). The title, every topic, the mode
+switch and every button always stay, and a wider window gets the words back.
 
 ## The guided tour
 
