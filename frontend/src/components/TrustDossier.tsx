@@ -320,7 +320,7 @@ function Dossier() {
             [
               "Claude’s visual check",
               "Advice about the sample pages. It changes nothing in a file.",
-              "Listed beside the pages by file and page; a blocking finding changes the button’s label.",
+              "Kept in the preview’s records by file and page, not listed in the window; a blocking finding is listed beside the pages and changes the button’s label.",
             ],
             [
               "Remembered repairs",

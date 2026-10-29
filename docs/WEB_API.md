@@ -169,7 +169,9 @@ Rules the page relies on:
   older server sends no `occurrences`.
 - `samples` are the pages of the plan waiting for the user (stages `preview` and `question`), less any document
   whose copy a partial save already delivered; every other stage sends none, so a finished run takes its
-  pages along. The visual check's findings in `warnings`, and `blocking`, follow the same rule.
+  pages along. The visual check's findings in `warnings`, and `blocking`, follow the same rule. The page lists
+  `warnings` only when `blocking` is true (under **Please check**); otherwise they are kept for diagnostics and
+  not shown.
 - `action.kind`: `approve` → the one button "Create edited copies" (or "I reviewed the flagged pages — create
   copies" when `blocking`), `continue` → "Continue" (stage `resume`: a request is open and the documents or the plan
   changed, or work stopped; never after an answer that ended the request), `save` → "Save N ready copies", `none` →
