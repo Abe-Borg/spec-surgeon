@@ -32,6 +32,23 @@ export function toggleUntick(unticks: Unticks, key: string): Unticks {
   return next;
 }
 
+/** Tick every one of `keys` (`ticked`), or untick every one: "Tick all" and "Untick all", for the whole list or one
+ * document's. */
+export function setTicks(unticks: Unticks, keys: string[], ticked: boolean): Unticks {
+  const next = { ...unticks };
+  for (const key of keys) {
+    if (ticked) delete next[key];
+    else next[key] = true;
+  }
+  return next;
+}
+
+/** How many of `keys` are ticked: every one, none, or some (the select-all box's mixed state). */
+export function tickState(unticks: Unticks, keys: string[]): "all" | "none" | "some" {
+  const unticked = keys.filter((key) => unticks[key]).length;
+  return unticked === 0 ? "all" : unticked === keys.length ? "none" : "some";
+}
+
 /** The unticked keys, in the list's order, among the occurrences shown. */
 export function untickedKeys(unticks: Unticks, docs: OccurrenceDoc[]): string[] {
   return docs.flatMap((d) => d.items.map((i) => i.key)).filter((key) => unticks[key]);
