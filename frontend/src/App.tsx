@@ -270,6 +270,8 @@ export default function App() {
     [applyView],
   );
 
+  const onRemoveAll = useCallback(() => applyView(api.removeDocuments()), [applyView]);
+
   // The whole window takes a drop. A counter survives the enter/leave pairs
   // every child element fires while a file crosses it.
   useEffect(() => {
@@ -655,6 +657,7 @@ export default function App() {
           onAdd={onAddKind}
           onAddFolder={onAddFolder}
           onRemove={onRemove}
+          onRemoveAll={onRemoveAll}
           onOpen={onOpen}
           onStartOver={onStartOver}
           onUndo={onUndo}

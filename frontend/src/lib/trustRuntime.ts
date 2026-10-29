@@ -109,12 +109,13 @@ export const RUNTIME_CARDS: RuntimeCard[] = [
       "for. A dropped copy stays in the scratch folder until the window closes; the file you dropped is untouched.",
   },
   {
-    covers: ["A4"],
-    title: "Removing an attachment",
-    you: "The ✕ beside a file.",
+    covers: ["A4", "A38"],
+    title: "Removing an attachment, or all the documents",
+    you: "The ✕ beside a file, or Remove all documents (with two or more listed) and then Remove all to confirm.",
     runs:
       "The file leaves this conversation; any plan is void and is checked again with the next request. If it was " +
-      "the last file with an edited copy, the next change starts from your originals.",
+      "the last file with an edited copy, the next change starts from your originals. Remove all documents takes " +
+      "every Word document out at once, each as its ✕ would; the template and the pictures and tables stay.",
     sent: "Nothing.",
     ai: NONE,
     bounds: "The file itself is not deleted or changed, and neither is a copy made of it earlier.",

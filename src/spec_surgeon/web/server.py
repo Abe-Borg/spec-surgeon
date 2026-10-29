@@ -706,6 +706,16 @@ def create_app(state: WindowState, *, dev: bool = False) -> FastAPI:
         state.task.remove(str(body.get("path") or ""), template=bool(body.get("template")))
         return state.view()
 
+    @app.post("/api/remove-documents")
+    def remove_documents():
+        """**Remove all documents**: every Word document out of this conversation at once
+        (``DocumentTask.remove_documents``); the template, the pictures and tables and the files themselves stay.
+        409 while work runs; else the view."""
+        if state.busy:
+            return busy_error()
+        state.task.remove_documents()
+        return state.view()
+
     @app.post("/api/send")
     async def send(request: Request):
         try:
