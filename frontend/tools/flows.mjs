@@ -258,7 +258,7 @@ try {
   const topBar = page.locator("header nav[aria-label='Help']");
   check(
     "the top bar names the help topics, Why trust it before About",
-    JSON.stringify(await topBar.getByRole("button").allInnerTexts()) === JSON.stringify(["How to use", "Workflows", "How it works", "Why trust it", "About"]),
+    JSON.stringify(await topBar.getByRole("button").allInnerTexts()) === JSON.stringify(["Tour", "How to use", "Workflows", "How it works", "Why trust it", "About"]),
     JSON.stringify(await topBar.getByRole("button").allInnerTexts()),
   );
   check("the old Help menu is gone", (await page.getByRole("button", { name: "Help ▾" }).count()) === 0);
@@ -307,7 +307,9 @@ try {
   await page.locator("header nav[aria-label='Help']").getByRole("button", { name: "About" }).click();
   const about = page.getByRole("dialog", { name: "About" });
   await about.getByText("What’s new in 1.6.0").waitFor();
-  check("About shows the release notes", await about.getByText("The window is a web page").isVisible({ timeout: 3000 }).catch(() => false));
+  // the heading shows the version at once; the notes come with GET /api/about, so wait for them
+  check("About shows the release notes",
+    await about.getByText("The window is a web page").waitFor({ timeout: 5000 }).then(() => true, () => false));
   check("About names the model", await about.getByText("Claude Opus 5.5").isVisible());
   await about.getByRole("button", { name: "Read the full license" }).click();
   check("About shows the full license", await about.getByText("Permission is hereby granted").isVisible());
@@ -506,7 +508,7 @@ try {
   await exportMenu.getByRole("menuitem", { name: /PDF \(Clean\)/ }).click();
   await page.getByText(/clean PDFs? to C:/).first().waitFor({ timeout: 20000 });
   check("…and PDF (Clean) leaves the edited copies as they were",
-    (await page.getByText("Your edited copies").isVisible()) && (await undoBtn.isEnabled()));
+    (await page.getByRole("heading", { name: "Your edited copies" }).isVisible()) && (await undoBtn.isEnabled()));
   await page.getByRole("button", { name: "All buttons" }).click();
   await page.getByRole("button", { name: "Find and replace" }).click();
   await previewBtn.click();
