@@ -345,7 +345,7 @@ const TUTORIAL_SCENARIOS = {
     v.messages = [msg("user", "Headers and footers from the template · ISSUED FOR PERMIT → ISSUED FOR CONSTRUCTION 2026-03-01")];
     v.samples = samples();
     // the plan refused the other firm's document, as the server's chapter does (no section number line to fill)
-    v.plan = { groups: [], targets: [], set_aside: [{ path: DOCS[2].path, name: name(DOCS[2].path), reason: "Its first lines carry no section number for the template's placeholder; change this one in Word." }], stages: 1 };
+    v.plan = { groups: [], targets: [], set_aside: [{ path: DOCS[2].path, name: name(DOCS[2].path), reason: "No paragraph of this document starts with SECTION and its section number (like “SECTION 21 13 13”), so its own section number cannot be read for the headers and footers. Its first line reads “PROJECT MANUAL”." }], stages: 1 };
     v.action = approveAction(v, "tok-tour-button");
     return v;
   },

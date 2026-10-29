@@ -35,6 +35,11 @@ interface Props {
 
 const BUSY_TIP = "Finish or stop the current work first";
 
+/** A button on a section's title line: smaller than the ones under it, so the line still reads as a title. */
+const titleBtn =
+  "shrink-0 rounded-lg border border-edge bg-raised px-2.5 py-1 text-xs text-ink transition-colors " +
+  "hover:border-accent hover:text-accent disabled:pointer-events-none disabled:opacity-40";
+
 function FileIcon() {
   return (
     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
@@ -112,19 +117,25 @@ function AttachmentCard({
  * One section of the tray with its own fold: a title line (with, folded, a
  * one-line summary) and, open, a card per attachment and the button that adds
  * more. It folds by itself once a plan or copies exist and opens on a click;
- * once the user has opened or folded it, their choice stands.
+ * once the user has opened or folded it, their choice stands. `action` sits on
+ * the title line and `notice` under it, both shown folded or open: what must
+ * stay one click away when the list has folded (Remove all documents).
  */
 function Section({
   id,
   title,
   summary,
   compact,
+  action,
+  notice,
   children,
 }: {
   id: TraySection;
   title: string;
   summary: string;
   compact: boolean;
+  action?: ReactNode;
+  notice?: ReactNode;
   children: ReactNode;
 }) {
   const [collapsed, setCollapsed] = useState(false);
@@ -139,25 +150,29 @@ function Section({
   const bodyId = `tray-${id}-body`;
   return (
     <section aria-label={title.split(" · ")[0]} data-tour={`tray-${id}`}>
-      <button
-        type="button"
-        onClick={toggle}
-        aria-expanded={!collapsed}
-        aria-controls={bodyId}
-        title={collapsed ? "Show each file and the way to add more" : "Fold this to one line"}
-        className="group flex w-full items-baseline gap-2 rounded-lg text-left transition-colors hover:text-accent"
-      >
-        <span
-          aria-hidden
-          className={`inline-block text-[10px] text-ink-faint transition-transform group-hover:text-accent ${collapsed ? "" : "rotate-90"}`}
+      <div className="flex items-center gap-2">
+        <button
+          type="button"
+          onClick={toggle}
+          aria-expanded={!collapsed}
+          aria-controls={bodyId}
+          title={collapsed ? "Show each file and the way to add more" : "Fold this to one line"}
+          className="group flex min-w-0 flex-1 items-baseline gap-2 rounded-lg text-left transition-colors hover:text-accent"
         >
-          ▸
-        </span>
-        <h2 className="font-[family-name:var(--font-display)] text-base font-semibold text-ink group-hover:text-accent">
-          {title}
-        </h2>
-        {collapsed && summary && <span className="min-w-0 truncate text-[11px] text-ink-faint">{summary}</span>}
-      </button>
+          <span
+            aria-hidden
+            className={`inline-block text-[10px] text-ink-faint transition-transform group-hover:text-accent ${collapsed ? "" : "rotate-90"}`}
+          >
+            ▸
+          </span>
+          <h2 className="font-[family-name:var(--font-display)] text-base font-semibold text-ink group-hover:text-accent">
+            {title}
+          </h2>
+          {collapsed && summary && <span className="min-w-0 truncate text-[11px] text-ink-faint">{summary}</span>}
+        </button>
+        {action}
+      </div>
+      {notice}
       {!collapsed && <div id={bodyId}>{children}</div>}
     </section>
   );
@@ -217,7 +232,54 @@ export default function DocumentsTray({
 
   return (
     <div className="flex flex-col gap-4" aria-label="Your attachments" role="group">
-      <Section id="documents" title={trayTitle(view)} summary={traySummary("documents", view)} compact={compact && attachments.length > 0}>
+      <Section
+        id="documents"
+        title={trayTitle(view)}
+        summary={traySummary("documents", view)}
+        compact={compact && attachments.length > 0}
+        action={
+          // on the title line, so the list folded once a plan exists still has it (the owner's run of 2026-10-29:
+          // the button sat in the folded body and every document was taken out by its ✕)
+          documentCount >= 2 && (
+            <Tip tip={held ? holdTip : "Take every Word document out of this conversation; the template, pictures and tables stay"}>
+              <button
+                type="button"
+                className={titleBtn}
+                disabled={held}
+                onClick={() => setConfirmingRemoveAll((c) => !c)}
+                aria-expanded={confirmingRemoveAll}
+                data-capability="documents.remove-all"
+              >
+                Remove all documents
+              </button>
+            </Tip>
+          )
+        }
+        notice={
+          confirmingRemoveAll && (
+            <div className="mt-3 flex flex-wrap items-center gap-2 rounded-xl border border-edge bg-surface px-3 py-2.5" role="group" aria-label="Confirm removing all documents">
+              <span className="w-full text-[12px] leading-snug text-ink-dim">
+                Remove all {documentCount} documents from this conversation? The files themselves are not touched.
+                {hasCopies && " Their edited copies leave the list with them; export any you want to keep first."}
+              </span>
+              <button type="button" className={quietBtn} onClick={() => setConfirmingRemoveAll(false)}>
+                Keep them
+              </button>
+              <button
+                type="button"
+                className={primaryBtn}
+                disabled={held}
+                onClick={() => {
+                  setConfirmingRemoveAll(false);
+                  onRemoveAll();
+                }}
+              >
+                Remove all {documentCount}
+              </button>
+            </div>
+          )
+        }
+      >
         {cards("documents")}
         <div className="mt-3 flex flex-wrap items-center gap-2">
           <Tip tip={held ? holdTip : "Attach one or more .docx files to edit"}>
@@ -230,43 +292,7 @@ export default function DocumentsTray({
               Add a folder of documents
             </button>
           </Tip>
-          {documentCount >= 2 && (
-            <Tip tip={held ? holdTip : "Take every Word document out of this conversation; the template, pictures and tables stay"}>
-              <button
-                type="button"
-                className={quietBtn}
-                disabled={held}
-                onClick={() => setConfirmingRemoveAll((c) => !c)}
-                aria-expanded={confirmingRemoveAll}
-                data-capability="documents.remove-all"
-              >
-                Remove all documents
-              </button>
-            </Tip>
-          )}
         </div>
-        {confirmingRemoveAll && (
-          <div className="mt-3 flex flex-wrap items-center gap-2 rounded-xl border border-edge bg-surface px-3 py-2.5" role="group" aria-label="Confirm removing all documents">
-            <span className="w-full text-[12px] leading-snug text-ink-dim">
-              Remove all {documentCount} documents from this conversation? The files themselves are not touched.
-              {hasCopies && " Their edited copies leave the list with them; export any you want to keep first."}
-            </span>
-            <button type="button" className={quietBtn} onClick={() => setConfirmingRemoveAll(false)}>
-              Keep them
-            </button>
-            <button
-              type="button"
-              className={primaryBtn}
-              disabled={held}
-              onClick={() => {
-                setConfirmingRemoveAll(false);
-                onRemoveAll();
-              }}
-            >
-              Remove all {documentCount}
-            </button>
-          </div>
-        )}
         {attachments.length === 0 && (
           <p className="mt-3 text-[12px] text-ink-faint">
             Or drop .docx files, pictures or spreadsheets anywhere in this window.

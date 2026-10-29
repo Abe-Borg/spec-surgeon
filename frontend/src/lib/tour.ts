@@ -186,7 +186,7 @@ export const TOUR: readonly TourChapter[] = [
         placement: "left",
         title: "Removing, and what a change to the list does",
         body:
-          "The ✕ beside a file takes it out of this conversation; the file itself is not touched. With two or more documents listed, Remove all documents takes every one out at once, after you confirm; the template and the pictures and tables stay. Adding or removing a document after a plan exists voids that plan: the conversation says so and the button reads Continue until the documents have been checked against your request again. Each section of this list folds to one line once a plan exists; click its title to open it.",
+          "The ✕ beside a file takes it out of this conversation; the file itself is not touched. With two or more documents listed, Remove all documents, on the Documents title line, takes every one out at once, after you confirm; the template and the pictures and tables stay. Adding or removing a document after a plan exists voids that plan: the conversation says so and the button reads Continue until the documents have been checked against your request again. Each section of this list folds to one line once a plan exists; click its title to open it. Remove all documents stays on that line, folded or open.",
       },
     ],
   },

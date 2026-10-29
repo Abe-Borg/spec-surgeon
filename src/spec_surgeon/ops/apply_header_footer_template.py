@@ -438,7 +438,7 @@ class ApplyHeaderFooterTemplate(Op):
         if t_even != pkg.settings_flag("evenAndOddHeaders"):
             raise JobException(f"evenAndOddHeaders is {'on' if t_even else 'off'} in the template and "
                                f"{'off' if t_even else 'on'} in this document; it is a document-wide setting — "
-                               f"not changed silently", "even-odd")
+                               f"not changed silently", "even-odd", {"template_even_odd": bool(t_even)})
         t_title = [sp.find(W + "titlePg") is not None and sp.find(W + "titlePg").get(W + "val") not in ("0", "false", "off")
                    for sp in tsect]
         title = [sp.find(W + "titlePg") is not None and sp.find(W + "titlePg").get(W + "val") not in ("0", "false", "off")
