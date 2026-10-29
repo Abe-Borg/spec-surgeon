@@ -27,6 +27,7 @@ whole view, and the page renders it (`src/lib/view.ts`). Streamed frames are pre
 | `src/lib/sse.ts` | the `data: <json>` frame parser and the stream reader |
 | `src/lib/view.ts` | the reducer over the view and the live reply bubble |
 | `src/lib/chat.ts`, `action.ts`, `workbench.ts`, `review.ts`, `help.ts` | the pure rules the components render (the review marks and `hold` live in `review.ts`; `help.ts`: the top bar's topics and context line, About's update line) |
+| `src/lib/useFit.ts` | how far a one-line bar gives way to fit its window, measured on the page after every change of its words or width; the top bar's steps are `GIVE_WAY` in `Header.tsx` |
 | `src/lib/reveal.ts`, `rehypeReveal.ts`, `useReveal.ts` | how a reply's words come onto the page: the reading pace, a finished reply carrying on from the words already shown, the blocks a reply renders as, the pieces that fade in and the caret; `useReveal` runs it frame by frame |
 | `src/components/MessageBubble.tsx`, `RevealMarkdown.tsx`, `Collapse.tsx` | one bubble per reply from its first status to the finished message (the working line, the log, the words); a reply's markdown block by block; the folds that open and close by height |
 | `src/lib/api.ts` | every route of the contract |
