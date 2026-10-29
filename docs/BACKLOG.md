@@ -17,6 +17,22 @@ them was built; `git log --all -- 'docs/PLAN-*'` finds them, with their findings
 | S4 — what a run left open | Over test-set-2 (13 specifications, eight owners): the reference rules find no section number in seven of them (VA, Wisconsin, Port of Portland, Michigan layouts); a chain preview repeats the spec's summary and assumptions for each step; after an outcome-planner question the next reply still goes to that planner, not the assistant (seen again over test-set-3) | Reference rules for those layouts; a chain preview that says its summary once; the reply after an outcome-planner question goes back to the assistant |
 | Font button: documents built alike at two body sizes | **Match font to template** plans per body size (one layout per size, `recipes._font_layouts`), and a layout routes by structure pattern (`layouts.route`): two documents of one pattern whose body sizes differ cannot take two sizes in one press, so the size most of them have wins and the rest wait under Left untouched with the reason, to be pressed alone | A layout that names its documents beside its patterns (`validate_layout_plan`, `route`, the `applies_to` pin and the approval token), so one press covers them — only if the owner's runs meet the case |
 
+### The Specification Formatter's modes in Default mode (N1–N7)
+
+The owner's decision (2026-10-29): what the Specification Formatter does comes into Default mode, rebuilt under these
+invariants; Safe mode is not touched, and no literal marker is written. The design is
+[docs/SPEC_FORMATTER_MODES_DESIGN.md](SPEC_FORMATTER_MODES_DESIGN.md).
+
+| Item | What to build |
+| --- | --- |
+| N1 — the outline tool | `read_outline`: the structure reader's roles, and Claude's reading (one structured call, coverage checked, never overriding the reader) of the paragraphs it leaves |
+| N2 — the `indices` selector | listed paragraph ordinals, on both sides |
+| N3 — the even/odd switch | `apply_header_footer_template` `even_odd: "template"` |
+| N4 — Canadian reading | PageFormat's `.1` levels read by list level, for the outline tool only |
+| N5 — bundled schemes | CSC PageFormat and CSI scheme files, picked in the chat as the template |
+| N6 — typed CSI onto another list | `convert_typed_numbers` `typed_as: "csi"` |
+| N7 — the four modes as requests | worked specs, guidance, end-to-end tests |
+
 ### Safe mode, the second round of buttons (M1–M3)
 
 The owner's go-ahead of 2026-10-28 built the Safe mode proposal's first round (twelve buttons, Reject beside Accept,
