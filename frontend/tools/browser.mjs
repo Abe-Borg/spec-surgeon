@@ -20,7 +20,7 @@ export function findChromium() {
     if (!existsSync(root)) continue;
     for (const entry of readdirSync(root)) {
       if (!/^chromium-\d+$/.test(entry)) continue;
-      for (const rel of ["chrome-linux/chrome", "chrome-win/chrome.exe", "chrome-mac/Chromium.app/Contents/MacOS/Chromium"]) {
+      for (const rel of ["chrome-linux64/chrome", "chrome-linux/chrome", "chrome-win/chrome.exe", "chrome-mac/Chromium.app/Contents/MacOS/Chromium"]) {
         const file = join(root, entry, rel);
         if (existsSync(file) && statSync(file).isFile()) candidates.push({ file, rev: Number(entry.split("-")[1]) });
       }
