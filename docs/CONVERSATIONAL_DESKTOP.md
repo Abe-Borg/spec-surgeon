@@ -508,7 +508,9 @@ white, a size of nothing, spacing that pushes a line off the page.
 **Find and replace, occurrence by occurrence.** A plan with a find-and-replace (`replace_table`: Safe mode's button,
 or a conversation's) lists every occurrence it found under the previews, in every document of the plan — not the
 sampled ones only — with the part it sits in, its paragraph, the article it sits under where the structure analysis
-reads one, and the words around it. Each has a checkbox. Untick an occurrence to leave it as it is (a historical
+reads one, and the words around it. Each has a checkbox; the box above the list ticks or unticks every occurrence at
+once (mixed while only some are ticked), and with several documents a box beside each name does the same for that
+document's, so a long list can be unticked whole and the few to replace ticked back. Untick an occurrence to leave it as it is (a historical
 reference, a line that should keep the old wording) and press **Update the preview**: the window writes the unticked
 occurrences into the plan (`replace_table.params.skip`, each by its file, part, paragraph and place in the text), the
 plan passes the gate again with exactly those as the ones you unticked (a request can never write `skip` on its own),

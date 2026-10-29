@@ -28,6 +28,8 @@ interface Props {
   /** The ticks differ from the previewed plan's: Update the preview is due. */
   unticksPending: boolean;
   onToggleUntick: (key: string) => void;
+  /** Tick or untick many occurrences at once (the select-all boxes). */
+  onSetTicks: (keys: string[], ticked: boolean) => void;
   onUpdateOccurrences: () => void;
   onAdd: (kind: "documents" | "template" | "references") => void;
   /** Add a folder of documents (the native folder dialog). */
@@ -104,6 +106,7 @@ function Workbench({
   canUntick,
   unticksPending,
   onToggleUntick,
+  onSetTicks,
   onUpdateOccurrences,
   onAdd,
   onAddFolder,
@@ -196,6 +199,7 @@ function Workbench({
             canUntick={canUntick}
             pending={unticksPending}
             onToggle={onToggleUntick}
+            onSetTicks={onSetTicks}
             onUpdate={onUpdateOccurrences}
           />
         )}

@@ -337,7 +337,9 @@ export const RUNTIME_CARDS: RuntimeCard[] = [
   {
     covers: ["A35"],
     title: "Find and replace, occurrence by occurrence",
-    you: "Untick an occurrence in the list under the previews, then Update the preview.",
+    you:
+      "Untick an occurrence in the list under the previews (or every one at once with the box above the list), then " +
+      "Update the preview.",
     runs:
       "The list shows every occurrence a find-and-replace plan found, in every document of the plan, with the words " +
       "around it. Update the preview writes the unticked occurrences into the plan (each by its file, paragraph and " +
