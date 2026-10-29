@@ -21,7 +21,7 @@ from spec_surgeon.gui import Session
 from spec_surgeon.render import libreoffice, word_worker
 from spec_surgeon.settings import Settings
 from spec_surgeon.web.server import WindowState
-from test_export_clean import edited, no_ai  # noqa: F401
+from test_export_clean import edited, no_ai, renderer  # noqa: F401
 from test_going_back import TITLE, files, on_disk, press, safe_task  # noqa: F401
 
 
@@ -203,6 +203,41 @@ def test_a_stopped_export_saves_nothing_and_changes_nothing(tmp_path, no_ai):  #
         task.perform("export", kind="accepted", folder=str(dest), log=stop_when(event, ""))
     assert list(dest.iterdir()) == [] and task.exported == {} and task.results == copies
     assert task.stage == "done" and task.messages[-1]["text"] == STOPPED["export"]
+
+
+def test_a_stop_after_the_clean_copies_are_made_still_saves_nothing(tmp_path, no_ai, monkeypatch):  # noqa: F811
+    from spec_surgeon import exports
+    task = edited(tmp_path)
+    dest = tmp_path / "saved"
+    dest.mkdir()
+    event = threading.Event()
+    made = exports.make_clean
+
+    def then_stop(*a, **k):
+        result = made(*a, **k)
+        event.set()                                   # pressed once every clean copy is made, before any is written
+        return result
+    monkeypatch.setattr(exports, "make_clean", then_stop)
+    with stopping.scope(event), pytest.raises(stopping.Stopped):
+        task.perform("export", kind="accepted", folder=str(dest))
+    assert list(dest.iterdir()) == [] and task.messages[-1]["text"] == STOPPED["export"]
+
+
+def test_a_stop_while_the_pdfs_are_checked_saves_no_pdf(tmp_path, renderer, no_ai, monkeypatch):  # noqa: F811
+    from spec_surgeon import pdf_export
+    task = edited(tmp_path)
+    dest = tmp_path / "saved"
+    dest.mkdir()
+    event = threading.Event()
+    check = pdf_export.check_pdf
+
+    def checked_then_stop(pdf):
+        event.set()
+        return check(pdf)
+    monkeypatch.setattr(pdf_export, "check_pdf", checked_then_stop)
+    with stopping.scope(event), pytest.raises(stopping.Stopped):
+        task.perform("export", kind="pdf", folder=str(dest))
+    assert list(dest.iterdir()) == [] and task.messages[-1]["text"] == STOPPED["export"]
 
 
 # ---- the window arms it for a Safe-mode job only -------------------------------------------------------------------

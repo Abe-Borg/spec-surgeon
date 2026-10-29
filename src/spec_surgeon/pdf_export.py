@@ -24,7 +24,7 @@ from pathlib import Path
 from typing import Callable, Dict, List, Optional, Tuple
 
 from . import diagnostics as diag
-from . import render
+from . import render, stopping
 
 PDF_FOLDER = "pdf"                     # under the run folder: the clean PDFs, ready to send
 FAILED_FOLDER = "pdf-failed"           # a PDF that came out but failed ``check_pdf``: diagnosis only
@@ -119,6 +119,7 @@ def export_pdfs(copies: Dict[Path, Path], folder: Path, prefer: str = "auto",
             rendered = render.render_pdfs(list(copies.values()), folder, backend, log=said_too, detail=detail,
                                           cache=cache)
             for source, copy in copies.items():
+                stopping.check("PDF check")        # Stop (Safe mode, ``stopping``) lands between the PDFs' checks
                 pdf = rendered.get(copy)
                 if pdf is None or not Path(pdf).is_file():
                     reason = _said_about(said, copy) or f"{result.renderer_name} wrote no PDF and said nothing about it"

@@ -2911,6 +2911,7 @@ class DocumentTask:
                 dest, n = folder / f"{Path(name).stem} ({n}){Path(name).suffix}", n + 1
             taken.add(_same_file_key(dest))
             plan.append((origin, dest, data, dest.exists()))
+        stopping.check("export")       # Safe mode's Stop lands up to here; the files, once begun, are all written
         saved = already = 0
         for origin, dest, data, there in plan:
             if there:
