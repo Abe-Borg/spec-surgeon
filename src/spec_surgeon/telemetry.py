@@ -62,10 +62,6 @@ _FOLD = str.maketrans({"\u0130": "i", "\u0131": "i", "\u212a": "k", "\u017f": "s
 _ASSIGNMENT_WORDS = ("key", "auth", "pass", "secret", "token", "cookie")
 
 
-def new_id() -> str:
-    return uuid.uuid4().hex
-
-
 def _secrets() -> Tuple[str, ...]:
     """The provider credentials set in the environment now (each at least 8 characters), to be scrubbed verbatim."""
     found = []
