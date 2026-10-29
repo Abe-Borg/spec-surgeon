@@ -231,15 +231,18 @@ jobs). Details: `docs/CONVERSATIONAL_DESKTOP.md`.
     `TutorialTask` (a `DocumentTask` without a journal over the bundled showcase in `examples/tutorial/`, which
     `tests/make_tutorial_showcase.py` builds byte-stable; `send`/`choose` refused, `NO_CONVERSATION`) and `Tutorial`
     (the lease `web/server.py` swaps the window's task for: `begin`, `show(kind)`, `end`; the original task waits
-    untouched in `WindowState.original_task`). Each chapter state (`SCENARIOS`) is built through the production
+    untouched in `WindowState.original_task`; the practice folder is `tutorial\` in the window's scratch folder,
+    `practice_root`, never a folder windows share). Each chapter state (`SCENARIOS`) is built through the production
     paths — triage, `recipes.build` and the gate, `Session.make_preview`, `Session.run` — with no model call; the
     conversation chapters are recordings that say so (`RECORDED`, `TutorialTask.scripted`). The page's side:
     `frontend/src/lib/tour.ts` (the manifest: chapters, steps, `data-tour` anchors, the capabilities each teaches),
     `capabilities.ts` (every end-user control carries a `data-capability`), `useTour.ts`, `tourStorage.ts`,
-    `components/TourOverlay.tsx`. `frontend/tests/tour.test.ts` fails on a `data-capability` the vocabulary lacks, a
-    capability no control carries or no step teaches, an anchor the page lacks, a scenario the server does not build,
-    or a form value the server's chapter did not run: **a new control needs its capability and its tour step in the
-    same change** (the test cannot see a control that carries no capability; the reviewer can).
+    `components/TourOverlay.tsx`; a Safe-mode chapter's form is opened by its step (`prepare`: `TOUR_FORM`,
+    `TOUR_FIND_FORM`, the values the server's chapter ran), and the user's own form is set aside when the tour starts
+    and put back when it ends (`App.tsx`). `frontend/tests/tour.test.ts` fails on a `data-capability` the vocabulary
+    lacks, a capability no control carries or no step teaches, an anchor the page lacks, a scenario the server does
+    not build, or a form value the server's chapter did not run: **a new control needs its capability and its tour
+    step in the same change** (the test cannot see a control that carries no capability; the reviewer can).
   - `document_task.py`, `review_display.py`, `gui.py` (`Session`, `main`; `python -m spec_surgeon` runs it), `web/`
     (`server.py`, `shell.py`, `watch.py`: the page's own reports and the watchdog over the page and the job),
     `scratch.py`, `updater.py`, `settings.py`, `credentials.py`, `winapp.py`.

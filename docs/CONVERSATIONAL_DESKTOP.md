@@ -351,16 +351,21 @@ touched:
   `examples/tutorial/`: four short specifications (21 13 13, 21 13 16, 21 05 00 and another firm's clean agent
   section with no section number line), a table of contents saved as text that triage refuses, a prepared
   header/footer template with one typed placeholder, a logo and a table of project values. The copies and previews
-  the tour makes go to a practice folder under the app's data folder (`data_dir()\tutorial\`), deleted when the
-  tour ends and replaced at the next start. **New conversation** during a tour ends it first; the conversation comes
-  back, then starts afresh.
+  the tour makes go to a practice folder inside the window's own scratch folder (`<scratch>\tutorial\`,
+  `tutorial.practice_root`), deleted when the tour ends and with the scratch folder if the window closes first, so
+  the copies card's word that copies wait in the scratch folder holds in the tour too, and two windows' tours never
+  share a folder. **New conversation** during a tour ends it first; the conversation comes back, then starts afresh.
+  What the page holds of the user's own work is kept too: the red X marks on the user's previews and the Safe-mode
+  form (open or not, and what was typed in it) are set aside as the tour begins and put back when it ends.
 - **Real where it can be, recorded where it cannot, and labelled.** Each chapter asks the server for its state
   (`POST /api/tutorial/scenario`), and the server builds it from the showcase through the production code paths:
-  triage on arrival, a Safe-mode button (**Headers and footers from the template**, the placeholder filled with
+  triage on arrival, a Safe-mode button (**Match headers and footers to template**, the placeholder filled with
   "ISSUED FOR CONSTRUCTION 2026-03-01") through `recipes.build` and the gate to a real preview, the real run that
-  writes checked copies with one document held by the red X and the other firm's left untouched, and in Default mode
-  a plan from a worked EditSpec (every font to Arial, 21 05 00 left out) through the same gate, preview and run. No
-  model call anywhere, in any chapter. The conversation chapters' messages and the question under them are a
+  writes checked copies with one document held by the red X and the other firm's left untouched, **Find and
+  replace** ("FM Global" to "FM Approvals") with one occurrence unticked, and in Default mode a plan from a worked
+  EditSpec (every font to Arial, 21 05 00 left out) through the same gate, preview and run. The page opens the
+  Safe-mode form each of those chapters ran, with its values (`TOUR_FORM`, `TOUR_FIND_FORM` in `lib/tour.ts`), so the
+  panel shows the button the previews came from. No model call anywhere, in any chapter. The conversation chapters' messages and the question under them are a
   recording: an app note at the top of each says so, **Send**, the answer buttons and the suggested replies are held
   still with one sentence saying why, and the server refuses a send or a choice in the practice workspace before
   anything could reach Claude. A step whose control is not on screen (a Continue card, say) says that beside the
@@ -369,10 +374,15 @@ touched:
 - **A fixed track you only watch.** The tour highlights one control at a time with a card beside it: Continue, Back,
   and End the tour at every step; the mode switch is held while it runs (the tour switches modes as its chapters
   need). Escape asks before ending. The last step's Continue is **Finish and return to my conversation**. The chapters,
-  in order: your practice workspace, the documents, Safe mode's note and buttons, the preview (checkmarks and the red X, Left
-  untouched, the one button), the copies (the working set, the hand-off to Default mode, the to-do list), the
-  conversation, questions and suggested replies, a plan in Default mode, the to-do list's pass, Help and About, and the
-  finish.
+  in order: your practice workspace (the top bar, the modes, spending and the context gauge, Settings), the documents
+  (a folder at once, the template, pictures and tables, removing them), Safe mode's note, buttons, recipes and form,
+  the preview (the pages and the layout check, Worth knowing, checkmarks and the red X, Left untouched, the one
+  button), the copies (What you've done so far, Save as a recipe, Export, the working set, the hand-off to Default
+  mode, the to-do list), find and replace occurrence by occurrence, the conversation (an answer that ends a request,
+  a request kept to some documents), questions and suggested replies, a plan in Default mode (a document left out, a
+  custom method's word changes, Create with some set aside), the to-do list's pass, Help and About, and the finish.
+  Steps whose subject would spend money (a real message, an answer, a custom method, the pause, an update) are marked
+  optional.
 - **Picked back up, and remembered.** The page keeps its place (chapter and step, with the tour's id, in the
   browser's local storage under `spec-surgeon:tour-progress`, discarded when the tour's version changes); a reload
   while the practice workspace is up resumes there, and a reload with no place to go back to ends the tour and brings

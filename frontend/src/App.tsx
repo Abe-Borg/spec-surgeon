@@ -27,7 +27,7 @@ import { EMPTY_SAFE_FORM, openForm, type SafeFormState } from "./lib/recipes";
 import ObliterateWarning from "./components/ObliterateWarning";
 import { modeChoice } from "./lib/modes";
 import TourOverlay from "./components/TourOverlay";
-import { TOUR_COMPLETION_VERSION, TOUR_FORM, type TourStep } from "./lib/tour";
+import { TOUR_COMPLETION_VERSION, preparedInputs, preparedRecipe, type TourStep } from "./lib/tour";
 import { useTour } from "./lib/useTour";
 
 type PickKind = "documents" | "template" | "references";
@@ -48,6 +48,12 @@ export default function App() {
   const [uploading, setUploading] = useState(false);
   const [draft, setDraft] = useState("");
   const [safeForm, setSafeForm] = useState<SafeFormState>(EMPTY_SAFE_FORM);
+  const safeFormRef = useRef(safeForm);
+  safeFormRef.current = safeForm;
+  // The user's Safe-mode form while the guided tour opens its own (put back as the tour ends)
+  const tourFormRef = useRef<SafeFormState | null>(null);
+  // The tour has held the window since it last ended (its end puts the form back once)
+  const tourHeldRef = useRef(false);
   const [prefill, setPrefill] = useState({ text: "", nonce: 0 });
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [helpTopic, setHelpTopic] = useState<HelpTopic | null>(null);
@@ -477,17 +483,18 @@ export default function App() {
 
   // --- The guided tour -------------------------------------------------------
   // The server builds each chapter's state on bundled practice documents and answers with the view; the page shows
-  // it like any other. The one page-side preparation is the Safe-mode form a step points at (lib/tour.ts TOUR_FORM).
+  // it like any other. The one page-side preparation is the Safe-mode form a step points at (lib/tour.ts TOUR_FORM,
+  // TOUR_FIND_FORM): the button and values the chapter's server state was built with.
   const applyTourView = useCallback((next: View) => dispatch({ type: "view", view: next }), []);
   const prepareTourStep = useCallback(
     (step: TourStep) => {
-      if (step.prepare !== "safe-form") return;
-      const recipe = recipes.find((r) => r.id === TOUR_FORM.recipe);
+      const prepare = step.prepare;
+      if (!prepare) return;
+      const recipe = recipes.find((r) => r.id === preparedRecipe(prepare));
       if (!recipe) return;
       setSafeForm((form) => {
         const opened = openForm(form, recipe, viewRef.current);
-        const slots = { ...((opened.inputs.slots as Record<string, string> | undefined) ?? {}), [TOUR_FORM.slot]: TOUR_FORM.value };
-        return { ...opened, inputs: { ...opened.inputs, slots } };
+        return { ...opened, inputs: preparedInputs(prepare, opened.inputs) };
       });
     },
     [recipes],
@@ -498,12 +505,32 @@ export default function App() {
     if (tourActive) {
       // taken as the tour begins, before any practice view arrives
       tourReviewsRef.current = { key: keyRef.current, reviews: reviewsRef.current };
+      tourHeldRef.current = true;
       return;
     }
     const kept = keptAcrossTour(tourReviewsRef.current, keyRef.current);
     tourReviewsRef.current = null;
     if (kept) setReviews(kept);
+    if (!tourHeldRef.current) return;
+    // the tour has ended: the user's Safe-mode form as it was (open or not, and what was typed in it), set aside when
+    // the tour was started; after a reload mid-tour there was none to keep, so the buttons. The tour's forms and
+    // values stay in the practice workspace.
+    tourHeldRef.current = false;
+    const form = tourFormRef.current;
+    tourFormRef.current = null;
+    setSafeForm(form ?? EMPTY_SAFE_FORM);
   }, [tourActive]);
+  // Starting the tour sets the user's Safe-mode form aside and opens the practice workspace on the buttons, where its
+  // Safe-mode chapters begin (a step that needs a form opens it itself: prepareTourStep).
+  const setFormAsideForTour = () => {
+    if (tour.active || tourFormRef.current) return;
+    tourFormRef.current = safeFormRef.current;
+    setSafeForm(EMPTY_SAFE_FORM);
+  };
+  const onStartTour = () => {
+    setFormAsideForTour();
+    tour.start();
+  };
   const tourFinished = state.loaded ? view.tutorial.finished_version >= TOUR_COMPLETION_VERSION : null;
   const unsavedCopies = view.export?.unsaved ?? 0;
   newConversationRef.current = () => {
@@ -525,13 +552,11 @@ export default function App() {
     }
     applyView(api.newConversation(), resetPage);
   };
-  const onStartTourAt = useCallback(
-    (chapter: string) => {
-      setHelpTopic(null);
-      tour.startAtChapter(chapter);
-    },
-    [tour],
-  );
+  const onStartTourAt = (chapter: string) => {
+    setHelpTopic(null);
+    setFormAsideForTour();
+    tour.startAtChapter(chapter);
+  };
 
   const onOpen = useCallback((path: string) => {
     api.openPath(path).catch((failure: unknown) => setNotice(failureText(failure)));
@@ -656,7 +681,7 @@ export default function App() {
         onMode={onMode}
         onStop={onStop}
         tourActive={tourActive}
-        onStartTour={tour.start}
+        onStartTour={onStartTour}
       />
       {updateShown && (
         <UpdateBanner
@@ -707,7 +732,7 @@ export default function App() {
           onDiscard={discard}
           tourActive={tourActive}
           tourFinished={tourFinished}
-          onStartTour={tour.start}
+          onStartTour={onStartTour}
         />
         <Workbench
           view={view}

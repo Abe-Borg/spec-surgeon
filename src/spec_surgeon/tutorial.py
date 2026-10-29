@@ -5,7 +5,8 @@ prepared header/footer template, a logo and a table of pairs — in a workspace 
 is set aside untouched, a ``TutorialTask`` takes its place, and every chapter's state is built here from the showcase
 through the production code paths (triage on arrival, a Safe-mode button through ``recipes.build`` and the gate, the
 ordinary preview, the ordinary run that writes checked copies). No model call anywhere, no file of the user's, and
-nothing kept: the practice folder under ``data_dir()/tutorial`` is replaced at the next tour.
+nothing kept: the practice folder is ``tutorial`` inside the window's own scratch folder (``scratch.py``), removed when
+the tour ends and, if the window closes first, with the scratch folder; two windows' tours never share one.
 
 Two things are recordings, and say so in the chat: the conversation chapters' messages (an ``app`` note at the top of
 each says the words are a bundled example) and their question under the chat (``TutorialTask.scripted``). A ``send``
@@ -26,7 +27,6 @@ from typing import Any, Dict, List, Optional
 from . import diagnostics as diag
 from .document_task import DocumentTask, LAUNCH_MODES
 from .gui import Session
-from .settings import data_dir
 
 SHOWCASE_DIR = Path(__file__).resolve().parent / "examples" / "tutorial"
 # The bundled files, by name (tests/make_tutorial_showcase.py builds them; tests/test_tutorial.py checks them).
@@ -76,6 +76,8 @@ QUESTION_CHOICES: List[Dict[str, Any]] = [
      "detail": "Adds one header line to Clean Agent Systems (other firm).docx", "editable": True},
 ]
 QUESTION_CHIPS = ["Leave out the fourth for now", "Set the fourth aside for later"]
+# The practice folder's name inside the window's scratch folder (practice_root)
+PRACTICE_FOLDER = "tutorial"
 
 
 class TutorialTask(DocumentTask):
@@ -111,13 +113,14 @@ def showcase_files() -> Dict[str, Path]:
     return out
 
 
-def practice_root() -> Path:
-    return data_dir() / "tutorial"
+def practice_root(scratch: Path) -> Path:
+    """The practice folder's place: ``tutorial`` in the window's scratch folder (the user's own task's ``out_root``),
+    so the tour's copies are where the copies card says copies are, and go with the window."""
+    return Path(scratch) / PRACTICE_FOLDER
 
 
-def _new_folder() -> Path:
+def _new_folder(root: Path) -> Path:
     """A fresh practice folder; the previous tour's is removed first (nothing of the user's is ever in it)."""
-    root = practice_root()
     if root.exists():
         shutil.rmtree(root, ignore_errors=True)
     folder = root / time.strftime("%Y%m%d-%H%M%S")
@@ -210,6 +213,7 @@ class Tutorial:
         self.lock = threading.Lock()
         self.id: Optional[str] = None
         self.scenario: Optional[str] = None
+        self.root: Optional[Path] = None          # the practice root (practice_root), removed whole at the end
         self.folder: Optional[Path] = None
         self.request_id: Optional[str] = None
         self.task: Optional[TutorialTask] = None
@@ -221,13 +225,17 @@ class Tutorial:
     def status(self) -> Dict[str, Any]:
         return {"active": self.active, "id": self.id, "scenario": self.scenario}
 
-    def begin(self, *, render: bool, spending_limit=None, request_id: Optional[str] = None) -> TutorialTask:
+    def begin(self, *, render: bool, scratch: Path, spending_limit=None,
+              request_id: Optional[str] = None) -> TutorialTask:
+        """The practice workspace's first state, in a fresh practice folder inside ``scratch`` (the window's scratch
+        folder: ``practice_root``)."""
         with self.lock:
             if self.active:
                 if request_id and request_id == self.request_id and self.task is not None:
                     return self.task
                 raise RuntimeError("A tour is already running; end it before starting another.")
-            self.folder = _new_folder()
+            self.root = practice_root(scratch)
+            self.folder = _new_folder(self.root)
             self.task = build_scenario("start", self.folder, render=render, spending_limit=spending_limit)
             self.id = uuid.uuid4().hex
             self.scenario = "start"
@@ -260,8 +268,9 @@ class Tutorial:
         with self.lock:
             if not self.active or (tutorial_id is not None and tutorial_id != self.id):
                 return False
-            ended = self.id
-            self.id, self.scenario, self.folder, self.request_id, self.task = None, None, None, None, None
-        shutil.rmtree(practice_root(), ignore_errors=True)
+            ended, root = self.id, self.root
+            self.id, self.scenario, self.root, self.folder, self.request_id, self.task = (None,) * 6
+        if root is not None:
+            shutil.rmtree(root, ignore_errors=True)
         diag.event("tutorial.ended", tutorial=ended)
         return True
