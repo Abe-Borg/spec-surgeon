@@ -34,6 +34,16 @@ export function entryKey(index: number): string {
   return `entry-${index}`;
 }
 
+/** The longest app note shown as a one-line pill; anything longer, or of several lines, is a left-aligned block. A long
+ *  note in a pill wraps into a centred ellipse crammed with text (the custom-method notice quotes Claude's whole
+ *  proposal), so the pill is kept for the short notes it reads well on. */
+export const NOTE_PILL_CHARS = 100;
+
+/** How the chat shows an app note: `"pill"` (short, centred) or `"block"` (long or several lines). */
+export function noteShape(text: string): "pill" | "block" {
+  return text.includes("\n") || text.trim().length > NOTE_PILL_CHARS ? "block" : "pill";
+}
+
 /** The reply that begins the pass over the to-do list; the server recognises these exact words
  *  (`document_task.WORK_TODO`). Sent as a chip: the user's decision, never their wording. */
 export const WORK_TODO = "Work on the documents I set aside";
