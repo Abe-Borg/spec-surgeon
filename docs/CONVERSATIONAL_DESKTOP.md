@@ -550,8 +550,9 @@ and footers as the sample's plan fills them — its own values in the slots, at 
 header/footer distances when the request keeps them — rendered alone,
 the independent header/footer-removal reference), so a sample's **Checked** covers its
 page layout: a layout that moved is a sample that did not pass, and the plan goes the way a failed check sends it.
-The card says in one line what the layout check found, or why it is not asserted (no layout reference by design, a
-wording change that reflows the text), or that it waits for the run and why: no pages were rendered; the pages
+The card says in one line what the layout check found, or why it is not asserted (no layout reference by design,
+said once and naming no operation, each operation's own reason kept in V7's record and the preview text; a wording
+change that reflows the text), or that it waits for the run and why: no pages were rendered; the pages
 were rendered but the preview could not check them (a custom method's trial kept without its plan;
 a layout reference that could not be rendered or compared — the pictures and page counts on the card stand, and
 the line says the pages were rendered); or the plan is done in steps and only its last step's pages are rendered

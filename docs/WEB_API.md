@@ -133,8 +133,10 @@ Rules the page relies on:
   steps that failed before a later step passed. A preview that could not complete says so; a missing renderer is
   not a failed verification. `samples[].geometry` is the page-layout verdict (check V7) in plain words — `status`
   `PASS`, `FAIL` (then V7 is among the failures and the sample did not pass) or `NA` with a `note` saying why: no
-  layout reference by design, a wording change that reflows the text, or that the run checks it — no pages rendered
-  here, or pages rendered here (the before/after pictures and page counts stand) that the preview could not check,
+  layout reference by design (one plain sentence however many operations give it up, naming none; each operation's
+  own reason stays in V7's record and the preview text), a wording change that reflows the text, or that the run
+  checks it — no pages rendered here, or pages rendered here (the before/after pictures and page counts stand)
+  that the preview could not check,
   because it holds no plan for the sample (a custom method's trial kept without its plan) or because the layout reference could not be
   rendered or compared, the note saying which; a plan done in steps renders its last step's pages only, so an
   earlier step's layout is checked at the run. A note never says no pages were rendered when they were.
