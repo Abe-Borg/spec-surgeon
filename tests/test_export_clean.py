@@ -187,6 +187,51 @@ def test_a_document_the_engine_cannot_clean_exactly_gets_no_file_and_says_why(tm
     assert "Not saved: equation.docx — a tracked change inside an equation" in task.messages[-1]["text"]
 
 
+def styled_redline() -> bytes:
+    """The redline with one tracked change of its own in a style definition (Jack made a style bold), which the accept
+    step flags and leaves for Word (``resolve_tracked_changes``, Codex review on PR #150)."""
+    import io
+    src = zipfile.ZipFile(io.BytesIO(redline()))
+    out = io.BytesIO()
+    with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as z:
+        for info in src.infolist():
+            data = src.read(info.filename)
+            if info.filename == "word/styles.xml":
+                text = data.decode("utf-8")
+                at = text.index("</w:rPr>", text.index("<w:style "))
+                change = ('<w:rPrChange w:id="9901" w:author="Jack" w:date="2026-01-01T00:00:00Z"><w:rPr/>'
+                          '</w:rPrChange>')
+                data = (text[:at] + change + text[at:]).encode("utf-8")
+            z.writestr(info, data)
+    return out.getvalue()
+
+
+def test_a_tracked_change_the_accept_step_leaves_in_a_style_gets_no_clean_file(tmp_path, renderer, no_ai):
+    """Both clean kinds promise every tracked change accepted, with no preview to show the accept step's flag: a copy
+    that keeps one in its style definitions is named with why and gets no file, never one with pending changes."""
+    task = safe_task(tmp_path)
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    (docs / "styled.docx").write_bytes(styled_redline())
+    (docs / "redline.docx").write_bytes(redline())
+    task.attach([docs / "styled.docx", docs / "redline.docx"])
+    view = task.perform("recipe", recipe="remove_highlight", inputs={})
+    task.perform("primary", token=view["token"])
+    # the working copy is the redline: its text, a header and a comment carry tracked changes besides the style
+    assert exports.pending_changes(Path(task.working[str(docs / "styled.docx")])) == (
+        "tracked changes stay pending in the text (13) and the style definitions (1) and a header (1) and the comments "
+        "(1), which the accept step leaves as they are — accept them in Word, then export again")
+    for kind, made_name in (("accepted", "redline.docx"), ("pdf", "redline.pdf")):
+        dest = tmp_path / kind
+        dest.mkdir()
+        made = task.export(dest, kind)
+        assert [p.name for p in dest.iterdir()] == [made_name] and list(made["missing"]) == ["styled.docx"]
+        assert made["missing"]["styled.docx"] == ("tracked changes stay pending in the style definitions (1), which "
+                                                  "the accept step leaves as they are — accept them in Word, then "
+                                                  "export again")
+    assert exports.pending_changes(tmp_path / "accepted" / "redline.docx") == ""
+
+
 # ---- PDF (Clean) ------------------------------------------------------------------------------------------------------
 
 def test_clean_pdfs_from_checked_clean_copies_and_the_edited_copies_stay_as_they_were(tmp_path, renderer, no_ai):

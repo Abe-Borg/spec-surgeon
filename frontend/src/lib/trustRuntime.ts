@@ -496,7 +496,8 @@ export const RUNTIME_CARDS: RuntimeCard[] = [
       "Never over an input, and never into the app's scratch folder (it would go with it): a folder where a file " +
       "would land on an attached document or on a working copy, or that lies inside the scratch tree, refuses the " +
       "whole export, and nothing is written. A copy whose clean version cannot be made exactly (a change Word must " +
-      "settle itself, a comment a tracked deletion would take away), does not pass every check, or whose PDF does " +
+      "settle itself, a comment a tracked deletion would take away), does not pass every check, keeps a tracked " +
+      "change anywhere (one in a style or list definition, which the accept step leaves for Word), or whose PDF does " +
       "not pass its own, gets no file and is named with why; a PDF that failed is kept apart in pdf-failed in the " +
       "scratch folder. PDF (Clean) needs Word or LibreOffice on this computer and says so before it asks for a " +
       "folder. Each file is written whole, then renamed into place. The copies in the scratch folder are unchanged, " +

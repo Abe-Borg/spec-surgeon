@@ -787,8 +787,10 @@ through the render cache, and each PDF is checked (`pdf_export.check_pdf`): it o
 one page, and no page carries a note. A PDF that fails its check is kept apart in `pdf-failed/`, with `PDF_REPORT.md`
 beside the run's other reports. A document whose clean version cannot be made exactly (a change Word must settle
 itself: an inserted or merged table cell, a change inside an equation; or, for Word (Tracked Changes OFF), a comment
-a tracked deletion would take away), does not pass every check, or whose PDF cannot be made or fails its check, gets
-no file: the chat names it with the engine's reason in plain words. PDF (Clean) needs Word or LibreOffice: without
+a tracked deletion would take away), does not pass every check, still carries a tracked change anywhere afterwards
+(one in a style or a list definition, which the accept step flags and leaves for Word: `exports.pending_changes`;
+an Export has no preview to show that flag), or whose PDF cannot be made or fails its check, gets no file: the chat
+names it with the engine's reason in plain words. PDF (Clean) needs Word or LibreOffice: without
 either the choice is held back and says why (the view's `pdf`), and the server refuses it before any dialog.
 
 Every kind: a file already there with the same content is that file, saved, and nothing is written over it; a

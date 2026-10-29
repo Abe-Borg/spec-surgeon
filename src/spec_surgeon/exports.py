@@ -106,12 +106,40 @@ def _why_not(item) -> str:
     return reason.strip().rstrip(".") or "it did not pass the independent checks"
 
 
+# where a tracked change can stay after the accept step, in words, by the part's name without its number
+# (``pending_changes``)
+_PART_WORDS = {"styles": "the style definitions", "numbering": "the list definitions", "comments": "the comments",
+               "document": "the text", "header": "a header", "footer": "a footer", "footnotes": "the footnotes",
+               "endnotes": "the endnotes"}
+
+
+def pending_changes(path: Path) -> str:
+    """'' when a clean copy carries no tracked change in any of its parts; otherwise where some stay, in words. The
+    accept step settles the tracked changes in the text, never one in a style or a list definition
+    (``resolve_tracked_changes`` flags those and leaves them for Word); a copy that kept any is not the file the menu
+    promises, and an Export has no preview to show that flag (Codex review on PR #150)."""
+    from .ooxml import count_revisions
+    from .package import DocxPackage
+    pkg = DocxPackage.from_path(path)
+    where: List[str] = []
+    for part in pkg.wordprocessing_xml_parts():
+        n = sum(count_revisions(pkg.xml(part)).values())
+        if n:
+            stem = Path(part).stem
+            where.append(f"{_PART_WORDS.get(stem.rstrip('0123456789'), stem)} ({n})")
+    if not where:
+        return ""
+    return (f"tracked changes stay pending in {' and '.join(where)}, which the accept step leaves as they are — "
+            f"accept them in Word, then export again")
+
+
 def make_clean(copies: Dict[str, Path], kind: str, run_dir: Path, *, render: bool = True,
                log: Optional[Callable[[str], None]] = None) -> Clean:
     """The clean version of each copy in ``copies`` ({key: copy}) for ``kind`` (``accepted`` or ``pdf``), made in
     ``run_dir`` (a new folder): the fixed spec through the gate, then a checked run over the copies, copies only; for
-    ``pdf`` a PDF of each clean copy that passed. Only a clean copy that passed every check is used (never one
-    delivered unverified); the copies are read, never written."""
+    ``pdf`` a PDF of each clean copy that passed. Only a clean copy that passed every check and carries no tracked
+    change left anywhere (``pending_changes``) is used, never one delivered unverified; the copies are read, never
+    written."""
     from . import compiler
     from .batch import run_batch
     from .chain import run_chain
@@ -147,11 +175,14 @@ def make_clean(copies: Dict[str, Path], kind: str, run_dir: Path, *, render: boo
                 continue
             made = item.delivered_to or (item.output if getattr(item, "noop", False) else None)
             if item.status == "PASS" and not getattr(item, "unverified", None) and made and Path(made).is_file():
-                clean[key] = Path(made)
+                why = pending_changes(Path(made))
+                if not why:
+                    clean[key] = Path(made)
+                    continue
             else:
-                result.failed[key] = _why_not(item)
-                diag.event("export.file_failed", level="warning", kind=kind, source=str(item.source),
-                           reason=result.failed[key])
+                why = _why_not(item)
+            result.failed[key] = why
+            diag.event("export.file_failed", level="warning", kind=kind, source=str(item.source), reason=why)
         for key in sources:
             if key not in clean and key not in result.failed:
                 result.failed[key] = "the run stopped before its copy was made"
