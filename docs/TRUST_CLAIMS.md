@@ -399,7 +399,7 @@ How each is labelled:
 - **Failure:** a copy that fails its check is moved to `failed\` and never delivered (`batch.py`). A failed call
   appends nothing to the history (`conversation.py`).
 - **Renderers:** Word 120 s per file (`word_worker.DEFAULT_TIMEOUT`), LibreOffice 600 s per batch
-  (`libreoffice.render_pdfs`). Word: up to 3 private instances side by side (`WORD_INSTANCES`), at most one per two
+  (`libreoffice.render_groups`). Word: up to 3 private instances side by side (`WORD_INSTANCES`), at most one per two
   cores and one per 2 files (`word_instances`); `SPEC_SURGEON_WORD_INSTANCES` replaces the 3 (1: one instance).
 - **Worker processes:** a batch of 3 or more files (`batch.PROCESS_MIN_FILES`), a preview's 12 or more plans
   (`planner.PLAN_PROCESS_MIN_FILES`) and 3 or more samples, one process per core up to 8

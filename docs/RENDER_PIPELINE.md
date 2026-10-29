@@ -30,6 +30,15 @@ Rules:
    (oldest entries evicted past 2 GB), and is never read for a .docx whose bytes differ.
 4. **Both sides are still compared.** V6/V7 and the before/after pictures keep reading a source PDF and an output
    PDF; where they come from is the cache's business.
+5. **One round of LibreOffice processes per step.** (2026-10-29) `render.render_pdf_groups` takes several groups,
+   each `(files, out_dir)`, and LibreOffice renders them side by side (`libreoffice.render_groups`): the preview's
+   and the run's sources and copies are one call, and V7's references (template references, headers/footers-only
+   copies, header/footer-removal references) another, where each was a call of its own, one after the other. A
+   process takes at least two files when its group has them (`MIN_FILES_PER_PROCESS`, `plan_processes`): a soffice
+   start costs about 1 s of CPU against 0.4 s a file, so two one-file processes cost more than one two-file process.
+   With a cache, a file whose bytes another file of the call has is rendered once and served to the other from the
+   cache (a copy no change touched, beside its source), as it was when the copies rendered after the sources.
+   Word renders the groups one after the other, as before. `render.render_pdfs` is the one-group form.
 
 ## What was built (2026-10-20, branch `wip/render-pipeline`)
 
@@ -52,11 +61,12 @@ Rules:
   (`gui.Session` stamps them `YYYYMMDD-HHMMSS[-n]`) under a root the user chose; otherwise (a folder the caller
   named, a test folder) a `.render-cache` beside the output folder itself, never above a folder the caller named.
 - **Off switch:** `SPEC_SURGEON_RENDER_CACHE=0` (also `false`, `no`, `off`).
-- `render.render_pdfs(files, out_dir, backend, workers, log, detail, cache=None)` serves hits, renders only the
-  misses (a renderer failure still returns the hits), stores the fresh renders and trims. The preview
-  (`preview.render_samples`) and the run (`batch._render_and_compare`) pass `RenderCache.for_out_dir(out_dir)`
-  to every `render_pdfs` call — sources, outputs, headers/footers-only copies and removal references alike —
-  and say in their logs where the cache is and how many PDFs it served.
+- `render.render_pdf_groups(groups, backend, workers, log, detail, cache=None)` (and its one-group form
+  `render_pdfs`) serves hits, renders only the misses (a renderer failure still returns the hits), stores the fresh
+  renders and trims. The preview (`preview.render_samples`) and the run (`batch._render_and_compare`,
+  `geometry_references`) pass `RenderCache.for_out_dir(out_dir)` to every call — sources, outputs,
+  headers/footers-only copies and removal references alike — and say in their logs where the cache is and how many
+  PDFs it served.
 
 ### Word — `src/spec_surgeon/render/word_worker.py`, `word_com.py`
 
@@ -83,7 +93,9 @@ Rules:
 - A profile soffice cannot start from — it exits with an error and no PDF has ever come out of that profile in
   this call — is wiped and recreated once (`render.profile_reset`), and the chunk is tried again on the fresh one
   before the ordinary one-file-at-a-time retry. A timeout, or an error after a PDF came out, never wipes one.
-- `_convert_batch` and the N-parallel-chunks design are unchanged.
+- `_convert_batch` is unchanged. A call's chunks come from `plan_processes` over its groups (rule 5); chunk *k* of
+  the call runs on profile *k*, whatever its group, and a failed chunk's one-by-one retries write into their own
+  group's folder.
 
 ### Measured (Linux, LibreOffice 24.2.7.2, `make_fixtures.py --count 4` = 6 files, `change-all-font-arial`)
 
@@ -105,3 +117,6 @@ that remains to be measured on the owner's machine, as does the one-instance Wor
 
 Tests: `tests/test_render_cache.py`, `tests/test_render_word_batch.py` (a fake worker behind a real spawned process
 and pipe), `tests/test_render_libreoffice_profiles.py` (the last test runs the real soffice when installed).
+Rule 5: `test_render_libreoffice_profiles.py` (`plan_processes`, groups side by side, a failed chunk's retries
+in their own group's folder) and `test_render_cache.py` (a file with another's bytes rendered once; a run of two
+files is two processes, its sources together and its copies together).

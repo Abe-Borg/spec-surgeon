@@ -29,6 +29,7 @@ from spec_surgeon.package import DocxPackage
 from spec_surgeon.preview import (GEOMETRY_AT_RUN, GEOMETRY_RENDERED_AT_RUN, GEOMETRY_RENDERED_NOT_COMPARED,
                                   make_chain_preview, make_preview, preview_generated)
 from spec_surgeon.ui_feedback import failed_preview_checks
+from fake_render import per_group
 
 SPECS = Path(__file__).resolve().parent.parent / "examples" / "specs"
 # a change that leaves the pages as they are, so the source render is its layout reference (V7 asserted)
@@ -83,7 +84,7 @@ def fake_renderer(monkeypatch, *, shift_outputs: float = 0.0, hide=(), split_out
             rendered.append(f)
         return out
     monkeypatch.setattr(render_mod, "pick", lambda prefer="auto": "fake")
-    monkeypatch.setattr(render_mod, "render_pdfs", render_pdfs)
+    monkeypatch.setattr(render_mod, "render_pdf_groups", per_group(render_pdfs))
     return rendered
 
 

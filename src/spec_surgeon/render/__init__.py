@@ -16,7 +16,7 @@ from __future__ import annotations
 import sys
 import traceback
 from pathlib import Path
-from typing import Callable, Dict, Optional, Sequence
+from typing import Callable, Dict, List, Optional, Sequence, Tuple
 
 from . import libreoffice, word_com
 from . import cache as cache_mod
@@ -85,56 +85,113 @@ def render_pdfs(files: Sequence[Path], out_dir: Path, backend: str, workers: int
                 cache: Optional[RenderCache] = None) -> Dict[Path, Path]:
     """{docx: pdf} for the files that rendered (or were served from ``cache``); the others are missing (and said on
     ``log``)."""
-    with diag.span("render.batch", backend=backend, out_dir=str(out_dir), file_count=len(files),
-                   workers=workers, cache=str(cache.root) if cache is not None else None) as outcome:
-        result, served = _render_pdfs(files, out_dir, backend, workers, log, detail, cache)
-        outcome.update(rendered=len(result) - served, cached=served,
-                       missing=[str(f) for f in files if Path(f) not in result])
-        return result
+    return render_pdf_groups([(files, out_dir)], backend, workers, log=log, detail=detail, cache=cache)[0]
 
 
-def _render_pdfs(files: Sequence[Path], out_dir: Path, backend: str, workers: int,
-                 log: Optional[Callable[[str], None]],
-                 detail: Optional[Callable[[str], None]],
-                 cache: Optional[RenderCache]):
+def render_pdf_groups(groups: Sequence[Tuple[Sequence[Path], Path]], backend: str, workers: int = 4,
+                      log: Optional[Callable[[str], None]] = None,
+                      detail: Optional[Callable[[str], None]] = None,
+                      cache: Optional[RenderCache] = None) -> List[Dict[Path, Path]]:
+    """``render_pdfs`` for several groups at once, each ``(files, out_dir)``: one {docx: pdf} per group, in order.
+    LibreOffice renders every group's files side by side (``libreoffice.render_groups``), so a run's sources and its
+    copies take one round of processes rather than two; Word renders the groups one after the other, as before. With a
+    cache, a file whose bytes another file of the call has too is rendered once and served from the cache to the
+    other (a copy no change touched is not rendered beside its source)."""
+    groups = [([Path(f) for f in files], Path(out_dir)) for files, out_dir in groups]
+    total = sum(len(files) for files, _ in groups)
+    fields = {"out_dir": str(groups[0][1])} if len(groups) == 1 else {"out_dirs": [str(d) for _, d in groups]}
+    with diag.span("render.batch", backend=backend, **fields, file_count=total, workers=workers,
+                   cache=str(cache.root) if cache is not None else None) as outcome:
+        results, served = _render_pdf_groups(groups, backend, workers, log, detail, cache)
+        outcome.update(rendered=sum(len(r) for r in results) - served, cached=served,
+                       missing=[str(f) for (files, _), r in zip(groups, results) for f in files if f not in r])
+        return results
+
+
+def _render_pdf_groups(groups: List[Tuple[List[Path], Path]], backend: str, workers: int,
+                       log: Optional[Callable[[str], None]],
+                       detail: Optional[Callable[[str], None]],
+                       cache: Optional[RenderCache]):
     log = log or (lambda msg: None)
     detail = detail or (lambda msg: None)
-    files = [Path(f) for f in files]
-    out_dir = Path(out_dir)
-    served: Dict[Path, Path] = {}
-    pending = files
+    served: List[Dict[Path, Path]] = [{} for _ in groups]
+    pending: List[List[Path]] = [list(files) for files, _ in groups]
+    later: List[List[Path]] = [[] for _ in groups]      # the same bytes as a file rendered in this call: served after
     renderer = None
-    if cache is not None and cache_mod.enabled() and files:
+    if cache is not None and cache_mod.enabled() and any(files for files, _ in groups):
         renderer = renderer_identity(backend)
-        pending = []
+        first: Dict[str, Path] = {}
+        for g, (files, out_dir) in enumerate(groups):
+            pending[g] = []
+            for f in files:
+                hit = cache.get(f, out_dir / (f.stem + ".pdf"), renderer)
+                digest = cache.seen_digest(f)
+                if hit is not None:
+                    served[g][f] = hit
+                elif digest is not None and first.setdefault(digest, f) != f:
+                    later[g].append(f)
+                else:
+                    pending[g].append(f)
+            if served[g]:
+                detail(f"render cache: {len(served[g])} of {len(files)} PDF(s) came from earlier renders by "
+                       f"{renderer} ({cache.root}); {len(files) - len(served[g])} to render")
+    rendered = _render_backend(groups, pending, backend, workers, log, detail)
+    if cache is not None and renderer is not None and (any(rendered) or any(later)):
+        kept = 0
+        for r in rendered:
+            kept += sum(1 for f, pdf in r.items() if cache.put(f, pdf, renderer))
+        for g, files in enumerate(later):
+            for f in files:
+                hit = cache.get(f, groups[g][1] / (f.stem + ".pdf"), renderer)
+                if hit is not None:
+                    served[g][f] = hit
+        missed = [[f for f in files if f not in served[g]] for g, files in enumerate(later)]
+        if any(missed):                                  # its twin did not render or could not be kept: on its own
+            for g, r in enumerate(_render_backend(groups, missed, backend, workers, log, detail)):
+                rendered[g].update(r)
+                kept += sum(1 for f, pdf in r.items() if cache.put(f, pdf, renderer))
+        cache.trim()
+        if any(rendered):
+            detail(f"render cache: kept {kept} of {sum(len(r) for r in rendered)} fresh render(s) for next time")
+    results: List[Dict[Path, Path]] = []
+    for g, (files, _) in enumerate(groups):
+        result: Dict[Path, Path] = {}
         for f in files:
-            hit = cache.get(f, out_dir / (f.stem + ".pdf"), renderer)
-            if hit is not None:
-                served[f] = hit
-            else:
-                pending.append(f)
-        if served:
-            detail(f"render cache: {len(served)} of {len(files)} PDF(s) came from earlier renders by {renderer} "
-                   f"({cache.root}); {len(pending)} to render")
-    rendered: Dict[Path, Path] = {}
-    if pending:
-        try:
-            if backend == "word":
-                rendered = word_com.render_pdfs(pending, out_dir, log=log, detail=detail)
-            elif backend == "libreoffice":
-                rendered = libreoffice.render_pdfs(pending, out_dir, workers=workers, log=log, detail=detail)
-        except Exception as e:  # noqa: BLE001 — the renderer itself failed: no PDFs, the batch goes on without them
-            diag.event("render.backend_failed", level="error", backend=backend,
-                       exception=diag.exception_record(e, "render"))
-            log(f"rendering with {backend} failed: {error_text(e)}")
-            detail(traceback.format_exc())
-        if rendered and cache is not None and renderer is not None:
-            kept = sum(1 for f, pdf in rendered.items() if cache.put(f, pdf, renderer))
-            cache.trim()
-            detail(f"render cache: kept {kept} of {len(rendered)} fresh render(s) for next time")
-    result: Dict[Path, Path] = {}
-    for f in files:
-        pdf = served.get(f) or rendered.get(f)
-        if pdf is not None:
-            result[f] = Path(pdf)
-    return result, len(served)
+            pdf = served[g].get(f) or rendered[g].get(f)
+            if pdf is not None:
+                result[f] = Path(pdf)
+        results.append(result)
+    return results, sum(len(s) for s in served)
+
+
+def _render_backend(groups: List[Tuple[List[Path], Path]], pending: List[List[Path]], backend: str, workers: int,
+                    log: Callable[[str], None], detail: Callable[[str], None]) -> List[Dict[Path, Path]]:
+    """Render ``pending[g]`` into group ``g``'s folder. A renderer that fails as a whole renders nothing for the
+    groups it was given, says so, and the batch goes on without them."""
+    rendered: List[Dict[Path, Path]] = [{} for _ in groups]
+    if not any(pending):
+        return rendered
+    if backend == "word":
+        for g, files in enumerate(pending):
+            if files:
+                rendered[g] = _guarded(backend, log, detail, word_com.render_pdfs, files, groups[g][1],
+                                       log=log, detail=detail) or {}
+    elif backend == "libreoffice":
+        got = _guarded(backend, log, detail, libreoffice.render_groups,
+                       [(files, groups[g][1]) for g, files in enumerate(pending)], workers=workers, log=log,
+                       detail=detail)
+        if got is not None:
+            rendered = got
+    return rendered
+
+
+def _guarded(backend: str, say: Callable[[str], None], trace: Callable[[str], None], fn, *args, **kwargs):
+    """``fn(*args, **kwargs)``, or None when the renderer itself failed (said on ``say``, its traceback on ``trace``)."""
+    try:
+        return fn(*args, **kwargs)
+    except Exception as e:  # noqa: BLE001 — the renderer itself failed: no PDFs, the batch goes on without them
+        diag.event("render.backend_failed", level="error", backend=backend,
+                   exception=diag.exception_record(e, "render"))
+        say(f"rendering with {backend} failed: {error_text(e)}")
+        trace(traceback.format_exc())
+        return None

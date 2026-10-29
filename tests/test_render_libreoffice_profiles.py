@@ -49,17 +49,55 @@ def _fake_soffice(monkeypatch, runs, behaviour=None):
 def test_profiles_live_under_the_config_folder_and_are_reused_across_calls(tmp_path, monkeypatch):
     runs = []
     _fake_soffice(monkeypatch, runs)
-    files = [_docx(tmp_path / f"{n}.docx", "21 13 13", f"T{n}") for n in range(3)]
+    files = [_docx(tmp_path / f"{n}.docx", "21 13 13", f"T{n}") for n in range(4)]
     assert profiles_root() == config_dir() / "render-profiles"
     for n in range(2):
         got = libreoffice.render_pdfs(files, tmp_path / f"out{n}", workers=2)
         assert set(got) == set(files)
     # chunk i on profile i in both calls (two threads: the order they finish in is theirs)
     assert sorted(r[0] for r in runs[:2]) == ["0", "1"] and sorted(r[0] for r in runs[2:]) == ["0", "1"]
-    assert sorted(runs[0][1] + runs[1][1]) == ["0.docx", "1.docx", "2.docx"]
+    assert sorted(runs[0][1] + runs[1][1]) == ["0.docx", "1.docx", "2.docx", "3.docx"]
     assert (profiles_root() / "0").is_dir() and (profiles_root() / "1").is_dir()   # kept, not deleted
     with ProfileLease(profiles_root(), 0) as lease:                           # and the leases were released
         assert lease.index == 0 and lease.path == profiles_root() / "0"
+
+
+@pytest.mark.parametrize("sizes, workers, expected", [
+    ([1], 4, [1]), ([2], 4, [1]), ([3], 4, [1]), ([4], 4, [2]), ([24], 8, [8]),   # at least two files a process
+    ([1, 1], 2, [1, 1]), ([8, 8], 8, [4, 4]), ([3, 3], 3, [1, 1]),               # a run's sources and copies
+    ([0, 2], 4, [0, 1]), ([1, 1, 1], 1, [1, 1, 1]),                              # more groups than workers: one each
+])
+def test_each_group_gets_processes_of_at_least_two_files_within_the_workers(sizes, workers, expected):
+    assert libreoffice.plan_processes(sizes, workers) == expected
+
+
+def test_groups_render_side_by_side_each_into_its_own_folder(tmp_path, monkeypatch):
+    runs = []
+    _fake_soffice(monkeypatch, runs)
+    sources = [_docx(tmp_path / "in" / f"{n}.docx", "21 13 13", f"T{n}") for n in range(2)]
+    copies = [_docx(tmp_path / "copies" / f"{n}.docx", "21 13 13", f"C{n}") for n in range(2)]
+    src, out = libreoffice.render_groups([(sources, tmp_path / "source"), (copies, tmp_path / "output")], workers=4)
+    assert src == {f: tmp_path / "source" / f"{f.stem}.pdf" for f in sources}
+    assert out == {f: tmp_path / "output" / f"{f.stem}.pdf" for f in copies}
+    # one process a group (two files each, not one a file), on profiles 0 and 1, side by side
+    assert sorted(runs) == [("0", ["0.docx", "1.docx"]), ("1", ["0.docx", "1.docx"])]
+
+
+def test_a_failed_chunk_retries_its_files_into_their_own_groups_folder(tmp_path, monkeypatch):
+    runs = []
+
+    def copies_crash(profile_dir, files):
+        if len(files) > 1 and Path(files[0]).parent.name == "copies":
+            raise subprocess.CalledProcessError(139, ["soffice"], output=b"", stderr=b"Segmentation fault")
+    _fake_soffice(monkeypatch, runs, copies_crash)
+    sources = [_docx(tmp_path / "in" / f"{n}.docx", "21 13 13", f"T{n}") for n in range(2)]
+    copies = [_docx(tmp_path / "copies" / f"{n}.docx", "21 13 13", f"C{n}") for n in range(2)]
+    said = []
+    src, out = libreoffice.render_groups([(sources, tmp_path / "source"), (copies, tmp_path / "output")], workers=4,
+                                         log=said.append)
+    assert set(src) == set(sources) and out == {f: tmp_path / "output" / f"{f.stem}.pdf" for f in copies}
+    assert any("retrying them one by one" in m for m in said)
+    assert sorted(r for r in runs if len(r[1]) == 1) == [("1", ["0.docx"]), ("1", ["1.docx"])]
 
 
 def test_a_profile_soffice_cannot_start_from_is_wiped_and_recreated_once(tmp_path, monkeypatch):

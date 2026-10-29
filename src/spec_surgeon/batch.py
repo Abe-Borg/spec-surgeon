@@ -1070,14 +1070,6 @@ def geometry_references(pairs: Sequence[RenderPair], out_dir: Path, backend: str
                 log.block(traceback.format_exc())
         log(f"rendering {len(references)} template reference(s) and {len(copies)} headers/footers-only output(s) "
             f"with {backend}")
-        for k, v in render_mod.render_pdfs(list(references), tpl_dir, backend, workers, log=rlog,
-                                           detail=log.detail, cache=cache).items():
-            if k in references:
-                refs.template_refs[references[k][0]] = (v, references[k][1])
-        for k, v in render_mod.render_pdfs(list(copies), hf_dir, backend, workers, log=rlog,
-                                           detail=log.detail, cache=cache).items():
-            if k in copies:
-                refs.output_hf[copies[k][0]] = (v, copies[k][1])
     removed_hf_inputs: Dict[Path, Path] = {}
     for p in pairs:
         plan = p.plan
@@ -1097,9 +1089,25 @@ def geometry_references(pairs: Sequence[RenderPair], out_dir: Path, backend: str
             log.block(traceback.format_exc())
     if removed_hf_inputs:
         log(f"rendering {len(removed_hf_inputs)} independent header/footer-removal reference(s) with {backend}")
-        references = render_mod.render_pdfs(list(removed_hf_inputs), out_dir / "render" / "removed-hf-reference-pdf",
-                                           backend, workers, log=rlog, detail=log.detail, cache=cache)
-        refs.removed_hf_pdfs = {removed_hf_inputs[path]: pdf for path, pdf in references.items()
+    # every reference renders in one round of renderer processes, side by side
+    groups = []
+    if templated:
+        groups += [(list(references), tpl_dir), (list(copies), hf_dir)]
+    if removed_hf_inputs:
+        groups.append((list(removed_hf_inputs), out_dir / "render" / "removed-hf-reference-pdf"))
+    if not groups:
+        return refs
+    rendered = render_mod.render_pdf_groups(groups, backend, workers, log=rlog, detail=log.detail, cache=cache)
+    if templated:
+        tpl_pdfs, hf_pdfs, rendered = rendered[0], rendered[1], rendered[2:]
+        for k, v in tpl_pdfs.items():
+            if k in references:
+                refs.template_refs[references[k][0]] = (v, references[k][1])
+        for k, v in hf_pdfs.items():
+            if k in copies:
+                refs.output_hf[copies[k][0]] = (v, copies[k][1])
+    if removed_hf_inputs:
+        refs.removed_hf_pdfs = {removed_hf_inputs[path]: pdf for path, pdf in rendered[0].items()
                                 if path in removed_hf_inputs}
     return refs
 
@@ -1184,11 +1192,12 @@ def _render_and_compare(batch: BatchResult, renderer: str, do_render: bool, work
                 src_in[cp] = fr.source
             else:
                 src_in[fr.source] = fr.source
-        rendered = render_mod.render_pdfs(list(src_in), out_dir / "render" / "source", backend, workers, log=rlog,
-                                          detail=log.detail, cache=cache)
+        # the sources and the copies render side by side, in one round of renderer processes
+        rendered, out_pdfs = render_mod.render_pdf_groups(
+            [(list(src_in), out_dir / "render" / "source"),
+             ([fr.output for fr in renderable], out_dir / "render" / "output")],
+            backend, workers, log=rlog, detail=log.detail, cache=cache)
         src_pdfs = {src_in[k]: v for k, v in rendered.items() if k in src_in}
-        out_pdfs = render_mod.render_pdfs([fr.output for fr in renderable], out_dir / "render" / "output", backend,
-                                          workers, log=rlog, detail=log.detail, cache=cache)
         pairs = [RenderPair(fr.source, fr.output, fr.plan or {}, src_pdfs.get(fr.source), out_pdfs.get(fr.output),
                             fr.out_name) for fr in renderable]
         refs = geometry_references(pairs, out_dir, backend, workers, cache, rlog, log)
