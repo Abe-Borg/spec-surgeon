@@ -3,7 +3,8 @@
 
 Built with python-docx (a dev dependency the app does not ship) and committed. Every ``.docx`` is written with fixed zip
 timestamps, so running this again on the same python-docx gives the same bytes; ``tests/test_schemes.py`` compares the
-committed files' document, styles and numbering parts with a fresh build.
+committed files with a fresh build. The same bytes go beside the worked examples' other templates
+(``examples/templates/``), which the worked EditSpecs name.
 
     python tests/make_scheme_examples.py              # rewrites src/spec_surgeon/examples/schemes/
 
@@ -72,11 +73,15 @@ def schemes() -> dict:
     return {SCHEMES[s][0]: build_scheme(s) for s in SCHEMES}
 
 
+EXAMPLE_TEMPLATES = HERE.parent / "examples" / "templates"    # the worked examples' templates (not shipped)
+
+
 def main(argv=None) -> int:
     SCHEMES_DIR.mkdir(parents=True, exist_ok=True)
     for name, data in schemes().items():
-        (SCHEMES_DIR / name).write_bytes(data)
-        print(f"wrote {SCHEMES_DIR / name} ({len(data)} bytes)")
+        for folder in (SCHEMES_DIR, EXAMPLE_TEMPLATES):
+            (folder / name).write_bytes(data)
+            print(f"wrote {folder / name} ({len(data)} bytes)")
     return 0
 
 

@@ -25,6 +25,8 @@ def test_the_committed_schemes_are_a_fresh_build():
     assert set(built) == {name for name, *_ in schemes.SCHEMES.values()}
     for scheme in schemes.SCHEMES:
         assert schemes.scheme_file(scheme).read_bytes() == built[schemes.SCHEMES[scheme][0]], scheme
+        example = Path(__file__).resolve().parent.parent / "examples" / "templates" / schemes.SCHEMES[scheme][0]
+        assert example.read_bytes() == built[schemes.SCHEMES[scheme][0]], example     # the worked examples' copy
 
 
 @pytest.mark.parametrize("scheme", sorted(schemes.SCHEMES))
