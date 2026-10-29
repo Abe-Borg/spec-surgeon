@@ -97,7 +97,7 @@ def _why_not(item) -> str:
     reason = ""
     if exc or getattr(item, "reason", ""):
         reason = refusal_message(exc or {"code": getattr(item, "code", ""), "reason": item.reason,
-                                         "details": getattr(item, "details", {})})
+                                         "details": getattr(item, "details", {})}, step=False)
         reason = re.sub(r"^(?:word|customXml)/[\w./-]+\.xml:\s*", "", reason)
     record = getattr(item, "record", None)
     if not reason and record is not None and not record.passed:

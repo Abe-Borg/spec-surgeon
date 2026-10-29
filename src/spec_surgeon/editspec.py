@@ -765,14 +765,19 @@ def plan_chain(pkg: DocxPackage, chain: Dict[str, Any], pattern_id: Optional[str
                trace: Optional[Callable[..., None]] = None) -> List[Tuple[Plan, List[PlanFragment]]]:
     """Predict-first for every stage of a chain on one file: stage 1 on the file, each later stage on the bytes the
     stage before it would produce (applied in memory, never written). Raises what ``plan_spec`` raises, with the
-    stage named."""
+    stage named: its number, how many there are and the stage's own name (a saved recipe's step is its button's
+    label), which the window's Left untouched line opens with (``ui_feedback.refusal_message``)."""
     out: List[Tuple[Plan, List[PlanFragment]]] = []
     current = pkg
-    for i, st in enumerate(chain.get("stages") or [], 1):
+    stages = chain.get("stages") or []
+    for i, st in enumerate(stages, 1):
         try:
             plan, frags = plan_spec(current, st["spec"], pattern_id if i == 1 else None, trace)
         except JobException as e:
-            raise JobException(f"step {i}: {e.reason}", e.code, {**e.details, "chain_stage": i}) from e
+            raise JobException(f"step {i}: {e.reason}", e.code,
+                               {**e.details, "chain_stage": i, "chain_steps": len(stages),
+                                "step_name": str(st.get("name") or ""),
+                                "step_request": str((st.get("spec") or {}).get("request") or "")}) from e
         out.append((plan, frags))
         current = apply_spec(current, frags)
     return out

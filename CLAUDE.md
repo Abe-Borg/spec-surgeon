@@ -163,7 +163,10 @@ jobs). Details: `docs/CONVERSATIONAL_DESKTOP.md`.
   - `batch.py` (per-file pipeline, guarded delivery, records; `worker_plan`/`map_files`: three or more files go to
     spawned worker processes, each file whole in one, in the packaged app too — a test's patches never reach one,
     so `tests/conftest.py` runs threads), `guard.py`, `chain.py`, `report.py`
-    (`FAILURE_EXPLANATIONS`: every refusal code in plain words), `diagnostics.py`.
+    (`FAILURE_EXPLANATIONS`: every refusal code in plain words), `diagnostics.py`, `ui_feedback.py` (the window's
+    words for one refusal, `refusal_message`: the step that refused the file — `editspec.plan_chain` records its
+    number, count and name — then what was looked for and what the document holds instead, from the record's
+    details; the record itself never changes).
   - `catalog.py` (op catalog, `COMMON_ASSUMPTIONS`, `op_sheet`), `profile.py`, `planner.py`, `structure.py`, `triage.py`.
   - `compiler.py`, `conversation.py`, `llm.py`, `vision.py` — request → EditSpec. `llm.call` is the one call site: the
     system prompt carries its own 1-hour cache breakpoint, the history the automatic 5-minute one, and a `one_shot`
@@ -298,7 +301,8 @@ journal and the newest session folders' records (all in the window's scratch fol
 4. `apply()` mutates the working copy through the overlay (`write_xml`, `remove_member`, `add_member`, `edit_rels`).
 5. A fixture, an end-to-end test (plan → merge → apply → `run_suite`, `record.passed`), and a planted-defect test for
    every new rule: a wrong output, and a wrong implementation shared by plan and apply.
-6. Every new refusal code in `report.FAILURE_EXPLANATIONS`; the op in `compiler.placed_words` if it places typed
+6. Every new refusal code in `report.FAILURE_EXPLANATIONS` (and its details enough for `ui_feedback.refusal_message`
+   to name what was looked for: the words, the selection, the value); the op in `compiler.placed_words` if it places typed
    text; a `COMMON_ASSUMPTIONS` entry in `catalog.py`; at least one case in `tests/describe_cases/`.
 
 ## The trust surfaces

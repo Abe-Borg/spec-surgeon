@@ -137,6 +137,18 @@ specifications, Windows and Word, and only the owner can do them. Record what a 
   untouched with the reason, and **Try these in Default mode** removes that note when asked. The copies open in Word
   without a repair prompt. Then, in Default mode on those copies, one request cuts the placeholders and deletes the
   copyright line.
+- **Left untouched says what was looked for; Remove all documents on the title line (the owner's Safe-mode run of
+  2026-10-29; built 2026-10-29):** the recipe "DIV 21 IFP" (Match headers and footers to template, then Find and
+  replace) over the same 28 documents with the template attached, with Word: no line under Left untouched reads
+  "This file does not contain the text or location needed for this change" or "More than one possible match was
+  found"; each names its step ("Step 1 of 2 (Match headers and footers to template): …") and what it looked for and
+  did not find (a SECTION line to read the section number or title from, with the document's first line quoted, if
+  that is why), the Michigan document the different values it gives, and the ASHRAE, Reliable and AcousticalSolutions
+  documents the Different Odd & Even Pages setting in plain words. A line that still reads vaguely is recorded here
+  with its document's refusal record (`records\`, the diagnostic bundle). Create the copies: the same
+  reasons under Left untouched by the last button, and on the to-do list after **Try these in Default mode**. With
+  the preview open and the documents list folded, **Remove all documents** shows on its title line and, after the
+  confirmation, takes all 28 out while the template stays attached.
 - **Saved recipes (built 2026-10-29):** in Safe mode with Word rendering over a real Division 21 batch, Match headers
   and footers to template, Change the issue stamp and Accept all tracked changes, then **Save as a recipe…** with all
   three ticked; the recipe's tile under **My recipes** shows the three steps; on a second real batch from another

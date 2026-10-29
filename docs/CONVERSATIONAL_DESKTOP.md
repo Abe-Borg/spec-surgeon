@@ -427,7 +427,8 @@ are refused as a source, and nothing about the folder is remembered. Files from 
 together, including files with the same name. Each file has
 a remove button; with two or more documents listed, **Remove all documents** takes every Word document out at once
 after one confirmation (`DocumentTask.remove_documents`, each as its ✕ would), leaving the template and the pictures
-and tables. **Add a template (optional)** attaches one reference document; it is never part of the batch,
+and tables. It sits on the documents' title line, so it stays one click away when the list has folded under a plan
+or copies. **Add a template (optional)** attaches one reference document; it is never part of the batch,
 and if one of the documents is a copy of the template the window says so and asks you to remove one of them.
 
 **Add a picture or table (optional)**, or dropping one, attaches a file for the edit to use: a picture
@@ -753,7 +754,11 @@ A file can be left out at five points, each time with one sentence that names th
 - At plan time, when the operation cannot predict its result on that file, or when no layout covers its
   structure; in a plan done in steps, at whichever step cannot predict its result (every step is planned on every
   document, each later step on what the step before it would make). These appear under **Left untouched** before
-  anything runs; no paid investigation
+  anything runs, each with a specific reason (`ui_feedback.refusal_message`, from the refusal's record): the step
+  that refused it ("Step 1 of 2 (Match headers and footers to template): …", a saved recipe's step by its button, a
+  request's by its words), what it looked for (the words to find, a SECTION line to read the section number or title
+  from, a setting such as Different Odd & Even Pages) and what the document holds instead (its first line, or the
+  different values it gives); no paid investigation
   precedes them. The preview of the other documents stands, and the assistant names each one with its reason in its
   next reply; **Create edited copies** leaves them as they are (they are not run, so no recovery follows for them)
   and puts them on the to-do list with their reason. Only a plan that covers no file at all, or a preview none of
