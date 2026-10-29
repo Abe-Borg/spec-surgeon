@@ -377,7 +377,10 @@ const SCENARIOS = {
     v.messages = [msg("user", "Remove highlighting"), msg("app", "2 document copies are ready. Open them, press another button to change them further, or start over from the originals. Left untouched: 21 31 13 Electric-Drive, Centrifugal Fire Pumps.docx — each one's reason is beside the copies.")];
     v.results = results().slice(0, 2);
     v.export = { folder: "", unsaved: v.results.length, copies: v.results.length };
-    v.working = { generation: 1, from_originals: false, can_start_over: true };
+    v.working = {
+      generation: 1, from_originals: false, can_start_over: true,
+      done: [{ request: "Remove highlighting", recipe: "remove_highlight", documents: 2, of: 3, not: [{ name: name(DOCS[2].path), why: "left untouched" }] }],
+    };
     v.left_untouched = [{ path: DOCS[2].path, name: name(DOCS[2].path), reason: "Editing is restricted in this file (Review → Restrict Editing); remove the restriction in Word, then run again." }];
     return v;
   },
@@ -439,7 +442,10 @@ const SCENARIOS = {
     v.results = results();
     v.export = { folder: "", unsaved: v.results.length, copies: v.results.length };
     v.action = { label: "", token: "", kind: "none", can_hold: false };
-    v.working = { generation: 1, from_originals: false, can_start_over: true };
+    v.working = {
+      generation: 1, from_originals: false, can_start_over: true,
+      done: [{ request: v.messages.find((m) => m.role === "user")?.text ?? "", recipe: "", documents: 3, of: 3, not: [] }],
+    };
     v.attachments = v.attachments.map((a) =>
       a.kind === "document" && a.state !== "refused" ? { ...a, current: `${RUN_DIR}/${a.name}` } : a,
     );
@@ -541,6 +547,7 @@ let view = emptyView();
 let beforeButton = null;
 let undoStack = [];
 let lastRequest = "";
+let lastRecipe = "";   // the button whose preview waits ("" for a request): its run's line in What you've done so far
 function resetGoingBack() {
   beforeButton = null;
   undoStack = [];
@@ -550,6 +557,15 @@ function undoFields() {
   const blocked = !top ? "" : view.stage === "preview" ? "Discard the preview first."
     : ["question", "budget"].includes(view.stage) ? "Drop the request that is open first, or finish it." : "";
   return { undo: top ? top.request : "", undo_blocked: blocked };
+}
+/** What you've done so far with this run's line added (docs/WEB_API.md, `working.done`): the documents attached now,
+ *  those it delivered, and why each other one got none. */
+function doneWith(request, delivered, untouched) {
+  const docs = view.attachments.filter((a) => a.kind === "document" && a.state !== "refused");
+  const not = docs
+    .filter((a) => !delivered.some((d) => d.source === a.path))
+    .map((a) => ({ name: a.name, why: view.todo.some((t) => t.path === a.path) && !untouched.some((u) => u.path === a.path) ? "set aside" : "left untouched" }));
+  return [...(view.working.done ?? []), { request, recipe: lastRecipe, documents: docs.length - not.length, of: docs.length, not }];
 }
 /** What Discard withdraws now, as the app says it (docs/WEB_API.md, `discard`). */
 /** What Export would save, as the app counts it (docs/WEB_API.md, `export`): the copies the window lists, and those not
@@ -850,6 +866,7 @@ async function recipeJob(res, recipe) {
   view.messages.push(msg("user", recipe.label));
   if (!beforeButton) beforeButton = { results: view.results, left_untouched: view.left_untouched };
   lastRequest = recipe.label;
+  lastRecipe = recipe.id;
   view.results = [];
   view.plan = null;
   view.samples = [];
@@ -1022,7 +1039,9 @@ async function primaryJob(res, token, hold = []) {
       results: beforeButton ? beforeButton.results : view.results,
       left_untouched: beforeButton ? beforeButton.left_untouched : view.left_untouched,
       currents: view.attachments.map((a) => [a.path, a.current]),
+      done: view.working.done ?? [],
     });
+    const doneSoFar = doneWith(lastRequest || "the last button", fresh, asideByButton);
     beforeButton = null;
     view.results = [...view.results.filter((r) => !fresh.some((f) => f.source === r.source)), ...fresh];
     await s.emit({ type: "results", results: view.results });
@@ -1035,11 +1054,12 @@ async function primaryJob(res, token, hold = []) {
     view.plan = null;
     view.samples = [];
     view.action = { label: "", token: "", kind: "none", can_hold: false };
-    view.working = { generation: view.working.generation + 1, from_originals: false, can_start_over: true };
+    view.working = { generation: view.working.generation + 1, from_originals: false, can_start_over: true, done: doneSoFar };
     view.attachments = view.attachments.map((a) =>
       running.some((r) => r.path === a.path) ? { ...a, current: `${RUN_DIR}/${a.name}` } : a,
     );
     view.working = { ...view.working, ...undoFields() };
+    lastRecipe = "";
     return s.end();
   }
   // A conversation's run: what it replaces is kept for Undo, as a button's is.
@@ -1049,7 +1069,9 @@ async function primaryJob(res, token, hold = []) {
     results: view.results,
     left_untouched: view.left_untouched,
     currents: view.attachments.map((a) => [a.path, a.current]),
+    done: view.working.done ?? [],
   });
+  const doneSoFar = doneWith(lastRequest || "the last change", fresh, []);
   view.results = [...view.results.filter((r) => !fresh.some((f) => f.source === r.source)), ...fresh];
   await s.emit({ type: "results", results: view.results });
   const note = msg("app", `${fresh.length} edited ${fresh.length === 1 ? "copy" : "copies"} created and verified`);
@@ -1071,7 +1093,7 @@ async function primaryJob(res, token, hold = []) {
   }
   view.stage = "done";
   view.action = { label: "", token: "", kind: "none", can_hold: false };
-  view.working = { generation: view.working.generation + 1, from_originals: false, can_start_over: true };
+  view.working = { generation: view.working.generation + 1, from_originals: false, can_start_over: true, done: doneSoFar };
   view.attachments = view.attachments.map((a) =>
     running.some((r) => r.path === a.path) ? { ...a, current: `${RUN_DIR}/${a.name}` } : a,
   );
@@ -1300,7 +1322,10 @@ async function handle(req, res) {
         return job.fail("Safe mode has no conversation: press a button to make a change, or switch to Default mode to type a request.");
       }
       const key = text.toLowerCase();
-      if (!["question", "resume", "budget"].includes(view.stage)) lastRequest = text;   // a new request (Undo names it)
+      if (!["question", "resume", "budget"].includes(view.stage)) {
+        lastRequest = text;   // a new request (Undo names it)
+        lastRecipe = "";
+      }
       if (key === WORK_TODO.toLowerCase() && view.todo.length) return todoJob(res, text);
       if (key.includes("question")) return questionJob(res, text);
       if (key.includes("fail")) return failJob(res, text);
@@ -1400,6 +1425,7 @@ async function handle(req, res) {
         generation: top.generation,
         from_originals: top.generation === 0,
         can_start_over: top.generation > 0 || view.todo.length > 0,
+        done: top.done ?? [],
       };
       view.working = { ...view.working, ...undoFields() };
       const upcoming = view.mode === "safe" ? "The next button" : "Your next request";
@@ -1411,7 +1437,7 @@ async function handle(req, res) {
     case "POST /api/start-over":
       if (view.busy) return busyRefusal();
       resetGoingBack();
-      view.working = { generation: 0, from_originals: true, can_start_over: false };
+      view.working = { generation: 0, from_originals: true, can_start_over: false, done: [] };
       view.plan = null;
       view.samples = [];
       view.warnings = [];

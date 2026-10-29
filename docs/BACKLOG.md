@@ -127,6 +127,14 @@ write-back over the originals unless asked for (T1 is the claim most of the trus
 Everything else is built and tested on fixtures; nothing is done on fixtures alone. These runs need real
 specifications, Windows and Word, and only the owner can do them. Record what a run finds as a new item above.
 
+- **What you've done so far (built 2026-10-29):** over a real batch in Safe mode, Remove all comments, Accept all
+  tracked changes and Match headers and footers to the template, each created in turn; the list under the copies
+  names the three in order, the newest marked LATEST, with "All N documents" or which documents did not get one and
+  why (a document the template button left untouched; one set aside with the ✗; one attached after the first button);
+  the three buttons carry their checkmark and the hover text says how many times; Undo the last button takes the
+  header/footer line and its checkmark off; a window ended without closing (Task Manager) shows the list again when
+  the next start restores it; Start over clears it. In Default mode, two requests in a row list the words typed, and Undo the last change
+  takes the second off. The list and the checkmarks read well at 1280 px wide.
 - **Find and replace, occurrence by occurrence (F1–F3, built 2026-10-27):** a real code-cycle rule set (the small
   tool's `find,replace` CSV attached as the table, or typed pairs) over a real specification folder attached with
   **Add a folder of documents**; the occurrence list under the previews reads right (the article labels, the words

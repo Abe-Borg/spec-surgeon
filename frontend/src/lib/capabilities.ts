@@ -52,6 +52,7 @@ export const END_USER_CAPABILITIES = [
   "results.folder",
   "results.start-over",
   "results.undo",
+  "results.done",
   "results.hand-off",
   "todo.card",
   "todo.put-back",

@@ -30,6 +30,11 @@ import {
   traySummary,
   trayTitle,
   undoLink,
+  doneCoverage,
+  doneSteps,
+  doneSubtitle,
+  ranLabel,
+  timesRun,
 } from "../src/lib/workbench.ts";
 
 const group = (overrides: Partial<PlanGroup> = {}): PlanGroup => ({
@@ -271,3 +276,53 @@ test("a copy's link opens the saved file while it holds the copy's bytes, else t
 });
 
 
+
+test("What you've done so far: each run with how many documents carry it, and why the others do not", () => {
+  const all = { request: "Remove all comments", recipe: "remove_comments", documents: 3, of: 3, not: [] };
+  assert.equal(doneCoverage(all), "All 3 documents");
+  assert.equal(doneCoverage({ ...all, documents: 1, of: 1 }), "1 document");
+  assert.equal(
+    doneCoverage({
+      ...all,
+      documents: 1,
+      not: [
+        { name: "21 31 13.docx", why: "left untouched" },
+        { name: "21 13 19.docx", why: "attached later" },
+      ],
+    }),
+    "1 of 3 documents · not 21 31 13.docx (left untouched); 21 13 19.docx (attached later)",
+  );
+  const many = ["a", "b", "c", "d", "e"].map((n) => ({ name: `${n}.docx`, why: "set aside" }));
+  assert.equal(
+    doneCoverage({ ...all, documents: 1, of: 6, not: many }),
+    "1 of 6 documents · not a.docx, b.docx, c.docx and 2 more (set aside)",
+  );
+  assert.equal(
+    doneCoverage({ ...all, documents: 0, of: 1, not: [{ name: "a.docx", why: "attached later" }] }),
+    "None of the documents attached now · not a.docx (attached later)",
+  );
+});
+
+test("the list's subtitle names Undo only while there is one, in the mode's words", () => {
+  const working = { generation: 1, from_originals: false, can_start_over: true, undo: "Remove all comments", undo_blocked: "" };
+  assert.equal(
+    doneSubtitle({ mode: "safe" }, undoLink({ mode: "safe", working }, false)),
+    "Every button you ran since the originals, oldest first. Undo the last button takes the newest off; Start over clears the list.",
+  );
+  assert.equal(
+    doneSubtitle({ mode: "default" }, undoLink({ mode: "default", working }, false)),
+    "Every change you made since the originals, oldest first. Undo the last change takes the newest off; Start over clears the list.",
+  );
+  assert.equal(doneSubtitle({ mode: "obliterate" }, null), "Every change you made since the originals, oldest first. Start over clears the list.");
+});
+
+test("a Safe-mode button carries its checkmark while a run of the working set is its own", () => {
+  const step = { request: "Remove all comments", recipe: "remove_comments", documents: 2, of: 2, not: [] };
+  const working = { generation: 3, from_originals: false, can_start_over: true };
+  const view = { working: { ...working, done: [step, { ...step, recipe: "" }, step] } };
+  assert.equal(timesRun(view, "remove_comments"), 2);
+  assert.equal(timesRun(view, "accept_changes"), 0);
+  assert.deepEqual(doneSteps({ working }), []);          // an older server sends no list
+  assert.equal(ranLabel(1), "You ran it once on these copies (What you've done so far).");
+  assert.equal(ranLabel(2), "You ran it 2 times on these copies (What you've done so far).");
+});
