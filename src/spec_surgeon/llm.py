@@ -23,7 +23,9 @@ recovery and the visual check of the preview samples).
   a fallback, the blocks the abandoned attempt produced before the last ``fallback`` marker (thinking, tool calls) must
   not be echoed back or acted on — only its text is kept.
 * ``served`` tells which model actually answered (``resp.model``) and whether a fallback ran.
-* ``Usage`` adds up tokens per serving model and estimates the cost from ``PRICES``.
+* ``Usage`` adds up tokens per serving model and estimates the cost from ``PRICES``. ``context_tokens`` is a gauge
+  beside it, never spending: how much context one response leaves its conversation holding, against the model's
+  ``CONTEXT_WINDOWS``.
 * Fast mode (Settings → "Fast responses", ``set_fast_mode``; off unless the user turns it on): a call to a model
   Anthropic serves fast (``FAST_PRICES``) asks for ``speed="fast"`` — the same model, effort and thinking, written up to
   ``FAST_SPEEDUP`` times faster, at ``FAST_PRICE_FACTOR`` times the price on every token (the caching multipliers apply
@@ -155,6 +157,14 @@ PRICES: Dict[str, Tuple[float, float, float, float, float]] = {
     "claude-opus-5": (5.00, 25.00, 0.50, 6.25, 10.00),
     "claude-opus-4-8": (5.00, 25.00, 0.50, 6.25, 10.00),
     "claude-sonnet-5-5": (2.00, 10.00, 0.20, 2.50, 4.00),
+}
+# Tokens of context each model can hold (Anthropic's model table, 2026-10): the top bar's context gauge measures the
+# conversation against it (``context_tokens``). A model that is not listed shows its tokens alone, never a guessed window.
+CONTEXT_WINDOWS: Dict[str, int] = {
+    "claude-opus-5-5": 1_000_000,
+    "claude-opus-5": 1_000_000,
+    "claude-opus-4-8": 1_000_000,
+    "claude-sonnet-5-5": 1_000_000,
 }
 # Fast mode: the models Anthropic serves fast, at FAST_PRICE_FACTOR times every price above (input, output, cache read,
 # both cache writes: the caching multipliers apply on top of the fast price). A model not listed is never asked for it.
@@ -933,6 +943,20 @@ def stop_problem(resp) -> Optional[str]:
     if stop not in ("end_turn", "tool_use", "stop_sequence"):
         return "the model response has an unrecognized final stop reason"
     return None
+
+
+def context_tokens(resp) -> Optional[int]:
+    """How much context a conversation holds once this answer joins it, as Anthropic counted it: the request's whole
+    prompt (fresh input + cache writes + cache reads, which together are the full prompt) plus the answer's output,
+    which the conversation keeps whole — its thinking too, which the same model reads again on the next request. Of a
+    response a fallback served, the final attempt (top-level usage covers only that one). The tool results the app
+    sends back are counted by the next request. A gauge, never spending; None when the usage carries none of the
+    counts (a test's scripted response may not)."""
+    usage = getattr(resp, "usage", None)
+    counts = [getattr(usage, k, None) for k in ("input_tokens", "cache_creation_input_tokens",
+                                                "cache_read_input_tokens", "output_tokens")]
+    known = [int(c) for c in counts if isinstance(c, (int, float)) and not isinstance(c, bool)]
+    return sum(known) if known else None
 
 
 def hour_writes(src) -> int:

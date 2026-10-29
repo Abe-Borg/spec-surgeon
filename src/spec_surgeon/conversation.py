@@ -354,7 +354,8 @@ class Conversation:
                  max_context_tokens: int = DEFAULT_CONTEXT_TOKENS, analysis_limits=None,
                  continuous_recovery: bool = False, word_sources=None, input_files: Sequence[Path] = (),
                  history: Sequence[str] = (), fresh: Sequence[str] = (), context: str = "",
-                 todo: Sequence[str] = (), earlier: Sequence[str] = (), unguarded: bool = False):
+                 todo: Sequence[str] = (), earlier: Sequence[str] = (), unguarded: bool = False,
+                 on_context: Optional[Callable[["Conversation"], None]] = None):
         if mode not in ("chat", "compile"):
             raise ValueError(f"unknown conversation mode {mode!r}")
         self.max_calls = positive_integer("max_calls", MAX_CALLS_PER_TURN if max_calls is None else max_calls)
@@ -417,6 +418,11 @@ class Conversation:
         self.notes: List[str] = []                 # app text for the next user message (never approved words)
         self._reply_mark: Optional[tuple] = None   # (the user message a reply sent, the state before it): see _take_back
         self.usage = llm.Usage()
+        # the context gauge (``_measure_context``): {"tokens", "window", "rollover"} at the last answer that joined the
+        # history, None before one; ``on_context`` (the window) hears of each. Never recorded, never sent to Claude.
+        # Not ``context``: that is the app's account of how the documents come to be planned, which the request carries
+        self.context_reading: Optional[Dict[str, Any]] = None
+        self.on_context = on_context
         self.tool_calls: List[Dict[str, Any]] = []
         self.turn: Optional[Turn] = None
         self.unsupported: Optional[Dict[str, Any]] = None
@@ -766,6 +772,7 @@ class Conversation:
                 return self._fail(declined_text(resp, taken_back=self._take_back()), [problem] + rejections)
             if problem:
                 return self._fail(problem, rejections)
+            self._measure_context(resp)              # the answer joins the history from here on
             content = llm.history_content(resp)
             uses = llm.tool_uses(content)
             said = "\n".join(t.strip() for t in llm.texts(content) if t.strip()).strip()
@@ -881,6 +888,25 @@ class Conversation:
             self.messages.append({"role": "user", "content": ordered})
             self._record_results(ordered, pending=False)
         return self._fail(f"no spec after {self.max_calls} calls", rejections)
+
+    def _measure_context(self, resp) -> None:
+        """The context gauge in the window's top bar: how much of the model's context window the conversation fills
+        once this answer joins it (``llm.context_tokens``, Anthropic's count), beside that window (None for a model
+        ``llm.CONTEXT_WINDOWS`` lacks) and ``max_context_tokens``, past which ``contexts.manage_context`` seals the
+        history and goes on in a fresh epoch (by its own estimate, not this count). A response without usage keeps the
+        last reading; a declined or failed one never gets here, since its answer joins nothing. ``on_context`` can
+        never affect the conversation."""
+        tokens = llm.context_tokens(resp)
+        if tokens is None:
+            return
+        self.context_reading = {"tokens": tokens, "window": llm.CONTEXT_WINDOWS.get(self.model),
+                        "rollover": self.max_context_tokens}
+        if self.on_context is None:
+            return
+        try:
+            self.on_context(self)
+        except Exception as error:  # noqa: BLE001 — the window's problem, never the conversation's
+            diag.event("conversation.context.observer_failed", level="warning", error_type=type(error).__name__)
 
     def _take_set_aside(self, block, inp: Dict[str, Any]) -> Dict[str, Any]:
         """A ``set_aside`` call: the documents the user asked to put on their to-do list leave this conversation's

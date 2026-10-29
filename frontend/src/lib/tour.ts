@@ -106,13 +106,13 @@ export const TOUR: readonly TourChapter[] = [
       },
       {
         id: "spending",
-        capabilities: ["header.spending", "header.connection", "header.stop"],
+        capabilities: ["header.spending", "header.stop", "header.context", "header.connection"],
         mode: "explanatory",
         anchor: "spend-pill",
         placement: "bottom",
-        title: "Spending and the connection, always in view",
+        title: "Spending, context and the connection",
         body:
-          `The pill estimates this conversation's spending as it accrues, from a built-in price table, never a bill. While work runs in Default mode a red Stop appears beside it: the kill switch, which cuts off the running AI step at once and starts no other. The next pill says whether an API key is available; in Safe mode it says no AI is used. Your spending check (Settings) pauses a request before it could spend more than $${F.spendingCheckDefaultUsd} until you continue.`,
+          `The pill estimates this conversation's spending as it accrues, from a built-in price table, never a bill. While work runs in Default mode a red Stop appears beside it: the kill switch, which cuts off the running AI step at once and starts no other. Once the assistant has worked, a pill counts the context its conversation holds against the model's context window: a measurement, not spending. The last pill says whether an API key is available; in Safe mode it says no AI is used. Your spending check (Settings) pauses a request before it could spend more than $${F.spendingCheckDefaultUsd} until you continue.`,
       },
       {
         id: "settings",

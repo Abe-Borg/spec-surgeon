@@ -417,6 +417,10 @@ class DocumentTask:
         self._failed_said_for = None        # the preview whose samples set aside as failed the chat has said
         self._budget = self._new_budget()
         self._request_budget = self._new_request()
+        # the top bar's context gauge: the conversation's last reading (``Conversation.context_reading``) and the id of the
+        # conversation it came from; never journalled, so a restored window shows none until the next step
+        self._context: Optional[Dict[str, Any]] = None
+        self.session.context_observer = self._on_context
         # Files a caller handed the session (tests, the installed smoke test) become attachments.
         given: List[Path] = []
         given = list(self.session.documents or [])
@@ -1192,7 +1196,28 @@ class DocumentTask:
         # setting is on, the model is served fast, and Anthropic has not refused fast mode for this key; ``request``:
         # this request's spending, ``limit`` the user's spending check (None: off)
         return {"usd": cost, "text": text, "calls": self._budget.calls, "fast": llm.fast_for(llm.DEFAULT_MODEL),
-                "request": self._request_budget.spent_usd, "limit": self.spending_limit}
+                "request": self._request_budget.spent_usd, "limit": self.spending_limit,
+                "context": self._context_view()}
+
+    def _on_context(self, conversation) -> None:
+        """A step of the conversation measured its context (``Conversation._measure_context``): the gauge follows at
+        once, on the live channel's ``cost`` event, rather than waiting for the job to end."""
+        self._context = dict(conversation.context_reading, conversation=conversation.id)
+        self._emit({"type": "cost", "cost": self._cost()})
+
+    def _context_view(self) -> Optional[Dict[str, Any]]:
+        """The context gauge beside the spending, a measurement and never spending (Build-a-Spec's context pill):
+        ``tokens``, the conversation's context at its last step (``llm.context_tokens``); ``window``, the model's
+        (None for a model ``llm.CONTEXT_WINDOWS`` lacks); ``rollover``, the estimate past which the history is sealed
+        and goes on in a fresh epoch (``contexts.manage_context``); ``live`` while that conversation is still the
+        request's. A request that ends ends its conversation, and the next message starts a new one, so the reading
+        then stands for the conversation before. None before the first step of this window's conversation."""
+        reading = self._context
+        if reading is None:
+            return None
+        conversation = self.session.conversation
+        return {"tokens": reading["tokens"], "window": reading["window"], "rollover": reading["rollover"],
+                "live": conversation is not None and conversation.id == reading["conversation"]}
 
     def _ready_to_talk(self):
         self.session.files(outcome=False)  # reject missing attachments before consuming an answer

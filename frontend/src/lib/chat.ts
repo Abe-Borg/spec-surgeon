@@ -202,6 +202,46 @@ export function costPill(cost: View["cost"] | null | undefined): string {
   return `≈ $${usd.toFixed(2)}`;
 }
 
+/** A compact token count, adapted from Build-a-Spec's Header.tsx (copy-based reuse): 142_304 → "142k", 1e6 → "1M",
+ *  1_250_000 → "1.3M". */
+export function compactTokens(n: number): string {
+  if (n >= 1_000_000) {
+    const m = n / 1_000_000;
+    return `${Number.isInteger(m) || m >= 10 ? m.toFixed(0) : m.toFixed(1)}M`;
+  }
+  if (n >= 1000) return `${Math.round(n / 1000)}k`;
+  return String(n);
+}
+
+/** The context gauge's words beside the spending: "142k / 1M" ("142k" for a model with no known window); "" before the
+ *  conversation's first step, and the top bar then shows no gauge. */
+export function contextPill(cost: View["cost"] | null | undefined): string {
+  const gauge = cost?.context;
+  if (!gauge || typeof gauge.tokens !== "number" || Number.isNaN(gauge.tokens)) return "";
+  const tokens = compactTokens(gauge.tokens);
+  return typeof gauge.window === "number" && gauge.window > 0 ? `${tokens} / ${compactTokens(gauge.window)}` : tokens;
+}
+
+/** The context gauge's hover text: what was counted, of what, and what happens to a long conversation. Every number
+ *  comes from the view. */
+export function contextTip(cost: View["cost"] | null | undefined): string {
+  const gauge = cost?.context;
+  if (!gauge || typeof gauge.tokens !== "number" || Number.isNaN(gauge.tokens)) return "";
+  const tokens = gauge.tokens.toLocaleString("en-US");
+  const of =
+    typeof gauge.window === "number" && gauge.window > 0
+      ? ` of the model's ${gauge.window.toLocaleString("en-US")} (${((gauge.tokens / gauge.window) * 100).toFixed(1)}%)`
+      : " (the app's table has no context window for this model)";
+  const lead = gauge.live
+    ? `The assistant's context at its last step: ${tokens} tokens${of}, as Anthropic counted them: the whole conversation of this request, Claude's answer included.`
+    : `The assistant's context at the last step of the request before: ${tokens} tokens${of}. Each request starts the assistant on a fresh conversation (the earlier exchanges come with it a line each), so your next message starts anew.`;
+  const rollover =
+    typeof gauge.rollover === "number" && gauge.rollover > 0
+      ? ` Past about ${gauge.rollover.toLocaleString("en-US")} tokens by the app's own estimate, the conversation is sealed on your computer and goes on in a fresh one that carries your request, your decisions and the approved words; Claude can still read the sealed part.`
+      : "";
+  return `${lead}${rollover} A measurement, not spending.`;
+}
+
 const STATUS_LABELS: Record<string, string> = {
   working: "Working…",
   thinking: "Thinking…",
