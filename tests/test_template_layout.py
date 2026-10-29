@@ -278,6 +278,7 @@ def test_a_template_that_shows_none_of_the_kinds_is_a_blank_reference(tmp_path):
     assert not [k for k in _refs_shown(VPackage(out))[1] if k[0] == "header"]
 
 
+@pytest.mark.render
 @pytest.mark.skipif(shutil.which("soffice") is None, reason="LibreOffice not installed")
 def test_a_blank_reference_passes_v7_rendered(tmp_path):
     """The same request run with LibreOffice: the copy's headers are gone, as the template's are, and V7 passes on

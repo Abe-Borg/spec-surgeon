@@ -314,6 +314,23 @@ export interface Cost {
   /** The spending check (Settings): the estimated dollars one request may spend before the work pauses; null when it
    *  is off. Absent from an older server. */
   limit?: number | null;
+  /** The context gauge beside the spending (a measurement, never spending); null before the conversation's first step,
+   *  absent from an older server. */
+  context?: ContextGauge | null;
+}
+
+/**
+ * How much of the model's context window the conversation fills (DocumentTask._context_view): `tokens` as Anthropic
+ * counted them at the conversation's last step (the whole prompt plus the answer it keeps), `window` the model's
+ * (null for a model the app's table lacks), `rollover` the app's estimate past which the history is sealed and goes on
+ * in a fresh conversation, `live` while that conversation is still the open request's; once the request ends, the next
+ * message starts a new one and the reading stands for the conversation before.
+ */
+export interface ContextGauge {
+  tokens: number;
+  window: number | null;
+  rollover: number | null;
+  live: boolean;
 }
 
 export interface Connection {

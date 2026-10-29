@@ -7,6 +7,7 @@ use their own journals, avoiding shared-file rotation races.
 from __future__ import annotations
 
 import contextvars
+import functools
 import json
 import logging
 import math
@@ -22,7 +23,7 @@ from contextlib import contextmanager
 from datetime import datetime, timezone
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
-from typing import Any, Dict, Iterator, Optional
+from typing import Any, Dict, Iterator, Optional, Tuple
 
 SCHEMA_VERSION = 1
 APP_EVENTS = "app-events-{pid}.jsonl"
@@ -52,27 +53,67 @@ def new_id() -> str:
     return uuid.uuid4().hex
 
 
-def redact_text(value: str) -> str:
-    """Scrub common credential formats, including known active provider credentials."""
-    text = str(value)
-    for name in ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "OPENAI_API_KEY"):
+_SECRET_ENV = ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "OPENAI_API_KEY")
+# A pattern is searched only where it could match: what each one cannot match without is checked first, exactly. The
+# case-insensitive ones need their words, compared folded: lower case, after the four non-ASCII letters Python's re
+# matches to an ASCII one when ignoring case (the re documentation: İ ı → i, K → k, ſ → s; test_observability checks
+# the list against re itself). _ASSIGNMENT's names each hold one of _ASSIGNMENT_WORDS and need a ':' or '='.
+_FOLD = str.maketrans({"\u0130": "i", "\u0131": "i", "\u212a": "k", "\u017f": "s"})
+_ASSIGNMENT_WORDS = ("key", "auth", "pass", "secret", "token", "cookie")
+
+
+def _secrets() -> Tuple[str, ...]:
+    """The provider credentials set in the environment now (each at least 8 characters), to be scrubbed verbatim."""
+    found = []
+    for name in _SECRET_ENV:
         secret = os.environ.get(name)
         if secret and len(secret) >= 8:
-            text = text.replace(secret, "[REDACTED]")
-    text = _TOKEN.sub("[REDACTED]", text)
-    text = _BEARER.sub(lambda m: m.group(1) + " [REDACTED]", text)
-    text = _ASSIGNMENT.sub(lambda m: m.group(1) + "[REDACTED]", text)
-    return _URL_USER.sub(r"\1[REDACTED]@", text)
+            found.append(secret)
+    return tuple(found)
 
 
-def _safe(value: Any, depth: int = 0, seen: Optional[set] = None) -> Any:
-    """Bound records and avoid object reprs (SDK objects can contain credentials)."""
+def _folded(text: str) -> str:
+    if not text.isascii() and any(letter in text for letter in "\u0130\u0131\u212a\u017f"):
+        text = text.translate(_FOLD)
+    return text.lower()
+
+
+def redact_text(value: str, secrets: Optional[Tuple[str, ...]] = None) -> str:
+    """Scrub common credential formats, including known active provider credentials (``secrets``: those read once
+    for a whole record by ``_secrets``; read from the environment now when not given)."""
+    text = str(value)
+    for secret in _secrets() if secrets is None else secrets:
+        text = text.replace(secret, "[REDACTED]")
+    if "sk-" in text:
+        text = _TOKEN.sub("[REDACTED]", text)
+    folded = _folded(text)
+    if "bearer" in folded or "basic" in folded:
+        text = _BEARER.sub(lambda m: m.group(1) + " [REDACTED]", text)
+        folded = _folded(text)
+    if ("=" in text or ":" in text) and any(word in folded for word in _ASSIGNMENT_WORDS):
+        text = _ASSIGNMENT.sub(lambda m: m.group(1) + "[REDACTED]", text)
+    if "@" in text and "://" in text:
+        text = _URL_USER.sub(r"\1[REDACTED]@", text)
+    return text
+
+
+@functools.lru_cache(maxsize=4096)
+def _field_kind(key: str) -> str:
+    """How a record field named ``key`` is written: "secret" (its value redacted), "payload" (omitted) or "plain"."""
+    return "secret" if _SECRET_FIELD.search(key) else "payload" if key.lower() in _PAYLOAD_FIELDS else "plain"
+
+
+def _safe(value: Any, depth: int = 0, seen: Optional[set] = None, secrets: Optional[Tuple[str, ...]] = None) -> Any:
+    """Bound records and avoid object reprs (SDK objects can contain credentials). ``secrets``: as ``redact_text``;
+    a top-level call reads them once for everything below it."""
     if value is None or isinstance(value, (bool, int)):
         return value
     if isinstance(value, float):
         return value if math.isfinite(value) else str(value)
+    if secrets is None:
+        secrets = _secrets()
     if isinstance(value, (str, Path)):
-        text = redact_text(str(value))
+        text = redact_text(str(value), secrets)
         return text if len(text) <= MAX_TEXT else text[:MAX_TEXT] + "…[truncated]"
     if isinstance(value, bytes):
         return {"bytes": len(value), "content": "[OMITTED]"}
@@ -87,13 +128,14 @@ def _safe(value: Any, depth: int = 0, seen: Optional[set] = None) -> Any:
             result = {}
             for key, val in islice(value.items(), MAX_ITEMS):
                 key = str(key)
-                result[redact_text(key)] = ("[REDACTED]" if _SECRET_FIELD.search(key) else
-                    "[OMITTED]" if key.lower() in _PAYLOAD_FIELDS else _safe(val, depth + 1, seen))
+                kind = _field_kind(key)
+                result[redact_text(key, secrets)] = ("[REDACTED]" if kind == "secret" else
+                    "[OMITTED]" if kind == "payload" else _safe(val, depth + 1, seen, secrets))
             if len(value) > MAX_ITEMS:
                 result["_omitted_fields"] = len(value) - MAX_ITEMS
             return result
         if isinstance(value, (list, tuple, set, frozenset)):
-            result = [_safe(item, depth + 1, seen) for item in islice(value, MAX_ITEMS)]
+            result = [_safe(item, depth + 1, seen, secrets) for item in islice(value, MAX_ITEMS)]
             if len(value) > MAX_ITEMS:
                 result.append({"omitted_items": len(value) - MAX_ITEMS})
             return result
@@ -141,10 +183,21 @@ class EventLog:
 
     def write(self, record: Dict[str, Any]) -> None:
         try:
-            data = json.dumps(record, ensure_ascii=False, allow_nan=False) + "\n"
+            self.write_line(json.dumps(record, ensure_ascii=False, allow_nan=False))
+        except Exception as exc:
+            diagnostic_failure(self.path, exc)
+
+    def write_line(self, line: str) -> None:
+        """Append one record already encoded as JSON (``event`` encodes once, for this journal and the app's)."""
+        data = line + "\n"
+        try:
             with self._lock:
-                self.path.parent.mkdir(parents=True, exist_ok=True)
-                with self.path.open("a", encoding="utf-8", newline="\n") as stream:
+                try:
+                    stream = self.path.open("a", encoding="utf-8", newline="\n")
+                except FileNotFoundError:               # its folder is made (again) when it is not there
+                    self.path.parent.mkdir(parents=True, exist_ok=True)
+                    stream = self.path.open("a", encoding="utf-8", newline="\n")
+                with stream:
                     stream.write(data)
                     stream.flush()
         except Exception as exc:
@@ -169,15 +222,18 @@ context_scope = scope
 def event(name: str, *, level: str = "info", **fields: Any) -> None:
     """Write one checkpoint, without raising or capturing locals/payloads."""
     try:
-        record = {**_safe(context()), **_safe(fields), "schema_version": SCHEMA_VERSION,
+        secrets = _secrets()
+        record = {**_safe(context(), secrets=secrets), **_safe(fields, secrets=secrets),
+            "schema_version": SCHEMA_VERSION,
             "event_id": new_id(), "event": str(name), "level": level,
             "timestamp": datetime.now(timezone.utc).isoformat(timespec="milliseconds"),
             "monotonic_ns": time.monotonic_ns(), "pid": os.getpid(),
             "thread_id": threading.get_ident(), "thread": threading.current_thread().name}
+        line = json.dumps(record, ensure_ascii=False, allow_nan=False)
         sink = _SINK.get()
         if sink is not None:
-            sink.write(record)
-        _LOGGER.log(getattr(logging, level.upper(), logging.INFO), json.dumps(record, ensure_ascii=False, allow_nan=False))
+            sink.write_line(line)
+        _LOGGER.log(getattr(logging, level.upper(), logging.INFO), line)
     except Exception as exc:
         diagnostic_failure("structured event", exc)
 

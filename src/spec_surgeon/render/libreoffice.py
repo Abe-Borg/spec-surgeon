@@ -261,6 +261,28 @@ def failure_text(e: BaseException) -> str:
     return f"{type(e).__name__}: {str(e)[:300]}"
 
 
+MIN_FILES_PER_PROCESS = 2   # a soffice start costs about what converting two or three files does (about 1 s of CPU
+                            # against 0.4 s a file): a process takes at least two files when its group has them
+
+
+def plan_processes(sizes: Sequence[int], workers: int) -> List[int]:
+    """How many soffice processes each group of files gets, side by side: one for every group that has files, then
+    one more at a time to the group with the most files per process, while each of its processes would still get at
+    least ``MIN_FILES_PER_PROCESS`` files and the total stays within ``workers`` (more groups than workers: one
+    process per group)."""
+    counts = [1 if n else 0 for n in sizes]
+    budget = max(int(workers), sum(counts))
+    while sum(counts) < budget:
+        best, load = None, 0.0
+        for g, n in enumerate(sizes):
+            if counts[g] and n // (counts[g] + 1) >= MIN_FILES_PER_PROCESS and n / counts[g] > load:
+                best, load = g, n / counts[g]
+        if best is None:
+            break
+        counts[best] += 1
+    return counts
+
+
 def render_pdfs(files: Sequence[Path], out_dir: Path, workers: int = 4, timeout: int = 600,
                 log: Optional[Callable[[str], None]] = None,
                 detail: Optional[Callable[[str], None]] = None) -> Dict[Path, Path]:
@@ -269,35 +291,50 @@ def render_pdfs(files: Sequence[Path], out_dir: Path, workers: int = 4, timeout:
     its own PDF and no other's; every failure is said on ``log``, with what soffice printed; ``detail`` gets each
     run's command summary, time and output. Chunk ``i`` runs on profile ``i`` (see ``ProfileLease``), and so do
     its one-by-one retries; a profile soffice cannot start from is wiped and recreated once per call."""
+    return render_groups([(files, out_dir)], workers=workers, timeout=timeout, log=log, detail=detail)[0]
+
+
+def render_groups(groups: Sequence[Tuple[Sequence[Path], Path]], workers: int = 4, timeout: int = 600,
+                  log: Optional[Callable[[str], None]] = None,
+                  detail: Optional[Callable[[str], None]] = None) -> List[Dict[Path, Path]]:
+    """``render_pdfs`` for several groups at once, each ``(files, out_dir)``, so a run's sources and its copies render
+    side by side instead of one after the other: every group's chunks (``plan_processes``) run in one pool, chunk
+    ``k`` of the call on profile ``k``. Returns one {docx: pdf} per group, in order."""
     log = log or (lambda msg: None)
     detail = detail or (lambda msg: None)
     soffice = find_soffice()
     if not soffice:
         raise RuntimeError("LibreOffice (soffice) not found; set SPEC_SURGEON_SOFFICE or install LibreOffice")
-    out_dir.mkdir(parents=True, exist_ok=True)
-    files = [Path(f) for f in files]
-    if not files:
-        return {}
-    workers = max(1, min(workers, len(files)))
-    chunks = [files[i::workers] for i in range(workers)]
+    groups = [([Path(f) for f in files], Path(out_dir)) for files, out_dir in groups]
+    for files, out_dir in groups:
+        out_dir.mkdir(parents=True, exist_ok=True)
+    counts = plan_processes([len(files) for files, _ in groups], workers)
+    chunks: List[Tuple[int, List[Path]]] = [(g, files[i::count]) for g, ((files, _), count) in
+                                            enumerate(zip(groups, counts)) for i in range(count)]
+    if not chunks:
+        return [{} for _ in groups]
     root = profiles_root()
-    said: Dict[Path, str] = {}                      # file → what its (last) soffice run printed
-    reported: set = set()                           # files whose failure has been said already
+    said: Dict[Tuple[int, Path], str] = {}          # (group, file) → what its (last) soffice run printed
+    reported: set = set()                           # (group, file)s whose failure has been said already
     wiped: Set[Path] = set()                        # profiles recreated during this call (once each)
     worked: Set[Path] = set()                       # profiles a PDF came out of during this call: proven, never wiped
 
-    def came_out(chunk: List[Path]) -> bool:
-        return any((out_dir / (f.stem + ".pdf")).exists() for f in chunk)
+    def pdf_of(g: int, f: Path) -> Path:
+        return groups[g][1] / (f.stem + ".pdf")
 
-    def run(chunk: List[Path], lease: ProfileLease, attempt: int = 1):
+    def came_out(g: int, chunk: List[Path]) -> bool:
+        return any(pdf_of(g, f).exists() for f in chunk)
+
+    def run(g: int, chunk: List[Path], lease: ProfileLease, attempt: int = 1):
+        out_dir = groups[g][1]
         t = time.perf_counter()
         for f in chunk:                             # a PDF from an earlier run is never taken for this one
-            (out_dir / (f.stem + ".pdf")).unlink(missing_ok=True)
+            pdf_of(g, f).unlink(missing_ok=True)
         with diag.scope(render_attempt=attempt, render_profile=lease.index):
             try:
                 done = _convert_batch(soffice, chunk, out_dir, lease.path, timeout)
             except subprocess.CalledProcessError as e:
-                if came_out(chunk):
+                if came_out(g, chunk):
                     worked.add(lease.path)
                 if lease.path in wiped or lease.path in worked:
                     raise
@@ -311,28 +348,28 @@ def render_pdfs(files: Sequence[Path], out_dir: Path, workers: int = 4, timeout:
                 reset_profile(lease.path)
                 done = _convert_batch(soffice, chunk, out_dir, lease.path, timeout)
             except subprocess.TimeoutExpired:
-                if came_out(chunk):
+                if came_out(g, chunk):
                     worked.add(lease.path)
                 retire_profile(lease.path)         # the retries and every later call take a fresh profile
                 raise
-        if came_out(chunk):
+        if came_out(g, chunk):
             worked.add(lease.path)
         printed = " ".join(x for x in (_tail(getattr(done, "stdout", None)), _tail(getattr(done, "stderr", None))) if x)
         for f in chunk:
-            said[f] = printed
+            said[(g, f)] = printed
         detail(f"LibreOffice (profile {lease.index}): {len(chunk)} file(s) → {out_dir.name}/ in "
                f"{time.perf_counter() - t:.1f}s" + (f"; it printed: {printed}" if printed else ""))
         return done
 
-    def run_chunk(index: int, chunk: List[Path]):
+    def run_chunk(index: int, g: int, chunk: List[Path]):
         with ProfileLease(root, index) as lease:
-            return run(chunk, lease)
+            return run(g, chunk, lease)
 
-    with ThreadPoolExecutor(max_workers=workers) as ex:
-        futs = [(i, chunk, ex.submit(contextvars.copy_context().run, run_chunk, i, chunk))
-                for i, chunk in enumerate(chunks) if chunk]
-        retry: List[Tuple[int, Path]] = []
-        for i, chunk, fut in futs:
+    with ThreadPoolExecutor(max_workers=len(chunks)) as ex:
+        futs = [(k, g, chunk, ex.submit(contextvars.copy_context().run, run_chunk, k, g, chunk))
+                for k, (g, chunk) in enumerate(chunks)]
+        retry: List[Tuple[int, int, Path]] = []
+        for k, g, chunk, fut in futs:
             try:
                 fut.result()
             except Exception as e:  # noqa: BLE001 — the chunk's process failed; find the file(s) at fault
@@ -340,25 +377,28 @@ def render_pdfs(files: Sequence[Path], out_dir: Path, workers: int = 4, timeout:
                            files=[str(f) for f in chunk], reason=failure_text(e))
                 log(f"LibreOffice failed on a chunk of {len(chunk)} file(s) ({failure_text(e)}); retrying them "
                     f"one by one: {[f.name for f in chunk][:8]}")
-                retry += [(i, f) for f in chunk if not (out_dir / (f.stem + ".pdf")).exists()]
-    for i, f in retry:
+                retry += [(k, g, f) for f in chunk if not pdf_of(g, f).exists()]
+    for k, g, f in retry:
         try:
-            with ProfileLease(root, i) as lease:
-                run([f], lease, attempt=2)
+            with ProfileLease(root, k) as lease:
+                run(g, [f], lease, attempt=2)
         except Exception as e:  # noqa: BLE001
-            reported.add(f)
+            reported.add((g, f))
             diag.event("render.file_failed", level="error", backend="libreoffice", source=str(f),
                        attempt=2, reason=failure_text(e))
             log(f"{f.name}: LibreOffice could not render it: {failure_text(e)}")
-    result = {}
-    for f in files:
-        pdf = out_dir / (f.stem + ".pdf")
-        if pdf.exists():
-            result[f] = pdf
-            diag.event("render.file_ready", backend="libreoffice", source=str(f), output=str(pdf))
-        elif f not in reported:
-            diag.event("render.file_missing", level="warning", backend="libreoffice", source=str(f),
-                       output=str(pdf), process_output=said.get(f))
-            log(f"{f.name}: no PDF came out of LibreOffice" + (f"; it printed: {said[f]}" if said.get(f) else
-                                                                " and it printed nothing"))
-    return result
+    results: List[Dict[Path, Path]] = []
+    for g, (files, _) in enumerate(groups):
+        result = {}
+        for f in files:
+            pdf = pdf_of(g, f)
+            if pdf.exists():
+                result[f] = pdf
+                diag.event("render.file_ready", backend="libreoffice", source=str(f), output=str(pdf))
+            elif (g, f) not in reported:
+                diag.event("render.file_missing", level="warning", backend="libreoffice", source=str(f),
+                           output=str(pdf), process_output=said.get((g, f)))
+                log(f"{f.name}: no PDF came out of LibreOffice" + (f"; it printed: {said[(g, f)]}"
+                                                                    if said.get((g, f)) else " and it printed nothing"))
+        results.append(result)
+    return results

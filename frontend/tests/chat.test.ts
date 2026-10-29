@@ -12,7 +12,10 @@ import {
   SET_ASIDE_REST,
   STARTERS,
   WORK_TODO,
+  compactTokens,
   composerState,
+  contextPill,
+  contextTip,
   costPill,
   requestPill,
   endedLive,
@@ -161,6 +164,34 @@ test("spending reads as the window says it: an estimate, never a bill", () => {
   assert.equal(requestPill({ usd: 3, text: "", calls: 3, request: 0.4, limit: 20 }, true), "≈ $0.40 of $20.00");
   assert.equal(requestPill({ usd: 3, text: "", calls: 3, request: 0.4, limit: null }), "");
   assert.equal(requestPill({ usd: 3, text: "", calls: 3 }), "");
+});
+
+test("the context gauge reads as Build-a-Spec's pill: tokens against the window, nothing before the first step", () => {
+  assert.equal(compactTokens(0), "0");
+  assert.equal(compactTokens(999), "999");
+  assert.equal(compactTokens(142_304), "142k");
+  assert.equal(compactTokens(1_000_000), "1M");
+  assert.equal(compactTokens(1_250_000), "1.3M");
+  const cost = (context: View["cost"]["context"]) => ({ usd: 0.5, text: "", calls: 2, context });
+  const live = { tokens: 142_304, window: 1_000_000, rollover: 900_000, live: true };
+  assert.equal(contextPill(cost(live)), "142k / 1M");
+  assert.equal(contextPill(cost({ ...live, window: null })), "142k");     // a model the table lacks: no guessed window
+  assert.equal(contextPill(cost(null)), "");                               // before the first step: no gauge
+  assert.equal(contextPill(cost(undefined)), "");                          // an older server
+  assert.equal(contextPill(null), "");
+  // the hover text: Anthropic's count of what, of what window, and the rollover, every number from the view
+  const tip = contextTip(cost(live));
+  assert.match(tip, /^The assistant's context at its last step: 142,304 tokens of the model's 1,000,000 \(14\.2%\)/);
+  assert.match(tip, /as Anthropic counted them/);
+  assert.match(tip, /Past about 900,000 tokens by the app's own estimate, the conversation is sealed/);
+  assert.match(tip, /A measurement, not spending\.$/);
+  // once the request ends, the reading stands for the conversation before, and says the next message starts anew
+  const before = contextTip(cost({ ...live, live: false }));
+  assert.match(before, /at the last step of the request before/);
+  assert.match(before, /your next message starts anew/);
+  assert.match(contextTip(cost({ ...live, window: null })), /no context window for this model/);
+  assert.doesNotMatch(contextTip(cost({ ...live, rollover: null })), /Past about/);
+  assert.equal(contextTip(cost(null)), "");
 });
 
 test("the status strip prefers the server's sentence, then the kind's label, then Working…", () => {

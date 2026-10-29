@@ -303,6 +303,7 @@ def test_a_document_without_an_outline_refuses(tmp_path, folder):
 
 # ---- the button, end to end, with no AI call ---------------------------------------------------------------------------
 
+@pytest.mark.render                 # the button that moves the most of a page: its copies pass V6/V7
 def test_the_button_matches_a_mixed_batch_and_leaves_out_what_it_cannot_match(folder, monkeypatch):
     """Two styled outlines (one layout), a typed one (another) and the architect's messy file: three copies pass
     every independent check — the template's styles, "1.01" shown as "1.1", Letter with 1 in margins, Arial, the

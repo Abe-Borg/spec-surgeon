@@ -2,7 +2,7 @@
 // line, the help topics beside it, then the pills and the buttons on the right.
 import { memo, useRef } from "react";
 import type { ExportKind, Mode, View } from "../types";
-import { costPill, dollars, requestPill } from "../lib/chat";
+import { contextPill, contextTip, costPill, dollars, requestPill } from "../lib/chat";
 import { HELP_TOPICS, sessionHeading, type HelpTopic } from "../lib/help";
 import { MODE_LABELS, MODE_TIPS } from "../lib/modes";
 import { useFit } from "../lib/useFit";
@@ -45,12 +45,14 @@ const GIVE_WAY = [
   "context line", // the documents tray lists the same
   "spacing",
   "spending words", // "this conversation"
+  "gauge words", // "142k / 1M context" → "142k / 1M", its hover text in full
   "key words", // "Key available" → "Key"; a missing key keeps "Add your API key" whole
   "help words", // one word per topic (lib/help.ts, `short`), the full label on hover
   "button words", // "New conversation" → "New", "Export · 3 unsaved" → "Export · 3"
   "dividers",
   "request words", // "this request ≈ $0.40 of $20.00" → "≈ $0.40 of $20.00"
   "closer spacing",
+  "context gauge", // a measurement, not a control: it goes before the one click an update needs
   "update pill", // set aside with the banner's Not now, kept one click away while anything else can go; About offers it too
 ] as const;
 
@@ -81,12 +83,15 @@ function Header({
   const fast = !!view.cost?.fast;
   const limit = view.cost?.limit;
   const request = busy && !safe ? requestPill(view.cost) : "";
+  // the context gauge (Build-a-Spec's context pill): none in Safe mode, which calls no AI, nor before the first step
+  const gauge = safe ? "" : contextPill(view.cost);
+  const gaugeLive = !!view.cost?.context?.live;
   const heading = sessionHeading(view);
   const [keyFull, keyShort] = keyWords(view);
 
   // Everything whose width the bar measures, in full: a change starts the giving way again from nothing.
   const bar = useRef<HTMLElement>(null);
-  const shown = [heading, costPill(view.cost), request, fast, keyFull, exportLabel(view), view.modes, busy, updatePill];
+  const shown = [heading, costPill(view.cost), request, fast, gauge, keyFull, exportLabel(view), view.modes, busy, updatePill];
   const fit = useFit(bar, JSON.stringify(shown), GIVE_WAY.length);
   const gone = (what: (typeof GIVE_WAY)[number]) => fit > GIVE_WAY.indexOf(what);
   const tight = gone("spacing");
@@ -234,6 +239,16 @@ function Header({
               Stop
             </button>
           </Tip>
+        )}
+        {gauge && !gone("context gauge") && (
+          <span
+            title={contextTip(view.cost)}
+            className={`rounded-full border border-edge bg-raised px-3 py-1 text-xs whitespace-nowrap tabular-nums ${gaugeLive ? "text-ink-dim" : "text-ink-faint"}`}
+            data-capability="header.context"
+          >
+            {gauge}
+            {!gone("gauge words") && <span className="ml-1 text-ink-faint">context</span>}
+          </span>
         )}
         <button
           type="button"

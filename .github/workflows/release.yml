@@ -76,7 +76,7 @@ jobs:
       - name: Test with LibreOffice
         run: |
           python -c "import spec_surgeon.web.server; from spec_surgeon.render.libreoffice import find_soffice; assert find_soffice()"
-          python -m pytest -q -s -n auto --junitxml=release-tests.xml
+          python -m pytest -q -s -n auto --dist worksteal --junitxml=release-tests.xml
       - name: Build and validate distributions
         run: |
           python packaging/installed_wheel_smoke.py --print-prompt-fingerprints > /tmp/spec-surgeon-source-prompts.json

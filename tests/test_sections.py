@@ -893,6 +893,7 @@ def _first_line(page) -> str:
     return body[0][4].strip() if body else ""
 
 
+@pytest.mark.render
 @pytest.mark.skipif(shutil.which("soffice") is None, reason="LibreOffice not installed")
 def test_libreoffice_puts_the_new_section_on_a_new_page_and_joins_pages_again(tmp_path):
     src = _render(tmp_path, "src", SINGLE)
@@ -912,6 +913,7 @@ def test_libreoffice_puts_the_new_section_on_a_new_page_and_joins_pages_again(tm
     assert len(_render(tmp_path, "one", one)) < len(four)
 
 
+@pytest.mark.render
 @pytest.mark.skipif(shutil.which("soffice") is None, reason="LibreOffice not installed")
 def test_libreoffice_sets_two_columns(tmp_path):
     data = build_columns_text()

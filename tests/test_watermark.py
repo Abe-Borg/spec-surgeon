@@ -727,6 +727,7 @@ def _grey(pdf_path: Path) -> List[int]:
     return out
 
 
+@pytest.mark.render
 def test_the_watermark_is_drawn_behind_every_page(tmp_path):
     from spec_surgeon.render import libreoffice
     if libreoffice.find_soffice() is None:

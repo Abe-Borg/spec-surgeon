@@ -187,15 +187,15 @@ def test_a_renderer_that_fails_still_leaves_the_served_hits_and_an_unreadable_fi
     a = _docx(tmp_path / "A.docx")
     cache = RenderCache(tmp_path / "cache")
     assert set(render_mod.render_pdfs([a], tmp_path / "out1", "libreoffice", 1, cache=cache)) == {a}
-    backend = libreoffice.render_pdfs
+    backend = libreoffice.render_groups
 
     def dies(*args, **kwargs):
         raise RuntimeError("soffice crashed")
-    monkeypatch.setattr(libreoffice, "render_pdfs", dies)
+    monkeypatch.setattr(libreoffice, "render_groups", dies)
     b = _docx(tmp_path / "B.docx", "21 13 16", "DRY-PIPE")
     got = render_mod.render_pdfs([a, b], tmp_path / "out2", "libreoffice", 1, log=said.append, cache=cache)
     assert got == {a: tmp_path / "out2" / "A.pdf"} and said == ["rendering with libreoffice failed: RuntimeError: soffice crashed"]
-    monkeypatch.setattr(libreoffice, "render_pdfs", backend)
+    monkeypatch.setattr(libreoffice, "render_groups", backend)
     missing = tmp_path / "nowhere.docx"
     got = render_mod.render_pdfs([a, missing], tmp_path / "out3", "libreoffice", 1, log=said.append, cache=cache)
     assert set(got) == {a, missing} and converted == ["A.docx", "nowhere.docx"]   # the renderer saw the missing file
@@ -226,3 +226,44 @@ def test_the_run_does_not_render_what_the_preview_rendered(tmp_path, monkeypatch
     for fr in batch.files:
         v6 = fr.record.get("V6")
         assert v6.status == "PASS" and Path(v6.data["source_pdf"]).is_file() and Path(v6.data["output_pdf"]).is_file()
+
+
+def test_a_file_with_the_bytes_of_another_in_the_same_call_is_rendered_once(tmp_path, monkeypatch):
+    """The sources and the copies render in one call; a copy no change touched has its source's bytes, so it is served
+    from the cache once its source rendered, as it was when the copies rendered after the sources."""
+    converted = []
+    _fake_backend(monkeypatch, converted)
+    a = _docx(tmp_path / "in" / "A.docx")
+    b = _docx(tmp_path / "in" / "B.docx", "21 13 16", "DRY-PIPE")
+    same = tmp_path / "copies" / "A.docx"
+    same.parent.mkdir()
+    same.write_bytes(a.read_bytes())
+    other = _docx(tmp_path / "copies" / "B.docx", "21 13 17", "CHANGED")
+    cache = RenderCache(tmp_path / "cache")
+    src, out = render_mod.render_pdf_groups([([a, b], tmp_path / "source"), ([same, other], tmp_path / "output")],
+                                            "libreoffice", 4, cache=cache)
+    assert src == {a: tmp_path / "source" / "A.pdf", b: tmp_path / "source" / "B.pdf"}
+    assert out == {same: tmp_path / "output" / "A.pdf", other: tmp_path / "output" / "B.pdf"}
+    assert sorted(converted) == ["A.docx", "B.docx", "B.docx"]                 # A's twin came from the cache
+    assert out[same].read_bytes() == src[a].read_bytes()
+
+
+def test_the_run_renders_its_sources_and_copies_in_one_round_of_processes(tmp_path, monkeypatch):
+    runs = []
+
+    def convert(soffice, files, out_dir, profile_dir, timeout):
+        runs.append((Path(out_dir).name, sorted(Path(f).name for f in files)))
+        for f in files:
+            make_pdf(Path(out_dir) / (Path(f).stem + ".pdf"), words=Path(f).stem)
+        return subprocess.CompletedProcess(["soffice"], 0, b"", b"")
+    monkeypatch.setattr(libreoffice, "find_soffice", lambda: "soffice")
+    monkeypatch.setattr(libreoffice, "version", lambda soffice=None: "24.2.7.2")
+    monkeypatch.setattr(libreoffice, "_convert_batch", convert)
+    folder = tmp_path / "specs"
+    _docx(folder / "A.docx")
+    _docx(folder / "B.docx", "21 13 16", "DRY-PIPE")
+    batch = run_batch([str(folder)], "edit-spec", {}, tmp_path / "run", workers=2, renderer="libreoffice",
+                      do_render=True, spec=FONT_SPEC)
+    assert batch.counts()["PASS"] == 2
+    # two processes, not four: the two sources together and the two copies together, side by side
+    assert sorted(runs) == [("output", ["A.docx", "B.docx"]), ("source", ["A.docx", "B.docx"])]

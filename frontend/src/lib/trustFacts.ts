@@ -11,6 +11,8 @@ export const TRUST_FACTS = {
   // The model and its settings (src/spec_surgeon/llm.py, resources.py, document_task.py; fast mode: llm.py)
   model: "claude-opus-5-5",
   maxOutputTokens: 128000,
+  contextWindowTokens: 1000000,
+  contextRolloverTokens: 900000,
   conversationEffort: "medium",
   recoveryEffort: "high",
   codegenEffort: "xhigh",

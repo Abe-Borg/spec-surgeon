@@ -18,6 +18,7 @@ from spec_surgeon.editspec import load_spec
 from spec_surgeon.gui import Session
 from spec_surgeon.preview import GeneratedPreview, SampleView, make_preview, render_samples
 from spec_surgeon.vision import VisualReview, review_samples
+from fake_render import per_group
 
 SPECS = Path(__file__).resolve().parent.parent / "examples" / "specs"
 REMOVE = json.loads((SPECS / "remove-all-headers-footers.json").read_text(encoding="utf-8"))
@@ -228,6 +229,7 @@ def test_the_visual_check_rewrite_keeps_the_approval_inputs(tmp_path):
     assert "VISUAL CHECK: fine" in (tmp_path / "pv" / "PREVIEW.md").read_text(encoding="utf-8")
 
 
+@pytest.mark.render
 @pytest.mark.skipif(not (shutil.which("soffice") or shutil.which("libreoffice")), reason="LibreOffice not installed")
 def test_real_render_keeps_the_pdfs_and_the_pages_for_the_visual_check(folder, tmp_path):
     s = Session(documents=sorted(folder.glob("*.docx")), out_root=tmp_path / "out",
@@ -515,8 +517,8 @@ def test_page_growth_is_visible_and_advisory(tmp_path, monkeypatch):
     output.write_bytes(source.read_bytes())
     before, after = make_pdf(tmp_path / "before.pdf", pages=2), make_pdf(tmp_path / "after.pdf", pages=3)
     monkeypatch.setattr(render, "pick", lambda _: "word")
-    monkeypatch.setattr(render, "render_pdfs", lambda paths, folder, *a, **kw:
-                        {p: before if folder.name == "source" else after for p in paths})
+    monkeypatch.setattr(render, "render_pdf_groups", per_group(lambda paths, folder, *a, **kw:
+                        {p: before if folder.name == "source" else after for p in paths}))
     sample = SampleView(source=source, output=output, passed=True)
     warnings = []
     render_samples([sample], tmp_path / "preview", "auto", True, warnings)

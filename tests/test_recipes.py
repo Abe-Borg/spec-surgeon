@@ -204,7 +204,14 @@ CASES = {
 }
 
 
-@pytest.mark.parametrize("recipe_id", sorted(CASES))
+# The buttons whose copies are rendered and compared here (V6/V7 on real pages, where a renderer is installed): the
+# ones that move what a page shows or check it against a reference of their own. The others change words, properties
+# or markup in place; their ops' own tests render them (tests/test_*.py, "libreoffice_opens_and_renders").
+RENDERED = {"font_template", "headers_footers_template", "page_setup", "remove_headers_footers", "watermark"}
+
+
+@pytest.mark.parametrize("recipe_id", [pytest.param(r, marks=pytest.mark.render) if r in RENDERED else r
+                                       for r in sorted(CASES)])
 def test_each_button_previews_and_runs_to_verified_copies_without_any_ai_call(recipe_id, folder, tmp_path,
                                                                                monkeypatch):
     def never(*a, **k):
