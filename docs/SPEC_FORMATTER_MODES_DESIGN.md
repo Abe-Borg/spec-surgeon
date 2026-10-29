@@ -39,8 +39,9 @@ A chat tool, `read_outline(file)`, in the conversation's tools (Default and Obli
   "PART 1 of the Contract Documents shall govern." are its close negatives. Automatic numbering is never demoted, and
   the reader itself, which Safe mode uses, is unchanged.
 * **Claude's reading of the rest.** The paragraphs the reader leaves `unresolved` go to one structured call
-  (`outline.classify`), in windows of at most `OUTLINE_CHUNK` paragraphs to decide, each window with up to
-  `OUTLINE_CONTEXT` paragraphs of context on either side (their reader role shown, never decided again). The system
+  (`outline.classify`), in windows of at most `OUTLINE_CHUNK` paragraphs to decide, each with the paragraphs within
+  `OUTLINE_CONTEXT` of it as context (their reader role shown, never decided again) and the outline above restated at
+  each gap, so a window's size never grows with how far apart its paragraphs lie. The system
   prompt and the one tool (`submit_roles`) are constants, byte-stable and cached; the call is `one_shot`, on the
   conversation's model, at `resources.OUTLINE_EFFORT` (`high`, as outcome planning), inside the request's spending
   check (`budget_scope` is already open), stopped by Stop (`cancellation_scope`). The prompt carries the Formatter's

@@ -221,3 +221,16 @@ def test_an_api_error_in_the_outline_call_is_an_answer_and_the_turn_goes_on(fold
     answer = json.loads(fake.requests[2]["messages"][-1]["content"][0]["content"])
     assert {u["paragraph"] for u in answer["unplaced"]} == set(UNRESOLVED)
     assert all("could not be made" in u["why"] for u in answer["unplaced"])
+
+
+def test_a_window_holds_only_each_paragraphs_neighbours():
+    rows = [{"paragraph": i} for i in range(1000)]
+    [w] = outline.windows(rows, [5, 500, 990], chunk=10, context=2)
+    assert w.context == [3, 4, 5, 6, 7, 498, 499, 500, 501, 502, 988, 989, 990, 991, 992]
+
+
+def test_a_gap_in_the_window_restates_the_outline_above_it():
+    call, sent = scripted(roles(*ALL))
+    outline.classify("spec.docx", DocxPackage(SPEC), call, context=0)
+    assert ("… (paragraphs 4–8 not shown; the outline above [9]: section_id [0] 'SECTION 21 13 13' > article [7] "
+            "'1.2 SUBMITTALS' > paragraph [8]") in sent[0]

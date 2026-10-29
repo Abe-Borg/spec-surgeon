@@ -197,14 +197,15 @@ def _clip(text: str, n: int) -> str:
 
 def windows(rows: Sequence[Dict[str, Any]], decide: Sequence[int], chunk: int = OUTLINE_CHUNK,
             context: int = OUTLINE_CONTEXT) -> List[Window]:
-    """The paragraphs to decide in order, ``chunk`` at a time; each window's context is every paragraph from
-    ``context`` before its first to ``context`` after its last (those to decide included)."""
+    """The paragraphs to decide in order, ``chunk`` at a time; each window's context is every paragraph within
+    ``context`` of one it decides (those included), so a window never holds more than ``chunk`` × (2 × ``context`` +
+    1) paragraphs however far apart its paragraphs lie (``window_message`` restates the outline at each gap)."""
     out: List[Window] = []
     n = len(rows)
     for at in range(0, len(decide), chunk):
         group = list(decide[at:at + chunk])
-        lo, hi = max(0, group[0] - context), min(n, group[-1] + context + 1)
-        out.append(Window(group, list(range(lo, hi))))
+        near = sorted({j for i in group for j in range(max(0, i - context), min(n, i + context + 1))})
+        out.append(Window(group, near))
     return out
 
 
@@ -231,7 +232,7 @@ def _outline_so_far(rows: Sequence[Dict[str, Any]], before: int) -> str:
     """The nearest placed paragraph of each depth above ``before``: where the window starts in the outline."""
     path: Dict[int, Dict[str, Any]] = {}
     for row in rows[:before]:
-        if row.get("role") and row.get("depth") is not None:
+        if row.get("role") and row.get("role") != "section_title" and row.get("depth") is not None:
             path = {d: r for d, r in path.items() if d < row["depth"]} | {row["depth"]: row}
     if not path:
         return "(nothing placed above this window)"
@@ -242,8 +243,16 @@ def _outline_so_far(rows: Sequence[Dict[str, Any]], before: int) -> str:
 def window_message(label: str, rows: Sequence[Dict[str, Any]], pars: Sequence[Any], sheet, window: Window,
                    retry: str = "") -> str:
     decide = set(window.decide)
-    lines = [ln for ln in (_line(rows[i], pars[i] if i < len(pars) else None, sheet, i in decide)
-                           for i in window.context) if ln]
+    lines: List[str] = []
+    previous = None
+    for i in window.context:
+        if previous is not None and i != previous + 1:
+            lines.append(f"… (paragraphs {previous + 1}–{i - 1} not shown; the outline above "
+                         f"[{i}]: {_outline_so_far(rows, i)})")
+        previous = i
+        ln = _line(rows[i], pars[i] if i < len(pars) else None, sheet, i in decide)
+        if ln:
+            lines.append(ln)
     return (f"FILE: {label}\nTHE OUTLINE ABOVE THIS WINDOW: {_outline_so_far(rows, window.context[0])}\n\n"
             "PARAGRAPHS (in document order; DECIDE marks yours, the others are context with fixed roles):\n"
             + "\n".join(lines)
