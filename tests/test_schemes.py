@@ -4,6 +4,8 @@ the app writes; picking it in the window attaches a copy as the template and pla
 decision and never wording. Scripted client only."""
 from __future__ import annotations
 
+import io
+import zipfile
 from pathlib import Path
 
 import pytest
@@ -20,13 +22,23 @@ from spec_surgeon.ops.selectors import StyleSheet
 from spec_surgeon.package import DocxPackage
 
 
+def members(data: bytes):
+    """Every member's name and bytes, in order: what a build decides. The archive's own headers also record the system
+    that wrote it (Python stamps a zip entry made on Windows otherwise than one made on Linux), so whole files built on
+    two systems differ while every member is the same."""
+    with zipfile.ZipFile(io.BytesIO(data)) as z:
+        return [(info.filename, z.read(info.filename)) for info in z.infolist()]
+
+
 def test_the_committed_schemes_are_a_fresh_build():
     built = fresh_schemes()
     assert set(built) == {name for name, *_ in schemes.SCHEMES.values()}
     for scheme in schemes.SCHEMES:
-        assert schemes.scheme_file(scheme).read_bytes() == built[schemes.SCHEMES[scheme][0]], scheme
+        fresh = members(built[schemes.SCHEMES[scheme][0]])
+        assert members(schemes.scheme_file(scheme).read_bytes()) == fresh, scheme
         example = Path(__file__).resolve().parent.parent / "examples" / "templates" / schemes.SCHEMES[scheme][0]
-        assert example.read_bytes() == built[schemes.SCHEMES[scheme][0]], example     # the worked examples' copy
+        assert members(example.read_bytes()) == fresh, example                         # the worked examples' copy
+        assert example.read_bytes() == schemes.scheme_file(scheme).read_bytes()         # one build, two places
 
 
 @pytest.mark.parametrize("scheme", sorted(schemes.SCHEMES))

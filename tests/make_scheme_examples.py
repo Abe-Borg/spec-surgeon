@@ -2,8 +2,8 @@
 ``src/spec_surgeon/examples/schemes/``: one paragraph style per level, numbered by ONE list, and a paragraph of each.
 
 Built with python-docx (a dev dependency the app does not ship) and committed. Every ``.docx`` is written with fixed zip
-timestamps, so running this again on the same python-docx gives the same bytes; ``tests/test_schemes.py`` compares the
-committed files with a fresh build. The same bytes go beside the worked examples' other templates
+timestamps, so running this again on the same python-docx gives the same members, byte for byte (the zip headers also
+name the system that wrote them); ``tests/test_schemes.py`` compares the committed files' members with a fresh build. The same bytes go beside the worked examples' other templates
 (``examples/templates/``), which the worked EditSpecs name.
 
     python tests/make_scheme_examples.py              # rewrites src/spec_surgeon/examples/schemes/
