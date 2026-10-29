@@ -43,6 +43,7 @@ from __future__ import annotations
 
 import copy
 import json
+import re
 import time
 import unicodedata
 import uuid
@@ -274,6 +275,55 @@ def _chips(raw: Any, errors: List[str]) -> List[str]:
         if text and len(text) <= 120 and text not in out:
             out.append(text)
     return out[:5]
+
+
+# What a suggested reply may say besides a choice's own words and still say nothing else (``restates``).
+_FILLER = frozenset("a an and as at be by for from i i'd i'll i'm i've in is it it's its me my of on or so that the "
+                    "then this to we we'll with you your".split())
+_NEGATIONS = frozenset("no not don't dont never nothing none neither nor without isn't aren't won't can't".split())
+_WORD = re.compile(r"[A-Za-z0-9]+(?:['’][A-Za-z]+)?")
+
+
+def _reply_words(text: str):
+    """A text's words in lower case, and its names: every number, and every capitalised word after the first that is
+    not "I" ("Valves", "Word", "21", "05")."""
+    tokens = _WORD.findall(text)
+    words = [t.lower().replace("’", "'") for t in tokens]
+    names = {w for i, (t, w) in enumerate(zip(tokens, words))
+             if t[0].isdigit() or (i and t[0].isupper() and w.split("'")[0] != "i")}
+    return words, names
+
+
+def _in_order(said: List[str], offered: List[str]) -> int:
+    """How many of ``said``'s words ``offered`` carries in the same order, with every negation of either matched by
+    one of the other's in that order (a negation is never skipped); -1 when the negations cannot be matched."""
+    best = [[-1] * (len(offered) + 1) for _ in range(len(said) + 1)]
+    best[0][0] = 0
+    for i in range(len(said) + 1):
+        for j in range(len(offered) + 1):
+            if i and j and said[i - 1] == offered[j - 1] and best[i - 1][j - 1] >= 0:
+                best[i][j] = best[i - 1][j - 1] + 1
+            if i and said[i - 1] not in _NEGATIONS:
+                best[i][j] = max(best[i][j], best[i - 1][j])
+            if j and offered[j - 1] not in _NEGATIONS:
+                best[i][j] = max(best[i][j], best[i][j - 1])
+    return best[-1][-1]
+
+
+def restates(chip: str, label: str) -> bool:
+    """True when a suggested reply says a choice's label again in other words, as "Do everything else now, I'll
+    accept in Word" beside the choice "Do everything else on all four now; leave the tracked changes in the three
+    files for me to accept in Word" did (the owner's report, 2026-10-29: every answer showed twice). Its words other
+    than small ones (``_FILLER``) are the label's in the label's order, all but one in five, with the same negations
+    in the same places (``_in_order``); and it names exactly what the label names (each number and capitalised name
+    of either is a word of the other). A reply that names another document or number, says the opposite, or puts
+    the same words to other targets ("Keep the headers and change the footers") is a different answer and stays."""
+    words, names = _reply_words(chip)
+    label_words, label_names = _reply_words(label)
+    content = [w for w in words if w not in _FILLER]
+    if not content or not names <= set(label_words) or not label_names <= set(words):
+        return False
+    return 5 * _in_order(content, [w for w in label_words if w not in _FILLER]) >= 4 * len(content)
 
 
 def _texts(raw: Any, what: str, errors: List[str]) -> List[str]:
@@ -913,6 +963,12 @@ class Conversation:
                 understanding.append(inp["understanding"].strip())
         if not (questions or choices or messages):
             questions = ["(the model asked an empty question)"]
+        # the choices are the answers: a suggested reply that only says one of them again is not offered beside it
+        restating = [chip for chip in chips if any(restates(chip, c.label) for c in choices)]
+        if restating:
+            errors.append(f"{len(restating)} suggested repl{'y' if len(restating) == 1 else 'ies'} restating a choice "
+                          f"dropped: {restating}")
+            chips = [chip for chip in chips if chip not in restating]
         return Turn("questions", message="\n\n".join(dict.fromkeys(messages)), understanding=" ".join(understanding),
                     questions=questions, choices=choices, errors=errors, images=images, chips=chips)
 

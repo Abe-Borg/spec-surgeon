@@ -72,7 +72,8 @@ def test_the_next_request_builds_on_the_copies_and_start_over_returns_to_the_ori
     assert view["working"]["generation"] == 0
     view = task.view()
     assert view["working"] == {"generation": 1, "from_originals": False, "can_start_over": True,
-                               "undo": REQUEST, "undo_blocked": ""}   # a conversation's run can be undone too
+                               "undo": REQUEST, "undo_blocked": "",   # a conversation's run can be undone too
+                               "done": [{"request": REQUEST, "recipe": "", "documents": 1, "of": 1, "not": []}]}
     assert START_OVER in view["chips"]
     assert view["attachments"][0]["current"] == str(first_copy)
     view = task.perform("send", text="Also make that title italic.")
@@ -94,7 +95,7 @@ def test_the_next_request_builds_on_the_copies_and_start_over_returns_to_the_ori
     # start over: the originals again, the plan void, the copies untouched
     view = task.perform("send", text=START_OVER)
     assert task.documents() == [source] and task.generation == 0 and task.history == []
-    assert view["working"]["from_originals"] and view["stage"] == "empty"
+    assert view["working"]["from_originals"] and view["stage"] == "empty" and view["working"]["done"] == []
     assert second_copy.is_file()
     view = task.perform("send", text=REQUEST)
     assert "CHANGES ALREADY MADE" not in fake.requests[2]["messages"][0]["content"]

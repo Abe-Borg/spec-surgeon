@@ -108,7 +108,7 @@ export const EMPTY_VIEW: View = {
   action: { label: "", token: "", kind: "none", can_hold: false },
   todo: [],
   focus: [],
-  working: { generation: 0, from_originals: true, can_start_over: false, undo: "", undo_blocked: "" },
+  working: { generation: 0, from_originals: true, can_start_over: false, undo: "", undo_blocked: "", done: [] },
   budget: { paused: false, reason: "" },
   discard: "",
   update: { state: "none", version: "", notes: "", progress: 0, error: "" },

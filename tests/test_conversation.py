@@ -24,7 +24,7 @@ from spec_surgeon import llm
 from spec_surgeon.catalog import CUSTOM_TRANSFORM_LIMITS
 from spec_surgeon.compiler import _Batch, check_submission, compile_request, placed_words, untraceable
 from spec_surgeon.conversation import (ACCEPTED_RESULT, Conversation, INVISIBLE_RANGES, ProtocolError, check_pairing,
-                                       clean_wording)
+                                       clean_wording, restates)
 
 SPECS = Path(__file__).resolve().parent.parent / "examples" / "specs"
 REMOVE = json.loads((SPECS / "remove-all-headers-footers.json").read_text(encoding="utf-8"))
@@ -586,6 +586,58 @@ def test_non_list_questions_and_choices_are_dropped_and_said_never_raised(folder
     t3 = conv(folder, FakeClient(submit(spec))).start()
     assert t3.status == "questions" and t3.questions == ["(the model asked an empty question)"]
     assert any("questions were dropped" in e for e in t3.errors)
+
+
+EVERYTHING = ("Do everything else on all four now; leave the tracked changes in the three files for me to accept in "
+              "Word")
+REATTACH = "I'll accept the changes in Word first and attach the files again"
+
+
+@pytest.mark.parametrize("chip, label, same", [
+    ("Do everything else now, I'll accept in Word", EVERYTHING, True),       # the owner's report, 2026-10-29
+    ("I'll accept in Word first and re-attach", REATTACH, True),
+    ("Do everything else now, I'll accept in Word", REATTACH, False),
+    ("I'll accept in Word first and re-attach", EVERYTHING, False),
+    ("Yes", "Yes, change the headers too", True),
+    ("Only Valves", "Change only Valves", True),
+    ("Valves only", "Change only Valves", False),                              # in another order: kept
+    ("Keep the headers and change the footers", "Change the headers and keep the footers", False),   # other targets
+    ("Don't change the headers, change the footers", "Change the headers, don't change the footers", False),
+    ("Leave out the fourth for now", "Change the three that have a stamp; leave the fourth as it is", False),
+    ("Set the fourth aside for later", "Give the fourth the same stamp in its header", False),
+    ("Don't change the headers", "Change the headers", False),                 # the opposite answer
+    ("Change the headers", "Don't change the headers", False),
+    ("Leave out Valves", "Leave out Valves and Pumps", False),                 # names another document
+    ("Leave out 21 05 23", "Leave out 21 05 23 and 21 05 29", False),
+    ("Leave out 21 05 23", "Leave out 21 05 29", False),                       # another number
+    ("Keep headers", "Change headers", False),
+    ("Everything, including the headers", "Just the body text", False),
+])
+def test_a_suggested_reply_restates_a_choice_only_when_it_says_nothing_else(chip, label, same):
+    assert restates(chip, label) is same
+
+
+def test_a_suggested_reply_that_restates_a_choice_is_dropped_and_the_others_stay(folder):
+    replies = ["Do everything else now, I'll accept in Word", "I'll accept in Word first and re-attach",
+               "Set Valves aside for later"]
+    fake = FakeClient(ask(message="Two ways to get there.", suggested_replies=replies,
+                          choices=[{"label": EVERYTHING, "kind": "alternative"},
+                                   {"label": REATTACH, "kind": "clarify"}]))
+    t = conv(folder, fake).start()
+    assert [ch.label for ch in t.choices] == [EVERYTHING, REATTACH]
+    assert t.chips == ["Set Valves aside for later"]
+    assert any("2 suggested replies restating a choice dropped" in e for e in t.errors)
+    t2 = conv(folder, FakeClient(ask(message="Which titles?", suggested_replies=replies))).start()
+    assert t2.chips == replies and t2.errors == []                 # without choices, the replies are the answers
+
+
+def test_the_chat_prompt_says_each_choice_once():
+    prompt = compiler_module.system_prompt(chat=True)
+    assert "suggested reply repeats a choice in other words" in prompt
+    assert "without listing the choices again" in prompt
+    ask_user = next(t for t in compiler_module.CHAT_TOOLS if t["name"] == "ask_user")["input_schema"]["properties"]
+    assert "never a choice again in other words" in ask_user["suggested_replies"]["description"]
+    assert "never the choices again" in ask_user["message"]["description"]
 
 
 def test_the_choices_of_an_answered_turn_cannot_be_picked_after_the_next_turn_failed(folder):
