@@ -1850,6 +1850,49 @@ def build_styled_outline(number: str = "21 13 13", title: str = "WET-PIPE SPRINK
     return docx_bytes(doc)
 
 
+CANADIAN_LEVELS = ("CaPart", "CaArt", "CaPara", "CaSub", "CaSub2")
+
+
+def build_canadian_outline(number: str = "21 13 13", title: str = "WET-PIPE SPRINKLER SYSTEMS",
+                           typed: bool = False) -> bytes:
+    """A specification in Canadian CSC PageFormat (docs/SPEC_FORMATTER_MODES_DESIGN.md N4): styles ``CaPart`` /
+    ``CaArt`` / ``CaPara`` / ``CaSub`` / ``CaSub2`` numbered by one list — num 30: ``PART %1`` (``w:suff`` space),
+    ``%1.%2``, ``.%3``, ``.%4``, ``.%5``, every level decimal. ``typed``: the same outline with the numbers typed at
+    the start of Normal paragraphs (a tab after each) and no list.
+
+    Body (numbers in brackets): "SECTION nn nn nn"; the title; GENERAL [PART 1]; SUMMARY [1.1]; "Paragraph one." [.1];
+    "Subparagraph one." [.1]; "Subparagraph two." [.2]; "Sub-subparagraph." [.1]; "Paragraph two." [.2]; SUBMITTALS
+    [1.2]; "Product data." [.1]; PRODUCTS [PART 2]; MATERIALS [2.1]; "Pipe." [.1]; "END OF SECTION nn nn nn"."""
+    doc = Document()
+    ids = CANADIAN_LEVELS
+    outline = (("CaPart", "GENERAL", "PART 1"), ("CaArt", "SUMMARY", "1.1"), ("CaPara", "Paragraph one.", ".1"),
+               ("CaSub", "Subparagraph one.", ".1"), ("CaSub", "Subparagraph two.", ".2"),
+               ("CaSub2", "Sub-subparagraph.", ".1"), ("CaPara", "Paragraph two.", ".2"),
+               ("CaArt", "SUBMITTALS", "1.2"), ("CaPara", "Product data.", ".1"), ("CaPart", "PRODUCTS", "PART 2"),
+               ("CaArt", "MATERIALS", "2.1"), ("CaPara", "Pipe.", ".1"))
+    if not typed:
+        for k, sid in enumerate(ids):
+            _add_style(doc, f'<w:style w:type="paragraph" w:customStyle="1" w:styleId="{sid}"><w:name w:val="{sid}"/>'
+                            f'<w:basedOn w:val="Normal"/><w:pPr><w:numPr><w:ilvl w:val="{k}"/><w:numId w:val="30"/>'
+                            f'</w:numPr></w:pPr></w:style>')
+        levels = [_lvl_xml(0, "decimal", "PART %1", pstyle="CaPart", suff="space", left=0, hanging=0),
+                  _lvl_xml(1, "decimal", "%1.%2", pstyle="CaArt", left=720, hanging=720),
+                  _lvl_xml(2, "decimal", ".%3", pstyle="CaPara", left=1440, hanging=720),
+                  _lvl_xml(3, "decimal", ".%4", pstyle="CaSub", left=2160, hanging=720),
+                  _lvl_xml(4, "decimal", ".%5", pstyle="CaSub2", left=2880, hanging=720)]
+        _add_lists(doc, [_abstract_xml(30, levels, "6B6B0030")],
+                   ['<w:num w:numId="30"><w:abstractNumId w:val="30"/></w:num>'])
+    doc.add_paragraph(f"SECTION {number}")
+    doc.add_paragraph(title)
+    for sid, text, marker in outline:
+        if typed:
+            doc.add_paragraph(f"{marker}\t{text}")
+        else:
+            doc.add_paragraph(text, style=doc.styles[_style_name(doc, sid)])
+    doc.add_paragraph(f"END OF SECTION {number}")
+    return docx_bytes(doc)
+
+
 # ---- built-in batch 2: generic package surgery for fixtures (docs/BUILTIN_OPS_BATCH2_DESIGN.md) -----------------------
 
 def docx_bytes(doc) -> bytes:

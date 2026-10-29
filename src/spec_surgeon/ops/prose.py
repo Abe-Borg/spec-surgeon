@@ -150,6 +150,7 @@ def styles(ids: Sequence[Any]) -> str:
     return "the " + join(quote(x) for x in ids) + " styles"
 
 
+INDICES_SHOWN = 6           # chosen paragraph numbers a sentence names before "and N more"
 SCOPE_WORDS = {"document": "the document body", "headers": "the headers", "footers": "the footers",
                "footnotes": "the footnotes", "endnotes": "the endnotes", "comments": "the comments"}
 
@@ -200,6 +201,11 @@ def _paragraph_words(pred: Any) -> str:
     if pred.get("index_range"):
         a, b = pred["index_range"]
         clauses.append(f"numbered {a + 1} through {b}" if b - a > 1 else f"number {a + 1}")
+    if isinstance(pred.get("indices"), list) and pred["indices"]:
+        chosen = sorted(i for i in pred["indices"] if isinstance(i, int))
+        shown = ", ".join(str(i + 1) for i in chosen[:INDICES_SHOWN])
+        more = f" and {len(chosen) - INDICES_SHOWN} more" if len(chosen) > INDICES_SHOWN else ""
+        clauses.append(f"number {shown}" if len(chosen) == 1 else f"numbered {shown}{more}")
     if pred.get("after_heading_regex"):
         clauses.append("after the first paragraph matching " + quote(pred["after_heading_regex"]))
     if isinstance(pred.get("between_paragraphs"), dict):

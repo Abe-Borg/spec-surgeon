@@ -767,7 +767,8 @@ SELECTOR_GRAMMAR = {
     "scope": "part kinds: document | headers | footers | footnotes | endnotes | comments (resolved via rels)",
     "paragraphs": "'all' or AND of: style_in [styleIds] (no pStyle = default paragraph style), text_regex (Python "
                   "re.search on the block text), in_table (bool), is_empty (bool: no text and no picture, object, text "
-                  "box or field), index_range [start, end), "
+                  "box or field), index_range [start, end), indices [paragraph numbers from 0, as read_outline "
+                  "returns them], "
                   "has_bold (bool), is_all_caps (bool), after_heading_regex (str), "
                   "case_insensitive (bool, default false), flexible_whitespace (bool, default false; literal whitespace "
                   "outside regex character classes matches one or more whitespace characters), "

@@ -316,7 +316,7 @@ def effective_size(rpr, p, styles: Styles) -> int:
 
 # ---- selector resolution (independent of ops/selectors.py) ------------------------------------------
 
-PARA_KEYS = {"style_in", "text_regex", "in_table", "is_empty", "index_range",
+PARA_KEYS = {"style_in", "text_regex", "in_table", "is_empty", "index_range", "indices",
              "has_bold", "is_all_caps", "after_heading_regex", "between_paragraphs",
              "case_insensitive", "flexible_whitespace"}
 RUN_KEYS = {"has_direct_font", "font_in", "not_in_revisions", "color_in"}
@@ -464,6 +464,13 @@ def para_matches(pred, p, bi: int, view: PartView, styles: Styles) -> bool:
     if "index_range" in pred:
         a, b = pred["index_range"]
         if not (a <= bi < b):
+            return False
+    if "indices" in pred:
+        chosen = pred["indices"]
+        if (not isinstance(chosen, list) or not chosen
+                or any(type(i) is not int or i < 0 for i in chosen) or len(set(chosen)) != len(chosen)):
+            raise ValueError(f"indices {chosen!r} — the op must refuse")
+        if bi not in chosen:
             return False
     if "has_bold" in pred and _v_para_has_bold(p, view.runs[bi], styles) != bool(pred["has_bold"]):
         return False
@@ -2511,7 +2518,7 @@ KIND_EXAMPLES: Dict[str, Dict[str, Any]] = {}
 _SCOPE_KINDS = "document | headers | footers | footnotes | endnotes | comments"
 _PARA_PRED = ('a paragraph predicate: null or "all" for every paragraph, else an object with any of ' +
               ", ".join(sorted(PARA_KEYS)) + " (index_range is [first, past-the-last] over the part's paragraphs in "
-              "document order; text_regex is a Python regex over the paragraph's text; case_insensitive and "
+              "document order; indices lists chosen paragraphs by that same count; text_regex is a Python regex over the paragraph's text; case_insensitive and "
               "flexible_whitespace are booleans)")
 _RUN_PRED = ('a run predicate: "all", or an object with any of ' + ", ".join(sorted(RUN_KEYS))
              + " (font_in and color_in are lists; not_in_revisions a boolean)")
