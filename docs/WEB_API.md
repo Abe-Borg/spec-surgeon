@@ -281,9 +281,9 @@ Rules the page relies on:
   cleared, and the next message is a new request told that this one was withdrawn. The page keeps each button's form
   when the user goes back to all the buttons (page memory only; **Clear form** empties it).
 - The page keeps the unsent message and staged Safe form across mode switches. Only a conversation mode's draft
-  holds its Create action. A successful New conversation or Start over clears both inputs; a failed reset keeps
-  them. Start over retains the attached originals and clears the last button's untouched status; New conversation
-  starts with no attachments.
+  holds its Create action. A successful New conversation or Start over clears both inputs, the last job's failure
+  note and a saved recipe's open run form; a failed reset keeps them. Start over retains the attached originals and
+  clears the last button's untouched status; New conversation starts with no attachments.
 - `cost.fast` is true while fast mode is in effect (`llm.fast_for(llm.DEFAULT_MODEL)`: Settings → Fast responses
   is on, the model is served fast, and Anthropic has not refused fast mode for this key): the spending pill then says
   "Fast". An older server leaves it out.

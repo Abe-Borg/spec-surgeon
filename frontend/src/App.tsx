@@ -322,11 +322,17 @@ export default function App() {
 
   // --- Conversation, results -----------------------------------------------
 
-  const resetInputs = useCallback(() => {
+  // A successful New conversation or Start over: what the page keeps of its own goes with what the server reset —
+  // the inputs, the last job's failure, and a saved recipe's run form (kept inside the Safe panel and the recipes
+  // beside the message box, so both start afresh under a new key).
+  const [resets, setResets] = useState(0);
+  const resetPage = useCallback(() => {
     setDraft("");
     setSafeForm(EMPTY_SAFE_FORM);
     setPrefill({ text: "", nonce: 0 });
     setReviews({});
+    setResets((n) => n + 1);
+    dispatch({ type: "reset" });
   }, []);
 
   // Declared below, once the tour exists: New conversation ends a running tour first (the conversation comes back,
@@ -352,7 +358,7 @@ export default function App() {
     [refresh, runJob],
   );
 
-  const onStartOver = useCallback(() => applyView(api.startOver(), resetInputs), [applyView, resetInputs]);
+  const onStartOver = useCallback(() => applyView(api.startOver(), resetPage), [applyView, resetPage]);
   // The ways back, in every mode: Discard withdraws a preview (Safe: the form keeps what was typed; Default and
   // Obliterate: the request ends) or a conversation's open request; Undo takes the working set back to the copies
   // from before the last run.
@@ -432,6 +438,7 @@ export default function App() {
   const panel = useMemo(
     () => (
       <SafePanel
+        key={resets}
         recipes={recipes}
         view={view}
         busy={busy}
@@ -450,11 +457,12 @@ export default function App() {
         onManageRecipes={onManageRecipes}
       />
     ),
-    [recipes, view, busy, onRecipe, onDiscard, safeForm, tourRunning, onSafeNoteHidden, onDefaultMode, onOpenSettings,
-      onRunRecipe, onSaveRecipeForms, onManageRecipes],
+    [resets, recipes, view, busy, onRecipe, onDiscard, safeForm, tourRunning, onSafeNoteHidden, onDefaultMode,
+      onOpenSettings, onRunRecipe, onSaveRecipeForms, onManageRecipes],
   );
   const recipesStrip = (
     <RecipesStrip
+      key={resets}
       view={view}
       catalog={recipes}
       busy={busy}
@@ -502,7 +510,7 @@ export default function App() {
     if (busyRef.current) return;
     if (tourActive) {
       void tour.abort().then((returned) => {
-        if (returned) applyView(api.newConversation(), resetInputs);
+        if (returned) applyView(api.newConversation(), resetPage);
       });
       return;
     }
@@ -515,7 +523,7 @@ export default function App() {
     ) {
       return;
     }
-    applyView(api.newConversation(), resetInputs);
+    applyView(api.newConversation(), resetPage);
   };
   const onStartTourAt = useCallback(
     (chapter: string) => {
