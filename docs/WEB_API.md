@@ -234,6 +234,14 @@ Rules the page relies on:
   it." while a conversation's request is open); "" when it can. The page shows **Undo the last button** (Safe mode) or
   **Undo the last change** (Default, Obliterate) beside Start over while `undo` is set, disabled with `undo_blocked`
   as its reason.
+- `working.done` is **What you've done so far** (`DocumentTask.runs`, `_done_view`), in every mode: one entry per run
+  that delivered copies, oldest first, `{"request", "recipe", "documents", "of", "not"}` — the button's sentence or
+  the request the user typed; the Safe-mode button pressed (a recipe id, `""` for a request); how many of the
+  documents attached now carry it, of how many; and each other document attached now as `{"name", "why"}`, `why`
+  one of `left untouched` (the run left it as it was), `set aside` (it waited on the to-do list then) or `attached
+  later` (attached after the run, or removed and attached again). `POST /api/undo` takes the newest off; Start over
+  and removing the last working copy clear it; the journal keeps it. The page lists it under the copies, the newest
+  marked LATEST, and gives a Safe-mode button a checkmark while an entry names it.
 - `discard` is what `POST /api/discard` would withdraw now: `preview` (a preview waiting for approval, in every
   mode), `request` (Default and Obliterate: a request still open with nothing to approve — Claude's question, a reply
   to continue, a custom method being written, a pause at the spending check), or `""` (nothing, work runs, or recovery

@@ -320,7 +320,10 @@ export const RUNTIME_CARDS: RuntimeCard[] = [
       "while a preview waits) withdraws it: nothing is created, and the window shows the copies it showed before. " +
       "Each button's form keeps what you typed until Clear form, New conversation or Start over. Undo the last " +
       "button makes the copies from before that button the ones the next button builds on again (your originals, " +
-      "when it was the first), and takes off the to-do list the documents its ✗ put there. In Default and " +
+      "when it was the first), and takes off the to-do list the documents its ✗ put there. Under the copies, What " +
+      "you've done so far lists each run they carry since the originals (the button's sentence or your request, " +
+      "and which documents carry it), kept in the saved conversation; Undo takes the newest off, Start over clears " +
+      "it, and a button you already ran carries a checkmark. In Default and " +
       "Obliterate the same two work on a conversation: Discard preview, or Drop this request while a question, a " +
       "pause or a reply to continue is open, ends the request with nothing created (no AI call; the next request is " +
       "told it was withdrawn, and a pass over the to-do list puts its documents back on the list), and Undo the " +

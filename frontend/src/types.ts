@@ -325,6 +325,21 @@ export interface Working {
   undo?: string;
   /** Why it cannot be undone now (a preview waits, a request is open); "" when it can. */
   undo_blocked?: string;
+  /** What you've done so far: each run that delivered copies, oldest first. Absent from an older server. */
+  done?: DoneStep[];
+}
+
+/** One run the copies carry (docs/WEB_API.md, `working.done`). */
+export interface DoneStep {
+  /** The button's sentence, or the request the user typed. */
+  request: string;
+  /** The Safe-mode button pressed (a recipe id); "" for a request. */
+  recipe: string;
+  /** How many of the documents attached now carry it, of how many. */
+  documents: number;
+  of: number;
+  /** Each other document attached now, and why it does not carry it ("left untouched", "set aside", "attached later"). */
+  not: { name: string; why: string }[];
 }
 
 export type Discard = "" | "preview" | "request";
