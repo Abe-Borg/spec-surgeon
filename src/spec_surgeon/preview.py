@@ -45,6 +45,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from . import diagnostics as diag
+from . import stopping
 from .editspec import apply_spec, plan_spec
 from .fingerprint import fingerprint
 from .package import DocxPackage
@@ -680,6 +681,7 @@ def render_samples(samples: List[SampleView], out_dir: Path, renderer: str, do_r
     import shutil
     from . import render as render_mod
     from .verify import geometry as geom
+    stopping.check("preview render")             # Stop (``stopping``): no page renders after it
     detail = log.detail if log is not None else (lambda msg: None)
     block = log.block if log is not None else (lambda text: None)
 
@@ -805,6 +807,7 @@ def _sample_geometry(samples: List[SampleView], out_dir: Path, backend: Optional
             s.geometry = dict(GEOMETRY_RENDERED_NOT_COMPARED)
         return
     for s, pair in pairs:
+        stopping.check("preview geometry")
         name = labels[str(Path(s.source))]
         try:
             v6, v7, _geometry = compare_pair(pair, refs, backend)

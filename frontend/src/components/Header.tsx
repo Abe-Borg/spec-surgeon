@@ -22,7 +22,8 @@ interface Props {
   onOpenSettings: () => void;
   onOpenHelp: (topic: HelpTopic) => void;
   onMode: (mode: Mode) => void;
-  /** The kill switch beside the spending: cuts off the AI step that is running and starts no other. */
+  /** The kill switch beside the spending: cuts off the AI step that is running and starts no other; in Safe mode,
+   *  which calls no AI, it ends the work that is running. */
   onStop: () => void;
   /** The guided tour runs: it switches modes as its chapters need, so the switch is held still. */
   tourActive: boolean;
@@ -227,12 +228,18 @@ function Header({
           )}
           {fast && <span className="ml-1.5 font-medium text-accent">Fast</span>}
         </span>
-        {busy && !safe && (
-          <Tip tip="Stop now — the kill switch: cuts off the AI step that is running at once and starts no other. Your progress is saved; nothing in your files changes.">
+        {busy && (
+          <Tip
+            tip={
+              safe
+                ? "Stop now — the kill switch: ends the work that is running at once (the preview being made, the copies being created and checked, or an export) and keeps nothing it made. Your documents and copies stay as they were."
+                : "Stop now — the kill switch: cuts off the AI step that is running at once and starts no other. Your progress is saved; nothing in your files changes."
+            }
+          >
             <button
               type="button"
               onClick={onStop}
-              aria-label="Stop all AI work"
+              aria-label={safe ? "Stop the work" : "Stop all AI work"}
               data-capability="header.stop"
               className="rounded-full border border-err/60 bg-err/10 px-3 py-1 text-xs font-medium whitespace-nowrap text-err transition-colors hover:bg-err/20"
             >

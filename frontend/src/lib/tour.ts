@@ -135,7 +135,7 @@ export const TOUR: readonly TourChapter[] = [
         placement: "bottom",
         title: "Spending, context and the connection",
         body:
-          `The pill estimates this conversation's spending as it accrues, from a built-in price table, never a bill. While work runs in Default mode a red Stop appears beside it: the kill switch, which cuts off the running AI step at once and starts no other. Once the assistant has worked, a pill counts the context its conversation holds against the model's context window (the exact count on hover; faint once the request ends): a measurement, not spending. The last pill says whether an API key is available; in Safe mode it says no AI is used. Your spending check (Settings) pauses a request before it could spend more than $${F.spendingCheckDefaultUsd} until you continue.`,
+          `The pill estimates this conversation's spending as it accrues, from a built-in price table, never a bill. While work runs a red Stop appears beside it: the kill switch. In Default mode it cuts off the running AI step at once and starts no other; in Safe mode, which calls no AI, it ends the work itself. Once the assistant has worked, a pill counts the context its conversation holds against the model's context window (the exact count on hover; faint once the request ends): a measurement, not spending. The last pill says whether an API key is available; in Safe mode it says no AI is used. Your spending check (Settings) pauses a request before it could spend more than $${F.spendingCheckDefaultUsd} until you continue.`,
       },
       {
         id: "settings",
@@ -309,6 +309,17 @@ export const TOUR: readonly TourChapter[] = [
         title: "One button, tied to what is on screen",
         body:
           "Create edited copies, with the number it makes, approves exactly the plan and pages shown: if a document or the plan changed since the preview, the click is refused until you have looked again, and a failed check blocks it with its reason. Discard preview withdraws a preview and creates nothing, in every mode; in Default and Obliterate the request ends with it, and Drop this request ends one still open at a question. The button's own sentence is your line in the chat above, and the changes it made join the history the next request hears. The tour leaves this preview as it is; the next chapter shows the copies it would make.",
+      },
+      {
+        id: "stop",
+        capabilities: ["action.stop"],
+        mode: "explanatory",
+        anchor: "action-bar",
+        needs: "action",
+        placement: "top",
+        title: "Stop now, while the work runs",
+        body:
+          "While a button's preview is being made, the copies are created and checked, or an export is saved, this bar holds Stop now instead, and the top bar a red Stop. Safe mode calls no AI, so Stop ends the work itself, at once, and keeps nothing it made: a preview being made is withdrawn and the window shows what it showed before the button; a stopped Create makes no copy and leaves its preview waiting; a stopped export saves nothing. Your documents and copies stay as they were.",
       },
     ],
   },

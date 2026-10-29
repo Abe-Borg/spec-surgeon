@@ -514,6 +514,19 @@ try {
   check("Undo goes back before the button: no copies, nothing left untouched",
     (await page.getByText("Your edited copies").count()) === 0 && (await handOff.count()) === 0);
   check("…and nothing is left to undo", (await undoBtn.count()) === 0);
+  // Safe mode's kill switch: Stop now in the bar above the buttons (and Stop in the top bar) while a button's work runs;
+  // a stopped preview is withdrawn and nothing is created.
+  await page.getByRole("button", { name: "All buttons" }).click();
+  await page.getByRole("button", { name: "Find and replace" }).click();
+  await previewBtn.click();
+  const safeStop = page.getByRole("region", { name: "Work running" }).getByRole("button", { name: "Stop now" });
+  await safeStop.waitFor({ timeout: 10000 });
+  check("Safe mode shows Stop now above the buttons while a button's work runs", true);
+  check("…and the kill switch in the top bar", await page.locator("header").getByRole("button", { name: "Stop the work" }).isVisible());
+  await safeStop.click();
+  await page.getByText("Stopped. The preview was not finished, so it is withdrawn").waitFor({ timeout: 10000 });
+  check("a stopped preview is withdrawn and nothing is created",
+    (await createCopies.count()) === 0 && (await page.locator("header").getByRole("button", { name: "Stop the work" }).count()) === 0);
   // Export: its three choices once copies exist; PDF (Clean) runs as a job and leaves the edited copies as they were.
   const exportBtn = page.getByRole("button", { name: /^Export/ });
   check("Export waits for copies", await exportBtn.isDisabled());

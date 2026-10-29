@@ -24,6 +24,7 @@ export const TRUST_FACTS = {
   retryDelaysSeconds: [5, 20],
   retryAfterCapSeconds: 60,
   stopPollSeconds: 0.25,
+  safeStopPollSeconds: 0.25,
   stoppedOutputTokensPerSecond: 150,
   recoveryAttemptsPerGroup: 8,
   stallRepetitions: 3,

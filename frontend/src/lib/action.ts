@@ -1,7 +1,8 @@
 /**
  * The one button (docs/WEB_API.md, `action.kind`; docs/CONVERSATIONAL_DESKTOP.md,
  * "One action"). It lives in the conversation pane, above the composer. Every
- * path ends in the same spot: while a job runs the composer shows "Stop now";
+ * path ends in the same spot: while a job runs the composer shows "Stop now"
+ * (in Safe mode, which has no composer, the action bar does: SAFE_STOP_TIP);
  * otherwise the server's action, with its label, or nothing. Create counts the
  * copies it makes (`action.copies`: the documents without a preview of their
  * own too); a document the user marked with the red X on its preview is taken
@@ -29,6 +30,11 @@ export type ActionButton =
 
 export const STOP_TIP =
   "Cuts off the AI step that is running and starts no other. Your progress is saved.";
+/** Safe mode calls no AI: its Stop ends the work itself (the server's `stopping`). */
+export const SAFE_STOP_TIP =
+  "Ends the work that is running at once: the preview being made, the copies being created and checked, or an export. Nothing it made is kept; your documents and copies stay as they were.";
+/** The sentence beside Safe mode's Stop now, in the action bar while a job runs. */
+export const SAFE_STOP_SENTENCE = "Working on it. Stop now ends it at once and keeps nothing it made.";
 export const DRAFT_TIP = "Send your new message before approving a plan.";
 export const APPROVE_TIP =
   "Creates an edited copy of every document from the plan and pages shown here. Your originals stay intact.";
@@ -91,7 +97,7 @@ function count(value: unknown): number {
  * @param unticksPending the find-and-replace ticks on the page differ from the previewed plan's (lib/occurrences.ts)
  */
 export function actionButton(view: View, busy: boolean, draft: boolean, held = 0, unticksPending = false): ActionButton | null {
-  if (busy) return { kind: "stop", label: "Stop now", tip: STOP_TIP };
+  if (busy) return { kind: "stop", label: "Stop now", tip: view.mode === "safe" ? SAFE_STOP_TIP : STOP_TIP };
   const action = view.action;
   if (!action || action.kind === "none" || !action.kind) return null;
   const kind = action.kind;
