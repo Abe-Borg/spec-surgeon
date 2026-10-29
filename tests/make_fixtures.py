@@ -1893,6 +1893,27 @@ def build_canadian_outline(number: str = "21 13 13", title: str = "WET-PIPE SPRI
     return docx_bytes(doc)
 
 
+def build_outline_spec(number: str = "21 13 13", title: str = "WET-PIPE SPRINKLER SYSTEMS") -> bytes:
+    """A typed CSI specification for the outline tool (docs/SPEC_FORMATTER_MODES_DESIGN.md N1): what the structure
+    reader leaves, and the Specification Formatter's close negatives, which it reads wrongly and the outline tool sends
+    to Claude. Every paragraph Normal, numbers typed with a tab after them.
+
+    Body (index: text): 0 "SECTION nn nn nn"; 1 the title; 2 "PROJECT REVISION HISTORY" (unresolved: no marker);
+    3 "GENERAL" (unresolved: PART 1's title without "PART"); 4 "1.1⇥SUMMARY"; 5 "A.⇥The Owner's insurer is FM Global.";
+    6 "B.⇥Sprinklers shall be FM Approved."; 7 "1.2⇥SUBMITTALS"; 8 "A.⇥Product data for each sprinkler."; 9 "1.5 times
+    the pipe diameter shall be maintained." (an article to the reader, requirement wording: sent to Claude); 10 "PART 1
+    of the Contract Documents shall govern." (a PART to the reader, a cross-reference: sent to Claude); 11 "PART 2 -
+    PRODUCTS"; 12 "2.1⇥MATERIALS"; 13 "A.⇥Pipe: black steel, Schedule 40."; 14 "END OF SECTION nn nn nn"."""
+    doc = Document()
+    for text in (f"SECTION {number}", title, "PROJECT REVISION HISTORY", "GENERAL", "1.1\tSUMMARY",
+                 "A.\tThe Owner's insurer is FM Global.", "B.\tSprinklers shall be FM Approved.", "1.2\tSUBMITTALS",
+                 "A.\tProduct data for each sprinkler.", "1.5 times the pipe diameter shall be maintained.",
+                 "PART 1 of the Contract Documents shall govern.", "PART 2 - PRODUCTS", "2.1\tMATERIALS",
+                 "A.\tPipe: black steel, Schedule 40.", f"END OF SECTION {number}"):
+        doc.add_paragraph(text)
+    return docx_bytes(doc)
+
+
 # ---- built-in batch 2: generic package surgery for fixtures (docs/BUILTIN_OPS_BATCH2_DESIGN.md) -----------------------
 
 def docx_bytes(doc) -> bytes:

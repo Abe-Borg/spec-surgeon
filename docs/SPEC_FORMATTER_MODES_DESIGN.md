@@ -31,7 +31,13 @@ A chat tool, `read_outline(file)`, in the conversation's tools (Default and Obli
 
 * **The reader first.** `structure.analyze_structure(pkg, canadian=True)` over the file as the batch has it
   (unmodified bytes). Its classified paragraphs are final: nothing below overrides one. Excluded paragraphs (tables,
-  hidden text, structural redlines, empty) are never sent and never get a role.
+  hidden text, structural redlines, empty) are never sent and never get a role. One exception, the Formatter's lesson
+  that a deterministic rule must be right before it is final (`outline.demote_unshaped`): a TYPED number the reader
+  read as a PART or an article stands only when the rest of the line is shaped like a heading (empty, or starting with
+  a capital or a digit, not ending like a sentence, at most `HEADING_WORDS` words), and a section line naming a second
+  SECTION is a cross-reference; those go to Claude to decide. "1.5 times the pipe diameter shall be maintained." and
+  "PART 1 of the Contract Documents shall govern." are its close negatives. Automatic numbering is never demoted, and
+  the reader itself, which Safe mode uses, is unchanged.
 * **Claude's reading of the rest.** The paragraphs the reader leaves `unresolved` go to one structured call
   (`outline.classify`), in windows of at most `OUTLINE_CHUNK` paragraphs to decide, each window with up to
   `OUTLINE_CONTEXT` paragraphs of context on either side (their reader role shown, never decided again). The system

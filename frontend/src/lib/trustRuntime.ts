@@ -224,7 +224,9 @@ export const RUNTIME_CARDS: RuntimeCard[] = [
     you: "Nothing: Claude asks for a document's outline while it plans your request, when a part of the outline it needs (the PART headings, the articles, the paragraph levels) has no style or typed shape the app can select it by.",
     runs:
       "The structure reader, code on your computer, reads every paragraph of the document's body first, Canadian " +
-      "PageFormat numbering included; what it places is final. Only the paragraphs it could not place are sent, " +
+      "PageFormat numbering included; what it places is final, except a typed PART or article number followed by " +
+      "words that read as a requirement rather than a heading, which is sent too. Only the paragraphs it could not " +
+      "place are sent, " +
       `${F.outlineParagraphsPerCall} at a time with a few paragraphs of context around them, and Claude gives each ` +
       "one part of the outline, or none with a reason. An answer that misses, repeats or invents a paragraph is " +
       "asked for once more; what is still not answered stays unplaced. The plan that uses the result places no " +

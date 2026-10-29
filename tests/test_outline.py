@@ -12,14 +12,16 @@ from pathlib import Path
 import pytest
 
 from fake_claude import FakeClient, api_error, resp, text, tool
-from make_fixtures import build, build_canadian_outline
+from make_fixtures import build_canadian_outline, build_outline_spec
 from spec_surgeon import compiler, llm, outline
 from spec_surgeon.conversation import Conversation
 from spec_surgeon.package import DocxPackage
 from spec_surgeon.resources import OUTLINE_EFFORT
 
-SPEC = build("21 13 13", "WET-PIPE SPRINKLER SYSTEMS")       # the reader leaves 2 ("PROJECT REVISION HISTORY") and
-UNRESOLVED = [2, 10]                                          # 10 ("GENERAL", a PART heading without "PART")
+SPEC = build_outline_spec()       # the reader leaves 2 ("PROJECT REVISION HISTORY") and 3 ("GENERAL", PART 1's title
+UNRESOLVED = [2, 3, 9, 10]        # without "PART"), and reads 9 and 10, requirement wording, as an article and a PART
+ALL = ((2, "none", "revision log heading"), (3, "part", "PART 1's title"), (9, "none", "requirement wording"),
+       (10, "none", "a cross-reference"))
 
 
 def roles(*pairs, tid="r1"):
@@ -40,49 +42,76 @@ def scripted(*answers):
 # ---- the classifier ------------------------------------------------------------------------------------------------
 
 def test_claude_decides_only_what_the_reader_leaves_and_never_overrides_it():
-    call, sent = scripted(roles((2, "none", "revision log heading"), (10, "part", "PART 1's title")))
+    call, sent = scripted(roles(*ALL))
     reading = outline.classify("spec.docx", DocxPackage(SPEC), call)
     assert len(sent) == 1
-    assert "[2] DECIDE" in sent[0] and "[10] DECIDE" in sent[0]
-    assert "[11] role=article" in sent[0]                       # context, its role fixed
-    assert "Call submit_roles with a role for each DECIDE paragraph: 2, 10." in sent[0]
-    assert {i: p.role for i, p in reading.proposals.items()} == {2: "none", 10: "part"}
+    assert all(f"[{i}] DECIDE" in sent[0] for i in UNRESOLVED)
+    assert "[4] role=article" in sent[0]                        # context, its role fixed
+    assert "Call submit_roles with a role for each DECIDE paragraph: 2, 3, 9, 10." in sent[0]
+    assert {i: p.role for i, p in reading.proposals.items()} == {2: "none", 3: "part", 9: "none", 10: "none"}
     answer = outline.result(reading)
     digest = hashlib.sha256(SPEC).hexdigest()
     assert answer["document_sha256"] == digest
-    assert answer["roles"]["part"] == {"placed_by_reader": [], "proposed_by_claude": [10], "selector": {
-        "scope": ["document"], "paragraphs": {"indices_by_document": {digest: [10]}}}}
-    assert answer["roles"]["article"]["proposed_by_claude"] == []
-    assert answer["left_out_of_the_outline_by_claude"] == [{"paragraph": 2, "reason": "revision log heading"}]
+    assert answer["roles"]["part"] == {"placed_by_reader": [11], "proposed_by_claude": [3], "selector": {
+        "scope": ["document"], "paragraphs": {"indices_by_document": {digest: [3, 11]}}}}
+    assert answer["roles"]["article"] == {"placed_by_reader": [4, 7, 12], "proposed_by_claude": [], "selector": {
+        "scope": ["document"], "paragraphs": {"indices_by_document": {digest: [4, 7, 12]}}}}
+    assert answer["typed_headings_sent_to_claude"] == [9, 10]
+    assert [x["paragraph"] for x in answer["left_out_of_the_outline_by_claude"]] == [2, 9, 10]
     assert answer["unplaced"] == [] and answer["claude_calls"] == 1
     assert "say in your message which roles rest on Claude's reading" in answer["note"]
 
 
 def test_an_answer_about_a_placed_paragraph_is_never_taken():
-    call, _ = scripted(roles((2, "none", "log"), (10, "part", "x"), (11, "paragraph", "override")),
-                       roles((2, "none", "log"), (10, "part", "x")))
+    call, _ = scripted(roles(*ALL, (12, "paragraph", "override")), roles(*ALL))
     reading = outline.classify("spec.docx", DocxPackage(SPEC), call)
     assert reading.calls == 2                                    # the first answer invented a paragraph: asked again
-    assert 11 not in reading.proposals
-    assert reading.rows[11]["role"] == "article"
+    assert 12 not in reading.proposals
+    assert reading.rows[12]["role"] == "article"
+
+
+@pytest.mark.parametrize("text, kept", [
+    ("1.1\tSUMMARY", True), ("1.3\tGeneral requirements", True), ("PART 1 - GENERAL", True),
+    ("1.5 times the pipe diameter shall be maintained.", False), ("PART 1 of the Contract Documents shall govern.", False),
+    ("1.2\tSubmit product data for each type.", False)])
+def test_a_typed_heading_is_kept_only_when_it_is_shaped_like_one(text, kept):
+    """The Specification Formatter's close negatives: the reader's typed PART and article readings stand only when the
+    rest of the line reads as a heading's title."""
+    from make_fixtures import docx_bytes
+    from docx import Document
+    doc = Document()
+    for t in ("SECTION 21 13 13", "WET-PIPE SPRINKLER SYSTEMS", "PART 1 - GENERAL", text, "END OF SECTION 21 13 13"):
+        doc.add_paragraph(t)
+    from spec_surgeon.structure import analyze_structure
+    rows = analyze_structure(DocxPackage(docx_bytes(doc)), canadian=True)["paragraphs"]
+    assert rows[3]["role"] in ("part", "article")                # the reader takes it for a heading
+    demoted = outline.demote_unshaped(rows)
+    assert (3 not in demoted) is kept
+
+
+def test_a_section_line_naming_a_second_section_is_sent_to_claude():
+    rows = [{"paragraph": 0, "role": "section_id", "content": "COMMON WORK RESULTS; see SECTION 23 05 01",
+             "disposition": "classified", "reason": "", "depth": 0}]
+    assert outline.demote_unshaped(rows) == [0] and rows[0]["reason"] == outline.SECOND_SECTION
 
 
 def test_a_paragraph_still_missing_after_the_retry_stays_unplaced_with_why():
-    call, sent = scripted(roles((10, "part", "x")), roles((10, "part", "x")))
+    call, sent = scripted(roles(*ALL[1:]), roles(*ALL[1:]))
     reading = outline.classify("spec.docx", DocxPackage(SPEC), call)
     assert reading.calls == 2
     assert "YOUR PREVIOUS ANSWER WAS NOT USED: not answered: 2" in sent[1]
-    assert set(reading.proposals) == {10}
+    assert set(reading.proposals) == {3, 9, 10}
     assert "did not give it one role" in reading.unplaced[2]
 
 
 def test_twice_answered_none_without_reason_and_unknown_roles_are_not_taken():
     bad = resp(tool("submit_roles", {"paragraphs": [
-        {"index": 2, "role": "none"}, {"index": 10, "role": "part", "reason": "a"},
-        {"index": 10, "role": "article", "reason": "b"}]}))
-    call, _ = scripted(bad, roles((2, "heading", "x"), (10, "part", "y")))
+        {"index": 2, "role": "none"}, {"index": 3, "role": "part", "reason": "a"},
+        {"index": 3, "role": "article", "reason": "b"}, {"index": 9, "role": "none", "reason": "c"},
+        {"index": 10, "role": "none", "reason": "d"}]}))
+    call, _ = scripted(bad, roles((2, "heading", "x"), (3, "part", "y")))
     reading = outline.classify("spec.docx", DocxPackage(SPEC), call)
-    assert set(reading.proposals) == {10}
+    assert set(reading.proposals) == {3, 9, 10}                  # 9 and 10 from the first answer, 3 from the retry
     assert 2 in reading.unplaced
 
 
@@ -146,7 +175,7 @@ def test_the_conversation_reads_the_outline_once_per_file_and_counts_its_usage(f
     label = "21 13 13 – SPEC.docx"
     fake = FakeClient(
         resp(tool("read_outline", {"file": label}, "o1")),
-        roles((2, "none", "revision log heading"), (10, "part", "PART 1's title")),
+        roles(*ALL),
         resp(tool("read_outline", {"file": label}, "o2")),          # asked again: no call
         resp(text("PART 1's title rests on Claude's reading."), stop="end_turn"))
     c = Conversation("restyle the PART headings", sorted(folder.glob("*.docx")), client=fake)
@@ -158,7 +187,7 @@ def test_the_conversation_reads_the_outline_once_per_file_and_counts_its_usage(f
     assert nested["output_config"] == {"effort": OUTLINE_EFFORT}
     assert "cache_control" not in nested                          # one-shot: nothing after the system prompt cached
     first = json.loads(fake.requests[2]["messages"][-1]["content"][0]["content"])
-    assert first["roles"]["part"]["proposed_by_claude"] == [10] and first["claude_calls"] == 1
+    assert first["roles"]["part"]["proposed_by_claude"] == [3] and first["claude_calls"] == 1
     second = json.loads(fake.requests[3]["messages"][-1]["content"][0]["content"])
     assert second["claude_calls"] == 0 and second["note"].startswith("Read earlier in this conversation")
     assert c.usage.tokens() == 4 * 120                             # every call's tokens, the outline's included

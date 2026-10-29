@@ -17,7 +17,7 @@ from pathlib import Path
 import pytest
 
 from fake_claude import FakeClient, resp, tool
-from make_fixtures import build, build_canadian_outline, build_styled_outline, build_typed
+from make_fixtures import build, build_canadian_outline, build_outline_spec, build_styled_outline, build_typed
 from spec_surgeon.document_task import DocumentTask
 from spec_surgeon.editspec import apply_spec, plan_spec
 from spec_surgeon.gui import Session
@@ -81,22 +81,24 @@ def test_canadian_automatic_numbers_back_onto_the_bundled_csi_scheme():
 
 
 def test_a_heading_the_reader_leaves_is_restyled_by_claudes_reading_through_the_window(tmp_path):
-    """The reader leaves "GENERAL" (a PART heading without "PART") and a revision log heading; Claude's reading
-    places the first and leaves the second out; the plan restyles paragraph 10 alone, through the gate, the preview and
-    Create."""
-    data = build("21 13 13", "WET-PIPE SPRINKLER SYSTEMS")
+    """The reader leaves "GENERAL" (PART 1's title without "PART") and a revision log heading, and its typed readings of
+    two requirement sentences go to Claude too; Claude's reading places "GENERAL" and leaves the rest out; the plan
+    restyles paragraph 3 alone, through the gate, the preview and Create."""
+    data = build_outline_spec()
     source = tmp_path / "docs" / "21 13 13 - WET-PIPE.docx"
     source.parent.mkdir()
     source.write_bytes(data)
     digest = hashlib.sha256(data).hexdigest()
     spec = {"request": "Make the PART headings Heading 1", "summary": "Restyle the PART headings", "mode": "formatting",
             "ops": [{"op": "apply_style", "params": {"style": "Heading1"},
-                     "select": {"scope": ["document"], "paragraphs": {"indices_by_document": {digest: [10]}}}}]}
+                     "select": {"scope": ["document"], "paragraphs": {"indices_by_document": {digest: [3]}}}}]}
     fake = FakeClient(
         resp(tool("read_outline", {"file": source.name}, "o1")),
         resp(tool("submit_roles", {"paragraphs": [
             {"index": 2, "role": "none", "reason": "the revision log's heading"},
-            {"index": 10, "role": "part", "reason": "PART 1's title"}]}, "r1")),
+            {"index": 3, "role": "part", "reason": "PART 1's title"},
+            {"index": 9, "role": "none", "reason": "requirement wording"},
+            {"index": 10, "role": "none", "reason": "a cross-reference"}]}, "r1")),
         resp(tool("submit_editspec", {"spec": spec}, "s1")))
     task = DocumentTask(Session(client=fake, out_root=tmp_path / "out", visual_check=False), render=False)
     task.attach([source])
@@ -108,7 +110,7 @@ def test_a_heading_the_reader_leaves_is_restyled_by_claudes_reading_through_the_
     pkg = DocxPackage(out)
     styled = [i for i, p in enumerate(paragraphs(pkg.xml(pkg.main_part())))
               if StyleSheet(pkg).paragraph_style_id(p) == "Heading1"]
-    assert styled == [10]
+    assert styled == [3]
     assert source.read_bytes() == data
 
 

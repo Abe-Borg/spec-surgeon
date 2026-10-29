@@ -2,7 +2,12 @@
 paragraph of one file, and Claude's reading of the paragraphs the reader leaves unresolved.
 
 **The reader first, and final.** ``structure.analyze_structure(pkg, canadian=True)`` on the file's unmodified bytes.
-A paragraph it places keeps that role: nothing here overrides it. A paragraph it excludes (a table cell, hidden text,
+A paragraph it places keeps that role: nothing here overrides it — with one exception the Specification Formatter
+learned (``demote_unshaped``): a TYPED number read as a PART, an article or the section number line is taken only when
+the rest of the line is shaped like a heading. "1.5 times the pipe diameter shall be maintained." and "PART 1 of the
+Contract Documents shall govern." read as requirement wording, and a section line that names a second SECTION is a
+cross-reference; those go to Claude to decide instead. Automatic numbering is stronger evidence and is never demoted;
+Safe mode's reading is not this module's and is unchanged. A paragraph it excludes (a table cell, hidden text,
 a redline that can change the structure, an empty line) is never sent and never gets a role.
 
 **Claude's reading of the rest** (``classify``): the unresolved paragraphs go to one structured call per window of at
@@ -26,6 +31,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
@@ -115,6 +121,44 @@ class OutlineReading:
     unplaced: Dict[int, str] = field(default_factory=dict)
     calls: int = 0
     note: str = ""
+    demoted: List[int] = field(default_factory=list)   # typed headings the reader read that fail a heading's shape
+
+
+# ---- the reader, with typed headings held to a heading's shape -----------------------------------------------------
+
+HEADING_WORDS = 12               # words a typed heading's title may have
+UNSHAPED = ("a typed number begins wording that reads as a requirement, not a heading (the Specification Formatter's "
+            "rule: the rest of the line must be shaped like a heading)")
+SECOND_SECTION = "the line names a second SECTION: a cross-reference, not the section number line"
+_SECTION_WORD = re.compile(r"\bSECTION\s+[0-9]{2}[ \u00a0–—-]*[0-9]{2}", re.I)
+
+
+def heading_shaped(rest: str) -> bool:
+    """The words after a typed PART or article number read as a heading's title: none, or starting with a capital
+    letter or a digit, not ending like a sentence, at most ``HEADING_WORDS`` words."""
+    rest = " ".join(str(rest or "").split())
+    if not rest:
+        return True
+    return ((rest[0].isupper() or rest[0].isdigit()) and not rest.endswith((".", "?", "!", ";", ","))
+            and len(rest.split()) <= HEADING_WORDS)
+
+
+def demote_unshaped(rows: List[Dict[str, Any]]) -> List[int]:
+    """Hold the reader's TYPED section, PART and article readings to a heading's shape (module docstring): a row that
+    fails becomes unresolved with the reason, so Claude decides it. Returns the rows demoted."""
+    demoted = []
+    for row in rows:
+        if row.get("role") not in ("section_id", "part", "article") or row.get("numbering", {}).get("marker"):
+            continue
+        rest = str(row.get("content") or "")
+        if row["role"] == "section_id":
+            why = SECOND_SECTION if _SECTION_WORD.search(rest) else None
+        else:
+            why = None if heading_shaped(rest) else UNSHAPED
+        if why:
+            row.update(role=None, disposition="unresolved", reason=why, depth=None)
+            demoted.append(row["paragraph"])
+    return demoted
 
 
 # ---- what is sent ---------------------------------------------------------------------------------------------------
@@ -268,6 +312,7 @@ def classify(label: str, pkg: DocxPackage, call: Callable[[str], Any], *, chunk:
     from .ops.selectors import StyleSheet
     rows = analyze_structure(pkg, canadian=True)["paragraphs"]
     reading = OutlineReading(label, hashlib.sha256(pkg.data).hexdigest(), rows)
+    reading.demoted = demote_unshaped(rows)
     decide = [r["paragraph"] for r in rows if r["disposition"] == "unresolved"]
     if not decide:
         reading.note = "the structure reader placed every paragraph in the outline: nothing was sent to Claude"
@@ -339,6 +384,7 @@ def result(reading: OutlineReading) -> Dict[str, Any]:
         "left_out_of_the_outline_by_claude": left_out,
         "unplaced": [{"paragraph": i, "why": why} for i, why in sorted(reading.unplaced.items())],
         "excluded_by_the_reader": excluded,
+        "typed_headings_sent_to_claude": reading.demoted,
         "claude_calls": reading.calls,
         "note": (reading.note + ". " if reading.note else "")
         + ("Paragraph numbers count every paragraph of the document body from 0. A selector names them under this "
