@@ -31,6 +31,9 @@ interface Props {
   onRemoveAll: () => void;
   /** Edited copies exist: the confirmation says they leave the list with their documents. */
   hasCopies: boolean;
+  /** Why the attachments cannot change now ("" when they can): a run's saved copies wait on its recovery (the
+   *  view's `recovery_blocked`); attaching or removing would end that check first. */
+  blocked: string;
 }
 
 const BUSY_TIP = "Finish or stop the current work first";
@@ -63,12 +66,15 @@ function AttachmentCard({
   attachment,
   scope,
   busy,
+  busyTip,
   showKind,
   onRemove,
 }: {
   attachment: Attachment;
   scope: "" | "To do" | "Working on";
   busy: boolean;
+  /** Why the ✕ waits while `busy`. */
+  busyTip: string;
   /** The kind tag (Picture, Table); the template's own section needs none. */
   showKind: boolean;
   onRemove: (attachment: Attachment) => void;
@@ -97,7 +103,7 @@ function AttachmentCard({
           <p className="mt-0.5 text-[12px] leading-snug text-err">{attachment.reason || "This file was left out."}</p>
         )}
       </div>
-      <Tip tip={busy ? BUSY_TIP : `Remove ${attachment.name} from this conversation`}>
+      <Tip tip={busy ? busyTip : `Remove ${attachment.name} from this conversation`}>
         <button
           type="button"
           onClick={() => onRemove(attachment)}
@@ -199,9 +205,10 @@ export default function DocumentsTray({
   onRemove,
   onRemoveAll,
   hasCopies,
+  blocked,
 }: Props) {
-  const held = busy || uploading;
-  const holdTip = uploading ? "Reading the files you added…" : BUSY_TIP;
+  const held = busy || uploading || !!blocked;
+  const holdTip = uploading ? "Reading the files you added…" : busy ? BUSY_TIP : blocked;
   const hasTemplate = attachments.some((a) => a.kind === "template");
   const view = { attachments, todo, focus };
   // Remove all documents asks once before it acts: a list of a dozen documents is one click from empty
@@ -222,6 +229,7 @@ export default function DocumentsTray({
             attachment={attachment}
             scope={scopeTag(attachment, view)}
             busy={held}
+            busyTip={holdTip}
             showKind={section !== "template"}
             onRemove={onRemove}
           />

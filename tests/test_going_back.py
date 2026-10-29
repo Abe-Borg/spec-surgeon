@@ -12,7 +12,7 @@ from pathlib import Path
 import pytest
 
 from make_fixtures import build, build_dirty
-from spec_surgeon.document_task import DocumentTask
+from spec_surgeon.document_task import WORK_TODO, DocumentTask
 from spec_surgeon.gui import Session
 
 TITLE = {"pattern": "SECTION {number} - {title}"}
@@ -316,17 +316,246 @@ def test_a_reopened_window_keeps_a_runs_point_only_while_its_recovery_waits(tmp_
     assert {k: again._pending_undo[k] for k in data["pending_undo"]} == data["pending_undo"]
 
 
-def test_a_runs_point_ends_with_the_request_it_was_taken_for(tmp_path, monkeypatch):
-    # attaching a document while recovery waits voids the plan, and the run's approval with it: no later request's
-    # save of recovered copies may take that point or those steps for its own
-    docs = [document(tmp_path / "First.docx"), document(tmp_path / "Second.docx")]
-    task = recovering_task(tmp_path, monkeypatch, plan(), resp(tool("submit_repair", REPAIR)))
+def waiting_copies(tmp_path, monkeypatch, *replies, journal=None):
+    """Three documents, Third.docx set aside with the ✗ and Second.docx failing its first run: Create delivers
+    First.docx's copy and recovery's preview of Second.docx waits, so First.docx's copy waits on it to join the
+    working set."""
+    docs = [document(tmp_path / f"{n}.docx") for n in ("First", "Second", "Third")]
+    task = recovering_task(tmp_path, monkeypatch, plan(), resp(tool("submit_repair", REPAIR)), *replies,
+                           journal=journal)
     task.attach(docs)
     fail_once(monkeypatch, docs[1])
+    view = task.perform("send", text=REQUEST)
+    view = task.perform("primary", token=view["token"], hold=[str(docs[2])])
+    assert task.session.recovery and view["stage"] == "preview" and list(task.results) == [str(docs[0])]
+    assert task.working == {} and list(task.todo) == [str(docs[2])] and task._pending_steps["steps"]
+    return task, docs
+
+
+def held_state(task):
+    return {"results": dict(task.results), "working": dict(task.working), "todo": dict(task.todo),
+            "attachments": [(a.path, a.template, a.reference) for a in task.attachments], "mode": task.mode,
+            "pending": (task._pending_undo, task._pending_steps), "recovery": task.session.recovery,
+            "decisions": list(task.decisions), "token": task.action_token()}
+
+
+HOLDING_ACTIONS = {
+    "attach a document": lambda task, docs, tmp: task.attach([document(tmp / "Fourth.docx")]),
+    "attach the template": lambda task, docs, tmp: task.attach([document(tmp / "Template.docx")], template=True),
+    "remove a delivered document": lambda task, docs, tmp: task.remove(docs[0]),
+    "remove the one being checked": lambda task, docs, tmp: task.remove(docs[1]),
+    "remove every document": lambda task, docs, tmp: task.remove_documents(),
+    "turn on Obliterate": lambda task, docs, tmp: task.set_mode("obliterate", acknowledged=True),
+    "switch to Safe mode": lambda task, docs, tmp: task.set_mode("safe"),
+    "put a document back": lambda task, docs, tmp: task.put_back(docs[2]),
+    "work on the to-do list": lambda task, docs, tmp: task.start_todo(),
+}
+
+
+@pytest.mark.parametrize("action", sorted(HOLDING_ACTIONS))
+def test_an_action_that_would_end_a_recovery_waits_while_its_runs_copies_do(tmp_path, monkeypatch, action):
+    # The run delivered First.docx's copy and recovery still checks Second.docx: First.docx's copy joins the working
+    # set when the check ends. An attach, a removal, a mode change, Put back or a pass over the to-do list would drop
+    # the recovery first and leave that copy listed but built on by nothing — so it waits, with the reason, as Discard
+    # does, and nothing changes
+    task, docs = waiting_copies(tmp_path, monkeypatch)
+    task.obliterate_allowed = True                                     # Settings → Advanced shows it
+    before = held_state(task)
+    view = task.view()
+    assert view["recovery_blocked"].startswith("Some copies from this request are saved while the rest are checked "
+                                               "again") and view["recovery_blocked"].endswith(
+        "Finish it first: create the copies it fixed.")
+    assert view["discard"] == "" and view["working"]["undo_blocked"] == ""   # nothing to undo yet
+    with pytest.raises(ValueError, match="Some copies from this request are saved"):
+        HOLDING_ACTIONS[action](task, docs, tmp_path)
+    assert held_state(task) == before
+    # the recovery's own button ends it: both copies join the working set as one run, with the plan approved
+    view = task.perform("primary", token=view["token"])
+    assert view["stage"] == "done" and task.generation == 1 and view["recovery_blocked"] == ""
+    assert sorted(task.working) == sorted(str(d) for d in docs[:2])
+    [row] = task._done_view()
+    assert row["request"] == REQUEST and row["documents"] == 2 and row["why_not"] == ""
+    assert len(task.undo_points) == 1 and task.undo_points[0]["working"] == {}
+    HOLDING_ACTIONS[action](task, docs, tmp_path)                        # and the action goes on as it always did
+
+
+def test_words_that_would_end_a_recovery_wait_while_its_runs_copies_do(tmp_path, monkeypatch):
+    # At recovery's preview every document it checks is fixed, so words cannot go on within it: a reply would void it
+    # and plan the request again on the originals. While First.docx's copy waits on it, the words are not taken — no
+    # model call, no decision, the preview and its token stand — and the chat says why
+    task, docs = waiting_copies(tmp_path, monkeypatch)
+    before, calls = held_state(task), len(task.session.client.requests)
+    view = task.perform("send", text=AGAIN)
+    assert view["stage"] == "preview" and held_state(task) == before
+    assert len(task.session.client.requests) == calls and AGAIN not in task.word_sources
+    assert [m["text"] for m in task.messages[-2:]] == [AGAIN, view["recovery_blocked"]]
+    view = task.perform("send", text=WORK_TODO)                       # the pass over the to-do list waits too
+    assert held_state(task) == before and task.focus is None
+    assert [m["text"] for m in task.messages[-2:]] == [WORK_TODO, view["recovery_blocked"]]
+    task.perform("primary", token=view["token"])
+    assert task.generation == 1 and len(task.working) == 2 and task._done_view()[0]["why_not"] == ""
+    view = task.perform("send", text=WORK_TODO)                       # once the check ends, the pass begins
+    assert task.focus == {**task.focus, "documents": [str(docs[2])]}
+
+
+def test_undo_and_a_recipe_wait_with_the_reason_while_a_runs_copies_wait(tmp_path, monkeypatch):
+    # an earlier run to undo: while the second run's First.docx copy waits on the check of Second.docx, Undo would take
+    # the first run off and drop the check — it waits, saying why, and so does a saved recipe
+    docs = [document(tmp_path / "First.docx"), document(tmp_path / "Second.docx")]
+    italic = {"candidate": {"kind": "spec", "spec": ITALIC}}
+    task = recovering_task(tmp_path, monkeypatch, plan(), plan(ITALIC, "t2"), resp(tool("submit_repair", italic)))
+    task.attach(docs)
     task.perform("primary", token=task.perform("send", text=REQUEST)["token"])
-    assert task.session.recovery and task._pending_undo is not None and task._pending_steps is not None
-    task.attach([document(tmp_path / "Third.docx")])
+    first = dict(task.working)
+    fail_once(monkeypatch, Path(first[str(docs[1])]))
+    view = task.perform("primary", token=task.perform("send", text=AGAIN)["token"])
+    reason = view["recovery_blocked"]
+    assert task.session.recovery and reason.startswith("Some copies from this request are saved")
+    assert view["working"]["undo_blocked"] == reason and view["recipe_blocked"] == reason
+    with pytest.raises(ValueError, match="Some copies from this request are saved"):
+        task.undo()
+    assert task.working == first and task.generation == 1 and len(task.undo_points) == 1
+    task.perform("primary", token=view["token"])
+    assert task.generation == 2 and task.view()["working"]["undo_blocked"] == ""
+    task.undo()
+    assert task.working == first
+
+
+def test_the_reason_names_the_way_out_the_check_is_at(tmp_path, monkeypatch):
+    # a check still asking about a document: answer it, save what is ready, or set the rest aside
+    task, docs = waiting_copies(tmp_path, monkeypatch)
+    task.session.recovery.files[0].status = "UNRESOLVED"
+    assert task._recovery_blocked().endswith("Finish it first: answer its question, save the ready copies, or set "
+                                             "the rest aside for later.")
+    task.stage = "resume"                                              # a reopened window: Continue goes on with it
+    assert task._recovery_blocked().endswith("Finish it first: continue it.")
+
+
+def test_a_reopened_window_holds_them_while_its_recovery_waits_to_continue(tmp_path, monkeypatch):
+    # The journal keeps the recovery to resume; until Continue loads it, the session holds none — Drop this request,
+    # Undo or an attach would still have dropped it, and the copy it waits for with it
+    journal = tmp_path / "conversation.json"
+    task, docs = waiting_copies(tmp_path, monkeypatch, journal=journal)
+    again = recovering_task(tmp_path, monkeypatch, journal=journal)
+    assert again.restore() and again.session.recovery is None and again._resume_recovery
+    view = again.view()
+    assert view["stage"] == "resume" and view["discard"] == ""
+    assert view["recovery_blocked"].endswith("Finish it first: continue it.")
+    with pytest.raises(ValueError, match="Some copies from this request are saved"):
+        again.discard_preview()
+    with pytest.raises(ValueError, match="Some copies from this request are saved"):
+        again.attach([document(tmp_path / "Fourth.docx")])
+    assert again._recipe_blocked() == view["recovery_blocked"]
+    view = again.perform("primary", token=again.action_token())       # Continue loads the check again
+    assert again.session.recovery and view["stage"] == "preview"
+    again.perform("primary", token=view["token"])
+    assert again.generation == 1 and len(again.working) == 2 and again._done_view()[0]["why_not"] == ""
+
+
+def test_a_window_reopened_in_safe_mode_goes_back_to_default_for_the_check(tmp_path, monkeypatch):
+    # Safe mode cannot go on with a check (no AI step there): its buttons wait, and the way to Default mode stays open
+    journal = tmp_path / "conversation.json"
+    waiting_copies(tmp_path, monkeypatch, journal=journal)
+    from spec_surgeon.recovery import RecoveryOptions
+    from spec_surgeon.saved_recipes import Store
+    again = DocumentTask(Session(client=FakeClient(), out_root=tmp_path / "out", visual_check=False), render=False,
+                         journal=journal, mode="safe", recipes=Store(tmp_path / "config" / "recipes.json"))
+    monkeypatch.setattr(again, "_recovery_options", lambda: RecoveryOptions(render=False, critic_review=False,
+                                                                           visual_review=False))
+    assert again.restore() and again.mode == "safe"
+    view = again.perform("recipe", recipe="remove_highlight", inputs={})
+    assert view["stage"] == "resume" and again._resume_recovery
+    assert again.messages[-1]["text"].endswith("Switch to Default mode to do that.")
+    again.set_mode("default")
+    view = again.perform("primary", token=again.action_token())
+    again.perform("primary", token=view["token"])
+    assert again.generation == 1 and len(again.working) == 2
+
+
+def test_a_run_that_delivered_nothing_ends_with_its_recovery(tmp_path, monkeypatch):
+    # Nothing waits on the check: an attach voids it as before, the request stays open to be checked again, and the
+    # run's undo point and steps end with it
+    docs = [document(tmp_path / "First.docx"), document(tmp_path / "Second.docx")]
+    task = recovering_task(tmp_path, monkeypatch, plan(), resp(tool("submit_repair", REPAIR)))
+    task.attach(docs[:1])
+    fail_once(monkeypatch, docs[0])
+    task.perform("primary", token=task.perform("send", text=REQUEST)["token"])
+    assert task.session.recovery and task.results == {} and task._pending_undo is not None
+    assert task.view()["recovery_blocked"] == ""
+    task.attach(docs[1:])
     assert task.session.recovery is None and task._pending_undo is None and task._pending_steps is None
+    assert task.stage == "resume" and task.decisions == [REQUEST] and task.working == {} and task.runs == []
+
+
+def test_words_that_end_a_reopened_windows_check_leave_nothing_of_it_to_resume(tmp_path, monkeypatch):
+    # a run that delivered nothing, its check kept by the journal: a new message ends it, and no later Continue or
+    # reopen goes back to it
+    journal = tmp_path / "conversation.json"
+    source = document(tmp_path / "Spec.docx")
+    task = recovering_task(tmp_path, monkeypatch, plan(), resp(tool("submit_repair", REPAIR)), journal=journal)
+    task.attach([source])
+    fail_once(monkeypatch, source)
+    task.perform("primary", token=task.perform("send", text=REQUEST)["token"])
+    again = recovering_task(tmp_path, monkeypatch, plan(ITALIC, "t2"), journal=journal)
+    assert again.restore() and again._resume_recovery and again._pending_undo is not None
+    assert again.view()["recovery_blocked"] == ""
+    view = again.perform("send", text=AGAIN)
+    assert view["stage"] == "preview" and again._resume_recovery is None and again._pending_undo is None
+    assert json.loads(journal.read_text(encoding="utf-8"))["recovery"] is None
+
+
+def test_an_outcome_plan_after_words_that_ended_a_runs_recovery_keeps_its_own_point_and_steps(tmp_path, monkeypatch):
+    # A run that delivered nothing, a revision typed at its recovery's preview: the words end the recovery (they are
+    # not about a document it still checks), and with it the run's undo point and steps. The outcome plan the
+    # planner then offers is the user's pick; its save takes its own point and keeps no plan for a recipe — never the
+    # earlier run's, which made none of these copies
+    from spec_surgeon import continuous_recovery, saved_recipes
+    from spec_surgeon.recovery import RecoveryOptions
+    from test_document_task import CONTRACT
+    monkeypatch.setattr(continuous_recovery, "options_for", lambda *a, **kw:
+                        RecoveryOptions(render=False, critic_review=False, visual_review=False))
+    source = document(tmp_path / "Spec.docx")
+    task = recovering_task(tmp_path, monkeypatch, plan(), resp(tool("submit_repair", REPAIR)),
+                           resp(tool("propose_plan", {"contract": CONTRACT, "rationale": "Format the title."})))
+    task.attach([source])
+    fail_once(monkeypatch, source)
+    view = task.perform("primary", token=task.perform("send", text=REQUEST)["token"])
+    assert task.session.recovery and view["stage"] == "preview" and task._pending_steps["steps"]
+    view = task.perform("send", text=AGAIN)
+    assert task.session.recovery is None and task._pending_undo is None and task._pending_steps is None
+    [choice] = view["choices"]
+    assert view["stage"] == "question" and choice["label"] == "Use these outcomes and continue"
+    view = task.perform("choose", choice_id=choice["id"])
+    assert task.session.recovery and view["stage"] == "preview"
+    task.perform("primary", token=view["token"])
+    assert task.stage == "done" and task.generation == 1 and list(task.working) == [str(source)]
+    [row] = task._done_view()
+    assert row["request"] == REQUEST and row["steps"] == [] and row["why_not"] == saved_recipes.WHY_NOT_KEPT
+    assert task.undo_points[0]["working"] == {}
+    task.undo()
+    assert task.working == {} and task.runs == []
+
+
+def test_the_window_refuses_them_with_the_reason(tmp_path, monkeypatch):
+    # the routes answer 400 with the reason, never a 500, and a dropped file is refused before a byte is written
+    from fastapi.testclient import TestClient
+    from spec_surgeon.settings import Settings
+    from spec_surgeon.web.server import TOKEN_HEADER, WindowState, create_app
+    task, docs = waiting_copies(tmp_path, monkeypatch)
+    state = WindowState(task, Settings(), token="t-0123456789", version="1.6.0")
+    client = TestClient(create_app(state), headers={TOKEN_HEADER: "t-0123456789"})
+    reason = client.get("/api/state").json()["recovery_blocked"]
+    assert reason.startswith("Some copies from this request are saved")
+    fourth = document(tmp_path / "Fourth.docx")
+    for route, body in (("/api/attach", {"paths": [str(fourth)]}), ("/api/remove", {"path": str(docs[0])}),
+                        ("/api/remove-documents", None), ("/api/mode", {"mode": "safe"}),
+                        ("/api/put-back", {"path": str(docs[2])})):
+        answer = client.post(route, json=body) if body is not None else client.post(route)
+        assert answer.status_code == 400 and answer.json() == {"error": reason}, route
+    uploads = Path(task.session.out_root) / "attachments"
+    answer = client.post("/api/upload", files=[("files", ("Fifth.docx", fourth.read_bytes(), "application/octet-stream"))])
+    assert answer.status_code == 400 and answer.json() == {"error": reason} and not uploads.exists()
+    assert task.session.recovery and list(task.results) == [str(docs[0])] and task.working == {}
 
 
 def test_discard_during_a_pass_puts_its_documents_back_on_the_to_do_list(tmp_path):

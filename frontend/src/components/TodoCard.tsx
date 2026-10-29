@@ -7,6 +7,9 @@ import Tip from "./Tip";
 interface Props {
   items: TodoItem[];
   busy: boolean;
+  /** Why the pass waits ("" when it does not): a run's saved copies wait on its recovery (the view's
+   *  `recovery_blocked`). Going to Default mode never waits: that is where the check goes on. */
+  blocked?: string;
   /** Sends the reply that begins the pass, as a chip: the user's decision, never their wording. */
   onSend: (text: string, chip?: boolean) => void;
   /** Safe mode: the documents wait for Default mode, where the conversation can plan them. */
@@ -20,7 +23,7 @@ interface Props {
  * could not be applied to them or their copy could not be made) wait here, each with why; one button begins the
  * pass over them (the same as typing “Work on the documents I set aside”).
  */
-export default function TodoCard({ items, busy, onSend, onDefaultMode, tourActive = false }: Props) {
+export default function TodoCard({ items, busy, blocked = "", onSend, onDefaultMode, tourActive = false }: Props) {
   const several = items.length > 1;
   const held = busy || tourActive;
   return (
@@ -59,11 +62,11 @@ export default function TodoCard({ items, busy, onSend, onDefaultMode, tourActiv
             </button>
           </Tip>
         ) : (
-          <Tip tip={tourActive ? TOUR_HOLD : busy ? "Finish or stop the current work first" : `Sends “${WORK_TODO}”`}>
+          <Tip tip={tourActive ? TOUR_HOLD : busy ? "Finish or stop the current work first" : blocked || `Sends “${WORK_TODO}”`}>
             <button
               type="button"
               className={primaryBtn}
-              disabled={held}
+              disabled={held || !!blocked}
               onClick={() => onSend(WORK_TODO, true)}
               data-capability="todo.card"
             >

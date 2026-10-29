@@ -201,6 +201,19 @@ specifications, Windows and Word, and only the owner can do them. Record what a 
   Create. **Undo the last change** then shows the copies from before the request, not its first copies, and the next
   request builds on those. Again with the window closed from Task Manager while recovery's preview waits: after the
   restart and Continue, the same holds, and the earlier changes in the list can still be undone one by one.
+- **A run's saved copies wait on its recovery (built 2026-10-29):** in Default mode with Word rendering over a real
+  batch, a request whose run saves some copies and sends one document to recovery. While recovery's preview or its
+  question waits, the document tray's buttons and ✕, **Remove all documents**, Safe and Obliterate in the mode switch
+  and **Put back** are greyed, each hover text saying that copies from this request are saved while the rest are
+  checked again and how to finish (create the copies it fixed, or answer its question, save the ready copies or set
+  the rest aside); a file dropped on the window is refused with the same words and nothing is added; a typed
+  "make it italic instead" at recovery's preview shows in the chat with that reason and no AI step runs. Create on the
+  preview (or Set the rest aside for later): What you've done so far lists the request once with every saved copy,
+  the next request builds on all of them (open one in Word: it carries the first change), Undo the last change takes
+  the whole run off, and the greyed controls work again. Again with the window closed from Task Manager while the
+  preview waits: after the restart the same controls and **Drop this request** wait until Continue brings the
+  preview back. With a request whose only document goes to recovery, attaching a second document still works as
+  before (the request is checked again over both).
 - **What you've done so far (built 2026-10-29):** over a real batch in Safe mode, Remove all comments, Accept all
   tracked changes and Match headers and footers to the template, each created in turn; the list under the copies
   names the three in order, the newest marked LATEST, with "All N documents" or which documents did not get one and

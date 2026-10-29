@@ -27,7 +27,7 @@ export type ChatItem =
       limitText: string;
       canContinue: boolean;
     }
-  | { kind: "todo"; key: string; items: TodoItem[] };
+  | { kind: "todo"; key: string; items: TodoItem[]; blocked: string };
 
 /** The key of the conversation's entry at `index` (a message, or the live bubble after the last one). */
 export function entryKey(index: number): string {
@@ -59,7 +59,8 @@ export function todoFor(state: UiState): ChatItem | null {
   if (view.busy || state.live) return null;
   if ((view.todo ?? []).length === 0 || (view.focus ?? []).length > 0) return null;
   if (view.stage !== "done" && view.stage !== "empty" && view.stage !== "resume") return null;
-  return { kind: "todo", key: "todo", items: view.todo };
+  // a reopened window whose recovery waits to continue rests too: the pass waits on that check (`recovery_blocked`)
+  return { kind: "todo", key: "todo", items: view.todo, blocked: view.recovery_blocked ?? "" };
 }
 
 /** The choices and chips to offer right now, or null when none apply. */

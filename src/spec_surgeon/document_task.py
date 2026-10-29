@@ -59,6 +59,10 @@ LEFT_OUT_REASON = "You asked to leave it out of this request; it stays as it is.
 WORK_TODO = "Work on the documents I set aside"  # the reply (a chip, typed) that begins the pass over the to-do list
 # the reply (a chip, typed) that ends a recovery by putting the documents it could not fix on the to-do list
 SET_ASIDE_REST = "Set the rest aside for later"
+# why an action that would end the recovery waits while a run's saved copies wait on it (``_recovery_blocked``): those
+# copies join the working set when the check ends, the way out given by the stage the check is at
+COPIES_WAIT = ("Some copies from this request are saved while the rest are checked again; they join your edited copies "
+               "when that check ends. Finish it first: {how}.")
 # why a document is on the to-do list (``todo[...]["why"]``), and the sentence the window and the model are given
 WHY_HELD, WHY_ASKED, WHY_REFUSED, WHY_FAILED = "held", "asked", "refused", "failed"
 HELD_REASON = "You marked its preview as needing more work."
@@ -597,7 +601,9 @@ class DocumentTask:
         self.session._set_outcome()
         self.session.end_conversation()
         self._resume_recovery = None
-        self._pending_undo = self._pending_steps = None        # a run still being checked ends with the plan
+        # a run still being checked ends with the plan: one that delivered nothing (``_recovery_blocked`` holds every
+        # action that would end one whose copies wait), or Start over
+        self._pending_undo = self._pending_steps = None
         self._revision += 1
         if self.mode == "safe" or recipe_run:
             # nothing to continue without the conversation: a button press, or a saved recipe's run, is planned again
@@ -624,6 +630,9 @@ class DocumentTask:
             return
         if template and len(checked) != 1:
             raise ValueError("Choose one template document.")
+        blocked = self._recovery_blocked()
+        if blocked:
+            raise ValueError(blocked)
         before = (self.documents(), self.template(), self.references())
         had_button = self.session.model_free and self.stage == "preview"
         had_recipe = self.session.outcome_source == "saved"
@@ -717,6 +726,9 @@ class DocumentTask:
                          f"as the template instead.")
 
     def remove(self, path, *, template=False):
+        blocked = self._recovery_blocked()
+        if blocked:
+            raise ValueError(blocked)
         path = Path(path)
         self.attachments = [a for a in self.attachments if not (a.path == path and a.template == template)]
         had_copies = bool(self.working)
@@ -763,6 +775,9 @@ class DocumentTask:
         """**Remove all documents**: every Word document in the list (a refused one too) taken out of this
         conversation through ``remove``, one at a time, so each leaves exactly as its ✕ would take it; the template and
         the pictures and tables stay. The files themselves are untouched. Returns how many were removed."""
+        blocked = self._recovery_blocked()
+        if blocked:
+            raise ValueError(blocked)
         listed = [a.path for a in self.attachments if not a.template and not a.reference]
         for path in listed:
             self.remove(path)
@@ -1032,12 +1047,53 @@ class DocumentTask:
                         "why_not": "" if steps else str(kept.get("why_not") or saved_recipes.WHY_NOT_KEPT)})
         return out
 
+    def _recovery_waits(self) -> bool:
+        """Recovery checks documents again: loaded (``Session.recovery``), stopped before it answered
+        (``recovery_checkpoint``: the spending check or Stop came first), with layouts still waiting for theirs, or kept
+        by the journal to resume (``_resume_recovery``, ``_resume_layouts``)."""
+        s = self.session
+        return bool(s.recovery is not None or s.recovery_checkpoint or s.pending_layout_recovery
+                    or self._resume_recovery or self._resume_layouts)
+
+    def _copies_waiting(self) -> List[str]:
+        """The attached originals whose copies a run delivered while recovery still checks its other documents: the
+        window lists them, and they join the working set when recovery ends (``_advance_generation`` moves exactly
+        these). None while no recovery waits."""
+        if not self._recovery_waits():
+            return []
+        attached = {str(a.path) for a in self.attachments if not a.template and not a.reference}
+        return [k for k, v in self.results.items()
+                if k in attached and Path(v).is_file() and self.working.get(k) != str(Path(v).resolve())]
+
+    def _recovery_blocked(self) -> str:
+        """Why an action that would end the recovery waits now; '' when none does. An attach, a removal, a mode change
+        that voids the plan or strands the check (Safe mode cannot go on with it), Put back, a pass over the to-do
+        list, a Safe-mode button, or words that do not go on within the recovery would drop it while copies its run
+        delivered wait to join the working set: they would stay listed, but nothing would build on them, What you've
+        done so far would not name them, and Undo could not take them off. So they wait, as Discard does
+        (``discard_kind``), until the recovery's own buttons end it: Save the ready copies, Set the rest aside. A run
+        that delivered nothing loses nothing: those actions go on, and the run's undo point and steps end with the
+        recovery (``_invalidate``, ``_send``)."""
+        if not self._copies_waiting():
+            return ""
+        r = self.session.recovery
+        if r is None or self.stage in ("resume", "budget"):
+            how = "continue it"
+        elif all(f.status == "READY" for f in r.files):
+            how = "create the copies it fixed"
+        else:
+            how = "answer its question, save the ready copies, or set the rest aside for later"
+        return COPIES_WAIT.format(how=how)
+
     def _undo_blocked(self) -> str:
         """Why the last change cannot be undone now; '' when it can."""
         if not self.undo_points:
             return "There is nothing to undo."
         if self.stage == "preview" and self.session.recovery is None:
             return "Discard the preview first."
+        held = self._recovery_blocked()
+        if held:
+            return held
         if self.stage not in ("done", "empty", "resume") or self.session.recovery is not None:
             return ("Drop the request that is open first, or finish it."
                     if self.discard_kind() == "request" else "Finish the request that is open first.")
@@ -1062,7 +1118,7 @@ class DocumentTask:
         a custom method being written, a pause at the spending check), or ``""``. Never while recovery checks files
         after a run: its copies are saved with their own button and the rest set aside (``SET_ASIDE_REST``)."""
         s = self.session
-        if s.recovery is not None or getattr(s.conversation, "recovery_active", False):
+        if s.recovery is not None or getattr(s.conversation, "recovery_active", False) or self._copies_waiting():
             return ""
         if self.stage == "preview":
             return "preview"
@@ -1081,6 +1137,8 @@ class DocumentTask:
         written or deleted."""
         kind = self.discard_kind()
         if not kind:
+            if self._recovery_blocked():
+                raise ValueError(self._recovery_blocked())
             if self.session.recovery is not None:
                 raise ValueError("The documents are being checked again: save the ready copies, or set the rest "
                                  "aside for later.")
@@ -1312,7 +1370,10 @@ class DocumentTask:
             return
         if text.casefold() == WORK_TODO.casefold():
             self.say(text, "user")
-            if self.todo:
+            blocked = self._recovery_blocked() if self.todo else ""
+            if blocked:
+                self.say(blocked)
+            elif self.todo:
                 self.start_todo()
             else:
                 self.say("Nothing is set aside right now; every document is in the plan.")
@@ -1345,16 +1406,32 @@ class DocumentTask:
             self.say(text, "user")
             self._take(choices[picks[0]], log)
         else:
+            s = self.session
+            talking = s.conversation is not None and s.conversation_matches(s.conversation.request)
+            # words go on within the recovery only about the documents it still checks; any other words end it
+            # (a reply voids the outcome, a new request compiles afresh)
+            to_recovery = (s.recovery_takes_words() if talking else
+                           s.recovery is not None and any(f.status != "READY" for f in s.recovery.files))
+            if not to_recovery and self._recovery_waits():
+                blocked = self._recovery_blocked()
+                if blocked:
+                    # copies its run delivered wait on it: the words are not taken, and nothing else changes
+                    self.say(text, "user")
+                    self.say(blocked)
+                    return
+                # the run delivered nothing: it ends with its recovery, and so do its undo point and steps (an outcome
+                # plan these words lead to takes its own at its first save) and a check the journal kept to resume
+                self._pending_undo = self._pending_steps = None
+                self._resume_recovery, self._resume_layouts = None, []
             self.say(text, "user")
             self.decisions.append(text)
             if not chip:
                 self.word_sources.append(text)
             self.save(in_progress=True)
-            s = self.session
-            if s.conversation is not None and s.conversation_matches(s.conversation.request):
+            if talking:
                 with self._conversation():
                     s.reply(text, render=self.render, log=log, approve=not chip)
-            elif s.recovery is not None and any(f.status != "READY" for f in s.recovery.files):
+            elif to_recovery:
                 s.resolve_remaining(log, request=text, options=self._recovery_options())
             else:
                 self._compile(log)
@@ -1419,6 +1496,11 @@ class DocumentTask:
         if mode == "obliterate" and acknowledged is not True:
             raise ValueError("Read the Obliterate warning and confirm it first.")
         crossing = (self.mode == "obliterate") != (mode == "obliterate")
+        if crossing or (mode == "safe" and self.mode != "safe"):
+            # crossing voids the plan, the recovery with it; Safe mode cannot go on with a check (no AI step there)
+            blocked = self._recovery_blocked()
+            if blocked:
+                raise ValueError(blocked)
         was_safe = self.mode == "safe"
         self.mode = mode
         self.session.unguarded = mode == "obliterate"
@@ -1445,6 +1527,12 @@ class DocumentTask:
         recipe = recipes.BY_ID.get(str(recipe_id))
         if recipe is None:
             raise ValueError("There is no such button.")
+        blocked = self._recovery_blocked()
+        if blocked:
+            # a window reopened in Safe mode over a check that waits: Default mode goes on with it
+            self._revision += 1
+            self.say(f"{recipe.label}: {blocked} Switch to Default mode to do that.")
+            return
         files = s.files(outcome=False)
         ctx = recipes.Context(files, self.template(), self.references())
         try:
@@ -1507,6 +1595,8 @@ class DocumentTask:
         does; in Default and Obliterate it is a request of its own, so an open one is finished or dropped first."""
         if self.recipes is None:
             return "Recipes are not available here."
+        if self._recovery_blocked():
+            return self._recovery_blocked()
         if self.session.recovery is not None:
             return "The documents are being checked again: save the ready copies, or set the rest aside for later."
         if self.mode == "safe":
@@ -2053,6 +2143,9 @@ class DocumentTask:
         key = str(Path(path))
         if key not in self.todo:
             raise ValueError("That document is not on your to-do list.")
+        blocked = self._recovery_blocked()
+        if blocked:
+            raise ValueError(blocked)
         before = self.documents()
         entry = self.todo.pop(key)
         self._sync()
@@ -2074,6 +2167,9 @@ class DocumentTask:
         this pass delivers its copies."""
         if not self.todo:
             return
+        blocked = self._recovery_blocked()
+        if blocked:
+            raise ValueError(blocked)
         decisions = list(next(iter(self.todo.values())).get("decisions") or [])
         group = {k: v for k, v in self.todo.items() if list(v.get("decisions") or []) == decisions}
         rest = {k: v for k, v in self.todo.items() if k not in group}
@@ -2702,6 +2798,7 @@ class DocumentTask:
                 "discard": self.discard_kind(),
                 "saved_recipes": self.recipes_view(),
                 "recipe_blocked": self._recipe_blocked(),
+                "recovery_blocked": self._recovery_blocked(),
                 "cost": self._budget.spent_usd,
                 "blocking": blocking}
 

@@ -371,6 +371,7 @@ class WindowState:
                 "discard": "" if busy else raw.get("discard", ""),
                 "saved_recipes": [dict(r) for r in raw.get("saved_recipes") or []],
                 "recipe_blocked": raw.get("recipe_blocked", ""),
+                "recovery_blocked": raw.get("recovery_blocked", ""),
                 "tutorial": self.tutorial_block(), "safe_note_hidden": bool(self.settings.safe_note_hidden),
                 "update": self.updates.state() if self.updates else _no_update()}
 
@@ -672,6 +673,9 @@ def create_app(state: WindowState, *, dev: bool = False) -> FastAPI:
         file and the remedy (``upload_failure``), never a 500 and never a shortened name; nothing is attached then."""
         if state.busy:
             return busy_error()
+        blocked = state.task._recovery_blocked()     # before a byte is written: attach would refuse them anyway
+        if blocked:
+            return error(blocked)
         folder = Path(state.task.session.out_root) / "attachments" / time.strftime("%Y%m%d-%H%M%S")
         saved: List[str] = []
         name = ""
@@ -714,17 +718,23 @@ def create_app(state: WindowState, *, dev: bool = False) -> FastAPI:
             body = await json_object(request)
         except ValueError as e:
             return error(str(e))
-        state.task.remove(str(body.get("path") or ""), template=bool(body.get("template")))
+        try:
+            state.task.remove(str(body.get("path") or ""), template=bool(body.get("template")))
+        except ValueError as e:
+            return error(str(e))
         return state.view()
 
     @app.post("/api/remove-documents")
     def remove_documents():
         """**Remove all documents**: every Word document out of this conversation at once
         (``DocumentTask.remove_documents``); the template, the pictures and tables and the files themselves stay.
-        409 while work runs; else the view."""
+        409 while work runs, 400 while a recovery holds the documents; else the view."""
         if state.busy:
             return busy_error()
-        state.task.remove_documents()
+        try:
+            state.task.remove_documents()
+        except ValueError as e:
+            return error(str(e))
         return state.view()
 
     @app.post("/api/send")

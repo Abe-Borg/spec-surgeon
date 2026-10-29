@@ -15,6 +15,7 @@ import {
   OBLITERATE_KEPT,
   converses,
   modeChoice,
+  modeHeld,
   unverifiedLine,
 } from "../src/lib/modes.ts";
 import { normalizeView } from "../src/lib/view.ts";
@@ -68,4 +69,22 @@ test("the view keeps Obliterate and a copy's failed checks; an unknown mode read
   );
   assert.equal(unverifiedLine([]), "");
   assert.equal(unverifiedLine(undefined), "");
+});
+
+test("while a run's saved copies wait on its recovery, the switches that would end the check wait with its reason", () => {
+  const why = "Some copies from this request are saved while the rest are checked again.";
+  const view = (mode: Mode, recovery_blocked = why) => ({ mode, recovery_blocked });
+  // across Obliterate the plan is void, the check with it; Safe mode cannot go on with a check
+  assert.equal(modeHeld(view("default"), "obliterate"), why);
+  assert.equal(modeHeld(view("default"), "safe"), why);
+  assert.equal(modeHeld(view("obliterate"), "default"), why);
+  assert.equal(modeHeld(view("obliterate"), "safe"), why);
+  assert.equal(modeHeld(view("safe"), "obliterate"), why);
+  // Safe to Default stays open (a window reopened in Safe mode goes on with the check there); the mode it is in too
+  assert.equal(modeHeld(view("safe"), "default"), "");
+  assert.equal(modeHeld(view("default"), "default"), "");
+  for (const mode of MODES) for (const chosen of MODES) assert.equal(modeHeld(view(mode, ""), chosen), "");
+  assert.equal(normalizeView({ recovery_blocked: why }).recovery_blocked, why);
+  assert.equal(normalizeView({}).recovery_blocked, "");
+  assert.equal(normalizeView({ recovery_blocked: 3 }).recovery_blocked, "");
 });

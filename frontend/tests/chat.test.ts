@@ -245,6 +245,11 @@ test("the to-do card closes the transcript once copies are saved and documents w
   assert.equal(todoFor(state({ ...done, stage: "question" })), null);
   assert.ok(todoFor(state({ ...done, stage: "resume" })));
   assert.equal(todoFor(state({ ...done, todo: [] })), null);
+  // a reopened window whose recovery waits to continue rests too: the card says why its pass waits
+  const waiting = todoFor(state({ ...done, stage: "resume", recovery_blocked: "Finish it first: continue it." }));
+  assert.equal(waiting?.kind === "todo" && waiting.blocked, "Finish it first: continue it.");
+  const free = todoFor(state(done));
+  assert.equal(free?.kind === "todo" && free.blocked, "");
   assert.equal(WORK_TODO, "Work on the documents I set aside");               // the server's exact words
   assert.equal(SET_ASIDE_REST, "Set the rest aside for later");
 });

@@ -293,6 +293,7 @@ export default function Chat({
                       <TodoCard
                         key={item.key}
                         items={item.items}
+                        blocked={item.blocked}
                         busy={busy}
                         tourActive={tourActive}
                         onSend={onSend}
