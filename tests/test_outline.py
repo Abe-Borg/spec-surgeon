@@ -146,6 +146,20 @@ def test_an_api_error_keeps_what_was_read_and_stops_sending():
     assert set(reading.unplaced) == set(UNRESOLVED) and "overloaded" in reading.unplaced[2]
 
 
+def test_a_failed_call_keeps_an_earlier_windows_own_reasons():
+    answers = [roles(*ALL[1:2], tid="a"), roles(*ALL[1:2], tid="b")]       # window 1 answers 3 only, twice
+
+    def call(message):
+        if answers:
+            return answers.pop(0)
+        raise api_error("Overloaded", status=529)
+    reading = outline.classify("spec.docx", DocxPackage(SPEC), call, chunk=2,
+                               failed=lambda e: "overloaded" if llm.is_api_error(e) else None)
+    assert "did not give it one role" in reading.unplaced[2]                 # window 1's reason stands
+    assert "overloaded" in reading.unplaced[9] and "overloaded" in reading.unplaced[10]
+    assert reading.proposals[3].role == "part"
+
+
 def test_a_defect_in_the_call_propagates():
     def call(message):
         raise AssertionError("a defect")

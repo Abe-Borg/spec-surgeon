@@ -234,7 +234,8 @@ jobs). Details: `docs/CONVERSATIONAL_DESKTOP.md`.
     `config_dir()\recipes.json`, each change read, made and written atomically under `recipes.json.lock`, which every
     window takes). A step is a Safe-mode button and
     its form, or the user's words and the plan they approved (`portable_plan`: a custom method, bindings, typed or bound
-    slot fills and per-occurrence capitalisation are refused with the reason; unticked occurrences dropped), with the
+    slot fills, per-occurrence capitalisation and paragraphs chosen per document by read_outline
+    (`indices_by_document`) are refused with the reason; unticked occurrences dropped), with the
     words it places (`compiler.placed_words` at approval). Taken at approval (`DocumentTask._steps_now` → `run_steps`,
     journalled beside `runs`). A run (`build_run`, `DocumentTask._saved_recipe`) builds every kept step from the
     documents attached now (a plan's template, picture or table remapped onto the attached one, `remap` — the owner's

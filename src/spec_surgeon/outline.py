@@ -338,7 +338,7 @@ def classify(label: str, pkg: DocxPackage, call: Callable[[str], Any], *, chunk:
                     raise
                 reading.proposals.update(kept)
                 for i in decide:
-                    if i not in reading.proposals:
+                    if i not in reading.proposals and i not in reading.unplaced:
                         reading.unplaced[i] = f"Claude's reading could not be made ({why})"
                 reading.note = "Claude's reading stopped at a failed call; what it read before is kept"
                 return reading
