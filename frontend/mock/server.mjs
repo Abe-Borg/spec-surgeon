@@ -260,6 +260,14 @@ const WARNINGS = [
   "21 05 00 Common Work Results, page 7: the last line of article 1.4 moved to the next page after the font change; nothing is cut off.",
   "21 05 00 Common Work Results, page 16: the new page carries only the end-of-section line.",
 ];
+/** The notes under Worth knowing (docs/WEB_API.md `worth_knowing`): the footer's old words, which the plan's footer
+ *  replacement leaves in a body, as the server words it (ops/elsewhere.py, C3). They follow the rule of `samples`. */
+const WORTH_KNOWING = [
+  {
+    name: name(DOCS[0].path),
+    text: "“Riverside Medical Center — Issued for Bid” also occurs in the body (1×); this change leaves it as it is.",
+  },
+];
 
 let seq = 0;
 const now = () => Date.now() / 1000;
@@ -427,6 +435,7 @@ const SCENARIOS = {
     v.plan = PLAN;
     v.samples = samples();
     v.warnings = WARNINGS;
+    v.worth_knowing = WORTH_KNOWING;
     v.action = { label: "Create edited copies", token: "tok-approve-1", kind: "approve", can_hold: true };
     return v;
   },
@@ -438,6 +447,7 @@ const SCENARIOS = {
   done: () => {
     const v = SCENARIOS.preview();
     v.stage = "done";
+    v.worth_knowing = [];
     v.cost = { usd: 0.34, text: "about $0.34", calls: 8 };
     v.messages = [...v.messages, msg("app", "3 edited copies created and verified · 14:35")];
     v.results = results();
@@ -780,6 +790,7 @@ async function questionJob(res, userText) {
   view.messages.push(msg("user", userText));
   view.plan = null;
   view.samples = [];
+  view.worth_knowing = [];
   view.warnings = [];
   view.blocking = false;
   view.action = { label: "", token: "", kind: "none" };
@@ -823,6 +834,7 @@ async function planJob(res, userText, layouts = false) {
   view.chips = [];
   view.plan = null;
   view.samples = [];
+  view.worth_knowing = [];
   view.warnings = [];
   view.blocking = false;
   view.action = { label: "", token: "", kind: "none" };
@@ -871,6 +883,7 @@ async function recipeJob(res, recipe) {
   view.results = [];
   view.plan = null;
   view.samples = [];
+  view.worth_knowing = [];
   view.warnings = [];
   view.left_untouched = [];
   view.action = { label: "", token: "", kind: "none" };
@@ -905,6 +918,7 @@ async function todoJob(res, userText) {
   view.todo = [];
   view.plan = null;
   view.samples = [];
+  view.worth_knowing = [];
   view.warnings = [];
   const several = names.length > 1;
   const note = msg(
@@ -962,6 +976,7 @@ async function occurrencesJob(res, skip) {
   const n = skip.length;
   view.messages.push(msg("app", n ? `${n} occurrence${n === 1 ? "" : "s"} will be left as ${n === 1 ? "it is" : "they are"}; the preview is being made again.` : "Every occurrence is back in; the preview is being made again."));
   view.samples = [];
+  view.worth_knowing = [];
   await s.emit({ type: "plan", plan: view.plan });
   await s.emit({ type: "status", kind: "rendering", text: "" });
   view.samples = samples();
@@ -1009,6 +1024,7 @@ async function primaryJob(res, token, hold = []) {
     await s.emit({ type: "message", message: note });
     view.plan = null;
     view.samples = [];
+    view.worth_knowing = [];
     view.warnings = [];
     view.focus = view.todo.map((item) => item.path);
     view.todo = [];
@@ -1054,6 +1070,7 @@ async function primaryJob(res, token, hold = []) {
     view.stage = "done";
     view.plan = null;
     view.samples = [];
+    view.worth_knowing = [];
     view.action = { label: "", token: "", kind: "none", can_hold: false };
     view.working = { generation: view.working.generation + 1, from_originals: false, can_start_over: true, done: doneSoFar };
     view.attachments = view.attachments.map((a) =>
@@ -1305,6 +1322,7 @@ async function handle(req, res) {
         view.stage = view.stage === "preview" ? "idle" : view.stage;
         view.plan = null;
         view.samples = [];
+        view.worth_knowing = [];
         view.action = { label: "", token: "", kind: "none", can_hold: false };
       }
       return json(res, 200, view);
@@ -1392,6 +1410,7 @@ async function handle(req, res) {
         // Default and Obliterate: the request ends with nothing created; the next message is a new request
         view.plan = null;
         view.samples = [];
+        view.worth_knowing = [];
         view.warnings = [];
         view.questions = [];
         view.choices = [];
@@ -1412,6 +1431,7 @@ async function handle(req, res) {
       beforeButton = null;
       view.plan = null;
       view.samples = [];
+      view.worth_knowing = [];
       view.warnings = [];
       view.action = { label: "", token: "", kind: "none", can_hold: false };
       view.stage = view.results.length && view.working.generation ? "done" : "empty";
@@ -1449,6 +1469,7 @@ async function handle(req, res) {
       view.working = { generation: 0, from_originals: true, can_start_over: false, done: [] };
       view.plan = null;
       view.samples = [];
+      view.worth_knowing = [];
       view.warnings = [];
       view.results = [];
       view.left_untouched = [];
