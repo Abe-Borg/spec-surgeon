@@ -206,6 +206,11 @@ def _paragraph_words(pred: Any) -> str:
         shown = ", ".join(str(i + 1) for i in chosen[:INDICES_SHOWN])
         more = f" and {len(chosen) - INDICES_SHOWN} more" if len(chosen) > INDICES_SHOWN else ""
         clauses.append(f"number {shown}" if len(chosen) == 1 else f"numbered {shown}{more}")
+    if isinstance(pred.get("indices_by_document"), dict) and pred["indices_by_document"]:
+        table = pred["indices_by_document"]
+        total = sum(len(v) for v in table.values() if isinstance(v, list))
+        clauses.append(f"chosen from each document's outline ({count(total, 'paragraph')} in "
+                       f"{count(len(table), 'document')})")
     if pred.get("after_heading_regex"):
         clauses.append("after the first paragraph matching " + quote(pred["after_heading_regex"]))
     if isinstance(pred.get("between_paragraphs"), dict):

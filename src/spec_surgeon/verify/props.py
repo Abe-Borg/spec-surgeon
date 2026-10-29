@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import copy
 import difflib
+import hashlib
 import re
 import sys
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
@@ -316,7 +317,7 @@ def effective_size(rpr, p, styles: Styles) -> int:
 
 # ---- selector resolution (independent of ops/selectors.py) ------------------------------------------
 
-PARA_KEYS = {"style_in", "text_regex", "in_table", "is_empty", "index_range", "indices",
+PARA_KEYS = {"style_in", "text_regex", "in_table", "is_empty", "index_range", "indices", "document_sha256",
              "has_bold", "is_all_caps", "after_heading_regex", "between_paragraphs",
              "case_insensitive", "flexible_whitespace"}
 RUN_KEYS = {"has_direct_font", "font_in", "not_in_revisions", "color_in"}
@@ -3021,12 +3022,34 @@ def _unread_members(ctx: Ctx, residual_parts: List[str]) -> List[str]:
     return sorted(changed - covered)
 
 
+def _v_pins(value: Any) -> Set[str]:
+    """Every ``document_sha256`` anywhere in the assertions."""
+    found: Set[str] = set()
+    if isinstance(value, dict):
+        for k, v in value.items():
+            if k == "document_sha256":
+                found.add(str(v))
+            else:
+                found |= _v_pins(v)
+    elif isinstance(value, (list, tuple)):
+        for v in value:
+            found |= _v_pins(v)
+    return found
+
+
 def check_properties(src: VPackage, out: VPackage, plan: Dict[str, Any], source_name: Optional[str] = None,
                      output_name: Optional[str] = None) -> Tuple[bool, str, Dict[str, Any]]:
     ctx = Ctx(src, out, plan, source_name, output_name)
     errs: List[str] = []
     summaries: List[str] = []
     assertions = plan.get("property_assertions", []) or []
+    # chosen paragraphs are one document's (docs/SPEC_FORMATTER_MODES_DESIGN.md N2): every selection pinned to a
+    # document must have been read from THIS source, by its own bytes
+    own = hashlib.sha256(src.data).hexdigest()
+    for pinned in sorted(_v_pins(assertions)):
+        if pinned != own:
+            errs.append(f"a selection was chosen in another document (SHA-256 {pinned[:12]}…), not this source "
+                        f"({own[:12]}…)")
     # Rule-based assertions independently rederive built-in decisions first.
     # Generic custom-method primitives then cover only paragraphs not already
     # proved by one of those stricter operation rules.

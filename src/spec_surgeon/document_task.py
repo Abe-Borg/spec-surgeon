@@ -96,6 +96,7 @@ TOOL_ACTIVITY = {
     "run_analysis": "Analysing the documents", "read_analysis_result": "Reading the analysis",
     "propose_defined_terms": "Finding defined terms", "read_context_archive": "Looking back at the conversation",
     "submit_editspec": "Writing the plan", "ask_user": "", "set_aside": "Setting documents aside",
+    "read_outline": "Reading the outline",
 }
 # The tools whose input carries the model's words to the user in a top-level "message": the reply joins them to its
 # plain text (``conversation._ask_turn``, ``_spec_turn``), so the window shows them as they are written.

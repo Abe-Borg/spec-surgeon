@@ -118,3 +118,62 @@ def test_a_shared_selector_that_ignores_indices_is_caught(plain, monkeypatch):
     _, out, rec = run_ops(plain, [("apply_style", sel, {"style": "BodyText"})])
     assert [i for i, s in enumerate(styles_of(out)) if s == "BodyText"] == [10, 11, 12, 13]
     assert "V10" in failed(rec)
+
+
+# ---- chosen paragraphs per document (indices_by_document): resolved per file, pinned for the verifier -------------
+
+import copy
+import hashlib
+
+from spec_surgeon.editspec import SpecError, apply_spec, plan_spec, validate_spec
+
+
+def restyle_spec(table) -> dict:
+    return {"request": "r", "summary": "s", "mode": "formatting", "ops": [{
+        "op": "apply_style", "select": {"scope": ["document"], "paragraphs": {"indices_by_document": table}},
+        "params": {"style": "BodyText"}}]}
+
+
+def run_spec(data: bytes, spec: dict):
+    pkg = DocxPackage(data)
+    plan, frags = plan_spec(pkg, spec)
+    out = apply_spec(pkg, frags).output_bytes()
+    return plan, out, run_suite(data, out, plan.to_dict(), "src.docx", "out.docx")
+
+
+def test_one_spec_gives_each_document_its_own_chosen_paragraphs(plain):
+    other = build("21 13 19", "PREACTION SPRINKLER SYSTEMS")
+    table = {hashlib.sha256(plain).hexdigest(): [10, 11], hashlib.sha256(other).hexdigest(): [13]}
+    for data, want in ((plain, [10, 11]), (other, [13])):
+        plan, out, rec = run_spec(data, restyle_spec(table))
+        assert rec.passed, failed(rec)
+        assert [i for i, s in enumerate(styles_of(out)) if s == "BodyText"] == want
+
+
+def test_a_document_the_table_does_not_name_is_refused(plain):
+    other = build("21 13 19", "PREACTION SPRINKLER SYSTEMS")
+    with pytest.raises(JobException) as e:
+        run_spec(plain, restyle_spec({hashlib.sha256(other).hexdigest(): [10]}))
+    assert e.value.code == "not-outlined"
+
+
+@pytest.mark.parametrize("pred", [{"indices": [1]}, {"indices": [1], "document_sha256": "a" * 64},
+                                  {"indices_by_document": {}}, {"indices_by_document": {"ABC": [1]}},
+                                  {"indices_by_document": [1, 2]}])
+def test_a_spec_cannot_name_bare_paragraph_numbers(pred):
+    spec = restyle_spec({})
+    spec["ops"][0]["select"]["paragraphs"] = pred
+    with pytest.raises(SpecError):
+        validate_spec(spec)
+
+
+def test_a_plan_pinned_to_another_document_fails_the_verifier(plain):
+    """The plan's selection names another document's digest (a shared resolver picking the wrong entry): the verifier
+    hashes the source itself."""
+    plan, out, rec = run_spec(plain, restyle_spec({hashlib.sha256(plain).hexdigest(): [10, 11]}))
+    assert rec.passed
+    bad = copy.deepcopy(plan.to_dict())
+    bad["property_assertions"][0]["select"]["paragraphs"]["document_sha256"] = "0" * 64
+    rec2 = run_suite(plain, out, bad, "src.docx", "out.docx")
+    assert "V10" in failed(rec2)
+    assert any("chosen in another document" in e for c in rec2.checks if c.id == "V10" for e in c.data.get("errors", []))

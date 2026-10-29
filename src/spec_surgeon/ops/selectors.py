@@ -13,7 +13,10 @@ Grammar:
                                         field in it: ``holds_object``)
                   index_range [a, b]   (a ≤ block index < b, over the part's w:p in document order)
                   indices [i, …]       (the block index is one of these: distinct whole numbers ≥ 0, at most
-                                        MAX_INDICES — the outline tool's chosen paragraphs, N2)
+                                        MAX_INDICES — the outline tool's chosen paragraphs, N2); a spec names them
+                                        per document (``indices_by_document``), and ``editspec.
+                                        resolve_document_select`` gives each document its own list with its
+                                        ``document_sha256``, which the verifier compares with the source
                   has_bold bool        (has a non-empty live run with effective bold on)
                   is_all_caps bool     (live display text is all uppercase letters or has w:caps on)
                   after_heading_regex "…" (comes after the first paragraph matching the regex)
@@ -46,7 +49,7 @@ from .patterns import BoundedPattern, compile_pattern
 
 STYLES_REL = REL_TYPE_BASE + "styles"
 SCOPE_KINDS = ("document", "headers", "footers", "footnotes", "endnotes", "comments")
-PARAGRAPH_KEYS = ("style_in", "text_regex", "in_table", "is_empty", "index_range", "indices",
+PARAGRAPH_KEYS = ("style_in", "text_regex", "in_table", "is_empty", "index_range", "indices", "document_sha256",
                   "has_bold", "is_all_caps", "after_heading_regex", "between_paragraphs",
                   "case_insensitive", "flexible_whitespace")
 RUN_KEYS = ("has_direct_font", "font_in", "not_in_revisions", "color_in")
@@ -129,6 +132,10 @@ def check_paragraph_selector(pred) -> None:
                 or len(set(ix)) != len(ix)):
             raise JobException(f"indices must be a list of 1 to {MAX_INDICES} distinct paragraph numbers (whole "
                                f"numbers from 0, counted over the part's paragraphs in document order)", "bad-params")
+    if "document_sha256" in pred and ("indices" not in pred or not isinstance(pred["document_sha256"], str)
+                                      or not re.fullmatch(r"[0-9a-f]{64}", pred["document_sha256"])):
+        raise JobException("document_sha256 names the document an indices list was read from (64 hex digits)",
+                           "bad-params")
     if "has_bold" in pred and not isinstance(pred["has_bold"], bool):
         raise JobException("has_bold must be true or false", "bad-params")
     if "is_all_caps" in pred and not isinstance(pred["is_all_caps"], bool):

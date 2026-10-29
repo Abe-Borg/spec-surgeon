@@ -28,7 +28,7 @@ LABELS = {
     "exact_text": "Text is exactly", "contains_text": "Text contains", "text_regex": "Text matching pattern",
     "cardinality": "Passages per document", "expected_count": "Required matches per document",
     "expected_matches": "Required text replacements", "tracked": "Show changes in Word",
-    "style_id": "Style", "style_in": "Styles", "index_range": "Paragraph range (zero-based)", "indices": "Chosen paragraphs (zero-based)",
+    "style_id": "Style", "style_in": "Styles", "index_range": "Paragraph range (zero-based)", "indices": "Chosen paragraphs (zero-based)", "indices_by_document": "Chosen paragraphs, per document",
     "section_title": "section title", "document": "document body", "slot_fills": "Template field values",
     "template_sections": "Template sections (zero-based)", "size": "Size", "w": "Width", "h": "Height",
 }
