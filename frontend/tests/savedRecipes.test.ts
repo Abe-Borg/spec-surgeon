@@ -7,8 +7,18 @@ import test from "node:test";
 
 import type { Attachment, DoneStep, Recipe, RecipeStep, SavedRecipe, View } from "../src/types.ts";
 import {
+  addedMode,
+  attachedFields,
   changedForms,
   composerRecipes,
+  editChanged,
+  editPayload,
+  editProblem,
+  editableFields,
+  editedSteps,
+  moveStep,
+  openEdit,
+  setRemoved,
   formChips,
   formsChanged,
   keptSteps,
@@ -21,6 +31,7 @@ import {
   recipeMeta,
   runPicks,
   runProblem,
+  runStale,
   safeRecipes,
   savableRuns,
   stepShort,
@@ -139,4 +150,58 @@ test("a button run inside a recipe checkmarks its tile, and Save as a recipe say
   assert.equal(saveRecipeBlocked(view), "");
   const custom: DoneStep = { id: "z", request: "r", recipe: "", documents: 1, of: 1, not: [], steps: [], why_not: "Claude wrote a custom method for it." };
   assert.equal(saveRecipeBlocked({ working: { ...working, done: [custom] } }), "Claude wrote a custom method for it.");
+});
+
+test("an edit moves, removes and puts back steps, and sends the kept ones in their new order", () => {
+  const recipe = saved([button("title_property", { pattern: "SECTION {number}" }), plan(), button("accept_changes", { action: "accept" })], { rev: "v1" });
+  const opened = openEdit(recipe);
+  assert.equal(opened.rev, "v1");
+  assert.equal(editChanged(opened, recipe), false);
+  assert.deepEqual(editPayload(opened, recipe, CATALOG), [{ step: 0 }, { step: 1 }, { step: 2 }]);
+  const moved = moveStep({ ...opened, open: 2 }, 2, -1);                    // the open form follows its step
+  assert.deepEqual(moved.steps.map((s) => s.from), [0, 2, 1]);
+  assert.equal(moved.open, 1);
+  assert.equal(moveStep(opened, 0, -1), opened);                            // nothing above the first step
+  const removed = setRemoved(moved, 2, true);                              // the request removed: a Safe recipe now
+  assert.equal(editChanged(removed, recipe), true);
+  assert.deepEqual(editPayload(removed, recipe, CATALOG), [{ step: 0 }, { step: 2 }]);
+  assert.equal(modeOfSteps(editedSteps(removed, recipe)), "safe");
+  assert.deepEqual(setRemoved(removed, 2, false).steps, moved.steps);       // put back
+  const none = [0, 1, 2].reduce((e, i) => setRemoved(e, i, true), opened);
+  assert.equal(editProblem(none, recipe, CATALOG), "Keep at least one step, or delete the recipe.");
+  assert.equal(editProblem({ ...opened, name: " " }, recipe, CATALOG), "Type a name for the recipe.");
+  assert.match(editProblem(opened, { ...recipe, rev: "v2" }, CATALOG), /changed since you opened it/);
+});
+
+test("an edit changes a button's own fields, never what it reads from attached files or a request's plan", () => {
+  assert.deepEqual(editableFields(HEADERS), []);
+  assert.equal(attachedFields(HEADERS), true);
+  assert.deepEqual(editableFields(TITLE).map((f) => f.name), ["pattern"]);
+  const recipe = saved([button("title_property", { pattern: "SECTION {number}" }), plan()]);
+  const edit = openEdit(recipe);
+  assert.deepEqual(edit.steps.map((s) => s.inputs), [{ pattern: "SECTION {number}" }, null]);
+  const typed = { ...edit, steps: [{ ...edit.steps[0], inputs: { pattern: "{number} {title}" } }, edit.steps[1]] };
+  assert.deepEqual(editPayload(typed, recipe, CATALOG), [{ step: 0, inputs: { pattern: "{number} {title}" } }, { step: 1 }]);
+  const emptied = { ...edit, steps: [{ ...edit.steps[0], inputs: { pattern: "" } }, edit.steps[1]] };
+  assert.equal(editProblem(emptied, recipe, CATALOG), "Step 1: Type the title.");
+  assert.equal(editProblem(setRemoved(emptied, 0, true), recipe, CATALOG), "");   // a removed step needs nothing
+});
+
+test("changes added to a saved recipe move it to the mode of its steps", () => {
+  const safeOne = saved([button("accept_changes")]);
+  assert.equal(addedMode(safeOne, [button("title_property")]), "safe");
+  assert.equal(addedMode(safeOne, [plan()]), "default");
+  assert.equal(addedMode(saved([plan()]), [plan(true)]), "obliterate");
+});
+
+test("a run form opened before the recipe's steps were edited cannot preview or save its forms", () => {
+  const recipe = saved([button("title_property", { pattern: "SECTION {number}" }), button("accept_changes", { action: "accept" })], { rev: "v1" });
+  const run = openRun(recipe, CATALOG, attached());
+  assert.equal(run.rev, "v1");
+  assert.equal(runStale(recipe, run), false);
+  const reordered = { ...recipe, rev: "v2", steps: [recipe.steps[1], recipe.steps[0]] };
+  assert.equal(runStale(reordered, run), true);
+  assert.equal(runProblem(reordered, run, CATALOG, attached()), "The recipe changed since its form was opened; open it again.");
+  assert.equal(runProblem(reordered, openRun(reordered, CATALOG, attached()), CATALOG, attached()), "");
+  assert.equal(runStale({ ...recipe, rev: undefined }, run), false);          // an older server sends no revision
 });

@@ -45,6 +45,8 @@ export const END_USER_CAPABILITIES = [
   "recipes.mine",
   "recipes.form",
   "recipes.manage",
+  "recipes.edit",
+  "recipes.add",
   // the previews and the one button
   "preview.pages",
   "preview.marks",

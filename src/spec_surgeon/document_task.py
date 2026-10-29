@@ -1185,14 +1185,14 @@ class DocumentTask:
         return None
 
     def perform(self, action, *, text="", token="", choice_id="", chip=False, hold=(), wording=None, recipe="",
-                inputs=None, skip=(), kind="", folder="", steps=None, log=lambda _: None, events=None):
+                inputs=None, skip=(), kind="", folder="", steps=None, rev=None, log=lambda _: None, events=None):
         """Worker entry point. One ledger covers every nested model call and every turn. ``events`` is the window's
         live channel (docs/WEB_API.md: status, activity, text_delta, thinking_delta, message, plan, samples, results,
         question, cost); without one the job runs silently and the view says everything at the end. ``hold`` (the
         primary action) names the previewed documents the user set aside: they go on the to-do list, the others run.
         ``recipe`` and ``inputs`` (the ``recipe`` action) are a Safe-mode button and its form; ``recipe`` and ``steps``
         (the ``saved_recipe`` action) a saved recipe and, per step, whether it is skipped and the form a button step
-        runs with this time (``saved_recipes.choose_steps``). ``skip`` (the
+        runs with this time (``saved_recipes.choose_steps``; ``rev``, the recipe as its run form opened). ``skip`` (the
         ``occurrences`` action) names, by key, the find-and-replace occurrences the user unticked in the preview.
         ``kind`` and ``folder`` (the ``export`` action) are a clean export's kind and the folder it writes into: it is
         no request, so the request open, its spending and the stage are left as they are (``_export_job``)."""
@@ -1224,7 +1224,7 @@ class DocumentTask:
                 elif action == "recipe":
                     self._recipe(recipe, inputs, checkpointed_log)
                 elif action == "saved_recipe":
-                    self._saved_recipe(recipe, steps, checkpointed_log)
+                    self._saved_recipe(recipe, steps, checkpointed_log, rev=rev)
                 elif action == "occurrences":
                     self._occurrences(skip, checkpointed_log)
                 else:
@@ -1495,7 +1495,7 @@ class DocumentTask:
             return "Drop the request that is open first, or finish it."
         return ""
 
-    def _saved_recipe(self, recipe_id, picks, log):
+    def _saved_recipe(self, recipe_id, picks, log, rev=None):
         """A saved recipe (``saved_recipes``): every step it keeps this time built from the documents attached now,
         each through the one gate, composed in order into one plan and through the gate again (``build_run``), then
         the ordinary preview. No AI call (``Session.model_free``). A step that cannot be used, or a recipe that does
@@ -1513,7 +1513,7 @@ class DocumentTask:
             raise ValueError(f"{record['name']}: {here['why_not_here']}")
         s = self.session
         try:
-            chosen = saved_recipes.choose_steps(record, picks)
+            chosen = saved_recipes.choose_steps(record, picks, rev=rev)
             files = s.files(outcome=False)
             ctx = recipes.Context(files, self.template(), self.references())
             self._emit({"type": "status", "kind": "checking", "text": "Checking the documents…"})
@@ -1579,9 +1579,10 @@ class DocumentTask:
         return [saved_recipes.recipe_view(r, self.mode) for r in self.recipes.all()
                 if r["mode"] != saved_recipes.OBLITERATE or self.obliterate_allowed]
 
-    def save_recipe(self, name, note, run_ids) -> Dict[str, Any]:
+    def save_recipe(self, name, note, run_ids, into=None) -> Dict[str, Any]:
         """Save as a recipe: the runs of What you've done so far the user ticked, oldest first, as one recipe of their
-        steps (a recipe's run is its steps again). Every ticked run must be one a recipe can keep."""
+        steps (a recipe's run is its steps again), or (``into``, a saved recipe's id) added to the end of that recipe.
+        Every ticked run must be one a recipe can keep."""
         if self.recipes is None:
             raise ValueError("Recipes are not available here.")
         if not isinstance(run_ids, list) or not all(isinstance(i, str) for i in run_ids):
@@ -1599,6 +1600,8 @@ class DocumentTask:
                 raise ValueError(f"“{run['request']}” cannot be saved: "
                                  f"{kept.get('why_not') or saved_recipes.WHY_NOT_KEPT}")
             steps += [dict(st) for st in kept["steps"]]
+        if into:
+            return self._add_to_recipe(str(into), steps)
         try:
             record = self.recipes.add(name, note, steps)
         except saved_recipes.RecipeRunError as e:
@@ -1611,20 +1614,40 @@ class DocumentTask:
         self.save()
         return record
 
-    def change_recipe(self, action: str, recipe_id: str, *, name=None, note=None, inputs=None) -> None:
-        """Manage recipes: ``rename`` (and what it is for), ``duplicate``, ``delete``, or ``inputs`` (a Safe recipe's
-        buttons take the forms its run form holds)."""
+    def _add_to_recipe(self, recipe_id: str, steps: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """The ticked runs' steps added to the end of a saved recipe; the chat says how many it has now, and the mode
+        it belongs to when a step moved it to one with fewer guardrails."""
+        try:
+            before = self.recipes.get(recipe_id)
+            record = self.recipes.append(recipe_id, steps)
+        except saved_recipes.RecipeRunError as e:
+            raise ValueError(str(e)) from e
+        total = len(record["steps"])
+        moved = {saved_recipes.DEFAULT: " It is now a Default-mode recipe: it runs in Default and Obliterate mode.",
+                 saved_recipes.OBLITERATE: " It is now an Obliterate recipe: it runs only in Obliterate mode."}
+        self.say(f"Added {len(steps)} step{'s' if len(steps) != 1 else ''} to the recipe “{record['name']}”: it has "
+                 f"{total} now." + (moved.get(record["mode"], "") if record["mode"] != before["mode"] else ""))
+        self.save()
+        return record
+
+    def change_recipe(self, action: str, recipe_id: str, *, name=None, note=None, inputs=None, steps=None,
+                      rev=None) -> None:
+        """Manage recipes: ``rename`` (and what it is for), ``edit`` (name, what it is for and ``steps``, on the
+        recipe as the editor opened it, ``rev``: ``saved_recipes.Store.edit``), ``duplicate``, ``delete``, or ``inputs``
+        (a Safe recipe's buttons take the forms its run form holds)."""
         if self.recipes is None:
             raise ValueError("Recipes are not available here.")
         try:
             if action == "rename":
                 self.recipes.rename(str(recipe_id), name, note)
+            elif action == "edit":
+                self.recipes.edit(str(recipe_id), rev, name, note, steps)
             elif action == "duplicate":
                 self.recipes.duplicate(str(recipe_id))
             elif action == "delete":
                 self.recipes.delete(str(recipe_id))
             elif action == "inputs":
-                self.recipes.update_inputs(str(recipe_id), inputs)
+                self.recipes.update_inputs(str(recipe_id), inputs, rev=rev)
             else:
                 raise ValueError("Unknown recipe change.")
         except saved_recipes.RecipeRunError as e:

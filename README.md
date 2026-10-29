@@ -320,7 +320,17 @@ attached when it runs; a document a step cannot take is left untouched in Safe m
 Default and Obliterate. A recipe runs in the mode it was saved in or one with fewer guardrails: Safe recipes in every
 mode, Default ones in Default and Obliterate, Obliterate ones only in Obliterate. A change Claude wrote a custom method
 for, or planned with values read from particular documents, cannot be kept, and the dialog says why. Recipes are kept
-in `recipes.json` beside `settings.json`; **Manage** renames, duplicates and deletes them.
+in `recipes.json` beside `settings.json`; **Manage** duplicates and deletes them.
+
+**Edit**, in Manage, changes a recipe after it is saved: its name, what it is for, and its steps — moved up or down
+with the arrows, removed (greyed until you save, **Put back** brings one back), or, for a button, given another form
+(the fields you type or choose; what a button reads from the template, a picture or a table is chosen in the recipe's
+run form, with them attached). A step saved from a request runs as you approved it, so it is moved or removed whole,
+never rewritten; to change one, ask again and save that run. To add steps, run the new changes and choose **Add to a
+saved recipe** in the Save as a recipe dialog: the changes you tick go after the recipe's steps, in the order you ran
+them. Removing a recipe's last request makes it a Safe-mode recipe again, and adding one makes it a Default-mode
+recipe; the dialog and the chat say so. An edited recipe is previewed and approved like any other, and an edit is
+refused when the recipe changed in another window since you opened it.
 
 Besides Word documents you can attach pictures and tables for the edit to use, such as a new logo to swap in or
 insert, a schedule to place as a table, or a spreadsheet of project values to fill in; Claude is told about them and can read the tables, and nothing

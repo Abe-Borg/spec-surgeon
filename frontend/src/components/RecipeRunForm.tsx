@@ -8,6 +8,7 @@ import {
   modeNote,
   runPicks,
   runProblem,
+  runStale,
   stepProblem,
   stepsText,
   type RecipeRunState,
@@ -27,8 +28,9 @@ interface Props {
   onRunChange: (next: RecipeRunState) => void;
   /** Previews the recipe as one plan, no AI call (docs/WEB_API.md, `POST /api/saved-recipes/run`). */
   onPreview: (picks: { skip: boolean; inputs?: RecipeInputs }[]) => void;
-  /** The changed button forms kept in the recipe (`POST /api/saved-recipes/change`, action `inputs`). */
-  onSaveForms?: (forms: (RecipeInputs | null)[]) => Promise<boolean>;
+  /** The changed button forms kept in the recipe (`POST /api/saved-recipes/change`, action `inputs`): the recipe's new
+   *  revision, or null when the save was refused. */
+  onSaveForms?: (forms: (RecipeInputs | null)[]) => Promise<string | null>;
   /** Back to every button (Safe mode); the dialog in Default mode has its own ✕. */
   onBack?: () => void;
   tourActive?: boolean;
@@ -179,13 +181,13 @@ export default function RecipeRunForm({
 
       <p className="text-[12.5px] leading-snug text-ink-dim">
         What you change or skip here is for this run; the recipe stays as you saved it.{" "}
-        {changed && onSaveForms && (
+        {changed && onSaveForms && !runStale(recipe, run) && (
           <button
             type="button"
             disabled={busy}
             onClick={() =>
               void onSaveForms(changedForms(recipe, run, catalog)).then(
-                (ok) => ok && onRunChange({ ...run, saved: run.inputs.map((i) => (i ? { ...i } : null)) }),
+                (rev) => rev !== null && onRunChange({ ...run, rev: rev || run.rev, saved: run.inputs.map((i) => (i ? { ...i } : null)) }),
               )
             }
             className={link}

@@ -420,22 +420,33 @@ export default function App() {
     }
   }, []);
   const onRunRecipe = useCallback(
-    (recipe: SavedRecipe, picks: api.RecipeRunPick[]) =>
-      void runJob(api.runSavedRecipe(recipe.id, picks), `Run the recipe “${recipe.name}”`, "saved_recipe"),
+    (recipe: SavedRecipe, picks: api.RecipeRunPick[], rev?: string) =>
+      void runJob(api.runSavedRecipe(recipe.id, picks, rev), `Run the recipe “${recipe.name}”`, "saved_recipe"),
     [runJob],
   );
   const onSaveRecipeForms = useCallback(
-    (recipe: SavedRecipe, forms: (RecipeInputs | null)[]) => answered(api.saveRecipeForms(recipe.id, forms)),
+    async (recipe: SavedRecipe, forms: (RecipeInputs | null)[], rev?: string): Promise<string | null> => {
+      // the recipe's new revision, which the run form takes as its own: its own save is not another window's edit
+      let next = "";
+      const ok = await answered(
+        api.saveRecipeForms(recipe.id, forms, rev).then((v) => {
+          next = v.saved_recipes.find((r) => r.id === recipe.id)?.rev ?? "";
+          return v;
+        }),
+      );
+      return ok ? next : null;
+    },
     [answered],
   );
   const onSaveRecipe = useCallback(
-    (name: string, note: string, runs: string[]) => answered(api.saveRecipe(name, note, runs)),
+    (name: string, note: string, runs: string[], into?: string) => answered(api.saveRecipe(name, note, runs, into)),
     [answered],
   );
   const onOpenSaveRecipe = useCallback(() => setSavingRecipe(true), []);
   const onManageRecipes = useCallback(() => setManagingRecipes(true), []);
-  const onRenameRecipe = useCallback(
-    (recipe: SavedRecipe, name: string, note: string) => answered(api.changeRecipe("rename", recipe.id, { name, note })),
+  const onEditRecipe = useCallback(
+    (recipe: SavedRecipe, rev: string, name: string, note: string, steps: { step: number; inputs?: RecipeInputs }[]) =>
+      answered(api.editRecipe(recipe.id, rev, name, note, steps)),
     [answered],
   );
   const onDuplicateRecipe = useCallback((recipe: SavedRecipe) => answered(api.changeRecipe("duplicate", recipe.id)), [answered]);
@@ -798,6 +809,7 @@ export default function App() {
         <SaveRecipeDialog
           done={view.working.done ?? []}
           catalog={recipes}
+          recipes={view.saved_recipes}
           busy={busy}
           onSave={onSaveRecipe}
           onClose={() => setSavingRecipe(false)}
@@ -806,8 +818,10 @@ export default function App() {
       {managingRecipes && (
         <ManageRecipes
           recipes={view.saved_recipes}
+          catalog={recipes}
+          view={view}
           busy={busy}
-          onRename={onRenameRecipe}
+          onEdit={onEditRecipe}
           onDuplicate={onDuplicateRecipe}
           onDelete={onDeleteRecipe}
           onClose={() => setManagingRecipes(false)}

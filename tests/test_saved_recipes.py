@@ -132,6 +132,70 @@ def test_a_safe_recipe_takes_the_forms_its_run_form_holds(store):
         store.update_inputs(other["id"], [{"x": 1}])
 
 
+def test_a_recipe_is_edited_whole_its_steps_removed_reordered_or_given_another_form(store):
+    plan = saved_recipes.plan_step(WORDS, REPLACE, [], False)
+    title = saved_recipes.button_step("title_property", TITLE, "x")
+    record = store.add("Mixed", "", [STEP, plan, title])
+    view = saved_recipes.recipe_view(record, "default")
+    assert record["mode"] == "default" and view["rev"] == saved_recipes.revision(record)
+    edited = store.edit(record["id"], view["rev"], " Titles  first ", "for permits",
+                        [{"step": 2, "inputs": {"pattern": "{number}"}}, {"step": 0}])
+    assert edited["name"] == "Titles first" and edited["note"] == "for permits"
+    assert [s["button"] for s in edited["steps"]] == ["title_property", "remove_comments"]
+    assert edited["steps"][0]["inputs"] == {"pattern": "{number}"} and edited["steps"][1] == STEP
+    assert edited["mode"] == "safe"                                     # its one plan step removed: a Safe recipe now
+    assert Store(store.path).get(record["id"]) == edited and edited["saved"] == record["saved"]
+    # an editor opened before this edit, or before another window's, is refused instead of writing over it
+    with pytest.raises(RecipeRunError, match="changed since you opened it"):
+        store.edit(record["id"], view["rev"], "Mixed", "", [{"step": 0}])
+    rev = saved_recipes.revision(edited)
+    store.ran(record["id"], 3)                                          # a run is not an edit: the editor stays good
+    assert saved_recipes.revision(store.get(record["id"])) == rev
+
+
+def test_a_run_form_opened_before_the_steps_were_reordered_is_refused_not_applied_to_the_wrong_step(tmp_path, store):
+    """Run-form picks and saved forms are by position: once Edit reorders a recipe of the same length, the form opened
+    before it is refused (its ``rev``) instead of giving a skip or a form meant for one step to another."""
+    record = store.add("Two", "", [saved_recipes.button_step("title_property", TITLE, "x"), STEP])
+    opened = saved_recipes.revision(record)
+    store.edit(record["id"], opened, "Two", "", [{"step": 1}, {"step": 0}])
+    with pytest.raises(RecipeRunError, match="changed since its form was opened"):
+        store.update_inputs(record["id"], [{"pattern": "{number}"}, None], rev=opened)
+    assert store.get(record["id"])["steps"][1]["inputs"] == TITLE                      # nothing written
+    task = safe(tmp_path, store)
+    task.attach(specs(tmp_path / "b", (("21 05 00", "COMMON WORK RESULTS"),)))
+    task.perform("saved_recipe", recipe=record["id"], steps=[{"skip": True}, {}], rev=opened)
+    assert task.session.spec is None and "changed since its form was opened" in task.messages[-1]["text"]
+    now = saved_recipes.revision(store.get(record["id"]))
+    view = task.perform("saved_recipe", recipe=record["id"], steps=[{"skip": True}, {}], rev=now)
+    assert view["stage"] == "preview" and [o["op"] for o in task.session.spec["ops"]] == ["set_document_properties"]
+
+
+@pytest.mark.parametrize("steps, said", [([], "Keep at least one step"),
+                                         ([{"step": 0}, {"step": 0}], "could not be read"),
+                                         ([{"step": 3}], "could not be read"),
+                                         ([{"step": True}], "could not be read"),
+                                         ("all", "could not be read"),
+                                         ([{"step": 1, "inputs": {"find": "x"}}], "runs as you approved it")])
+def test_an_edit_that_does_not_fit_the_recipe_or_rewrites_an_approved_plan_is_refused(store, steps, said):
+    record = store.add("Mixed", "", [STEP, saved_recipes.plan_step(WORDS, REPLACE, [], False)])
+    with pytest.raises(RecipeRunError, match=said):
+        store.edit(record["id"], saved_recipes.revision(record), "Mixed", "", steps)
+    assert store.get(record["id"]) == record                            # nothing is written
+
+
+def test_runs_saved_into_a_recipe_are_added_to_its_end(store):
+    record = store.add("Clean", "", [STEP])
+    plan = saved_recipes.plan_step(WORDS, REPLACE, [], False)
+    grown = store.append(record["id"], [plan])
+    assert [s["kind"] for s in grown["steps"]] == ["button", "plan"] and grown["mode"] == "default"
+    assert grown["name"] == "Clean" and grown["saved"] == record["saved"]
+    with pytest.raises(RecipeRunError, match=f"at most {saved_recipes.MAX_STEPS} steps"):
+        store.append(record["id"], [STEP] * (saved_recipes.MAX_STEPS - 1))
+    with pytest.raises(RecipeRunError, match="no such recipe"):
+        store.append("gone", [STEP])
+
+
 # ---- what a recipe can keep -----------------------------------------------------------------------------------------
 
 def test_a_plan_keeps_no_unticked_occurrences_and_refuses_what_is_bound_to_particular_documents():
@@ -208,6 +272,37 @@ def test_safe_buttons_saved_as_a_recipe_run_on_other_documents_as_one_plan(tmp_p
     assert [s["button"] for s in again["steps"]] == ["remove_comments", "accept_changes", "title_property"]
     task.undo()                                                          # one run: one undo takes the whole recipe off
     assert done(task) == [] and task.working == {}
+
+
+def test_an_edited_recipe_runs_its_steps_in_their_new_order_and_runs_added_to_it_come_last(
+        tmp_path, store, monkeypatch):
+    no_ai(monkeypatch)
+    record = store.add("Two", "", [STEP, saved_recipes.button_step("accept_changes", {"action": "accept"}, "x")])
+    store.edit(record["id"], saved_recipes.revision(record), "Two", "", [{"step": 1}, {"step": 0}])
+    task = safe(tmp_path, store)
+    task.attach(specs(tmp_path / "b", (("21 05 00", "COMMON WORK RESULTS"),)))
+    press(task, "title_property", TITLE)
+    [run] = done(task)
+    task.save_recipe("", "", [run["id"]], into=record["id"])
+    assert task.messages[-1]["text"] == "Added 1 step to the recipe “Two”: it has 3 now."
+    view = task.perform("saved_recipe", recipe=record["id"], steps=None)
+    assert view["stage"] == "preview"
+    assert [st["name"] for st in task.session.spec["stages"]] == [
+        "Accept or reject all tracked changes", "Remove all comments", "Set the document title property"]
+
+
+def test_a_request_added_to_a_safe_recipe_says_the_recipe_moved_to_default_mode(tmp_path, store):
+    record = store.add("Clean", "", [STEP])
+    first = chat(tmp_path, store, plan(REPLACE))
+    first.attach([document(tmp_path / "a" / "Spec.docx")])
+    first.perform("primary", token=first.perform("send", text=WORDS)["token"])
+    [run] = done(first)
+    grown = first.save_recipe(None, None, [run["id"]], into=record["id"])
+    assert grown["mode"] == "default" and grown["steps"][1]["request"] == WORDS
+    assert first.messages[-1]["text"] == ("Added 1 step to the recipe “Clean”: it has 2 now. It is now a "
+                                          "Default-mode recipe: it runs in Default and Obliterate mode.")
+    with pytest.raises(ValueError, match="no such recipe"):
+        first.save_recipe(None, None, [run["id"]], into="gone")
 
 
 def test_a_step_can_be_skipped_or_run_with_another_form_this_time(tmp_path, store):
@@ -453,11 +548,29 @@ def test_the_routes_save_change_and_run_a_recipe(tmp_path, store, monkeypatch):
     assert recipe["name"] == "Clean" and recipe["runs_here"] and recipe["steps"][0]["button"] == "remove_comments"
     view = client.post("/api/saved-recipes/change", json={"action": "rename", "id": recipe["id"], "name": "Tidy"}).json()
     assert [r["name"] for r in view["saved_recipes"]] == ["Tidy"]
+    view = client.post("/api/saved-recipes/save", json={"runs": [run_id], "into": recipe["id"]}).json()
+    [recipe] = view["saved_recipes"]
+    assert len(recipe["steps"]) == 2
+    view = client.post("/api/saved-recipes/change", json={
+        "action": "edit", "id": recipe["id"], "rev": recipe["rev"], "name": "Tidy", "note": "bids",
+        "steps": [{"step": 1}]}).json()
+    [recipe] = view["saved_recipes"]
+    assert len(recipe["steps"]) == 1 and recipe["note"] == "bids"
+    assert client.post("/api/saved-recipes/change", json={
+        "action": "edit", "id": recipe["id"], "rev": "stale", "name": "Tidy", "steps": [{"step": 0}]}).json() == {
+        "error": "The recipe changed since you opened it, perhaps in another window; open it again."}
     view = client.post("/api/saved-recipes/change", json={"action": "duplicate", "id": recipe["id"]}).json()
     assert [r["name"] for r in view["saved_recipes"]] == ["Tidy", "Tidy (copy)"]
     with client.stream("POST", "/api/saved-recipes/run", json={"id": recipe["id"], "steps": [{"skip": False}]}) as r:
         last = frames(r)[-1]
     assert last["type"] == "done" and last["state"]["stage"] == "preview"
+    with client.stream("POST", "/api/saved-recipes/run", json={"id": recipe["id"], "rev": "stale",
+                                                                "steps": [{"skip": False}]}) as r:
+        last = frames(r)[-1]
+    assert last["type"] == "done" and "changed since its form was opened" in last["state"]["messages"][-1]["text"]
+    assert client.post("/api/saved-recipes/change", json={"action": "inputs", "id": recipe["id"], "rev": "stale",
+                                                          "inputs": [None]}).json() == {
+        "error": "The recipe changed since its form was opened; open it again."}
     assert client.post("/api/saved-recipes/run", json={"id": recipe["id"], "steps": "all"}).json() == {
         "error": "The recipe's steps could not be read."}
     view = client.post("/api/saved-recipes/change", json={"action": "delete", "id": recipe["id"]}).json()
