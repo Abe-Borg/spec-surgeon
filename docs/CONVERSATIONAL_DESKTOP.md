@@ -30,9 +30,9 @@ font, page size and margins), text (find and replace, with every occurrence list
 add END OF SECTION where missing; keep numbers with their units), clean up (accept or reject all tracked changes,
 remove comments, highlighting, hidden text or empty paragraphs, clean up spaces, standardize quotes and dashes, remove
 hyperlinks, freeze fields as plain text, remove unused styles) and files and properties (name the copies by section
-number and title, the document title property, Track Changes off, save clean PDFs, set author and company, set the
-proofing language). A button that cannot be pressed yet says why when
-the pointer rests on it (no documents, no template, no picture). Pressing one opens a short form — the words to find
+number and title, the document title property, Track Changes off, set author and company, set the proofing
+language). Clean PDFs are Export's, in every mode ("Export: saving the copies", below). A button that cannot be
+pressed yet says why when the pointer rests on it (no documents, no template, no picture). Pressing one opens a short form — the words to find
 and their replacements, the issue stamp as it reads now and as it should, the watermark's words, a template's values,
 a font's name, the margins, a naming pattern — and **Preview**.
 
@@ -96,33 +96,6 @@ shape (`recipes.slot_role`: `NUMBER_SLOTS`, `NUMBER_SHAPE` — `XX XX XX`, `00 0
 `Specification Name` among them), and the form names the ones each document fills (`slot_roles`); an ordinary
 specification gives each document its own number and title wherever its headers and footers
 show its own; a template with nothing to fill is refused at the button.
-
-**Save clean PDFs** (`recipes._clean_pdf`, `pdf_export.py`) makes a PDF of every document with all its comments off and
-every tracked change accepted, ready to issue. Its plan is two ordered steps, fixed in this order: every comment is
-removed (`remove_comments`, its replies with it), then every tracked change is accepted (`resolve_tracked_changes`).
-The comments go first so that a comment anchored in text a tracked deletion takes away does not stop the deletion from
-being accepted. The plan passes the gate and the preview as any button's does, and the preview's after pages are the
-clean pages. Beside them the one button reads **Save clean PDFs**. Its run makes and checks the clean copies (each
-step a checked batch on the step before it); then `Session._export_pdfs` hands each copy that passed every check
-(an identical copy too: a document with nothing to clean still gets its PDF) to `pdf_export.export_pdfs`. That renders
-it with the renderer the preview and the run use: Word in a new, invisible instance, or LibreOffice when Word is not
-there. It goes through the render cache, so a copy the run rendered for its page checks is served again. Then it
-checks each PDF (`check_pdf`): it opens without a password, has at least one page, and no page carries a note. The
-PDFs go to the run's `pdf/` folder, with `PDF_REPORT.md` beside the run's other reports; a PDF that fails its check
-is kept apart in `pdf-failed/`. The window lists them under **Your clean PDFs** (the view's `pdfs`), each opening in
-the PDF viewer, with a button for their folder; like the copies they live in the window's scratch folder until
-**Export** saves them with the copies ("Export: saving the copies", below), and the close asks before deleting them. A PDF made from a document delivered UNVERIFIED earlier (Obliterate
-mode) is marked UNVERIFIED there with that copy's failed checks (`DocumentTask._pdf_marks`), as every later copy built
-on it is.
-
-The PDFs are the result and nothing else changes (`DocumentTask._end_export`): the Word documents the next button works
-on are the ones it worked on, comments and tracked changes included. No copy joins the working set, no line joins the
-history the assistant hears, and no undo point is taken, so **Undo the last button** still goes back before the last
-button that changed the documents. The clean copies stay in the run folder's `outputs/`. A document the plan cannot
-clean exactly (a change Word must settle itself: an inserted or merged table cell, a change inside an equation), or
-whose PDF cannot be made or fails its check, gets no PDF and is listed under **Left untouched by the last button** with
-the reason. The button needs Word or LibreOffice: without either it cannot be pressed, and says why (the view's
-`pdf`).
 
 **Match body formatting to template** (`template_roles.py`, `body_match.py`) plans
 each document on its own, in code. The form shows the template's style for each part of a section (the section
@@ -299,7 +272,7 @@ rather than guessed from the width (`frontend/src/lib/useFit.ts`; the steps are 
 spending pill, the connection pill says **Key**, **No AI** or **Credentials** (**Add your API key** stays whole), the
 help topics take one word each (**Guide**, **Workflows**, **Mechanics**, **Trust**, **About**, the full name on hover),
 **New conversation** and **Export · 3 unsaved** become **New** and **Export · 3**, the dividers go, "this request"
-leaves the request's spending, and last the update pill (About still offers it). The title, every topic, the mode
+leaves the request's spending, the spacing tightens again, and last the update pill (About still offers it). The title, every topic, the mode
 switch and every button always stay, and a wider window gets the words back.
 
 ## The guided tour
@@ -806,29 +779,72 @@ send it again.
 
 ## Export: saving the copies
 
-Nothing of a session is written anywhere but the window's scratch folder until you press **Export** in the top bar
-(enabled once there are edited copies; its label counts the copies not saved yet). The native folder dialog opens
-where you last saved (Settings shows the folder), and every copy the next request builds on — one per attached
-document, the working set — is written into the chosen folder under its planned name, byte for byte the copy the
-checker passed, each written whole and then renamed into place (`DocumentTask.export`, `guard.write_new`). All or
-nothing: every copy is read and every destination settled before the first write. A file already there with the
-same content is that copy, saved, and nothing is written over it; a different file under a copy's name is left alone
-and the copy is numbered beside it (`name (2).docx`); a folder where a copy would land on one of the files this
-conversation works on — an attached document, a working copy — refuses the whole export, and so does a folder inside
-the app's scratch tree, where a saved copy would go with the window. Each copy's destination is recorded with the
-md5 of the bytes written (`DocumentTask.exported`, kept in the journal): a copy is saved while a file with its
-current bytes sits where Export put it — the copy's bytes and the saved file's both agree with the fingerprint
-(`DocumentTask.export_states`). The copies list marks such a copy **SAVED** (its hover says where, and its link
-opens the saved file); a copy whose bytes moved since — opened through the window's link, which opens the working
-copy in the scratch folder, and edited and saved in Word — is marked **CHANGED** and counts as unsaved again: its
-link opens the working copy, the one with the newer content (the hover says so), and the next Export writes it
-beside the file saved before, which is never written over. A copy whose saved file no longer holds its bytes
-(written over, truncated or edited after Export) is marked **NOT SAVED** and counts as unsaved again the same way,
-its link opening the working copy; one whose saved file is gone is unsaved again, plainly. The chat says how many
-were saved, and the journal keeps what was saved
-where (an entry from before the fingerprint reads as saved, its hash taken from the saved file while it is there),
-so a later run's new copies read as unsaved again and Undo's older copies as saved. Saving the records beside the
-copies, saving beside the originals and writing back over the originals are not offered (backlog H4).
+Nothing of a session is written anywhere but the window's scratch folder until you choose in **Export**, in the top
+bar. It opens whenever the window lists edited copies and no work runs: the copies the next request builds on, and
+those a run whose recovery still checks other documents has already delivered (`DocumentTask.export_set`; before
+2026-10-29 it counted the working set only, and stayed greyed out while those copies were listed). Its label counts
+the copies not saved yet. It offers three choices, in the owner's words (`exports.py`, `ExportMenu.tsx`):
+
+- **Word (Tracked Changes ON)** — each copy as it is, byte for byte the copy the checker passed: its tracked changes
+  (the request's own and any the file already had) and its comments stay, to accept or reject in Word.
+- **Word (Tracked Changes OFF)** — each copy with every tracked change accepted. Its comments stay: the choice names
+  tracked changes only, and nothing is removed that the user did not ask to remove.
+- **PDF (Clean)** — a PDF of each copy with every comment removed and every tracked change accepted.
+
+The native folder dialog opens next, where you last exported (Settings shows the folder). Word (Tracked Changes ON)
+writes every copy into it under its planned name, each written whole and then renamed into place
+(`DocumentTask.export`, `guard.write_new`), all or nothing: every copy is read and every destination settled before the
+first write.
+
+The two clean choices run as a job, since they make and check a file per copy first (`exports.make_clean`). Their
+plans are fixed in code: one step, every tracked change accepted (`resolve_tracked_changes` accept), for Word (Tracked
+Changes OFF); two ordered steps for PDF (Clean), every comment removed (`remove_comments`, replies with it) and then
+every tracked change accepted. The comments go first so that a comment anchored in text a tracked deletion takes
+away does not stop the deletion from being accepted. The plan passes the gate (`compiler.compose_submission`) and runs
+over the edited copies as any plan does (`batch.run_batch`, `chain.run_chain`), in a folder of the scratch folder
+(`exports\<stamp>-<kind>\`, with its records and reports), each copy planned, applied and checked by the independent
+verifier; only a clean copy that passed every check is used, never one delivered unverified. The choice in the menu
+names the change and approves it (the owner's decision, 2026-10-29, which retired Safe mode's **Save clean PDFs**
+button): there is no preview, and nothing else changes — the edited copies keep their comments and tracked changes,
+nothing joins the history the assistant hears, no undo point is taken, and a request open (a preview waiting, a
+question) stands as it was with its approval. For PDF (Clean) each clean copy that passed is rendered with the
+renderer the preview and the run use (Word in a new, invisible instance, or LibreOffice when Word is not there),
+through the render cache, and each PDF is checked (`pdf_export.check_pdf`): it opens without a password, has at least
+one page, and no page carries a note. A PDF that fails its check is kept apart in `pdf-failed/`, with `PDF_REPORT.md`
+beside the run's other reports. A document whose clean version cannot be made exactly (a change Word must settle
+itself: an inserted or merged table cell, a change inside an equation; or, for Word (Tracked Changes OFF), a comment
+a tracked deletion would take away), does not pass every check, still carries a tracked change anywhere afterwards
+(one in a style or a list definition, which the accept step flags and leaves for Word: `exports.pending_changes`;
+an Export has no preview to show that flag), or whose PDF cannot be made or fails its check, gets no file: the chat
+names it with the engine's reason in plain words. PDF (Clean) needs Word or LibreOffice: without
+either the choice is held back and says why (the view's `pdf`), and the server refuses it before any dialog.
+
+Every kind: a file already there with the same content is that file, saved, and nothing is written over it; a
+different file under the name is left alone and the new one is numbered beside it (`name (2).docx`); a folder where a
+file would land on one of the files this conversation works on — an attached document, an original, an edited copy —
+refuses the whole export (checked before any clean copy is made), and so does a folder inside the app's scratch tree,
+where a saved file would go with the window. A PDF never lands on an input, so a PDF can be saved beside the
+originals. The chat says how many were saved and where (and, for a copy delivered UNVERIFIED in Obliterate mode, that
+the clean file was made from it).
+
+Word (Tracked Changes ON) records each copy's destination with the md5 of the bytes written (`DocumentTask.exported`,
+kept in the journal): a copy is saved while a file with its current bytes sits where Export put it — the copy's bytes
+and the saved file's both agree with the fingerprint (`DocumentTask.export_states`). The clean choices write files made
+from a copy, not the copy, so they save it as nothing. The copies list marks a saved copy **SAVED** (its hover says
+where, and its link opens the saved file); a copy whose bytes moved since — opened through the window's link, which
+opens the working copy in the scratch folder, and edited and saved in Word — is marked **CHANGED** and counts as
+unsaved again: its link opens the working copy, the one with the newer content (the hover says so), and the next
+Export writes it beside the file saved before, which is never written over. A copy whose saved file no longer holds
+its bytes (written over, truncated or edited after Export) is marked **NOT SAVED** and counts as unsaved again the
+same way, its link opening the working copy; one whose saved file is gone is unsaved again, plainly. The journal keeps
+what was saved where (an entry from before the fingerprint reads as saved, its hash taken from the saved file while
+it is there), so a later run's new copies read as unsaved again and Undo's older copies as saved. Saving the records
+beside the copies, saving beside the originals and writing back over the originals are not offered (backlog H4).
+
+The assistants know Export: asked for PDFs, or for clean or accepted files, the conversation answers in plain words
+naming the Export choice that does it and plans nothing (`compiler.SIMPLE_EXPERIENCE`), and the outcome planner and
+recovery are told the same (`exports.PROMPT_NOTE`) — before 2026-10-29 the assistant told the owner it could not make
+PDFs.
 
 ## Conversations and a clean start
 
@@ -843,8 +859,8 @@ checkpoint. It can contain document text. It never contains the API key, an appr
 acknowledgement of a visual finding; those belong to one displayed preview only.
 
 Every start of the app is a clean one: an empty conversation, nothing attached, in a new scratch folder. A clean
-close deletes the scratch folder whole — after one native question when an edited copy or clean PDF is not saved as
-it is now: never saved with Export, changed since it was, its saved file changed since, or gone (every copy's and
+close deletes the scratch folder whole — after one native question when an edited copy is not saved as it is now:
+never saved with Export → Word (Tracked Changes ON), changed since it was, its saved file changed since, or gone (every copy's and
 every saved file's bytes are read again at the close, not the last fingerprint; OK closes and gives the copies up,
 Cancel keeps the window open; the only
 time a close is refused); what Export

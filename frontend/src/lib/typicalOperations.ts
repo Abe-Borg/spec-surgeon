@@ -153,15 +153,6 @@ export const SAFE_OPERATIONS: readonly TypicalOperation[] = [
     can: "Yes",
     note: "The setting only. Pending changes are neither accepted nor rejected.",
   },
-  {
-    task: "Issue clean PDFs of the set: no comments, every tracked change accepted",
-    buttons: ["Save clean PDFs"],
-    can: "Yes",
-    note:
-      "Needs Microsoft Word or LibreOffice on this computer; Word's pages are the ones to trust. Each PDF is made " +
-      "from a checked clean copy, and your Word documents keep their comments and tracked changes. A change Word " +
-      "must settle itself leaves that file without a PDF.",
-  },
 ];
 
 export const SAFE_LIMITS =
@@ -360,7 +351,10 @@ export const OBLITERATE_OPERATIONS: readonly TypicalOperation[] = [
 
 export const EVERY_MODE =
   "In every mode: copies only, the source guard, the independent checks on every copy, and built-in operations " +
-  "refusing what they cannot predict.";
+  "refusing what they cannot predict. Export, in the top bar, saves the edited copies as Word with tracked changes " +
+  "on (as they are) or off (every tracked change accepted, comments kept), or as clean PDFs (comments removed, " +
+  "tracked changes accepted; Word or LibreOffice makes them). The clean versions are made and checked like any " +
+  "copy, and your edited copies stay as they are.";
 
 /** The verdict's colour: Yes is fine, Partly is a caution, No is a stop. */
 export function verdictTone(can: string): "ok" | "warn" | "err" {

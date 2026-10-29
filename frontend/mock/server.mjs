@@ -282,7 +282,6 @@ function emptyView() {
     warnings: [],
     blocking: false,
     results: [],
-    pdfs: [],
     pdf: { available: true, renderer: "Microsoft Word", reason: "" },
     export: { folder: "", unsaved: 0, copies: 0 },
     action: { label: "", token: "", kind: "none", can_hold: false },
@@ -542,8 +541,6 @@ let view = emptyView();
 let beforeButton = null;
 let undoStack = [];
 let lastRequest = "";
-/** The button waiting for approval saves clean PDFs (Save clean PDFs): the run gives PDFs, not working copies. */
-let exporting = false;
 function resetGoingBack() {
   beforeButton = null;
   undoStack = [];
@@ -555,6 +552,12 @@ function undoFields() {
   return { undo: top ? top.request : "", undo_blocked: blocked };
 }
 /** What Discard withdraws now, as the app says it (docs/WEB_API.md, `discard`). */
+/** What Export would save, as the app counts it (docs/WEB_API.md, `export`): the copies the window lists, and those not
+ *  saved as Word with their tracked changes. */
+function exportOf(v) {
+  const results = v.results ?? [];
+  return { folder: v.export?.folder ?? "", unsaved: results.filter((r) => !r.saved_to).length, copies: results.length };
+}
 function discardOf(v) {
   if (v.busy) return "";
   if (v.stage === "preview") return "preview";
@@ -571,7 +574,10 @@ let updateFound = true; // what the next check for updates finds; the up-to-date
 // --- Helpers --------------------------------------------------------------
 
 function json(res, status, body) {
-  if (body === view) view.discard = discardOf(view);
+  if (body === view) {
+    view.discard = discardOf(view);
+    view.export = exportOf(view);
+  }
   const data = JSON.stringify(body);
   res.writeHead(status, {
     "Content-Type": "application/json; charset=utf-8",
@@ -724,6 +730,7 @@ function startStream(res) {
     view.busy = false;
     running = null;
     view.discard = discardOf(view);
+    view.export = exportOf(view);
     res.write(`data: ${JSON.stringify({ type: "done", state: view })}\n\n`);
     res.end();
   };
@@ -841,11 +848,9 @@ async function planJob(res, userText, layouts = false) {
 async function recipeJob(res, recipe) {
   const s = startStream(res);
   view.messages.push(msg("user", recipe.label));
-  if (!beforeButton) beforeButton = { results: view.results, left_untouched: view.left_untouched, pdfs: view.pdfs };
+  if (!beforeButton) beforeButton = { results: view.results, left_untouched: view.left_untouched };
   lastRequest = recipe.label;
-  exporting = recipe.id === "clean_pdf";
   view.results = [];
-  view.pdfs = [];
   view.plan = null;
   view.samples = [];
   view.warnings = [];
@@ -867,9 +872,7 @@ async function recipeJob(res, recipe) {
   view.occurrences = recipe.id === "find_replace" ? occurrences() : [];
   await s.emit({ type: "samples", samples: view.samples, occurrences: view.occurrences, warnings: [], blocking: false });
   view.stage = "preview";
-  view.action = exporting
-    ? { label: "Save clean PDFs", token: `tok-approve-${++seq}`, kind: "approve", can_hold: true, export: "pdf" }
-    : { label: "Create edited copies", token: `tok-approve-${++seq}`, kind: "approve", can_hold: true };
+  view.action = { label: "Create edited copies", token: `tok-approve-${++seq}`, kind: "approve", can_hold: true };
   view.working = { ...view.working, ...undoFields() };
   s.end();
 }
@@ -1010,23 +1013,6 @@ async function primaryJob(res, token, hold = []) {
       })
     : [];
   const fresh = results().filter((r) => running.some((a) => a.path === r.source) && !asideByButton.some((x) => x.path === r.source));
-  if (view.mode === "safe" && exporting) {
-    // Save clean PDFs: a PDF of each clean copy; the working set, the history and Undo are as they were.
-    exporting = false;
-    beforeButton = null;
-    view.pdfs = fresh.map((r) => ({ source: r.source, output: `${RUN_DIR}/pdf/${r.name.replace(/\.docx$/i, "")}.pdf`, name: r.name.replace(/\.docx$/i, ".pdf") }));
-    view.left_untouched = asideByButton.map((x) => ({ path: x.path, name: x.name, reason: x.reason }));
-    const left = view.left_untouched.length ? ` Without a PDF: ${view.left_untouched.map((x) => x.name).join(", ")} — each one's reason is under Left untouched.` : "";
-    const done = msg("app", `${view.pdfs.length} clean ${view.pdfs.length === 1 ? "PDF is" : "PDFs are"} ready, made by Microsoft Word: every comment removed and every tracked change accepted, each from a copy the checks passed. Your Word documents are as they were; the next button works on them, comments and tracked changes included.${left}`);
-    view.messages.push(done);
-    await s.emit({ type: "message", message: done });
-    view.stage = "done";
-    view.plan = null;
-    view.samples = [];
-    view.action = { label: "", token: "", kind: "none", can_hold: false };
-    view.working = { ...view.working, ...undoFields() };
-    return s.end();
-  }
   if (view.mode === "safe") {
     // A button's run: the app's own note, no AI words; what it left untouched waits beside the copies. What it
     // replaces is kept for Undo.
@@ -1388,10 +1374,8 @@ async function handle(req, res) {
       if (beforeButton) {
         view.results = beforeButton.results;
         view.left_untouched = beforeButton.left_untouched;
-        view.pdfs = beforeButton.pdfs ?? [];
       }
       beforeButton = null;
-      exporting = false;
       view.plan = null;
       view.samples = [];
       view.warnings = [];
@@ -1432,7 +1416,6 @@ async function handle(req, res) {
       view.samples = [];
       view.warnings = [];
       view.results = [];
-      view.pdfs = [];
       view.left_untouched = [];
       view.todo = [];
       view.focus = [];
@@ -1455,15 +1438,32 @@ async function handle(req, res) {
       return json(res, 200, view);
     }
     case "POST /api/export": {
+      // Export's three kinds (docs/WEB_API.md): Word (Tracked Changes ON) answers with the view; Word (Tracked
+      // Changes OFF) and PDF (Clean) make and check their clean copies first, so they answer with the job stream.
       if (view.busy) return busyRefusal();
-      if (view.results.length === 0 && view.pdfs.length === 0) return json(res, 400, { error: "There are no edited copies or clean PDFs to save yet." });
+      const body = await readJson(req);
+      const kind = typeof body.kind === "string" && body.kind ? body.kind : "word";
+      if (!["word", "accepted", "pdf"].includes(kind)) return json(res, 400, { error: "Export saves Word with tracked changes on or off, or a clean PDF." });
+      if (view.results.length === 0) return json(res, 400, { error: "There are no edited copies to save yet." });
       const folder = "C:/Users/abe/Documents/Saved copies";
-      view.results = view.results.map((r) => ({ ...r, saved_to: `${folder}/${r.name}` }));
-      view.pdfs = view.pdfs.map((p) => ({ ...p, saved_to: `${folder}/${p.name}` }));
-      view.export = { folder, unsaved: 0, copies: view.results.length + view.pdfs.length };
-      view.messages.push(msg("app", `Saved ${view.results.length} copies to ${folder}.`));
       settings.export_folder = folder;
-      return json(res, 200, view);
+      if (kind === "word") {
+        view.results = view.results.map((r) => ({ ...r, saved_to: `${folder}/${r.name}` }));
+        view.export = { folder, unsaved: 0, copies: view.results.length };
+        view.messages.push(msg("app", `Saved ${view.results.length} copies to ${folder}.`));
+        return json(res, 200, view);
+      }
+      const s = startStream(res);
+      await s.emit({ type: "status", kind: "creating", text: "Creating and checking the clean copies…" });
+      if (kind === "pdf") await s.emit({ type: "status", kind: "rendering", text: "Saving the clean PDFs…" });
+      const n = view.results.length;
+      const done = msg("app", kind === "pdf"
+        ? `Saved ${n} clean PDF${n === 1 ? "" : "s"} to ${folder}, made by Microsoft Word: every comment removed and every tracked change accepted, each from a copy the checks passed. Your edited copies are as they were.`
+        : `Saved ${n} Word cop${n === 1 ? "y" : "ies"} with every tracked change accepted to ${folder}. Comments stay; your edited copies are as they were.`);
+      view.messages.push(done);
+      await s.emit({ type: "message", message: done });
+      view.export = { ...view.export, folder };
+      return s.end();
     }
     case "POST /api/open": {
       const body = await readJson(req);

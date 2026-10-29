@@ -15,7 +15,7 @@ export interface Availability {
   reason: string;
 }
 
-type Attached = Pick<View, "attachments" | "template"> & Partial<Pick<View, "pdf">>;
+type Attached = Pick<View, "attachments" | "template">;
 
 const usable = (view: Pick<View, "attachments">) => view.attachments.filter((a) => a.state !== "refused");
 
@@ -50,12 +50,6 @@ export function availability(recipe: Recipe, view: Attached): Availability {
   }
   if (recipe.needs.includes("picture") && pictures(view).length === 0) {
     return { ready: false, reason: "Attach the new picture first." };
-  }
-  if (recipe.needs.includes("pdf") && view.pdf && !view.pdf.available) {
-    return {
-      ready: false,
-      reason: view.pdf.reason || "Saving PDFs needs Microsoft Word or LibreOffice on this computer.",
-    };
   }
   return { ready: true, reason: "" };
 }

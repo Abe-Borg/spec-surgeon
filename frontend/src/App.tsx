@@ -1,7 +1,7 @@
 // Adapted from Build-a-Spec's frontend/src/App.tsx (copy-based reuse): the
 // layout and the one place the job stream's events dispatch.
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
-import type { Attachment, Choice, JobEvent, Mode, Recipe, RecipeInputs, Update, View } from "./types";
+import type { Attachment, Choice, ExportKind, JobEvent, Mode, Recipe, RecipeInputs, Update, View } from "./types";
 import * as api from "./lib/api";
 import { actionButton, discardButton } from "./lib/action";
 import { composerState, transcript } from "./lib/chat";
@@ -326,11 +326,23 @@ export default function App() {
   const newConversationRef = useRef<() => void>(() => {});
   const onNewConversation = useCallback(() => newConversationRef.current(), []);
 
-  // Export → Save the copies…: a dismissed dialog changes nothing (the view is fetched again, which is harmless).
-  const onExport = useCallback(() => {
-    if (busyRef.current) return;
-    applyView(api.exportCopies().then((next) => next ?? api.getState()));
-  }, [applyView]);
+  // Export, one of its three kinds: Word (Tracked Changes ON) answers with the view; the clean kinds answer with the
+  // job stream, followed like any job. A dismissed dialog changes nothing (the view is fetched again, which is
+  // harmless).
+  const onExport = useCallback(
+    (kind: ExportKind) => {
+      if (busyRef.current) return;
+      api
+        .exportCopies(kind)
+        .then((answer) => {
+          if (answer === null) void refresh();
+          else if ("stream" in answer) void runJob(answer.stream, null, "export");
+          else if (!busyRef.current) dispatch({ type: "view", view: answer.view });
+        })
+        .catch((failure: unknown) => setNotice(failureText(failure)));
+    },
+    [refresh, runJob],
+  );
 
   const onStartOver = useCallback(() => applyView(api.startOver(), resetInputs), [applyView, resetInputs]);
   // The ways back, in every mode: Discard withdraws a preview (Safe: the form keeps what was typed; Default and
@@ -437,7 +449,7 @@ export default function App() {
     if (
       unsavedCopies > 0 &&
       !window.confirm(
-        `${unsavedCopies === 1 ? "1 file made in this window (an edited copy or a clean PDF) has" : `${unsavedCopies} files made in this window (edited copies or clean PDFs) have`} not been saved. A new conversation leaves ${unsavedCopies === 1 ? "it" : "them"} behind in the window's scratch folder, which goes when the window closes.\n\nOK starts the new conversation anyway. Cancel goes back, so you can save ${unsavedCopies === 1 ? "it" : "them"} with Export first.`,
+        `${unsavedCopies === 1 ? "1 edited copy made in this window has" : `${unsavedCopies} edited copies made in this window have`} not been saved as Word with ${unsavedCopies === 1 ? "its" : "their"} tracked changes. A new conversation leaves ${unsavedCopies === 1 ? "it" : "them"} behind in the window's scratch folder, which goes when the window closes.\n\nOK starts the new conversation anyway. Cancel goes back, so you can save ${unsavedCopies === 1 ? "it" : "them"} with Export first.`,
       )
     ) {
       return;

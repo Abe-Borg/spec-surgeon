@@ -257,7 +257,7 @@ try {
   // 10. The top bar's help topics: one dialog, a tab strip, Escape closes it.
   const topBar = page.locator("header nav[aria-label='Help']");
   check(
-    "the top bar names the tour and the help topics, Why trust it before About",
+    "the top bar names the help topics, Why trust it before About",
     JSON.stringify(await topBar.getByRole("button").allInnerTexts()) === JSON.stringify(["Tour", "How to use", "Workflows", "How it works", "Why trust it", "About"]),
     JSON.stringify(await topBar.getByRole("button").allInnerTexts()),
   );
@@ -307,7 +307,9 @@ try {
   await page.locator("header nav[aria-label='Help']").getByRole("button", { name: "About" }).click();
   const about = page.getByRole("dialog", { name: "About" });
   await about.getByText("What’s new in 1.6.0").waitFor();
-  check("About shows the release notes", await about.getByText("The window is a web page").isVisible({ timeout: 3000 }).catch(() => false));
+  // the heading shows the version at once; the notes come with GET /api/about, so wait for them
+  check("About shows the release notes",
+    await about.getByText("The window is a web page").waitFor({ timeout: 5000 }).then(() => true, () => false));
   check("About names the model", await about.getByText("Claude Opus 5.5").isVisible());
   await about.getByRole("button", { name: "Read the full license" }).click();
   check("About shows the full license", await about.getByText("Permission is hereby granted").isVisible());
@@ -489,18 +491,24 @@ try {
   check("Undo goes back before the button: no copies, nothing left untouched",
     (await page.getByText("Your edited copies").count()) === 0 && (await handOff.count()) === 0);
   check("…and nothing is left to undo", (await undoBtn.count()) === 0);
-  // Save clean PDFs: its preview's one button says what it makes; the PDFs are listed, and no working copy changes.
+  // Export: its three choices once copies exist; PDF (Clean) runs as a job and leaves the edited copies as they were.
+  const exportBtn = page.getByRole("button", { name: /^Export/ });
+  check("Export waits for copies", await exportBtn.isDisabled());
   await page.getByRole("button", { name: "All buttons" }).click();
-  await page.getByRole("button", { name: "Save clean PDFs", exact: true }).click();
+  await page.getByRole("button", { name: "Find and replace" }).click();
   await previewBtn.click();
-  const savePdfs = page.getByRole("button", { name: "Save clean PDFs", exact: true });
-  await page.getByText("If the pages look right, save the clean PDFs.").waitFor({ timeout: 20000 });
-  check("a Save clean PDFs preview's button says PDFs", (await savePdfs.count()) === 1 && (await createCopies.count()) === 0);
-  await savePdfs.click();
-  await page.getByText("Your clean PDFs").waitFor({ timeout: 20000 });
-  check("the clean PDFs are listed, each one a click away", await page.getByRole("button", { name: /\.pdf/ }).first().isVisible());
-  check("…and no copy joins the working set: no edited copies, nothing to undo",
-    (await page.getByText("Your edited copies").count()) === 0 && (await undoBtn.count()) === 0);
+  await createCopies.waitFor({ timeout: 20000 });
+  await createCopies.click();
+  await handOff.waitFor({ timeout: 20000 });
+  await exportBtn.click();
+  const exportMenu = page.getByRole("menu", { name: "Export the edited copies as" });
+  check("Export offers its three choices",
+    (await exportMenu.getByRole("menuitem").allInnerTexts()).map((t) => t.split("\n")[0]).join(" | ") ===
+      "Word (Tracked Changes ON) | Word (Tracked Changes OFF) | PDF (Clean)");
+  await exportMenu.getByRole("menuitem", { name: /PDF \(Clean\)/ }).click();
+  await page.getByText(/clean PDFs? to C:/).first().waitFor({ timeout: 20000 });
+  check("…and PDF (Clean) leaves the edited copies as they were",
+    (await page.getByRole("heading", { name: "Your edited copies" }).isVisible()) && (await undoBtn.isEnabled()));
   await page.getByRole("button", { name: "All buttons" }).click();
   await page.getByRole("button", { name: "Find and replace" }).click();
   await previewBtn.click();

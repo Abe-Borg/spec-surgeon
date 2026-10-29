@@ -71,7 +71,6 @@ DISCARDED = {"preview": "Preview discarded; nothing was created.",
 # said when the app takes a custom method on its own (``_collect_conversation``), Claude's proposal after it
 CUSTOM_METHOD_WRITTEN = ("Claude is writing a one-off custom method for this and trying it on copies of your documents; "
                          "nothing is created until you have seen its preview and approved it.")
-NO_PDF = "Its PDF could not be made"   # Save clean PDFs: a clean copy passed, its PDF did not (``_without_pdf``)
 CONVERSATION_EFFORT = "medium"   # the model's own default: fewer tool rounds per turn than high, measured by the owner
 RECOVERY_EFFORT = "high"         # the hard path keeps the depth
 RECOVERY_ATTEMPTS = 8            # candidate attempts per problem group (docs/RECOVERY.md), on every recovery path
@@ -318,13 +317,11 @@ class DocumentTask:
         self.word_sources: List[str] = []
         self.results: Dict[str, str] = {}
         self.unverified: Dict[str, List[str]] = {}   # original → the failed checks its copy was delivered with
-        # Save clean PDFs: original → the PDF of its clean copy, the last run's; never the working set (``_end_export``)
-        self.pdfs: Dict[str, str] = {}
         self._pdf_info: Optional[Dict[str, Any]] = None   # whether this computer can make PDFs (``pdf_info``)
-        # Export → Save the copies…: copy or PDF path → ``{"to": where it was saved, "md5": of the bytes written}``,
-        # and the folder of the last export. A copy or a clean PDF is saved only while a file with its current bytes
-        # sits where Export put it (``export_states``, ``unsaved_copies``): until then it is kept nowhere but the
-        # window's scratch folder.
+        # Export → Word (Tracked Changes ON): copy path → ``{"to": where it was saved, "md5": of the bytes written}``,
+        # and the folder of the last export (any kind). A copy is saved only while a file with its current bytes sits
+        # where Export put it (``export_states``, ``unsaved_copies``): until then it is kept nowhere but the window's
+        # scratch folder. The clean kinds (Tracked Changes OFF, PDF) are made from it and save it as nothing.
         self.exported: Dict[str, Dict[str, str]] = {}
         self.export_folder = ""
         self._digests: Dict[str, tuple] = {}   # copy path → (size, mtime_ns, md5): the last fingerprint taken
@@ -661,14 +658,13 @@ class DocumentTask:
         for shown in [*self.undo_points, self._before_button or {}]:
             # attached again later, it is an original: no undo or discard puts an old copy back in its place, or
             # shows one as its result
-            for part in ("working", "applied", "results", "unverified", "pdfs"):
+            for part in ("working", "applied", "results", "unverified"):
                 if part in shown:
                     shown[part].pop(str(path), None)
             if "left_untouched" in shown:
                 shown["left_untouched"] = [e for e in shown["left_untouched"]
                                            if _same_file_key(e["path"]) != _same_file_key(path)]
         self.left_untouched = [e for e in self.left_untouched if _same_file_key(e["path"]) != _same_file_key(path)]
-        self.pdfs.pop(str(path), None)
         pass_over = False
         if self.focus:
             self.focus["documents"] = [d for d in self.focus["documents"] if d != str(path)]
@@ -854,7 +850,7 @@ class DocumentTask:
         if not self.working and not self.history and not self.todo and not self.focus:
             return
         self.working, self.generation, self.history, self.decisions = {}, 0, [], []
-        self.results, self.unverified, self.pdfs = {}, {}, {}
+        self.results, self.unverified = {}, {}
         self.applied, self.todo, self.focus, self._binned, self.fresh = {}, {}, None, [], []
         self.left_untouched = []
         self.undo_points, self._pending_undo, self._before_button = [], None, None
@@ -870,11 +866,11 @@ class DocumentTask:
         """The working set as it is before the run being approved, and what the window shows of it (a button's
         preview cleared that, so its ``_before_button``): what ``undo`` restores once the run has delivered."""
         shown = self._before_button or {"results": self.results, "unverified": self.unverified,
-                                        "left_untouched": self.left_untouched, "pdfs": self.pdfs}
+                                        "left_untouched": self.left_untouched}
         return {"request": self.decisions[0] if self.decisions else "",
                 "working": dict(self.working), "generation": self.generation, "history": list(self.history),
                 "applied": {k: list(v) for k, v in self.applied.items()}, "fresh": list(self.fresh),
-                "results": dict(shown["results"]), "pdfs": dict(shown.get("pdfs", {})),
+                "results": dict(shown["results"]),
                 "unverified": {k: list(v) for k, v in shown["unverified"].items()},
                 "left_untouched": [dict(e) for e in shown["left_untouched"]],
                 "todo_before": list(self.todo)}
@@ -898,7 +894,6 @@ class DocumentTask:
         attached = {str(a.path) for a in self.attachments if not a.template and not a.reference}
         keys = {_same_file_key(p) for p in attached}
         self.results = {k: v for k, v in shown["results"].items() if k in attached and Path(v).is_file()}
-        self.pdfs = {k: v for k, v in shown.get("pdfs", {}).items() if k in attached and Path(v).is_file()}
         # a mark belongs to the working copy it was delivered with, shown among the results or not
         self.unverified = {k: list(v) for k, v in shown["unverified"].items() if k in self.results or k in self.working}
         self.left_untouched = [dict(e) for e in shown["left_untouched"]
@@ -1036,13 +1031,15 @@ class DocumentTask:
         return None
 
     def perform(self, action, *, text="", token="", choice_id="", chip=False, hold=(), wording=None, recipe="",
-                inputs=None, skip=(), log=lambda _: None, events=None):
+                inputs=None, skip=(), kind="", folder="", log=lambda _: None, events=None):
         """Worker entry point. One ledger covers every nested model call and every turn. ``events`` is the window's
         live channel (docs/WEB_API.md: status, activity, text_delta, thinking_delta, message, plan, samples, results,
         question, cost); without one the job runs silently and the view says everything at the end. ``hold`` (the
         primary action) names the previewed documents the user set aside: they go on the to-do list, the others run.
         ``recipe`` and ``inputs`` (the ``recipe`` action) are a Safe-mode button and its form. ``skip`` (the
-        ``occurrences`` action) names, by key, the find-and-replace occurrences the user unticked in the preview."""
+        ``occurrences`` action) names, by key, the find-and-replace occurrences the user unticked in the preview.
+        ``kind`` and ``folder`` (the ``export`` action) are a clean export's kind and the folder it writes into: it is
+        no request, so the request open, its spending and the stage are left as they are (``_export_job``)."""
         self.problem = ""
         self._events = events
         self.save(in_progress=True)
@@ -1053,6 +1050,8 @@ class DocumentTask:
             if status:
                 self._emit({"type": "status", "kind": status[0], "text": status[1]})
             log(message)
+        if action == "export":
+            return self._export_job(kind, folder, checkpointed_log)
         if not (action == "primary" and self.stage == "budget"):
             # a new request: the spending check starts again, and nothing stopped on the way carries over
             self._request_budget = self._new_request()
@@ -1085,6 +1084,17 @@ class DocumentTask:
             self._emit({"type": "cost", "cost": self._cost()})
             self._events = None
             self._talking = False
+            self.save()
+        return self.view()
+
+    def _export_job(self, kind: str, folder: str, log) -> Dict[str, Any]:
+        """Export → Word (Tracked Changes OFF) or PDF (Clean) as a job (``export``): the clean copies are made and
+        checked, and the PDFs rendered, which takes a while. No model call, nothing planned for the conversation: the
+        request open, the preview waiting and their tokens stand as they were."""
+        try:
+            self.export(folder, kind, log=log)
+        finally:
+            self._events = None
             self.save()
         return self.view()
 
@@ -1233,7 +1243,6 @@ class DocumentTask:
             raise ValueError("There is no such button.")
         files = s.files(outcome=False)
         ctx = recipes.Context(files, self.template(), self.references())
-        self._pdf_info = None                    # a renderer installed or removed since is seen at the press
         try:
             built = recipes.build(recipe.id, inputs, ctx)
         except recipes.RecipeError as e:
@@ -1258,12 +1267,11 @@ class DocumentTask:
             # first one's, which is still what came before)
             self._before_button = {"results": dict(self.results),
                                    "unverified": {k: list(v) for k, v in self.unverified.items()},
-                                   "left_untouched": [dict(e) for e in self.left_untouched],
-                                   "pdfs": dict(self.pdfs)}
+                                   "left_untouched": [dict(e) for e in self.left_untouched]}
         # Results describe this button's copies. Earlier copies remain in the working set and on disk, but must
         # not be presented as if they carry a later change that could be refused or fail verification. An UNVERIFIED
         # mark is the working copy's, not the button's: it stays (``_mark_unverified``).
-        self.results, self.pdfs = {}, {}
+        self.results = {}
         self.say(built.request, "user")
         self.decisions = [built.request]
         self.word_sources.extend(w for w in built.sources if w not in self.word_sources)
@@ -1280,7 +1288,7 @@ class DocumentTask:
             self.save()
             return
         s._set_outcome(spec=outcome, source="recipe", left_out=list(built.left_out),
-                       left_out_reasons=built.left_out, export=built.export)
+                       left_out_reasons=built.left_out)
         self._settle(log)
         self._say_render_warnings()
         if nothing:
@@ -1395,7 +1403,7 @@ class DocumentTask:
             return
         n = sum(len(es) for es in by_op.values())
         s._set_outcome(spec=outcome, source=s.outcome_source, left_out=list(s.left_out),
-                       left_out_reasons=dict(s.left_out_reasons), export=s.export)
+                       left_out_reasons=dict(s.left_out_reasons))
         self.say(f"{n} occurrence{'s' if n != 1 else ''} will be left as {'they are' if n != 1 else 'it is'}; the "
                  f"preview is being made again." if n else "Every occurrence is back in; the preview is being made again.")
         self._settle(log)
@@ -1420,8 +1428,8 @@ class DocumentTask:
             self.todo[entry["path"]] = {
                 "name": entry["name"], "decisions": [entry["request"]] if entry["request"] else [], "seen": [],
                 "why": WHY_REFUSED if refused else WHY_FAILED,
-                # a document whose clean copy was made but not its PDF (Save clean PDFs) says so as it is
-                "reason": f"{why}." if why.startswith((NO_PDF, PREVIEW_FAILED)) else
+                # a document whose preview failed its checks says so as it is
+                "reason": f"{why}." if why.startswith(PREVIEW_FAILED) else
                 ("The button could not change it" if refused else "Its copy could not be made")
                 + (f": {why}." if why else ".")}
         self.left_untouched = [e for e in self.left_untouched if e["path"] not in wanted]
@@ -1806,18 +1814,11 @@ class DocumentTask:
         request = self.decisions[0] if self.decisions else ""
         # a Safe-mode button's refused documents stay in scope for the next button; they are offered to Default mode
         untouched_before = self._refused_by_preview(outcome.preview, request) if model_free else []
-        export = s.export                        # Save clean PDFs: the run's copies are made for their PDFs
-        log("Creating and checking the clean copies…" if export else "Creating and checking your edited copies…")
+        log("Creating and checking your edited copies…")
         s.run(False, self.render, log, only=remaining)
         if not model_free:
             self._binned += [self._set_aside(path, seen_by, why=why, reason=reason)
                              for path, seen_by, why, reason in refused]
-        if export:
-            self._collect_pdfs()
-            self.left_untouched = self._left_after_run(request, untouched_before) + self._without_pdf(request)
-            self._end_export()
-            return
-        self.pdfs = {}                           # the last run's PDFs only: this run saved none
         self._collect_results()
         self._emit({"type": "results", "results": self._results_view()})
         if model_free:
@@ -2015,60 +2016,9 @@ class DocumentTask:
                 self.results[str(self.origin_of(item.source))] = str(item.output)
                 self._mark_unverified(str(self.origin_of(item.source)), getattr(item, "unverified", None))
 
-    def _collect_pdfs(self) -> None:
-        """The PDFs Save clean PDFs saved, keyed by the ATTACHED original, as the copies are (``_collect_results``)."""
-        done = self.session.last_pdfs
-        self.pdfs = {str(self.origin_of(source)): str(pdf) for source, pdf in (done.pdfs.items() if done else [])}
-
-    def _pdf_marks(self) -> Dict[str, List[str]]:
-        """The UNVERIFIED marks each PDF carries: its clean copy passed, but it was checked against a working copy
-        delivered UNVERIFIED (Obliterate mode), so that copy's marks stay on the PDF as an earlier copy's, as they do
-        on every later copy built on it (``_mark_unverified``)."""
-        return {origin: [m if m.startswith(EARLIER_COPY) else EARLIER_COPY + m for m in self.unverified[origin]]
-                for origin in self.pdfs if self.unverified.get(origin)}
-
-    def _without_pdf(self, request: str) -> List[Dict[str, str]]:
-        """The documents whose clean copy passed but whose PDF could not be made, with the renderer's reason."""
-        done = self.session.last_pdfs
-        out: List[Dict[str, str]] = []
-        for source, why in (done.failed.items() if done else []):
-            origin = str(self.origin_of(source))
-            out.append({"path": origin, "name": Path(origin).name, "why": WHY_FAILED,
-                        "reason": f"{NO_PDF}: {str(why).rstrip('.')}.", "request": request})
-        return out
-
-    def _end_export(self) -> None:
-        """Save clean PDFs is done: the PDFs are the result, and the working set is as it was — the clean copies the
-        PDFs were made from stay in the run folder, but the next request works on the documents as they were, their
-        comments and tracked changes included. So nothing joins the history the model hears, no copy becomes a working
-        copy, and no undo point is kept (there is nothing to undo)."""
-        s = self.session
-        self.stage = "done"
-        self._revision += 1
-        n, done = len(self.pdfs), s.last_pdfs
-        made = f", made by {done.renderer_name}" if done is not None and done.renderer_name else ""
-        shaky = len(self._pdf_marks())
-        if n:
-            ready = (f"{n} clean {'PDF is' if n == 1 else 'PDFs are'} ready{made}: every comment removed and every "
-                     f"tracked change accepted, each from a copy the checks passed. Your Word documents are as they "
-                     f"were; the next button works on them, comments and tracked changes included." +
-                     (f" {shaky} {'is' if shaky == 1 else 'are'} marked UNVERIFIED: {'its' if shaky == 1 else 'their'}"
-                      f" Word document was delivered UNVERIFIED earlier, and the checks that failed are beside "
-                      f"{'it' if shaky == 1 else 'them'}." if shaky else ""))
-        else:
-            ready = "No PDF was saved. Choose another button or start over from the originals."
-        self.say(ready + (f" Without a PDF: {', '.join(e['name'] for e in self.left_untouched)} — each one's reason is "
-                          "under Left untouched." if self.left_untouched else ""))
-        self._pending_undo, self._before_button = None, None
-        self.decisions = []
-        self._binned = []
-        self._sync()                             # a document the ✗ put on the to-do list leaves the next button's scope
-        s._set_outcome()
-        s.end_conversation()
-
     def pdf_info(self) -> Dict[str, Any]:
-        """Whether this computer can make PDFs (Save clean PDFs' ``needs``), and with what: asked once, again at each
-        button press."""
+        """Whether this computer can make PDFs (Export → PDF (Clean)), and with what: asked once, and again at each
+        export (``export``), so a renderer installed or removed since is seen then."""
         if self._pdf_info is None:
             from .pdf_export import RENDERER_NAMES, renderer
             backend, why = renderer()
@@ -2283,8 +2233,6 @@ class DocumentTask:
             labels = {k: v for k, v in labels.items() if k == "preview"}   # Safe mode continues no conversation
         if blocking and self.stage == "preview":
             labels["preview"] = "I reviewed the flagged pages — create copies"
-        elif s.export == "pdf" and "preview" in labels:
-            labels["preview"] = "Save clean PDFs"
         planned = getattr(batch_plan, "files", None)
         from .preview import refusals
         if s.model_free and self.stage == "preview" and planned and len(refusals(preview)) >= len(planned):
@@ -2339,13 +2287,11 @@ class DocumentTask:
                 "samples_set_aside": self._samples_set_aside() if pages is not None else [],
                 "occurrences": self._occurrences_view(pages) if pages is not None else [],
                 "warnings": list(dict.fromkeys(warnings)), "results": dict(self.results),
-                "pdfs": dict(self.pdfs), "pdf_unverified": self._pdf_marks(),
-                "export": s.export if self.stage == "preview" else "",
                 "unverified": {k: list(v) for k, v in self.unverified.items()},
                 "exported": {k: dict(v) for k, v in self.exported.items()}, "export_folder": self.export_folder,
                 "export_state": states,
                 "unsaved": [path for path, state in states.items() if state != "saved"],
-                "copies": len(self.working) + len(self.pdfs),
+                "copies": len(states),
                 "action": labels.get(self.stage, ""), "token": self.action_token(),
                 "blocked_reason": s.run_blocked_reason() if self.stage == "preview" else "",
                 "budget_paused": self.stage == "budget", "pause_reason": self.pause_reason(),
@@ -2353,7 +2299,16 @@ class DocumentTask:
                 "cost": self._budget.spent_usd,
                 "blocking": blocking}
 
-    # ---- Export: the one place a copy is written where the user chose ----
+    # ---- Export: the one place a file is written where the user chose ----
+    def export_set(self) -> Dict[str, str]:
+        """The edited copies Export saves, by attached original: the working set, and the copies the window lists that
+        have not joined it yet (a run whose recovery still checks other documents delivered them; they join at its
+        end), the listed copy winning as the newer one."""
+        attached = {str(a.path) for a in self.attachments if not a.template and not a.reference}
+        copies = dict(self.working)
+        copies.update({k: v for k, v in dict(self.results).items() if k in attached})
+        return copies
+
     def _digest(self, path: str, *, fresh: bool = False) -> Optional[str]:
         """The md5 of a file's bytes as they are now (a copy's, or the file Export saved it as); None when the file
         cannot be read. Taken again whenever the file's size or mtime moved since the last fingerprint, and always
@@ -2372,16 +2327,17 @@ class DocumentTask:
         return md5
 
     def export_states(self, *, fresh: bool = False) -> Dict[str, str]:
-        """Each working copy and clean PDF (its path) with whether it is saved: ``saved`` when a file with its
-        current bytes sits where Export put it (the copy's bytes, the saved file's bytes and the fingerprint Export
-        recorded all agree); ``changed`` when the copy's bytes moved since (a copy opened from the window and edited
-        in Word) or cannot be read; ``replaced`` when the copy is as it was but the saved file no longer holds its
-        bytes (written over, truncated or edited since Export); ``gone`` when the saved file is no longer there;
-        ``unsaved`` when Export never saved it. Only ``saved`` survives the close. Read over copies of the dicts, so
+        """Each edited copy Export would save (``export_set``, its path) with whether it is saved: ``saved`` when a
+        file with its current bytes sits where Export → Word (Tracked Changes ON) put it (the copy's bytes, the saved
+        file's bytes and the fingerprint Export recorded all agree); ``changed`` when the copy's bytes moved since (a
+        copy opened from the window and edited in Word) or cannot be read; ``replaced`` when the copy is as it was but
+        the saved file no longer holds its bytes (written over, truncated or edited since Export); ``gone`` when the
+        saved file is no longer there; ``unsaved`` when Export never saved it. Only ``saved`` survives the close: a
+        copy's clean versions (Tracked Changes OFF, PDF) are made from it, not it. Read over copies of the dicts, so
         the close question can be asked while a job is still running; ``fresh`` reads every copy and every saved
         file again."""
         states: Dict[str, str] = {}
-        for path in [*dict(self.working).values(), *dict(self.pdfs).values()]:
+        for path in self.export_set().values():
             entry = self.exported.get(path)
             if not entry:
                 states[path] = "unsaved"
@@ -2396,29 +2352,37 @@ class DocumentTask:
         return states
 
     def unsaved_copies(self, *, fresh: bool = False) -> List[str]:
-        """The working copies and the last run's clean PDFs that are not saved as they are now (their paths): never
-        saved by Export, changed since, their saved file changed since, or gone — what closing the window would
-        delete (``export_states``)."""
+        """The edited copies that are not saved as they are now (their paths): never saved by Export as Word (Tracked
+        Changes ON), changed since, their saved file changed since, or gone — what closing the window would delete
+        (``export_states``)."""
         return [path for path, state in self.export_states(fresh=fresh).items() if state != "saved"]
 
-    def export(self, folder) -> Dict[str, Any]:
-        """Export → Save the copies…: every copy the next request builds on (the working set, one per attached
-        original) and every clean PDF of the last Save clean PDFs run, written into ``folder`` under its planned
-        name, each through ``guard.write_new``. All or nothing:
-        every copy is read and every destination settled before the first write. A destination that is one of the
-        inputs (an attached file, a working copy) refuses the export, and so does a folder inside the app's scratch
-        tree (the window's own scratch folder or any other: a copy saved there would go with it); a file already
-        there with the same bytes is that copy, saved (nothing written); one with other bytes is left alone and the
-        copy is numbered beside it (so a copy changed since it was saved lands beside the file saved before, which
-        is the user's and never written over). Each copy's destination is recorded with the md5 of the bytes
-        written: the copy stays saved while its bytes are those (``export_states``). Returns ``{"folder", "saved",
-        "already"}``."""
-        from . import guard
+    def export_ready(self, kind: str = "word") -> Dict[str, str]:
+        """The copies an export of ``kind`` would save (``export_set``), or ``ValueError`` with the sentence the window
+        shows: an unknown kind, nothing to save, or a PDF with no program on this computer to make it. Asked before
+        the folder dialog opens, so it never asks for a folder in vain."""
+        from .exports import KINDS
+        if kind not in KINDS:
+            raise ValueError("Export saves Word with tracked changes on or off, or a clean PDF.")
+        copies = self.export_set()
+        if not copies:
+            raise ValueError("There are no edited copies to save yet.")
+        if kind == "pdf":
+            self._pdf_info = None                # a renderer installed or removed since is seen now
+            info = self.pdf_info()
+            if not info["available"]:
+                raise ValueError(info["reason"])
+        return copies
+
+    def check_export(self, folder, kind: str = "word") -> Path:
+        """The folder an export of ``kind`` would write into, resolved, or ``ValueError`` with the sentence the window
+        shows: what ``export_ready`` refuses, a folder that is not one, a folder inside the app's scratch tree (the
+        window's own scratch folder or any other: a file saved there would go with it), or one where a file would land
+        on an input (an attached file, an original, an edited copy). Asked before a clean export's run starts, so a
+        refusal costs nothing, and again by ``export``."""
         from .settings import scratch_root
+        copies = self.export_ready(kind)
         folder = Path(folder)
-        files = [*self.working.values(), *self.pdfs.values()]
-        if not files:
-            raise ValueError("There are no edited copies or clean PDFs to save yet.")
         if not folder.is_dir():
             raise ValueError(f"{folder} is not a folder.")
         folder = folder.resolve()
@@ -2427,23 +2391,87 @@ class DocumentTask:
             if _same_file_key(folder) == root or _same_file_key(folder).startswith(root.rstrip("\\/") + os.sep):
                 raise ValueError(f"{folder} is inside the app's scratch folder, which is deleted when the window "
                                  "closes; nothing was saved. Choose a folder of your own.")
-        inputs = set()
-        for a in self.attachments:
-            inputs.add(_same_file_key(a.path))
+        inputs = self._export_inputs(copies)
+        for current in copies.values():
+            dest = folder / self._export_name(current, kind)
+            if _same_file_key(dest) in inputs:
+                raise ValueError(f"{dest} is one of the files this conversation works on; nothing was saved. "
+                                 "Choose another folder.")
+        return folder
+
+    def _export_inputs(self, copies: Dict[str, str]) -> set:
+        """The files no export writes over: every attached file, every original and every edited copy."""
+        inputs = {_same_file_key(a.path) for a in self.attachments}
+        for original, current in copies.items():
+            inputs.add(_same_file_key(original))
+            inputs.add(_same_file_key(current))
         for original, current in self.working.items():
             inputs.add(_same_file_key(original))
             inputs.add(_same_file_key(current))
-        for pdf in self.pdfs.values():
-            inputs.add(_same_file_key(pdf))
-        plan: List[tuple] = []                       # (copy path, destination, bytes, already there)
-        taken: set = set()
-        for current in files:
+        return inputs
+
+    @staticmethod
+    def _export_name(current, kind: str) -> str:
+        """The name an exported file takes: the copy's own (its planned name), as a PDF for ``pdf``."""
+        return Path(current).stem + ".pdf" if kind == "pdf" else Path(current).name
+
+    def _export_run_dir(self, kind: str) -> Path:
+        """A new folder for a clean export's run, under the window's scratch folder (gone when the window closes)."""
+        from .exports import EXPORT_FOLDER
+        root = Path(self.session.out_root) / EXPORT_FOLDER
+        stamp = time.strftime("%Y%m%d-%H%M%S")
+        out, n = root / f"{stamp}-{kind}", 2
+        while out.exists():
+            out, n = root / f"{stamp}-{kind}-{n}", n + 1
+        return out
+
+    def export(self, folder, kind: str = "word", *, log=lambda _: None) -> Dict[str, Any]:
+        """Export (the top bar's menu; ``exports``): every edited copy the window lists (``export_set``) written into
+        ``folder`` in the chosen kind, each file through ``guard.write_new``, never over an input and never into the
+        app's scratch tree (``check_export``).
+
+        ``word`` — Word (Tracked Changes ON) — writes each copy as it is, all or nothing: every copy is read and every
+        destination settled before the first write; a copy no longer where it was made refuses the export.
+        ``accepted`` — Word (Tracked Changes OFF) — and ``pdf`` — PDF (Clean) — first make each copy's clean version
+        through the gate and a checked run in the scratch folder (``exports.make_clean``); a document whose clean
+        version or PDF cannot be made has no file and is named with the reason, and the others are written. The edited
+        copies are never changed, and nothing joins the history.
+
+        A file already there with the same bytes is that file, saved (nothing written); one with other bytes is left
+        alone and the new file is numbered beside it (so a copy changed since it was saved lands beside the file saved
+        before, which is the user's and never written over). Only ``word`` records what it saved (``exported``): the
+        copy stays saved while its bytes are those. Returns ``{"folder", "kind", "saved", "already", "missing"}``,
+        ``missing`` naming each document without a file and why."""
+        from . import guard
+        from .exports import make_clean
+        folder = self.check_export(folder, kind)
+        copies = self.export_set()
+        sources: Dict[str, bytes] = {}
+        for origin, current in copies.items():
             try:
-                data = Path(current).read_bytes()
+                sources[origin] = Path(current).read_bytes()
             except OSError as exc:
                 raise ValueError(f"A copy is no longer where it was made ({Path(current).name}: {exc}); create the "
                                  "copies again before saving them.") from exc
-            name = Path(current).name
+        missing: Dict[str, str] = {}
+        renderer = ""
+        if kind == "word":
+            made = {origin: (self._export_name(copies[origin], kind), data) for origin, data in sources.items()}
+        else:
+            clean = make_clean({origin: Path(current) for origin, current in copies.items()}, kind,
+                               self._export_run_dir(kind), render=self.render, log=log)
+            renderer = clean.renderer_name
+            made = {}
+            for origin, path in clean.made.items():
+                try:
+                    made[origin] = (self._export_name(copies[origin], kind), Path(path).read_bytes())
+                except OSError as exc:
+                    clean.failed[origin] = f"its file could not be read ({exc})"
+            missing = {Path(copies[origin]).name: why for origin, why in clean.failed.items() if origin not in made}
+        inputs = self._export_inputs(copies)
+        plan: List[tuple] = []                       # (original, destination, bytes, already there)
+        taken: set = set()
+        for origin, (name, data) in made.items():
             dest, n = folder / name, 2
             while True:
                 key = _same_file_key(dest)
@@ -2455,12 +2483,12 @@ class DocumentTask:
                 elif not dest.exists():
                     break
                 elif dest.is_file() and dest.read_bytes() == data:
-                    break                          # the same copy, saved already
+                    break                          # the same file, saved already
                 dest, n = folder / f"{Path(name).stem} ({n}){Path(name).suffix}", n + 1
             taken.add(_same_file_key(dest))
-            plan.append((current, dest, data, dest.exists()))
+            plan.append((origin, dest, data, dest.exists()))
         saved = already = 0
-        for current, dest, data, there in plan:
+        for origin, dest, data, there in plan:
             if there:
                 already += 1
             else:
@@ -2469,19 +2497,44 @@ class DocumentTask:
                 except OSError as exc:
                     self.save()
                     raise ValueError(f"{dest.name} could not be written to {folder} ({exc}); "
-                                     f"{saved} cop{'y was' if saved == 1 else 'ies were'} saved before it.") from exc
+                                     f"{saved} file{'' if saved == 1 else 's'} {'was' if saved == 1 else 'were'} "
+                                     f"saved before it.") from exc
                 saved += 1
-            self.exported[current] = {"to": str(dest), "md5": _md5(data)}
-            self._digest(current, fresh=True)      # the fingerprint of what was just read, for the next view
+            if kind == "word":
+                current = copies[origin]
+                self.exported[current] = {"to": str(dest), "md5": _md5(data)}
+                self._digest(current, fresh=True)  # the fingerprint of what was just read, for the next view
         self.export_folder = str(folder)
-        docx = sum(1 for current, *_ in plan if Path(current).suffix.lower() != ".pdf")
-        pdfs = len(plan) - docx
-        what = " and ".join(part for part in (f"{docx} cop{'y' if docx == 1 else 'ies'}" if docx else "",
-                                              f"{pdfs} clean PDF{'' if pdfs == 1 else 's'}" if pdfs else "") if part)
-        self.say(f"Saved {what} to {folder}" + (f" ({already} already there, unchanged)" if already else "") + ".")
-        made = {"folder": str(folder), "saved": saved, "already": already}
+        self.say(self._export_said(kind, folder, len(plan), already, missing, renderer,
+                                   sum(1 for origin, *_ in plan if self.unverified.get(origin))))
+        result = {"folder": str(folder), "kind": kind, "saved": saved, "already": already, "missing": missing}
         self.save()
-        return made
+        return result
+
+    @staticmethod
+    def _export_said(kind: str, folder: Path, count: int, already: int, missing: Dict[str, str], renderer: str,
+                     shaky: int) -> str:
+        """What the chat says after an export: what was saved where, what was already there, and each document
+        without a file with why."""
+        there = f" ({already} already there, unchanged)" if already else ""
+        if kind == "word":
+            said = f"Saved {count} cop{'y' if count == 1 else 'ies'} to {folder}{there}."
+        elif not count:
+            said = f"No {'PDF' if kind == 'pdf' else 'file'} was saved."
+        elif kind == "accepted":
+            said = (f"Saved {count} Word cop{'y' if count == 1 else 'ies'} with every tracked change accepted to "
+                    f"{folder}{there}. Comments stay; your edited copies are as they were.")
+        else:
+            made = f", made by {renderer}" if renderer else ""
+            said = (f"Saved {count} clean PDF{'' if count == 1 else 's'} to {folder}{there}{made}: every comment "
+                    f"removed and every tracked change accepted, each from a copy the checks passed. Your edited "
+                    f"copies are as they were.")
+        if shaky:
+            said += (f" {shaky} {'was' if shaky == 1 else 'were'} made from an edited copy delivered UNVERIFIED; "
+                     f"its failed checks are beside it in the window.")
+        if missing:
+            said += " Not saved: " + "; ".join(f"{name} — {str(why).rstrip('.')}" for name, why in missing.items()) + "."
+        return said
 
     # ---- the journal ----
     def save(self, *, in_progress=False):
@@ -2492,7 +2545,7 @@ class DocumentTask:
             "attachments": [a.to_dict() for a in self.attachments],
             "messages": self.messages, "decisions": self.decisions, "word_sources": self.word_sources,
             "exchanges": self.exchanges,
-            "results": self.results, "unverified": self.unverified, "pdfs": self.pdfs,
+            "results": self.results, "unverified": self.unverified,
             "recovery": str(self.session.recovery.out_dir) if self.session.recovery else
                         str(self.session.recovery_checkpoint) if self.session.recovery_checkpoint else self._resume_recovery,
             "pending_layouts": [str(x) for x in self.session.pending_layout_recovery],
@@ -2566,7 +2619,7 @@ class DocumentTask:
                 and type(p.get("generation")) is int and texts(p.get("history")) and lists(p.get("applied"))
                 and paths(p.get("results")) and lists(p.get("unverified")) and texts(p.get("todo_added", []))
                 and texts(p.get("fresh", []))
-                and paths(p.get("pdfs", {}))
+                and paths(p.get("pdfs", {}))           # the PDFs of the retired Save clean PDFs: read, then dropped
                 and isinstance(p.get("left_untouched"), list) and all(map(entry, p["left_untouched"]))
                 for p in points):
             return []
@@ -2574,7 +2627,6 @@ class DocumentTask:
                  "history": list(p["history"]), "applied": {k: list(v) for k, v in p["applied"].items()},
                  **({"fresh": list(p["fresh"])} if "fresh" in p else {}),
                  "results": dict(p["results"]), "unverified": {k: list(v) for k, v in p["unverified"].items()},
-                 "pdfs": dict(p.get("pdfs", {})),
                  "left_untouched": [{"path": e["path"], "name": e.get("name") or Path(e["path"]).name,
                                      "why": e.get("why", WHY_REFUSED), "reason": e.get("reason", ""),
                                      "request": e.get("request", "")} for e in p["left_untouched"]],
@@ -2664,10 +2716,6 @@ class DocumentTask:
                            **({"discarded": e["discarded"]} if e.get("discarded") else {})}
                           for e in exchanges][-EXCHANGES_KEPT:]
         self.results = data.get("results", {})
-        pdfs = data.get("pdfs", {})
-        # the last run's PDFs, while they are where they were saved (a journal from before Save clean PDFs has none)
-        self.pdfs = ({k: v for k, v in pdfs.items() if isinstance(k, str) and isinstance(v, str) and Path(v).is_file()}
-                     if isinstance(pdfs, dict) else {})
         working = data.get("working", {})
         unverified = data.get("unverified", {})
         # a mark belongs to a working copy (an earlier copy's, carried on) or to a result of the last run

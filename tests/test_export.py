@@ -65,7 +65,7 @@ def test_export_writes_the_working_copies_verbatim_into_the_chosen_folder(tmp_pa
     dest = tmp_path / "Saved"
     dest.mkdir()
     made = task.export(dest)
-    assert made == {"folder": str(dest.resolve()), "saved": 2, "already": 0}
+    assert made == {"folder": str(dest.resolve()), "kind": "word", "saved": 2, "already": 0, "missing": {}}
     for current in task.working.values():
         saved = dest / Path(current).name
         assert saved.read_bytes() == Path(current).read_bytes()
@@ -78,7 +78,8 @@ def test_export_writes_the_working_copies_verbatim_into_the_chosen_folder(tmp_pa
     assert view["exported"] == task.exported
     names = _names(dest)
     # saving again writes nothing new: the same bytes are already there
-    assert task.export(dest) == {"folder": str(dest.resolve()), "saved": 0, "already": 2} and _names(dest) == names
+    assert task.export(dest) == {"folder": str(dest.resolve()), "kind": "word", "saved": 0, "already": 2, "missing": {}}
+    assert _names(dest) == names
     assert task.messages[-1]["text"] == f"Saved 2 copies to {dest.resolve()} (2 already there, unchanged)."
     # someone else's file under a copy's name is left alone: the copy is numbered beside it
     first = next(iter(task.working.values()))
@@ -109,7 +110,7 @@ def test_a_copy_changed_since_it_was_saved_is_unsaved_again_until_the_next_expor
     # the second export writes it again: the file saved before is the user's, so the copy lands numbered beside it
     made = task.export(dest)
     numbered = dest / f"{Path(first).stem} (2).docx"
-    assert made == {"folder": str(dest.resolve()), "saved": 1, "already": 1}
+    assert made == {"folder": str(dest.resolve()), "kind": "word", "saved": 1, "already": 1, "missing": {}}
     assert numbered.read_bytes() == Path(first).read_bytes() and task.exported[first]["to"] == str(numbered)
     assert task.unsaved_copies() == [] and task.export_states() == {first: "saved", second: "saved"}
     assert _names(dest) == sorted([Path(first).name, numbered.name, Path(second).name])
@@ -136,7 +137,7 @@ def test_a_saved_file_that_no_longer_holds_the_copy_makes_it_unsaved_again(tmp_p
     # the next Export writes the copy beside the file that replaced it, which is the user's and never written over
     made = task.export(dest)
     numbered = dest / f"{Path(first).stem} (2).docx"
-    assert made == {"folder": str(dest.resolve()), "saved": 1, "already": 1}
+    assert made == {"folder": str(dest.resolve()), "kind": "word", "saved": 1, "already": 1, "missing": {}}
     assert saved.read_bytes() == b"edited in Word" and numbered.read_bytes() == Path(first).read_bytes()
     assert task.exported[first]["to"] == str(numbered) and task.export_states() == {first: "saved", second: "saved"}
 
@@ -150,7 +151,8 @@ def test_a_saved_file_that_is_gone_makes_its_copy_unsaved_again(tmp_path, files)
     (dest / Path(first).name).unlink()
     assert task.unsaved_copies() == [first] and task.export_states() == {first: "gone", second: "saved"}
     assert task.view()["unsaved"] == [first]
-    assert task.export(dest) == {"folder": str(dest.resolve()), "saved": 1, "already": 1}
+    assert task.export(dest) == {"folder": str(dest.resolve()), "kind": "word", "saved": 1, "already": 1,
+                                 "missing": {}}
     assert task.unsaved_copies() == [] and (dest / Path(first).name).read_bytes() == Path(first).read_bytes()
 
 
@@ -193,7 +195,7 @@ def test_export_refuses_a_folder_where_a_copy_would_land_on_an_input(tmp_path, f
     assert len(task.unsaved_copies()) == 2 and _names(files[0].parent) == ["21 13 13.docx", "21 13 16.docx"]
     with pytest.raises(ValueError, match="is not a folder"):
         task.export(tmp_path / "missing")
-    with pytest.raises(ValueError, match="no edited copies or clean PDFs"):
+    with pytest.raises(ValueError, match="no edited copies to save yet"):
         safe_task(tmp_path / "other").export(tmp_path)
 
 
@@ -407,13 +409,14 @@ def test_closing_asks_once_before_unsaved_copies_are_deleted(tmp_path):
     assert on_closing(state) is False and not state.close_confirmed
     title, question = state.shell.questions[-1]
     assert title == "Copies not saved" and question == unsaved_copies_question(2)
-    assert question.startswith("2 files made in this window (edited copies or clean PDFs) have not been saved as "
-                               "they are now (never saved with Export, or the copy or its saved file changed since). "
-                               "Closing deletes them")
-    assert "Export → Save the copies…" in question and "Cancel goes back" in question
-    assert unsaved_copies_question(1).startswith("1 file made in this window (an edited copy or a clean PDF) has not "
-                                                 "been saved as it is now (never saved with Export, or the copy or "
-                                                 "its saved file changed since). Closing deletes it")
+    assert question.startswith("2 edited copies made in this window have not been saved as they are now (never "
+                               "saved with Export → Word (Tracked Changes ON), or the copy or its saved file changed "
+                               "since; a PDF or a Word file with the tracked changes accepted is made from a copy, not "
+                               "the copy itself). Closing deletes them")
+    assert "Export → Word (Tracked Changes ON)." in question and "Cancel goes back" in question
+    assert unsaved_copies_question(1).startswith("1 edited copy made in this window has not been saved as it is now "
+                                                 "(never saved with Export → Word (Tracked Changes ON), or the copy "
+                                                 "or its saved file changed since;")
     state.shell.answer = True
     assert on_closing(state) is True and state.close_confirmed and len(state.shell.questions) == 2
     # a shell that cannot ask answers no: the close is refused rather than the copies deleted

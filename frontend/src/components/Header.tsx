@@ -1,12 +1,13 @@
 // Adapted from Build-a-Spec's frontend/src/components/Header.tsx (copy-based reuse): the title with its context
 // line, the help topics beside it, then the pills and the buttons on the right.
 import { memo, useRef } from "react";
-import type { Mode, View } from "../types";
+import type { ExportKind, Mode, View } from "../types";
 import { costPill, dollars, requestPill } from "../lib/chat";
 import { HELP_TOPICS, sessionHeading, type HelpTopic } from "../lib/help";
 import { MODE_LABELS, MODE_TIPS } from "../lib/modes";
 import { useFit } from "../lib/useFit";
-import { exportLabel, exportTip } from "../lib/workbench";
+import { exportLabel } from "../lib/workbench";
+import ExportMenu from "./ExportMenu";
 import Tip from "./Tip";
 
 interface Props {
@@ -15,8 +16,8 @@ interface Props {
   /** "v1.7.0 available" for an update set aside with the banner's "Not now"; "" for none (lib/help.updatePill). */
   updatePill: string;
   onDownloadUpdate: () => void;
-  /** Export → Save the copies…: the working copies written to a folder the native dialog asks for. */
-  onExport: () => void;
+  /** Export, the menu's choice: the edited copies written to a folder the native dialog asks for, in that kind. */
+  onExport: (kind: ExportKind) => void;
   onNewConversation: () => void;
   onOpenSettings: () => void;
   onOpenHelp: (topic: HelpTopic) => void;
@@ -49,6 +50,7 @@ const GIVE_WAY = [
   "button words", // "New conversation" → "New", "Export · 3 unsaved" → "Export · 3"
   "dividers",
   "request words", // "this request ≈ $0.40 of $20.00" → "≈ $0.40 of $20.00"
+  "closer spacing",
   "update pill", // set aside with the banner's Not now, kept one click away while anything else can go; About offers it too
 ] as const;
 
@@ -80,20 +82,20 @@ function Header({
   const limit = view.cost?.limit;
   const request = busy && !safe ? requestPill(view.cost) : "";
   const heading = sessionHeading(view);
-  const exportFull = exportLabel(view);
   const [keyFull, keyShort] = keyWords(view);
 
   // Everything whose width the bar measures, in full: a change starts the giving way again from nothing.
   const bar = useRef<HTMLElement>(null);
-  const shown = [heading, costPill(view.cost), request, fast, keyFull, exportFull, view.modes, busy, updatePill];
+  const shown = [heading, costPill(view.cost), request, fast, keyFull, exportLabel(view), view.modes, busy, updatePill];
   const fit = useFit(bar, JSON.stringify(shown), GIVE_WAY.length);
   const gone = (what: (typeof GIVE_WAY)[number]) => fit > GIVE_WAY.indexOf(what);
   const tight = gone("spacing");
+  const closer = gone("closer spacing");
 
   return (
     <header
       ref={bar}
-      className={`flex items-center border-b border-edge bg-surface px-5 py-3 ${tight ? "gap-3" : "gap-4"}`}
+      className={`flex items-center border-b border-edge bg-surface px-5 py-3 ${closer ? "gap-2" : tight ? "gap-3" : "gap-4"}`}
       data-tour="header"
     >
       <div className="flex flex-none items-baseline gap-3">
@@ -182,7 +184,7 @@ function Header({
         ))}
       </div>
       <div className="flex-1" />
-      <div className={`flex flex-none items-center gap-2 ${tight ? "" : "lg:gap-3"}`}>
+      <div className={`flex flex-none items-center ${closer ? "gap-1.5" : tight ? "gap-2" : "gap-2 lg:gap-3"}`}>
         {updatePill && !gone("update pill") && (
           <Tip
             tip={
@@ -251,19 +253,7 @@ function Header({
           <span className={`h-2 w-2 rounded-full ${safe ? "bg-ink-faint" : ready ? "bg-ok" : "bg-warn"}`} aria-hidden />
           {gone("key words") ? keyShort : keyFull}
         </button>
-        <Tip tip={exportTip(view, busy)}>
-          <button
-            type="button"
-            onClick={onExport}
-            disabled={busy || !!view.tutorial?.active || (view.export?.copies ?? 0) === 0}
-            aria-label={exportFull}
-            data-tour="header-export"
-            data-capability="header.export"
-            className="rounded-lg border border-edge bg-raised px-3 py-1.5 text-xs whitespace-nowrap text-ink transition-colors hover:border-accent hover:text-accent disabled:pointer-events-none disabled:opacity-40"
-          >
-            {exportLabel(view, gone("button words"))}
-          </button>
-        </Tip>
+        <ExportMenu view={view} busy={busy} onExport={onExport} short={gone("button words")} />
         <Tip
           tip={
             busy

@@ -174,14 +174,28 @@ from every layout the plan covers is left untouched with a sentence.
 
 Keep chatting: the next thing you ask for is made on the copies the last run created, your originals stay as they
 are, and **Start over from the originals** is one tap away. The copies live in the window's scratch folder until
-you save them: **Export**, in the top bar, writes them to a folder you choose (a file already there with the same
-content counts as saved; a different file under a copy's name is left alone and the copy is numbered beside it; a
-folder where a copy would land on one of your attached files is refused). A copy is saved while a file with its
-content sits where Export put it: clicking a copy opens that saved file, and a copy you then change in Word through
-the window's scratch folder reads **CHANGED** and counts as unsaved again until the next Export (which writes it
-beside the file saved before). Closing the window deletes its scratch folder, after one question if a copy is not
-saved as it is now, so every start is a clean one; a window that never closed is restored at the next start instead,
-once.
+you save them with **Export**, in the top bar. It is ready whenever the window lists edited copies and no work is
+running (copies a run delivered while it still checks other documents included), and offers three choices, then
+asks for a folder:
+
+- **Word (Tracked Changes ON)** — each copy as it is, byte for byte the copy the checker passed: its tracked changes
+  and comments stay, to accept or reject in Word.
+- **Word (Tracked Changes OFF)** — each copy with every tracked change accepted; its comments stay.
+- **PDF (Clean)** — a PDF of each copy with every comment removed and every tracked change accepted, made by Word (a
+  new, invisible instance, never the Word you have open) or LibreOffice when Word is not installed.
+
+The two clean choices make a clean version of each copy first, with a plan fixed in the app, and check it with the
+same independent checker as any copy (and each PDF opens, has pages and carries no comment notes); your edited
+copies are not changed, and a document whose clean version cannot be made exactly (a change only Word can settle,
+such as an inserted table cell or a change inside an equation) gets no file and the chat says why. In every choice a
+file already there with the same content counts as saved, a different file under the same name is left alone and
+the new one is numbered beside it, and a folder where a file would land on one of your attached files is refused.
+Ask the conversation for PDFs and it points you to Export. A copy is saved while a file with its content sits where
+Export → Word (Tracked Changes ON) put it: clicking a copy opens that saved file, and a copy you then change in Word
+through the window's scratch folder reads **CHANGED** and counts as unsaved again until the next Export (which writes
+it beside the file saved before). Closing the window deletes its scratch folder, after one question if a copy is not
+saved that way as it is now, so every start is a clean one; a window that never closed is restored at the next start
+instead, once.
 
 ![The plan in the conversation and before/after pages, with one action](docs/conversation-preview.png)
 
@@ -197,8 +211,8 @@ mode you last used (Safe the first time; never Obliterate).
   SECTION where missing*, *Keep numbers with their units*, *Accept or reject all tracked changes*,
   *Remove all comments*, *Remove highlighting*, *Remove hidden text*, *Remove empty paragraphs*, *Clean up spaces*,
   *Standardize quotes and dashes*, *Remove hyperlinks*, *Freeze fields as plain text*, *Remove unused styles*, *Name
-  files by section number and title*, *Set the document title property*, *Turn off Track Changes*, *Save clean PDFs*,
-  *Set author and company* and *Set proofing language*. A note above the buttons says what Safe mode is, what it
+  files by section number and title*, *Set the document title property*, *Turn off Track Changes*, *Set author and
+  company* and *Set proofing language* (clean PDFs are Export's, in every mode). A note above the buttons says what Safe mode is, what it
   cannot do (anything that is not a button), and that Default mode, with a Claude API key, is the way to more; its
   **Add a Claude API key** opens Settings and **Switch to Default mode** switches, and **Hide** folds it to one line
   (the window remembers). Each button has a short
@@ -242,19 +256,6 @@ mode you last used (Safe the first time; never Obliterate).
   tracked changes* can now throw away a round of edits. *Set author and company* sets File → Info → Author, Company
   and Subject, or clears the author names before issue. *Set proofing language* sets every language, or only other
   kinds of English, to the one you choose.
-- **Save clean PDFs** (Safe mode) gives you a PDF of every document with all comments off and every tracked change
-  accepted, ready to issue. It plans two steps, in this order: every comment (and its replies) is removed, then every
-  tracked change is accepted (insertions, deletions, moves and formatting changes, in the body, headers, footers and
-  notes). You see the clean pages in the preview and press **Save clean PDFs** beside them. The run makes the clean
-  copies and checks them like any button's. Then Word turns each copy that passed into a PDF (a new, invisible
-  instance, never the Word you have open), or LibreOffice when Word is not installed, and the app checks that each
-  PDF opens, has pages and carries no comment notes. The PDFs land in the run's `pdf` folder in the window's scratch
-  folder, so **Export** saves them with the copies to a folder you choose (`PDF_REPORT.md` beside
-  it lists each one and the copy it came from), and the window lists them under **Your clean PDFs**, each one a click
-  away. Your Word documents stay as they are: the next button works on them with their comments and tracked changes,
-  and Undo is unaffected. A document with a change only Word can settle (an inserted or merged table cell, a change
-  inside an equation), or whose PDF cannot be made, gets no PDF and is listed under Left untouched with why. The
-  button needs Word or LibreOffice on this computer, and says so when there is neither.
 - **Default — a conversation.** What you control: any change you can describe, from one word to whole tables,
   sections and pictures, on documents built in different ways. What it costs: an Anthropic API key and the AI's
   spending, and the AI can misread a request, so you read what it plans and look at the pages before you approve.

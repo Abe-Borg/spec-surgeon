@@ -468,7 +468,7 @@ function Dossier() {
           rightTitle="Stays on your machine"
           right={[
             "Your originals: read, never written.",
-            "Edited copies, failed copies, previews, page pictures and PDFs (the clean PDFs you saved among them), in the window’s scratch folder while it is open; the copies and PDFs you save with Export, where you chose.",
+            "Edited copies, failed copies, previews, page pictures and PDFs (the clean versions Export makes among them), in the window’s scratch folder while it is open; the Word copies and PDFs you save with Export, where you chose.",
             "The verification records, the conversation’s records (every request sent and every answer), logs and event journals.",
             "Your API key, in Windows Credential Manager when you ask it to be remembered.",
             "The repair memory, the render cache and settings.json; the conversation’s journal and copies of files you dropped on the window, in the scratch folder while it is open.",
@@ -581,7 +581,7 @@ function Dossier() {
         />
         <Term
           word="Approved"
-          claim="You pressed Create edited copies (or Save ready copies, or Save clean PDFs for that button) on a plan whose fingerprint covers the plan and the exact content of each file. A changed file or plan voids the approval. In Safe and Default modes, a document whose preview failed a check is not part of it (it waits under Left untouched), and Create refuses a preview none of whose samples passed. Save ready copies exports only the recovery's ready files."
+          claim="You pressed Create edited copies (or Save ready copies) on a plan whose fingerprint covers the plan and the exact content of each file. A changed file or plan voids the approval. In Safe and Default modes, a document whose preview failed a check is not part of it (it waits under Left untouched), and Create refuses a preview none of whose samples passed. Save ready copies exports only the recovery's ready files. Export’s Word (Tracked Changes OFF) and PDF (Clean) are approved by your choice in the menu: each runs one plan fixed in the app over your edited copies and changes none of them."
           not={[
             "That you read every sentence of the plan.",
             "That Claude understood you — only that the engine will do exactly what is on screen.",
@@ -596,7 +596,7 @@ function Dossier() {
           word="Copies only"
           claim="The window never writes to a file you attached. Every run delivers into the window’s scratch folder, and Export writes the copies where you choose, never over an input."
           not={[
-            "That copies are kept: the scratch folder is deleted when the window closes, after one question if a copy is not saved as it is now (never saved with Export, or the copy or its saved file changed since).",
+            "That copies are kept: the scratch folder is deleted when the window closes, after one question if a copy is not saved as it is now (never saved with Export → Word (Tracked Changes ON), or the copy or its saved file changed since).",
             "That the folder is private: the scratch folder is under the app’s local data, and the saved copies are wherever you chose.",
           ]}
         />

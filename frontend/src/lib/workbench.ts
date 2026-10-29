@@ -4,7 +4,7 @@
  *
  * Pure, so `node --test` can pin them.
  */
-import type { Attachment, Plan, Result, Sample, View } from "../types.ts";
+import type { Attachment, ExportKind, Plan, Result, Sample, View } from "../types.ts";
 
 /** The parent folder of a path, with either separator; "" when there is none. */
 export function parentFolder(path: string): string {
@@ -21,7 +21,7 @@ export function runFolder(view: Pick<View, "results">): string {
 }
 
 /**
- * The Export button's label: "Export", with the count of working copies not saved yet when there are any
+ * The Export button's label: "Export", with the count of edited copies not saved yet when there are any
  * ("Export · 2 unsaved"; in the top bar's fewer words, "Export · 2").
  */
 export function exportLabel(view: Pick<View, "export">, short = false): string {
@@ -29,20 +29,61 @@ export function exportLabel(view: Pick<View, "export">, short = false): string {
   return unsaved > 0 ? `Export · ${unsaved}${short ? "" : " unsaved"}` : "Export";
 }
 
-/** The Export button's hover text: what it does, and how many copies it would save; held still during the tour. */
-export function exportTip(view: Pick<View, "export"> & Partial<Pick<View, "tutorial">>, busy: boolean): string {
+/** Why the Export button cannot open its menu now, or "" when it can: the tour, work running, or no copies yet. */
+export function exportBlocked(view: Pick<View, "export"> & Partial<Pick<View, "tutorial">>, busy: boolean): string {
   if (view.tutorial?.active) return "Held still during the tour: the practice copies are not yours to save.";
   if (busy) return "Finish or stop the current work first";
-  const state = view.export ?? { folder: "", unsaved: 0, copies: 0 };
-  if (state.copies === 0) {
+  if ((view.export?.copies ?? 0) === 0) {
     return "Nothing to save yet: create edited copies first. Copies are kept only while this window is open, until you save them.";
   }
-  const head = "Save the edited copies to a folder you choose.";
+  return "";
+}
+
+/** The Export button's hover text: why it waits, or what it does and how many copies it would save. */
+export function exportTip(view: Pick<View, "export"> & Partial<Pick<View, "tutorial">>, busy: boolean): string {
+  const blocked = exportBlocked(view, busy);
+  if (blocked) return blocked;
+  const state = view.export ?? { folder: "", unsaved: 0, copies: 0 };
+  const head = "Save the edited copies to a folder you choose: as Word with tracked changes on or off, or as clean PDFs.";
   if (state.unsaved === 0) {
     return `${head} All ${state.copies === 1 ? "1 copy is" : `${state.copies} copies are`} saved${state.folder ? ` to ${state.folder}` : ""}.`;
   }
   const count = `${state.unsaved} of ${state.copies} ${state.copies === 1 ? "copy" : "copies"} ${state.unsaved === 1 ? "is" : "are"} not saved yet`;
-  return `${head} ${count}, and only a saved copy survives closing the window.`;
+  return `${head} ${count} as Word with their tracked changes, and only such a saved copy survives closing the window.`;
+}
+
+/** One choice of the Export menu: its kind, its label (the owner's words), and what it writes, in one sentence. */
+export interface ExportChoice {
+  kind: ExportKind;
+  label: string;
+  detail: string;
+}
+
+/** The Export menu's three choices, in the owner's order (2026-10-29). */
+export const EXPORT_CHOICES: readonly ExportChoice[] = [
+  {
+    kind: "word",
+    label: "Word (Tracked Changes ON)",
+    detail: "Each copy as it is: its tracked changes and comments stay, to accept or reject in Word.",
+  },
+  {
+    kind: "accepted",
+    label: "Word (Tracked Changes OFF)",
+    detail: "Each copy with every tracked change accepted. Comments stay.",
+  },
+  {
+    kind: "pdf",
+    label: "PDF (Clean)",
+    detail: "A PDF of each copy with every comment removed and every tracked change accepted.",
+  },
+];
+
+/** Why one Export choice cannot be picked now, or "": PDF (Clean) needs Word or LibreOffice on this computer. */
+export function exportChoiceBlocked(kind: ExportKind, view: Partial<Pick<View, "pdf">>): string {
+  if (kind === "pdf" && view.pdf && !view.pdf.available) {
+    return view.pdf.reason || "Saving PDFs needs Microsoft Word or LibreOffice on this computer.";
+  }
+  return "";
 }
 
 /** A copy's saved state, as the server reports it (`lib/workbench.ts` reads nothing else of a result). */
@@ -101,13 +142,7 @@ export function copiesNote(view: { results: SavedState[] }): string {
   if (changed > 0) whys.push(`${changed} changed since ${changed === 1 ? "it was" : "they were"} saved`);
   if (replaced > 0) whys.push(`${replaced} whose saved file changed since`);
   const why = whys.length > 0 ? ` (${whys.join(", ")})` : "";
-  return `${count}${why}: Export, in the top bar, saves them to a folder you choose. Until then they live only in this window's scratch folder, which goes when the window closes.`;
-}
-
-/** The folder of the clean PDFs: the parent of the first one, or "" with none. */
-export function pdfFolder(view: Partial<Pick<View, "pdfs">>): string {
-  const first = view.pdfs?.[0]?.output ?? "";
-  return first ? parentFolder(first) : "";
+  return `${count}${why}: Export, in the top bar, saves them to a folder you choose, as Word with tracked changes on or off or as clean PDFs. Until saved as Word with their tracked changes they live only in this window's scratch folder, which goes when the window closes.`;
 }
 
 export interface PageCount {
