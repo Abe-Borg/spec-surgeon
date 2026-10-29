@@ -47,6 +47,9 @@ spec_surgeon = ["schemas/**/*.xsd", "skill/**/*.md", "legal/*.txt", "web/static/
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# A passing test's temporary folder is removed when it ends, a failing one's kept to look at: a full run leaves
+# about 27,000 files (740 MB) otherwise, three runs' worth kept, the oldest deleted one at a time when a run starts.
+tmp_path_retention_policy = "failed"
 markers = [
     "render: the test looks at rendered pages, so it gets the renderer this machine has (Word, else LibreOffice); without the mark a test sees none (tests/conftest.py)",
 ]

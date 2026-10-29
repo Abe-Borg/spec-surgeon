@@ -231,7 +231,7 @@ jobs). Details: `docs/CONVERSATIONAL_DESKTOP.md`.
   `fake_render.py` fakes the renderer seam (`render.render_pdf_groups`); `conftest.py` seals keys, config dir and
   model, and hides Word and LibreOffice from every test not marked `@pytest.mark.render` (a test that looks at
   rendered pages carries the mark; one that fakes a renderer patches it itself); `describe_cases/` feeds
-  `test_describe.py`.
+  `test_describe.py`. Only a failing test keeps its temporary folder (`tmp_path_retention_policy`, pyproject).
 - `docs/` — `BACKLOG.md` (the open work), design notes (`BUILTIN_OPS_BATCH*_DESIGN.md`), `releases/`;
   `TRUST_CLAIMS.md` (the ledger behind the trust surfaces).
 - `packaging/` — PyInstaller spec, Inno Setup script, installed-app smoke tests, `license_notices.py` (the app's
