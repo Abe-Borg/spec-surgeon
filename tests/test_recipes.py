@@ -1134,8 +1134,19 @@ def test_every_note_the_fixture_holds_is_one_by_its_style_or_its_opening(text):
     assert (v_search(hidden_ops.SPECIFIER_OPENINGS, text) is not None) == found      # the verifier reads it alike
 
 
+@pytest.mark.parametrize("text", ["*** Specifier notes: edit to suit ***", "*** NOTE TO SPECIFIER ***",
+                                  "*** OPTIONAL ***", "--- OPTIONAL ---"])
+def test_asterisks_count_only_around_a_notes_own_name_or_optional(text):
+    from spec_surgeon.ops.patterns import compile_pattern
+    from spec_surgeon.verify.patterns import v_search
+    assert compile_pattern(hidden_ops.SPECIFIER_OPENINGS, where="t").search(text) is not None
+    assert v_search(hidden_ops.SPECIFIER_OPENINGS, text) is not None
+
+
 @pytest.mark.parametrize("text", NOTES_STAY + (
-    "*** END OF SECTION ***", "Retain the services of a testing agency.", "Verify dimensions in the field.",
+    "*** END OF SECTION ***", "*** GENERAL ***", "*** PART ONE - GENERAL ***",
+    "*** Copyright 2026 Owner. All rights reserved. ***", "*** Provide a fire pump. ***",
+    "Retain the services of a testing agency.", "Verify dimensions in the field.",
     "Delete the existing valve and cap the pipe.", "Copyright 2024 Owner Inc.", "Select one-piece valves.",
     "Revise as required.", "Note: provide access panels.", "Editorial review is required before issue."))
 def test_no_requirement_heading_placeholder_or_copyright_line_opens_as_a_note(text):

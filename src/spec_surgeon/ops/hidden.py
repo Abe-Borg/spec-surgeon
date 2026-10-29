@@ -80,15 +80,16 @@ RUN_RULE_KEYS = ("color_in", "hidden")
 # SpecCleanse's whole-paragraph rules, each narrowed there against requirements it once took ("Retain records of all
 # tests", "Select one of the listed manufacturers", "Provide two [retain or delete] spare filters"), and anchored here
 # at the paragraph's start — a requirement that merely contains such words keeps them. A heading never matches (END OF
-# SECTION, SECTION nn, PART n, ARTICLE n, even between asterisks). The plan carries it as an ordinary ``text_regex``,
-# which the verifier compiles and searches with its own code; ``describe`` names it in words instead of quoting it.
+# SECTION, SECTION nn, PART n, ARTICLE n). Delimiters alone are never a note: SpecCleanse's "*** anything ***" took
+# "*** GENERAL ***" and a copyright line between asterisks, so asterisks count only around a note's own name or
+# OPTIONAL. The plan carries it as an ordinary ``text_regex``, which the verifier compiles and searches with its own
+# code; ``describe`` names it in words instead of quoting it.
 _NOTE_NAMES = r"(?:note\s+to\s+specifiers?|(?:specifier|editor|coordinator)['’]?s?\s+notes?)\b"
 SPECIFIER_OPENINGS = (
     r"(?i)^(?![\W_]*(?:end\s+of\s+section|section\s+\d|part\s+\d|article\s+\d))\s*(?:"
-    r"\[?\s*" + _NOTE_NAMES +
+    r"(?:\[|\*{3,})?\s*" + _NOTE_NAMES +
     r"|\[\s*specifier\b|specifier\s*:|<\s*specifier\b"
     r"|\[\s*(?:edit|coordinator)[^\]]*?\bnote\b[^\]]*\]"
-    r"|\*{3}.*\*{3}\s*$"
     r"|\[?\s*retain\s+or\s+delete\b"
     r"|\[?\s*delete\s+if\s+not\s+(?:applicable|required|used)\b"
     r"|\[?\s*retain\s+if\s+(?:applicable|required|used)\b"
