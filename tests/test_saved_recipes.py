@@ -5,6 +5,7 @@ method, values read from particular documents) is refused with the reason; a rec
 fewer guardrails; the window's journal keeps what each run would save."""
 from __future__ import annotations
 
+import copy
 import json
 import threading
 from pathlib import Path
@@ -582,7 +583,7 @@ def test_the_routes_save_change_and_run_a_recipe(tmp_path, store, monkeypatch):
 def test_a_recipe_file_edited_to_place_words_the_user_never_gave_is_refused_by_the_gate(tmp_path, store):
     """recipes.json is plain JSON the user can edit: a plan step whose words were never traced (``places`` emptied,
     the replacement changed) still passes the one gate, which refuses words outside the step's own sources."""
-    step = saved_recipes.plan_step(WORDS, REPLACE, [], False)
+    step = saved_recipes.plan_step(WORDS, copy.deepcopy(REPLACE), [], False)
     step["plan"]["ops"][0]["params"]["replace"] = "Words nobody approved"
     step["places"] = []
     record = store.add("Tampered", "", [step])
