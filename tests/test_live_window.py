@@ -71,9 +71,12 @@ def test_the_next_request_builds_on_the_copies_and_start_over_returns_to_the_ori
     assert task.documents() == [first_copy]                       # the next request works on the copy
     assert view["working"]["generation"] == 0
     view = task.view()
+    [step] = view["working"].pop("done")
     assert view["working"] == {"generation": 1, "from_originals": False, "can_start_over": True,
-                               "undo": REQUEST, "undo_blocked": "",   # a conversation's run can be undone too
-                               "done": [{"request": REQUEST, "recipe": "", "documents": 1, "of": 1, "not": []}]}
+                               "undo": REQUEST, "undo_blocked": ""}   # a conversation's run can be undone too
+    assert {k: step[k] for k in ("request", "recipe", "documents", "of", "not", "buttons", "why_not")} == {
+        "request": REQUEST, "recipe": "", "documents": 1, "of": 1, "not": [], "buttons": [], "why_not": ""}
+    assert [(s["kind"], s["text"]) for s in step["steps"]] == [("plan", REQUEST)]   # a recipe could keep it
     assert START_OVER in view["chips"]
     assert view["attachments"][0]["current"] == str(first_copy)
     view = task.perform("send", text="Also make that title italic.")

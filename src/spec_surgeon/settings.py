@@ -1,6 +1,7 @@
 """What the window remembers between sessions, and where the app keeps its own files.
 
     %APPDATA%\\Spec Surgeon\\settings.json        the export folder, options, the colour scheme, update preferences (this module)
+    %APPDATA%\\Spec Surgeon\\recipes.json         the user's saved recipes (``saved_recipes``)
     %LOCALAPPDATA%\\Spec Surgeon\\scratch\\        the window's scratch folder (``scratch``): one per window, with every session
                                                folder, dropped file and the conversation's journal, deleted when the window
                                                closes; beside them the render cache (``.render-cache``), which stays

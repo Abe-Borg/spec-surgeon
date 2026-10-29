@@ -122,6 +122,10 @@ def job_started_line(action: str, values: Dict[str, Any]) -> str:
         what = f"the Safe-mode button {diag.snip(values.get('recipe') or '?', 40)}"
     elif action == "occurrences":
         what = f"{len(values.get('skip') or [])} occurrence(s) unticked in the preview"
+    elif action == "saved_recipe":
+        picks = values.get("steps") if isinstance(values.get("steps"), list) else []
+        skipped = sum(1 for p in picks if isinstance(p, dict) and p.get("skip") is True)
+        what = f"a saved recipe, {len(picks)} step(s)" + (f", {skipped} skipped" if skipped else "")
     elif action == "export":
         what = f"Export as {diag.snip(values.get('kind') or '?', 20)}"
     else:
@@ -361,6 +365,8 @@ class WindowState:
                 "working": raw["working"], "budget": {"paused": bool(raw["budget_paused"]),
                                                       "reason": raw.get("pause_reason", "")},
                 "discard": "" if busy else raw.get("discard", ""),
+                "saved_recipes": [dict(r) for r in raw.get("saved_recipes") or []],
+                "recipe_blocked": raw.get("recipe_blocked", ""),
                 "tutorial": self.tutorial_block(), "safe_note_hidden": bool(self.settings.safe_note_hidden),
                 "update": self.updates.state() if self.updates else _no_update()}
 
@@ -478,7 +484,8 @@ class WindowState:
         session = Session(out_root=task.session.out_root, client=task.session.client,
                           visual_check=task.session.visual_check)
         self.task = DocumentTask(session, journal=task.journal, render=task.render, mode=task.mode,
-                                 obliterate_allowed=task.obliterate_allowed, spending_limit=task.spending_limit)
+                                 obliterate_allowed=task.obliterate_allowed, spending_limit=task.spending_limit,
+                                 recipes=task.recipes)
         self.task.save()
 
     def remember_settings(self) -> None:
@@ -753,6 +760,46 @@ def create_app(state: WindowState, *, dev: bool = False) -> FastAPI:
         if inputs is not None and not isinstance(inputs, dict):
             return error("The button's form could not be read.")
         return stream("recipe", recipe=str(body.get("recipe") or ""), inputs=inputs or {})
+
+    # ---- saved recipes (``saved_recipes``) ----
+    @app.post("/api/saved-recipes/run")
+    async def run_saved_recipe(request: Request):
+        """A saved recipe as one plan, previewed (a job, as a button's ``/api/recipe``): ``id``, and ``steps`` — one
+        entry per saved step, ``{"skip": bool, "inputs": {…}}``, the form a button step runs with this time."""
+        try:
+            body = await json_object(request)
+        except ValueError as e:
+            return error(str(e))
+        steps = body.get("steps")
+        if steps is not None and (not isinstance(steps, list) or not all(isinstance(p, dict) for p in steps)):
+            return error("The recipe's steps could not be read.")
+        return stream("saved_recipe", recipe=str(body.get("id") or ""), steps=steps)
+
+    @app.post("/api/saved-recipes/save")
+    async def save_recipe(request: Request):
+        """Save as a recipe: ``name``, ``note`` and ``runs`` (the ids of What you've done so far's runs to keep)."""
+        if state.busy:
+            return busy_error()
+        try:
+            body = await json_object(request)
+            state.task.save_recipe(body.get("name"), body.get("note"), body.get("runs"))
+        except ValueError as e:
+            return error(str(e))
+        return state.view()
+
+    @app.post("/api/saved-recipes/change")
+    async def change_recipe(request: Request):
+        """Manage recipes: ``action`` ``rename`` (``name``, ``note``), ``duplicate``, ``delete``, or ``inputs`` (a Safe
+        recipe's forms, one entry per step, null to leave one as it is), on the recipe ``id``."""
+        if state.busy:
+            return busy_error()
+        try:
+            body = await json_object(request)
+            state.task.change_recipe(str(body.get("action") or ""), str(body.get("id") or ""),
+                                     name=body.get("name"), note=body.get("note"), inputs=body.get("inputs"))
+        except ValueError as e:
+            return error(str(e))
+        return state.view()
 
     @app.post("/api/occurrences")
     async def occurrences(request: Request):

@@ -96,6 +96,46 @@ pressed twice by mistake. Undo the last button takes the newest off (each undo p
 its run), Start over and removing the last working copy clear it, and the journal keeps it (`runs`); a journal from
 before it, or one whose list cannot be read, shows none rather than refusing the conversation.
 
+### Saved recipes
+
+**Save as a recipe…**, on What you've done so far, keeps the runs the user ticks under a name, oldest first, to run
+again on other documents (`saved_recipes.py`; `DocumentTask.save_recipe`). What a recipe keeps of a run is taken when
+the run is approved (`DocumentTask._steps_now`, kept in `run_steps` beside `runs` and journalled): in Safe mode the
+button and what its form held; in Default and Obliterate the user's words, the plan they approved
+(`saved_recipes.portable_plan`: the plan as approved, a find-and-replace's unticked occurrences dropped since they name
+the documents they were found in), the sentences it was shown with, the words it places (`compiler.placed_words`, the
+words the gate traced when it was approved) and the kind and name of each file it reads. A recipe's own run is its
+steps again. A run a recipe cannot keep says why in the dialog and cannot be ticked: a custom method (not a plan the
+engine runs as written), a plan bound to particular documents (bindings, typed or bound slot fills), capitals approved
+occurrence by occurrence. The recipes are kept in `recipes.json` beside `settings.json` (`saved_recipes.Store`: plain
+JSON, read again before every change so two windows never undo each other's saves, written atomically; an unreadable
+file is renamed `recipes.json.bad`). A recipe keeps no document, template, picture or table.
+
+A recipe belongs to the mode of its steps (`saved_recipes.recipe_mode`): only buttons, Safe; a plan, Default; a plan
+approved in Obliterate mode, Obliterate. It runs in its own mode and in any with fewer guardrails, never in one with
+more (`runs_in`): Safe recipes everywhere, Default ones in Default and Obliterate (never offered in Safe mode, whose
+plans are its own buttons'), Obliterate ones only in Obliterate and listed only while Obliterate mode is shown. Safe
+mode lists its recipes under **My recipes** above the buttons, each a tile with its steps in order (greyed with the
+reason while a step needs a file that is not attached); Default and Obliterate list theirs beside the message box: the
+two last run as chips and **All recipes** with every one. **Manage** renames, duplicates and deletes them.
+
+Opening a recipe shows its run form: each step with what it keeps, whether what it needs is attached, **Change** (a
+button step's form, for this run) and **Run** (untick to skip a step this time); **Save these changes to the recipe**
+keeps a changed form. **Preview** runs `saved_recipes.build_run` (`DocumentTask._saved_recipe`): every kept step built
+from the documents attached now — a button by `recipes.build` from its form, a plan as approved with the template,
+picture or table it reads mapped onto the one attached now (`remap`; the owner's decision: a recipe uses what is
+attached when it runs) — each through the one gate on its own, then composed in the user's order into ONE plan
+(`combine`: a chain whose stages are the steps; when a step plans per layout, a plan per layout whose layouts are each
+a chain, a structure pattern a layout step does not cover left out with why) that passes the gate again. One preview
+shows the pages after every step; one Create runs it as one checked run (`Session.model_free`: no visual check, no
+outcome planning, no recovery); What you've done so far lists it as one entry with its steps under it, and Undo takes
+the whole recipe off. The chat says the steps and every word they place before Create. A document a step cannot take is
+left untouched in Safe mode (offered to Default mode as after a button) and waits on the to-do list in Default and
+Obliterate (the owner's decision: no AI re-plans a recipe's step by itself; the user can ask the assistant there). In
+Default and Obliterate a recipe is a request of its own: it waits while another is open (`_recipe_blocked`), Discard
+ends it, and a recipe's preview voided by a change to the attachments, or waiting at a restart, is run again by the user,
+never handed to Claude as a request to plan.
+
 Tracked changes are off in Safe mode unless the form's *Show my changes as tracked changes in Word* is ticked (find
 and replace, the issue stamp, END OF SECTION, numbers kept with their units, remove hidden text, remove empty
 paragraphs, clean up spaces, standardize quotes and dashes); every other button's change is plain formatting or never
@@ -444,7 +484,8 @@ refused its plan, which is still to be made.
   Obliterate mode a copy's UNVERIFIED mark goes back with the copy it belongs to. No file is written or deleted.
 - **What you've done so far**, under the copies, lists each request the copies carry, as in Safe mode (above): the
   request's first words as you typed them, how many documents carry it and why any other does not. Undo the last
-  change takes the newest off.
+  change takes the newest off. **Save as a recipe…** keeps requests with the plans you approved, to run again from
+  **Recipes** beside the message box with no AI (Saved recipes, above).
 
 The assistant goes ahead on sensible defaults and says what it assumed; it asks at most three questions per
 turn, each with the answer it recommends, and offers short replies you can tap. A tapped reply is your decision

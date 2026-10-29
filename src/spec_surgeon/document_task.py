@@ -30,7 +30,7 @@ from typing import Any, Dict, List, Optional, Sequence
 
 from .ui_feedback import PREVIEW_FAILED, failed_preview_checks, failed_sample_message, refusal_message
 
-from . import llm, review_display
+from . import llm, review_display, saved_recipes
 from .gui import Session
 from .inputs import KINDS as REFERENCE_KINDS
 from .recovery_state import atomic_json
@@ -311,8 +311,13 @@ def _same_file_key(path) -> str:
 
 
 def _run_copy(run: Dict[str, Any]) -> Dict[str, Any]:
-    return {"request": run["request"], "recipe": run["recipe"], "documents": list(run["documents"]),
+    return {"id": run["id"], "request": run["request"], "recipe": run["recipe"], "documents": list(run["documents"]),
             "not": dict(run["not"])}
+
+
+def _run_id() -> str:
+    import uuid
+    return uuid.uuid4().hex[:12]
 
 
 def _restored_runs(runs) -> Optional[List[Dict[str, Any]]]:
@@ -321,18 +326,20 @@ def _restored_runs(runs) -> Optional[List[Dict[str, Any]]]:
     text = lambda value: isinstance(value, str)  # noqa: E731
     if not isinstance(runs, list) or not all(
             isinstance(r, dict) and text(r.get("request")) and text(r.get("recipe", ""))
+            and text(r.get("id", ""))
             and isinstance(r.get("documents"), list) and all(map(text, r["documents"]))
             and isinstance(r.get("not", {}), dict)
             and all(text(k) and v in (RUN_UNTOUCHED, RUN_SET_ASIDE) for k, v in r.get("not", {}).items())
             for r in runs):
         return None
-    return [_run_copy({"request": r["request"], "recipe": r.get("recipe", ""), "documents": r["documents"],
-                       "not": r.get("not", {})}) for r in runs]
+    # a run kept before runs had ids gets one: it is listed, and what it ran was not kept (``run_steps``)
+    return [_run_copy({"id": r.get("id") or _run_id(), "request": r["request"], "recipe": r.get("recipe", ""),
+                       "documents": r["documents"], "not": r.get("not", {})}) for r in runs]
 
 
 class DocumentTask:
     def __init__(self, session=None, *, journal=None, render=True, mode="default", obliterate_allowed=False,
-                 spending_limit=None):
+                 spending_limit=None, recipes=None):
         if mode not in MODES or (mode == "obliterate" and not obliterate_allowed):
             raise ValueError(f"mode must be one of {LAUNCH_MODES}")
         self.spending_limit = spending_check(spending_limit)   # Settings → Spending check: USD per request, None off
@@ -397,6 +404,16 @@ class DocumentTask:
         # newest off, Start over clears it; it is kept in the journal
         self.runs: List[Dict[str, Any]] = []
         self._button = ""                      # the Safe-mode button whose preview waits (a recipe id)
+        self._button_inputs: Dict[str, Any] = {}   # and the form it was built from
+        # Saved recipes (``saved_recipes``): the store the window keeps them in (None: none here, as in the tour's
+        # practice workspace); what each run of What you've done so far would keep in a recipe, by run id — its steps
+        # (a button and its form, or the user's words and the approved plan), the saved recipe it ran, or why it
+        # cannot be kept — journalled beside ``runs`` so an undo point carries ids only; the steps of the approval
+        # that is running, kept by ``_advance_generation`` once it delivers; and the recipe whose preview waits
+        self.recipes = recipes
+        self.run_steps: Dict[str, Dict[str, Any]] = {}
+        self._pending_steps: Optional[Dict[str, Any]] = None
+        self._running_recipe: Optional[Dict[str, Any]] = None
         self._template_kind: Optional[tuple] = None    # (the template's path, size, mtime, recipes.template_kind)
         self._binned: List[str] = []        # documents of this request that could not take the change, on the list
         self._parked = ("", 0)              # (conversation id, how many of its set-aside documents were taken)
@@ -570,12 +587,14 @@ class DocumentTask:
                 self._emit({"type": "message", "message": {"id": f"m{len(self.messages) - 1}", **message}})
 
     def _invalidate(self):
+        recipe_run = self.session.outcome_source == "saved"
         self.session._set_outcome()
         self.session.end_conversation()
         self._resume_recovery = None
         self._revision += 1
-        if self.mode == "safe":
-            # nothing to continue without the conversation: a button press is planned again when it is pressed
+        if self.mode == "safe" or recipe_run:
+            # nothing to continue without the conversation: a button press, or a saved recipe's run, is planned again
+            # when it is pressed — never handed to Claude as a request to plan
             self.decisions = []
         self.stage = "resume" if self.decisions else "empty"
         self.problem = ""
@@ -600,6 +619,7 @@ class DocumentTask:
             raise ValueError("Choose one template document.")
         before = (self.documents(), self.template(), self.references())
         had_button = self.session.model_free and self.stage == "preview"
+        had_recipe = self.session.outcome_source == "saved"
         fresh: List[str] = []
         if template:
             found = triage(checked[0], template=True)
@@ -629,8 +649,9 @@ class DocumentTask:
             if self.decisions:
                 self.say("The attachments changed. I’ll check the updated documents against your request.")
             elif had_button:
-                self.say("The attachments changed, so that preview no longer applies. Press the button again to "
-                         "preview it on these documents.")
+                self.say("The attachments changed, so that preview no longer applies. " +
+                         ("Run the recipe again" if had_recipe else "Press the button again") +
+                         " to preview it on these documents.")
             if fresh:
                 self.say(f"{', '.join(fresh)}: attached as an original. The changes already made to the other copies "
                          f"are not in it; the next change is made to it as it is. To give it every change, say "
@@ -861,12 +882,20 @@ class DocumentTask:
         request = self.decisions[0] if self.decisions else ""
         # a button's run only when the plan that ran is a button's (``Session.model_free``): the same words typed as a
         # request after its preview was discarded are the conversation's plan
-        button, self._button = self._button if self.session.model_free else "", ""
+        button, self._button = self._button if self.session.outcome_source == "recipe" else "", ""
         attached = [str(a.path) for a in self.attachments if not a.template and not a.reference and not a.refused]
-        self.runs.append({"request": request, "recipe": button,
+        run_id = _run_id()
+        self.runs.append({"id": run_id, "request": request, "recipe": button,
                           "documents": list(moved),
                           "not": {k: RUN_SET_ASIDE if k in self.todo else RUN_UNTOUCHED
                                   for k in attached if k not in moved}})
+        # what a recipe would keep of this run: the steps taken at its approval (none: it resumed after a restart)
+        steps, self._pending_steps = self._pending_steps, None
+        self.run_steps[run_id] = steps or {"steps": [], "name": "", "recipe_id": "",
+                                           "why_not": saved_recipes.WHY_NOT_KEPT}
+        if steps and steps.get("recipe_id") and self.recipes is not None:
+            self.recipes.ran(steps["recipe_id"], len(moved))
+        self._running_recipe = None
         point, self._pending_undo = self._pending_undo, None
         if point is None:
             # a run whose approval took no point (it resumed after a restart): nothing before it can be gone back to
@@ -930,19 +959,54 @@ class DocumentTask:
                 "left_untouched": [dict(e) for e in shown["left_untouched"]],
                 "todo_before": list(self.todo)}
 
+    def _steps_now(self) -> Dict[str, Any]:
+        """What a recipe would keep of the plan being approved (``saved_recipes``): a saved recipe's run keeps the
+        steps it ran; a Safe-mode button its form; a plan from the conversation the user's words, the plan as a recipe
+        keeps it, the sentences it was shown with and whether it was approved in Obliterate mode. A custom method, or a
+        plan bound to particular documents, keeps the reason it cannot be saved."""
+        s = self.session
+        empty = {"steps": [], "name": "", "recipe_id": "", "why_not": ""}
+        if s.outcome_source == "saved" and self._running_recipe is not None:
+            return {**empty, "steps": [dict(st) for st in self._running_recipe["steps"]],
+                    "name": self._running_recipe["name"], "recipe_id": self._running_recipe["id"]}
+        if s.outcome_source == "recipe" and self._button:
+            return {**empty, "steps": [saved_recipes.button_step(self._button, self._button_inputs,
+                                                                 self.decisions[0] if self.decisions else "")]}
+        if s.generated is not None or s.pending_custom_transform is not None:
+            return {**empty, "why_not": saved_recipes.WHY_CUSTOM}
+        if s.spec is None or s.recovery is not None:
+            return {**empty, "why_not": saved_recipes.WHY_NOT_KEPT}
+        plan, why = saved_recipes.portable_plan(s.spec)
+        if plan is None:
+            return {**empty, "why_not": why}
+        sentences = [c["summary"] for g in self._groups() for c in g["changes"]]
+        return {**empty, "steps": [saved_recipes.plan_step(self.decisions[0] if self.decisions else "", plan,
+                                                           sentences, s.unguarded)]}
+
     def _done_view(self) -> List[Dict[str, Any]]:
         """What you've done so far, as the window shows it under the copies: each run that delivered copies, oldest
         first, with its request and the button pressed, and over the documents attached now how many carry it and why
         each other one does not (``RUN_UNTOUCHED``, ``RUN_SET_ASIDE``, ``RUN_ATTACHED_LATER``). A document removed and
-        attached again is an original: it carries none (``remove``)."""
+        attached again is an original: it carries none (``remove``).
+
+        Each run also says what a recipe saved from it would keep (``run_steps``): ``steps`` (each as
+        ``saved_recipes.step_view`` shows it), ``name`` (the saved recipe it ran, if it was one), ``buttons`` (the
+        Safe-mode buttons it carried, its own or its recipe's: their tiles carry the checkmark) and, when it cannot be
+        kept, ``why_not``."""
         attached = [str(a.path) for a in self.attachments if not a.template and not a.reference and not a.refused]
         out: List[Dict[str, Any]] = []
         for run in self.runs:
             carrying = [k for k in attached if k in run["documents"] and k in self.working]
-            out.append({"request": run["request"], "recipe": run["recipe"], "documents": len(carrying),
-                        "of": len(attached),
+            kept = self.run_steps.get(run["id"]) or {"steps": [], "name": "", "why_not": saved_recipes.WHY_NOT_KEPT}
+            steps = kept.get("steps") or []
+            out.append({"id": run["id"], "request": run["request"], "recipe": run["recipe"],
+                        "documents": len(carrying), "of": len(attached),
                         "not": [{"name": Path(k).name, "why": run["not"].get(k, RUN_ATTACHED_LATER)}
-                                for k in attached if k not in carrying]})
+                                for k in attached if k not in carrying],
+                        "name": str(kept.get("name") or ""),
+                        "steps": [saved_recipes.step_view(st) for st in steps],
+                        "buttons": [st["button"] for st in steps if st.get("kind") == "button"],
+                        "why_not": "" if steps else str(kept.get("why_not") or saved_recipes.WHY_NOT_KEPT)})
         return out
 
     def _undo_blocked(self) -> str:
@@ -1104,12 +1168,14 @@ class DocumentTask:
         return None
 
     def perform(self, action, *, text="", token="", choice_id="", chip=False, hold=(), wording=None, recipe="",
-                inputs=None, skip=(), kind="", folder="", log=lambda _: None, events=None):
+                inputs=None, skip=(), kind="", folder="", steps=None, log=lambda _: None, events=None):
         """Worker entry point. One ledger covers every nested model call and every turn. ``events`` is the window's
         live channel (docs/WEB_API.md: status, activity, text_delta, thinking_delta, message, plan, samples, results,
         question, cost); without one the job runs silently and the view says everything at the end. ``hold`` (the
         primary action) names the previewed documents the user set aside: they go on the to-do list, the others run.
-        ``recipe`` and ``inputs`` (the ``recipe`` action) are a Safe-mode button and its form. ``skip`` (the
+        ``recipe`` and ``inputs`` (the ``recipe`` action) are a Safe-mode button and its form; ``recipe`` and ``steps``
+        (the ``saved_recipe`` action) a saved recipe and, per step, whether it is skipped and the form a button step
+        runs with this time (``saved_recipes.choose_steps``). ``skip`` (the
         ``occurrences`` action) names, by key, the find-and-replace occurrences the user unticked in the preview.
         ``kind`` and ``folder`` (the ``export`` action) are a clean export's kind and the folder it writes into: it is
         no request, so the request open, its spending and the stage are left as they are (``_export_job``)."""
@@ -1140,6 +1206,8 @@ class DocumentTask:
                     self._primary(token, checkpointed_log, hold=hold)
                 elif action == "recipe":
                     self._recipe(recipe, inputs, checkpointed_log)
+                elif action == "saved_recipe":
+                    self._saved_recipe(recipe, steps, checkpointed_log)
                 elif action == "occurrences":
                     self._occurrences(skip, checkpointed_log)
                 else:
@@ -1348,6 +1416,7 @@ class DocumentTask:
         self.say(built.request, "user")
         self.decisions = [built.request]
         self._button = recipe.id
+        self._button_inputs = json.loads(json.dumps(inputs or {}))
         self.word_sources.extend(w for w in built.sources if w not in self.word_sources)
         self.left_untouched = []
         if outcome is None:
@@ -1368,6 +1437,161 @@ class DocumentTask:
         if nothing:
             self.say("None of the documents can take this change as they are; each one's reason is under Left "
                      "untouched.")
+
+    # ---- saved recipes ----
+    def _recipe_blocked(self) -> str:
+        """Why a saved recipe cannot run now; '' when it can. In Safe mode it replaces a waiting preview, as a button
+        does; in Default and Obliterate it is a request of its own, so an open one is finished or dropped first."""
+        if self.recipes is None:
+            return "Recipes are not available here."
+        if self.session.recovery is not None:
+            return "The documents are being checked again: save the ready copies, or set the rest aside for later."
+        if self.mode == "safe":
+            return ""
+        if self.focus:
+            return "Finish the pass over your to-do list first."
+        kind = self.discard_kind()
+        if kind == "preview":
+            return "Discard the preview first, or create its copies."
+        if kind == "request":
+            return "Drop the request that is open first, or finish it."
+        return ""
+
+    def _saved_recipe(self, recipe_id, picks, log):
+        """A saved recipe (``saved_recipes``): every step it keeps this time built from the documents attached now,
+        each through the one gate, composed in order into one plan and through the gate again (``build_run``), then
+        the ordinary preview. No AI call (``Session.model_free``). A step that cannot be used, or a recipe that does
+        not run in this mode, is said in one message and nothing is previewed."""
+        from . import recipes
+        blocked = self._recipe_blocked()
+        if blocked:
+            raise ValueError(blocked)
+        try:
+            record = self.recipes.get(str(recipe_id))
+        except saved_recipes.RecipeRunError as e:
+            raise ValueError(str(e)) from e
+        here = saved_recipes.recipe_view(record, self.mode)
+        if not here["runs_here"]:
+            raise ValueError(f"{record['name']}: {here['why_not_here']}")
+        s = self.session
+        try:
+            chosen = saved_recipes.choose_steps(record, picks)
+            files = s.files(outcome=False)
+            ctx = recipes.Context(files, self.template(), self.references())
+            self._emit({"type": "status", "kind": "checking", "text": "Checking the documents…"})
+            built = saved_recipes.build_run(record, chosen, ctx, unguarded=s.unguarded)
+        except saved_recipes.RecipeRunError as e:
+            self._revision += 1
+            self.say(f"{record['name']}: {e}")
+            return
+        s.end_conversation()
+        if self.mode == "safe" and self._before_button is None:
+            # what the window shows now: Discard shows it again, as after a button
+            self._before_button = {"results": dict(self.results),
+                                   "unverified": {k: list(v) for k, v in self.unverified.items()},
+                                   "left_untouched": [dict(e) for e in self.left_untouched]}
+        self.results = {}
+        self.say(built.request, "user")
+        lines = "; ".join(f"{i}. {label.rstrip('.')}" for i, label in enumerate(built.labels, 1))
+        skipped = len(record["steps"]) - len(built.steps)
+        places = list(dict.fromkeys(w for st in built.steps for w in st.get("places") or []))
+        # every word a step places is said here, before the button that approves it: in Obliterate mode some may be
+        # Claude's, and the chat is where the user reads them (``compiler._content_checks``, ``shown``)
+        self.say(f"Its {len(built.steps)} step{'s' if len(built.steps) != 1 else ''}, in order, planned without AI: "
+                 f"{lines}." + (f" Skipped this time: {skipped}." if skipped else "") +
+                 (f" Words it places: {', '.join(saved_recipes._quote(w) for w in places)}." if places else "") +
+                 (" It was saved in Obliterate mode, so some of them may be Claude's."
+                  if places and any(st.get("unguarded") for st in built.steps) else ""))
+        self.decisions = [built.request]
+        self._button, self._button_inputs = "", {}
+        # the words a recipe's steps place are the user's own (or, in Obliterate, the ones just said above): the gate
+        # takes them again if the preview is updated (``_occurrences``); Claude's are never the conversation's
+        self.word_sources.extend(w for w in built.sources if w not in self.word_sources)
+        self._running_recipe = {"id": record["id"], "name": record["name"], "steps": built.steps,
+                                "shown": list(built.shown)}
+        if self.mode == "safe":
+            self.left_untouched = []
+        if built.outcome is None:
+            s._set_outcome()
+            self.left_untouched = [{"path": str(self.origin_of(Path(p))), "name": Path(p).name, "why": WHY_REFUSED,
+                                    "reason": refusal_message({"reason": r}), "request": built.request}
+                                   for p, r in built.left_out.items()] if self.mode == "safe" else []
+            self.decisions = []
+            self.stage = "empty" if not (self.results and self.generation) else "done"
+            self._revision += 1
+            self.say("None of the documents can take this recipe as they are" +
+                     ("; each one's reason is under Left untouched beside the documents." if self.mode == "safe"
+                      else ": " + "; ".join(f"{Path(p).name}: {r}" for p, r in list(built.left_out.items())[:3])))
+            self.save()
+            return
+        s._set_outcome(spec=built.outcome, source="saved", left_out=list(built.left_out),
+                       left_out_reasons=built.left_out)
+        self._settle(log)
+        if self.mode == "safe":
+            self._say_render_warnings()
+        if built.nothing:
+            self.say("None of the documents can take this recipe as they are; each one's reason is under Left "
+                     "untouched.")
+
+    def recipes_view(self) -> List[Dict[str, Any]]:
+        """The saved recipes the window lists in this mode (``saved_recipes.recipe_view``): every Safe and Default
+        recipe, and the Obliterate ones only while Obliterate mode is shown in Settings."""
+        if self.recipes is None:
+            return []
+        return [saved_recipes.recipe_view(r, self.mode) for r in self.recipes.all()
+                if r["mode"] != saved_recipes.OBLITERATE or self.obliterate_allowed]
+
+    def save_recipe(self, name, note, run_ids) -> Dict[str, Any]:
+        """Save as a recipe: the runs of What you've done so far the user ticked, oldest first, as one recipe of their
+        steps (a recipe's run is its steps again). Every ticked run must be one a recipe can keep."""
+        if self.recipes is None:
+            raise ValueError("Recipes are not available here.")
+        if not isinstance(run_ids, list) or not all(isinstance(i, str) for i in run_ids):
+            raise ValueError("Tick the changes to save.")
+        wanted = set(run_ids)
+        known = {r["id"] for r in self.runs}
+        if not wanted or not wanted <= known:
+            raise ValueError("Tick the changes to save; the list changed since the dialog opened.")
+        steps: List[Dict[str, Any]] = []
+        for run in self.runs:
+            if run["id"] not in wanted:
+                continue
+            kept = self.run_steps.get(run["id"]) or {}
+            if not kept.get("steps"):
+                raise ValueError(f"“{run['request']}” cannot be saved: "
+                                 f"{kept.get('why_not') or saved_recipes.WHY_NOT_KEPT}")
+            steps += [dict(st) for st in kept["steps"]]
+        try:
+            record = self.recipes.add(name, note, steps)
+        except saved_recipes.RecipeRunError as e:
+            raise ValueError(str(e)) from e
+        where = "under My recipes" if record["mode"] == saved_recipes.SAFE else "under Recipes, beside the message box"
+        self.say(f"Saved the recipe “{record['name']}”: {len(steps)} step{'s' if len(steps) != 1 else ''}. "
+                 f"It is {where}" + (", in every mode." if record["mode"] == saved_recipes.SAFE else
+                                     " in Default and Obliterate mode." if record["mode"] == saved_recipes.DEFAULT
+                                     else " in Obliterate mode."))
+        self.save()
+        return record
+
+    def change_recipe(self, action: str, recipe_id: str, *, name=None, note=None, inputs=None) -> None:
+        """Manage recipes: ``rename`` (and what it is for), ``duplicate``, ``delete``, or ``inputs`` (a Safe recipe's
+        buttons take the forms its run form holds)."""
+        if self.recipes is None:
+            raise ValueError("Recipes are not available here.")
+        try:
+            if action == "rename":
+                self.recipes.rename(str(recipe_id), name, note)
+            elif action == "duplicate":
+                self.recipes.duplicate(str(recipe_id))
+            elif action == "delete":
+                self.recipes.delete(str(recipe_id))
+            elif action == "inputs":
+                self.recipes.update_inputs(str(recipe_id), inputs)
+            else:
+                raise ValueError("Unknown recipe change.")
+        except saved_recipes.RecipeRunError as e:
+            raise ValueError(str(e)) from e
+        self._revision += 1
 
     def _say_render_warnings(self) -> None:
         """Safe mode has no conversation to say what the preview found: the render comparison's warning (words the
@@ -1467,6 +1691,8 @@ class DocumentTask:
         batch = compiler._Batch(files, self.template(), input_files=self.references())
         sources = [w for w in (*self.decisions, *self.word_sources) if isinstance(w, str) and w.strip()]
         shown = [m["text"] for m in self.messages if m.get("role") == "assistant" and isinstance(m.get("text"), str)]
+        if s.outcome_source == "saved" and self._running_recipe is not None:
+            shown += self._running_recipe.get("shown") or []       # an Obliterate recipe's words, said at its run
         self._emit({"type": "status", "kind": "checking", "text": "Checking the documents…"})
         outcome, errors = compiler.compose_submission(spec, batch, sources, leave_out=list(s.left_out),
                                                       unguarded=s.unguarded, shown=shown if s.unguarded else (),
@@ -1846,15 +2072,20 @@ class DocumentTask:
             raise ValueError("A document cannot be set aside while files are being checked again; save the ready "
                              "copies first.")
         if self.stage == "preview":
-            # what Undo goes back to once this run has delivered (a later save of recovered copies keeps this point)
+            # what Undo goes back to once this run has delivered (a later save of recovered copies keeps this point),
+            # and what a recipe saved from it would keep: the plan approved now
             self._pending_undo = self._undo_point()
+            self._pending_steps = self._steps_now()
         # the files the preview refused, and the samples it set aside because they failed, never run
         # (Session._without_refused): once the others run they go on the to-do list with the reason, to come back to
         # (the session keeps them until the request ends: the approval was taken over them)
         refused = self._refused_now(held) if s.recovery is None else []
-        # a Safe-mode button's, or any plan approved in Safe mode (a Default-mode preview still waiting when the mode
-        # changed): no AI step follows, and what the run leaves untouched waits beside the copies, not on the list
+        # a Safe-mode button's, a saved recipe's, or any plan approved in Safe mode (a Default-mode preview still
+        # waiting when the mode changed): no AI step follows. In Safe mode what the run leaves untouched waits beside
+        # the copies (``beside``); a saved recipe run in Default or Obliterate puts it on the to-do list, as a request
+        # does, where the conversation can plan it (the owner's decision: no AI re-plans a recipe's step by itself)
         model_free = s.model_free or self.mode == "safe"
+        beside = self.mode == "safe" or s.outcome_source == "recipe"
         # Obliterate: no automatic recovery either — a copy whose checks fail is delivered marked unverified, a
         # refused document goes on the to-do list as in Default mode
         no_recovery = model_free or self.mode == "obliterate"
@@ -1866,7 +2097,7 @@ class DocumentTask:
             seen = [c["summary"] for g in self._groups() for c in g["changes"]]   # the plan the user looked at
             for path in held:
                 self._set_aside(path, seen)
-            if not remaining and model_free:
+            if not remaining and beside:
                 # a Safe-mode button: there is no conversation to plan them again; they wait for Default mode
                 self._sync()
                 self._invalidate()
@@ -1887,15 +2118,15 @@ class DocumentTask:
             s.acknowledge_review(outcome.token)
         request = self.decisions[0] if self.decisions else ""
         # a Safe-mode button's refused documents stay in scope for the next button; they are offered to Default mode
-        untouched_before = self._refused_by_preview(outcome.preview, request) if model_free else []
+        untouched_before = self._refused_by_preview(outcome.preview, request) if beside else []
         log("Creating and checking your edited copies…")
         s.run(False, self.render, log, only=remaining)
-        if not model_free:
+        if not beside:
             self._binned += [self._set_aside(path, seen_by, why=why, reason=reason)
                              for path, seen_by, why, reason in refused]
         self._collect_results()
         self._emit({"type": "results", "results": self._results_view()})
-        if model_free:
+        if beside:
             # a Safe-mode button: no recovery (an AI call); what it left untouched is offered to Default mode
             self.left_untouched = self._left_after_run(request, untouched_before)
         elif no_recovery and s.last_batch is not None:
@@ -1941,7 +2172,7 @@ class DocumentTask:
         self.stage = "done"
         self._revision += 1
         n = len(self.results)
-        if model_free:
+        if beside:
             ready = (f"{n} document {'copy is' if n == 1 else 'copies are'} ready. Open them, press another button "
                      "to change them further, or start over from the originals." if n else
                      "No copies were created. Choose another button or start over from the originals.")
@@ -1956,7 +2187,7 @@ class DocumentTask:
                       f"one's failed checks are beside it." if shaky else ""))
         self._advance_generation()
         binned, self._binned = self._binned, []
-        if not model_free:
+        if not beside:
             self._offer_todo(binned)
 
     def _refused_now(self, held: Sequence[Path] = ()) -> List[tuple]:
@@ -2373,6 +2604,8 @@ class DocumentTask:
                 "blocked_reason": s.run_blocked_reason() if self.stage == "preview" else "",
                 "budget_paused": self.stage == "budget", "pause_reason": self.pause_reason(),
                 "discard": self.discard_kind(),
+                "saved_recipes": self.recipes_view(),
+                "recipe_blocked": self._recipe_blocked(),
                 "cost": self._budget.spent_usd,
                 "blocking": blocking}
 
@@ -2628,9 +2861,31 @@ class DocumentTask:
             "pending_layouts": [str(x) for x in self.session.pending_layout_recovery],
             "working": dict(self.working), "generation": self.generation, "history": list(self.history),
             "applied": self.applied, "fresh": self.fresh, "todo": self.todo, "focus": self.focus,
-            "undo": self.undo_points, "runs": self.runs,
+            "undo": self.undo_points, "runs": self.runs, "run_steps": self._kept_run_steps(),
+            "recipe_run": self.session.outcome_source == "saved",
             "exported": self.exported, "export_folder": self.export_folder,
             "budget": self._budget.to_dict(), "request": self._request_budget.to_dict(), "in_progress": in_progress})
+
+    def _kept_run_steps(self) -> Dict[str, Dict[str, Any]]:
+        """What a recipe would keep of each run still listed, or listed by an undo point (``run_steps``)."""
+        ids = {r["id"] for r in self.runs} | {r["id"] for p in self.undo_points for r in p.get("runs", [])}
+        return {k: v for k, v in self.run_steps.items() if k in ids}
+
+    @staticmethod
+    def _restored_run_steps(kept) -> Dict[str, Dict[str, Any]]:
+        """``run_steps`` as the journal kept it; an entry that does not read is dropped (its run then says what it ran
+        was not kept)."""
+        if not isinstance(kept, dict):
+            return {}
+        out: Dict[str, Dict[str, Any]] = {}
+        for key, entry in kept.items():
+            if (isinstance(key, str) and isinstance(entry, dict) and isinstance(entry.get("steps"), list)
+                    and all(saved_recipes._valid_step(st) for st in entry["steps"])
+                    and isinstance(entry.get("name", ""), str) and isinstance(entry.get("recipe_id", ""), str)
+                    and isinstance(entry.get("why_not", ""), str)):
+                out[key] = {"steps": entry["steps"], "name": entry.get("name", ""),
+                            "recipe_id": entry.get("recipe_id", ""), "why_not": entry.get("why_not", "")}
+        return out
 
     def _restore_todo(self, data) -> None:
         """The changes each copy carries, the documents attached since the last run, the to-do list and the pass over
@@ -2780,6 +3035,11 @@ class DocumentTask:
         self._sync()
         self.messages = data.get("messages", [])
         self.decisions = data["decisions"]
+        # a saved recipe's run waiting at the close is pressed again, never handed to Claude as a request to plan;
+        # it called no model, so nothing it spent needs a go-ahead
+        recipe_run = data.get("recipe_run") is True
+        if recipe_run:
+            self.decisions = []
         self.word_sources = data.get("word_sources", [])
         if not isinstance(self.word_sources, list) or not all(isinstance(x, str) for x in self.word_sources):
             raise ValueError("The saved wording approvals could not be read.")
@@ -2823,6 +3083,7 @@ class DocumentTask:
         # a list that cannot be read is shown as none rather than refusing the conversation (it is an account, not
         # what the next request builds on); a journal from before it kept none
         self.runs = (_restored_runs(data.get("runs", [])) or []) if self.working else []
+        self.run_steps = self._restored_run_steps(data.get("run_steps", {}))
         self.exported = self._restored_exported(data.get("exported", {}))
         self.export_folder = data.get("export_folder") if isinstance(data.get("export_folder"), str) else ""
         self._sync()
@@ -2853,6 +3114,8 @@ class DocumentTask:
         if data.get("in_progress") or cost is None:
             # The app closed while work ran: its last call may have cost more than was recorded; ask before going on.
             self._request_budget.exhausted_reason = INTERRUPTED
+        if recipe_run:
+            self._request_budget.exhausted_reason = None
         self.stage = ("budget" if self._request_budget.exhausted_reason else "resume" if self.decisions else
                       "done" if self.results and self.generation else "empty")
         if self.decisions:

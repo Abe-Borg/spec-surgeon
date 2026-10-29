@@ -2,7 +2,8 @@ import { memo, useEffect, useRef } from "react";
 import type { Attachment, View } from "../types";
 import type { Mark, Reviews } from "../lib/review";
 import type { Unticks } from "../lib/occurrences";
-import { changedTip, copiesNote, copyTip, doneCoverage, doneSteps, doneSubtitle, isSaved, notSavedTip, openTarget, planHasContent, runFolder, undoLink } from "../lib/workbench";
+import { changedTip, copiesNote, copyTip, doneCoverage, doneSteps, doneSubtitle, isSaved, notSavedTip, openTarget, planHasContent, runFolder, saveRecipeBlocked, saveRecipeTip, undoLink } from "../lib/workbench";
+import { TOUR_HOLD } from "../lib/tour";
 import { unverifiedLine } from "../lib/modes";
 import DocumentsTray from "./DocumentsTray";
 import Markdown from "./Markdown";
@@ -44,7 +45,16 @@ interface Props {
   onZoom: (src: string, title: string) => void;
   /** Safe mode's "Try these in Default mode" for what the last button left untouched. */
   onHandOff: (paths: string[]) => void;
+  /** Save as a recipe: the dialog over What you've done so far (absent: the server keeps no recipes). */
+  onSaveRecipe?: () => void;
+  /** The guided tour runs: Save as a recipe is held still (the practice runs are not yours to keep). */
+  tourActive?: boolean;
 }
+
+/** Save as a recipe on the paper: the accent's outline and words, white inside. */
+const saveRecipeBtn =
+  "inline-flex items-center gap-1.5 rounded-lg border border-accent/70 bg-white px-3 py-1 text-xs font-semibold text-accent " +
+  "transition-colors hover:bg-accent/10 disabled:pointer-events-none disabled:opacity-40";
 
 /** Faux grey bars where the previews will appear; pulsing while a plan is being worked out. */
 function PreviewPlaceholder({
@@ -117,6 +127,8 @@ function Workbench({
   onPutBack,
   onZoom,
   onHandOff,
+  onSaveRecipe,
+  tourActive = false,
 }: Props) {
   const occurrences = view.occurrences ?? [];
   const safe = view.mode === "safe";
@@ -398,10 +410,33 @@ function Workbench({
 
         {done.length > 0 && (
           <div data-tour="done-list" data-capability="results.done">
-          <PaperCard title="What you've done so far" subtitle={doneSubtitle(view, undo)}>
+          <PaperCard
+            title="What you've done so far"
+            subtitle={doneSubtitle(view, undo)}
+            aside={
+              onSaveRecipe && (
+                <Tip tip={tourActive ? TOUR_HOLD : saveRecipeTip(view, busy)}>
+                  <button
+                    type="button"
+                    disabled={busy || tourActive || !!saveRecipeBlocked(view)}
+                    onClick={onSaveRecipe}
+                    className={saveRecipeBtn}
+                    data-tour="save-recipe"
+                    data-capability="recipes.save"
+                  >
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                      <path d="M6 3h12v18l-6-4-6 4z" />
+                      <path d="M12 7v6M9 10h6" />
+                    </svg>
+                    Save as a recipe…
+                  </button>
+                </Tip>
+              )
+            }
+          >
             <ol className="divide-y divide-paper-edge">
               {done.map((step, i) => (
-                <li key={i} className="flex items-start gap-3 py-2 first:pt-0 last:pb-0">
+                <li key={step.id ?? i} className="flex items-start gap-3 py-2 first:pt-0 last:pb-0">
                   <span
                     aria-hidden
                     className="mt-0.5 flex h-5 w-5 flex-none items-center justify-center rounded-full border border-ok/50 bg-ok/10 text-[10.5px] font-semibold text-ok"
@@ -409,9 +444,28 @@ function Workbench({
                     {i + 1}
                   </span>
                   <div className="min-w-0 flex-1">
-                    <p className="line-clamp-3 text-sm break-words text-paper-ink" title={step.request}>
-                      {step.request}
-                    </p>
+                    {step.name ? (
+                      <>
+                        <p className="text-sm break-words text-paper-ink">
+                          <span className="mr-1.5 inline-flex rounded-full border border-accent/40 bg-accent/10 px-2 py-px text-[11px] font-semibold text-accent">
+                            Recipe
+                          </span>
+                          <span className="font-semibold">{step.name}</span>
+                        </p>
+                        <ol className="mt-1.5 border-l-2 border-accent/30 pl-2.5">
+                          {(step.steps ?? []).map((sub, j) => (
+                            <li key={j} className="flex gap-2 py-0.5 text-[13px] leading-snug break-words text-paper-ink">
+                              <span className="w-3 flex-none text-[11.5px] font-semibold text-accent">{String.fromCharCode(97 + j)}</span>
+                              {sub.text}
+                            </li>
+                          ))}
+                        </ol>
+                      </>
+                    ) : (
+                      <p className="line-clamp-3 text-sm break-words text-paper-ink" title={step.request}>
+                        {step.request}
+                      </p>
+                    )}
                     <p className="mt-0.5 text-xs leading-snug text-paper-dim">{doneCoverage(step)}</p>
                   </div>
                   {i === done.length - 1 && (
