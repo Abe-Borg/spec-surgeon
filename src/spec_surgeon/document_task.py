@@ -14,7 +14,9 @@ Settings; None: no check): each request — a message, a pick, an approval, a bu
 that could take that request past the limit is not started; the work pauses with its progress saved until the user
 says to go on, which allows the limit again. The window shows the estimated spending, and its Stop is the kill
 switch: it cuts off the call that is running at once (``llm.cancellation_scope``). Continue after a pause, a stop or
-a failed call picks the conversation up where it stopped.
+a failed call picks the conversation up where it stopped. In Safe mode, which calls no AI, Stop ends the job itself
+(``stopping``): a preview being made is withdrawn, a run being created delivers nothing and its preview waits again,
+an export saves nothing (``_stopped``).
 """
 from __future__ import annotations
 
@@ -30,7 +32,8 @@ from typing import Any, Dict, List, Optional, Sequence
 
 from .ui_feedback import PREVIEW_FAILED, failed_preview_checks, failed_sample_message, refusal_message
 
-from . import llm, review_display, saved_recipes
+from . import diagnostics as diag
+from . import llm, review_display, saved_recipes, stopping
 from .gui import Session
 from .inputs import KINDS as REFERENCE_KINDS
 from .recovery_state import atomic_json
@@ -68,6 +71,15 @@ EARLIER_COPY = "in an earlier copy: "   # an UNVERIFIED mark a later copy builds
 # open, is withdrawn
 DISCARDED = {"preview": "Preview discarded; nothing was created.",
              "request": "Request dropped; nothing was created."}
+# Stop in Safe mode (``stopping``, ``_stopped``): what the chat says once the job has ended, by what was stopped
+STOPPED = {
+    "preview": ("Stopped. The preview was not finished, so it is withdrawn: nothing was created, and your documents "
+                "and copies are as they were before you pressed the button. Press a button to preview again."),
+    "create": ("Stopped. No copy was created: copies reach your documents only once every one is made and checked, "
+               "and none of this run's did. The preview is still waiting; create the copies again, or discard it."),
+    "export": ("Stopped. Nothing was saved: the files are written only once every one is made and checked. Your "
+               "edited copies are as they were."),
+}
 # said when the app takes a custom method on its own (``_collect_conversation``), Claude's proposal after it
 CUSTOM_METHOD_WRITTEN = ("Claude is writing a one-off custom method for this and trying it on copies of your documents; "
                          "nothing is created until you have seen its preview and approved it.")
@@ -1213,7 +1225,12 @@ class DocumentTask:
                 self._emit({"type": "status", "kind": status[0], "text": status[1]})
             log(message)
         if action == "export":
-            return self._export_job(kind, folder, checkpointed_log)
+            try:
+                return self._export_job(kind, folder, checkpointed_log)
+            except stopping.Stopped:
+                self._stopped(action, {})
+                raise
+        todo = {key: dict(entry) for key, entry in self.todo.items()}   # a stopped Create puts it back (``_stopped``)
         if not (action == "primary" and self.stage == "budget"):
             # a new request: the spending check starts again, and nothing stopped on the way carries over
             self._request_budget = self._new_request()
@@ -1235,6 +1252,9 @@ class DocumentTask:
                     self._occurrences(skip, checkpointed_log)
                 else:
                     raise ValueError("Unknown task action")
+        except stopping.Stopped:
+            self._stopped(action, todo)
+            raise
         except llm.BudgetExceeded:
             self.stage = "budget"
         except Exception:
@@ -1250,6 +1270,31 @@ class DocumentTask:
             self._talking = False
             self.save()
         return self.view()
+
+    def _stopped(self, action: str, todo: Dict[str, Any]) -> None:
+        """Stop ended a Safe-mode job (``stopping``): nothing the job made is used, and the window shows what it
+        showed before it. An export saved nothing (its files are written only once every one is made) and changed
+        nothing. A Create delivered no copy (copies reach the working set only once the run has checked them all,
+        ``_collect_results``): its preview waits again for the same approval, the documents the press set aside off
+        the to-do list again (``todo``, the list as it was), so the marks on the previews still stand. A preview being
+        made — a button, a saved recipe, an untick — is withdrawn as Discard withdraws one: the copies and Left
+        untouched list from before the button are shown again (``_before_button``). No file is written or deleted;
+        what the job left in its scratch folder is never read as a result."""
+        if action == "export":
+            self.say(STOPPED["export"])
+        elif action == "primary" and self.stage == "preview":
+            self.todo = todo
+            self._pending_undo = self._pending_steps = None
+            self.say(STOPPED["create"])
+        else:
+            self._button = ""
+            before, self._before_button = self._before_button, None
+            self._invalidate()
+            if before is not None:
+                self._shown_again(before)
+            self.stage = "done" if self.results and self.generation else "empty"
+            self.say(STOPPED["preview"])
+        diag.event("task.stopped", action=action, stage=self.stage)
 
     def _export_job(self, kind: str, folder: str, log) -> Dict[str, Any]:
         """Export → Word (Tracked Changes OFF) or PDF (Clean) as a job (``export``): the clean copies are made and
@@ -2893,6 +2938,7 @@ class DocumentTask:
                 dest, n = folder / f"{Path(name).stem} ({n}){Path(name).suffix}", n + 1
             taken.add(_same_file_key(dest))
             plan.append((origin, dest, data, dest.exists()))
+        stopping.check("export")       # Safe mode's Stop lands up to here; the files, once begun, are all written
         saved = already = 0
         for origin, dest, data, there in plan:
             if there:

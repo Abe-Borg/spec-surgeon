@@ -976,6 +976,24 @@ async function planJob(res, userText, layouts = false) {
 
 /** A Safe-mode button: no AI call, so no words stream — the checks, the plan and the pages, then the one button.
  *  The last document is set aside with a reason, as the real engine does for one it cannot change exactly. */
+/** Stop in Safe mode (src/spec_surgeon/document_task.py, `_stopped`): a preview being made is withdrawn and the window
+ *  shows what it showed before the button; nothing is created. */
+function safeStopped(s) {
+  const before = beforeButton ?? { results: view.results, left_untouched: view.left_untouched };
+  beforeButton = null;
+  view.results = before.results;
+  view.left_untouched = before.left_untouched;
+  view.plan = null;
+  view.samples = [];
+  view.occurrences = [];
+  view.worth_knowing = [];
+  view.warnings = [];
+  view.stage = view.results.length ? "done" : "empty";
+  view.action = { label: "", token: "", kind: "none", can_hold: false };
+  view.messages.push(msg("app", "Stopped. The preview was not finished, so it is withdrawn: nothing was created, and your documents and copies are as they were before you pressed the button. Press a button to preview again."));
+  return s.end();
+}
+
 async function recipeJob(res, recipe, inputs = {}) {
   const s = startStream(res);
   lastInputs = inputs;
@@ -1002,7 +1020,9 @@ async function recipeJob(res, recipe, inputs = {}) {
     stages: 1,
   };
   await s.emit({ type: "plan", plan: view.plan });
-  await s.emit({ type: "status", kind: "rendering", text: "" });
+  // the pages render one sample at a time: room for Stop now to land (tools/flows.mjs)
+  for (let i = 0; i < 25 && !s.job.stop; i++) await s.emit({ type: "status", kind: "rendering", text: "" });
+  if (s.job.stop) return safeStopped(s);
   view.samples = samples();
   view.occurrences = recipe.id === "find_replace" ? occurrences() : [];
   await s.emit({ type: "samples", samples: view.samples, occurrences: view.occurrences, warnings: [], blocking: false });
@@ -1148,6 +1168,7 @@ async function primaryJob(res, token, hold = []) {
   );
   const held = inScope.filter((a) => hold.includes(a.current) || hold.includes(a.path));
   const running = inScope.filter((a) => !held.includes(a));
+  const todoBefore = [...view.todo];
   for (const a of held) {
     if (!view.todo.some((t) => t.path === a.path)) view.todo.push({ path: a.path, name: a.name, why: "held", reason: HELD_REASON });
   }
@@ -1169,6 +1190,12 @@ async function primaryJob(res, token, hold = []) {
   await s.emit({ type: "status", kind: "creating", text: "" });
   await s.emit({ type: "status", kind: "checking", text: "" });
   await s.emit({ type: "activity", text: "Verifying each edited copy against the plan" });
+  if (s.job.stop && view.mode === "safe") {
+    // Safe mode's kill switch ends the run itself: no copy, the preview waits again, the X'd documents back off the list
+    view.todo = todoBefore;
+    view.messages.push(msg("app", "Stopped. No copy was created: copies reach your documents only once every one is made and checked, and none of this run's did. The preview is still waiting; create the copies again, or discard it."));
+    return s.end();
+  }
   if (s.job.stop) {
     view.messages.push(msg("app", "Stopped. The copies that were already verified are kept."));
     return s.end();

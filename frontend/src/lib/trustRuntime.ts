@@ -495,19 +495,28 @@ export const RUNTIME_CARDS: RuntimeCard[] = [
   {
     covers: ["A11"],
     title: "Stop (the kill switch), or closing the window while work runs",
-    you: "Stop beside the spending in the top bar, the stop button in the chat, or the window's ✕.",
+    you:
+      "Stop beside the spending in the top bar, the stop button in the chat (in Safe mode, Stop now in the bar above " +
+      "the buttons), or the window's ✕.",
     runs:
-      `The running AI call is cut off: the app checks for a stop every ${F.stopPollSeconds} s and closes the ` +
-      "connection, so Anthropic stops writing. No further call starts. Your progress is saved; Continue picks it up. " +
-      `Closing the window does the same and waits up to ${F.closeWaitSeconds} s for the work to stop. Checking or ` +
-      "writing copies does not stop part-way: it finishes first. Then the app's process ends; nothing of it stays " +
-      "running.",
+      `Default and Obliterate: the running AI call is cut off: the app checks for a stop every ${F.stopPollSeconds} s ` +
+      "and closes the connection, so Anthropic stops writing. No further call starts. Your progress is saved; Continue " +
+      "picks it up. Checking or writing copies does not stop part-way there: it finishes first. Safe mode, which calls " +
+      `no AI: the work itself ends. The app checks for a stop between files and every ${F.safeStopPollSeconds} s ` +
+      "while work runs elsewhere, terminates its worker processes, ends the private Word instance or LibreOffice it " +
+      "started, and keeps nothing the work made: a preview being made is withdrawn and the window shows what it " +
+      "showed before the button; a stopped Create makes no copy and its preview waits again; a stopped export saves " +
+      `nothing. Closing the window stops the work the same way and waits up to ${F.closeWaitSeconds} s for it. Then ` +
+      "the app's process ends; nothing of it stays running.",
     sent: "Nothing new. The cut connection is the only signal.",
     ai: NONE,
     bounds:
       "The stopped call's spending is estimated from what the connection reported plus at most " +
       `${F.stoppedOutputTokensPerSecond} output tokens per second it ran. Anthropic may bill what was produced before ` +
-      `the stop. If work ignores Stop for ${F.stopGraceSeconds} s, the app log records where every part of the app was.`,
+      "the stop. In Safe mode a file already being made in the app's own process finishes its step first, and once " +
+      "the copies are being handed over the run finishes: a copy is delivered whole or not at all. Your originals " +
+      `are never written either way. If work ignores Stop for ${F.stopGraceSeconds} s, the app log records where ` +
+      "every part of the app was.",
   },
   {
     covers: ["B10"],

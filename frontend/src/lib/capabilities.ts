@@ -56,6 +56,7 @@ export const END_USER_CAPABILITIES = [
   "action.primary",
   "action.include-all",
   "action.discard",
+  "action.stop",
   "zoom.controls",
   // the copies and what comes after
   "results.copies",

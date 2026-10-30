@@ -67,6 +67,19 @@ What happens then is what happens to a plan in Default mode, with no model anywh
   in Default mode; with every document marked, nothing is created and no conversation starts.
 - The button's sentence (what you pressed and what you typed) is your line in the chat, and the change sentences of
   its plan join the history the next request in either mode hears.
+- **Stop now**, while a button's work runs — in the bar above the buttons, and as the red **Stop** beside the
+  spending in the top bar — is Safe mode's kill switch (`stopping`). Safe mode calls no AI, so it ends the work itself:
+  the plan, the preview's samples and pages, the copies being created and checked, a clean export. Between files and
+  steps the engine stops at once; work running elsewhere is looked at every 0.25 s (`stopping.POLL_SECONDS`) and
+  ended — the worker processes terminated, a Word worker ended with the private Word instance it started, LibreOffice's
+  process tree killed. Nothing the work made is used (`DocumentTask._stopped`): a preview being made (a button, a
+  saved recipe, an untick) is withdrawn as Discard withdraws one, the window showing the copies and Left untouched
+  list it showed before the button; a stopped **Create** delivers no copy — copies reach your documents only once the
+  run has checked them all — and its preview waits again for the same approval, the marks on it standing; a stopped
+  clean export saves nothing. A file already in hand in the app's own process finishes its step first, and once the
+  copies are being handed over the run finishes, so a copy is delivered whole or not at all. The chat says which of
+  these happened. In Default and Obliterate, Stop is the AI kill switch described under "Connection and resource
+  use": a file operation already running there finishes first.
 
 Changing your mind (`DocumentTask.discard_preview`, `DocumentTask.undo`; the same two buttons in Default and
 Obliterate, below under "The conversation"):
@@ -749,7 +762,7 @@ what it does. Its label says what it does:
   that answered, or the app closed while work was running (see below). A custom method that was being written goes
   on from where it stopped, with everything it had looked at.
 - **Stop now**, while work runs: the kill switch, in the composer and as **Stop** beside the spending in the top bar
-  (see below).
+  (see below); in Safe mode, in the bar above the buttons, where it ends the work itself (Safe mode, above).
 
 The button is tied to what is on screen. If a document, the template, the plan, a preview or a visual finding
 changes, the displayed action is void and the window says "The documents or plan changed. Review the updated
@@ -876,7 +889,8 @@ recovery critic) are not cached at all beyond the instructions. Three things kee
   in the top bar. It cuts off the AI step that is running at once, so Claude stops writing, and starts no other; a
   document check or file operation already running finishes first, since it costs nothing. A step that was cut off
   is counted from the input it reported and at most what it could have written in the time it ran. Your progress is
-  saved, and **Continue** picks the conversation up where it stopped.
+  saved, and **Continue** picks the conversation up where it stopped. In Safe mode, which calls no AI, the same Stop
+  ends the work itself, file operations included (Safe mode, above).
 - **Your spending check.** Settings → **Spending check** is the most one request — a message, a pick, an approval,
   a button — may spend, as the app estimates it: $20 until you type another amount and **Apply**, or **Turn off**
   for none (`Settings.spending_limit_usd`, 0 off; the owner's decision of 2026-10-27, in place of a pause after

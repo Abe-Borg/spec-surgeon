@@ -341,6 +341,15 @@ this request** ends a request still open at a question, a pause or a reply to co
 next message starts a new request (the assistant is told the last one was withdrawn). **Undo the last change** goes
 back before the last run that made copies, one run at a time.
 
+Need to stop a button's work part-way, say a preview of sixty documents rendering through Word? **Stop now**, in the
+bar above the buttons while the work runs (and the red **Stop** in the top bar), is Safe mode's kill switch. Safe mode
+calls no AI, so Stop ends the work itself, at once: the worker processes are ended, and so is the private Word
+instance or LibreOffice the app started; your own Word is never touched. Nothing the stopped work made is kept. A
+preview being made is withdrawn, and the window shows what it showed before you pressed the button. A stopped
+**Create edited copies** makes no copy at all (copies reach your documents only once every one is made and checked)
+and its preview waits again, so you can create the copies later or discard it. A stopped Export saves nothing. Your
+originals are never written either way.
+
 Under the copies, **What you've done so far** lists every button you ran since the originals, oldest first, in the
 words of your line in the chat, with how many of the documents attached now carry each one and why any other does not
 (left untouched, set aside on the to-do list, or attached later). **Undo the last button** takes the newest off, Start

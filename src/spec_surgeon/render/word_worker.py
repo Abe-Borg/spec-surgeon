@@ -8,6 +8,10 @@ is used. A Windows process handle is retained only after DispatchEx yields a new
 instance's own main window, found by a caption only it carries, or else the one Word process started since) and
 its creation time matches. If ownership cannot be established, a timeout still stops our Python worker;
 Word is left alone and the missing cleanup evidence is reported.
+
+Stop (Safe mode's kill switch, ``stopping``): the parent looks at it on every poll, ends its worker and terminates
+the private Word it owns (the same private-instance cleanup a timeout takes), publishes nothing more and raises
+``stopping.Stopped``.
 """
 from __future__ import annotations
 
@@ -26,6 +30,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Union
 
 from .. import diagnostics as diag
+from .. import stopping
 
 DEFAULT_TIMEOUT = 120.0
 MAX_RESULT_BYTES = 64 * 1024 * 1024
@@ -263,6 +268,7 @@ def run_word(action, source, *, pdf=None, timeout=None):
             send.close()
             finished = False
             while not finished:
+                stopping.check("Word")      # the finally below ends the worker and terminates its private Word
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
                     raise WordWorkerError("word-timeout", f"Word exceeded {seconds:g} seconds for {source.name}",
@@ -540,6 +546,7 @@ def _run_batch_worker(files: List[Path], out_dir: Path, seconds: float, batch: W
             send.close()
             finished = False
             while not finished:
+                stopping.check("Word")      # clean_exit stays False: the finally ends the worker and its private Word
                 left = deadline - time.monotonic()
                 if left <= 0:
                     if current is None and word_started and all(f in batch.results for f in files):

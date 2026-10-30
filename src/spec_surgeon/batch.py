@@ -27,6 +27,11 @@ the stage, the op and the line of code where the file stopped, and whether it wa
 I/O problem or the engine's own failure (with the traceback); ``DIAGNOSTICS.md`` puts it together per file. A worker
 process that dies takes no other file's result with it: the files it held are run again, each alone in a fresh
 process, and a file that kills that one too is recorded as ``worker-died`` with the last stage its trace reached.
+
+Stop (Safe mode's kill switch, ``stopping``): between files, before the render, between page comparisons and before
+delivery a pressed Stop raises ``stopping.Stopped``; worker processes are terminated on the spot (``stop_pool``) and a
+renderer's processes are ended by the renderer. Delivery itself, once begun, finishes. A stopped batch returns
+nothing, so nothing of it reaches the window.
 """
 from __future__ import annotations
 
@@ -40,14 +45,14 @@ import shutil
 import stat
 import time
 import traceback
-from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from concurrent.futures.process import BrokenProcessPool
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Sequence, Set, Tuple, Union
 
-from . import __version__, guard
+from . import __version__, guard, stopping
 from . import diagnostics as diag
 from .fingerprint import fingerprint
 from .editspec import (apply_spec, is_template_file, naming_op, plan_spec, spec_input_files, spec_renames_outputs, spec_templates,
@@ -335,22 +340,51 @@ def _process_pool(workers: int) -> ProcessPoolExecutor:
     return ProcessPoolExecutor(max_workers=workers, mp_context=multiprocessing.get_context("spawn"))
 
 
+def stop_pool(ex) -> None:
+    """Stop pressed while a pool works (``stopping``): its waiting calls are dropped and its worker processes
+    terminated at once, so none goes on writing into the run's folder; a thread pool's running calls finish the file
+    in hand. The caller raises ``stopping.Stopped``."""
+    if isinstance(ex, ProcessPoolExecutor):
+        processes = list((getattr(ex, "_processes", None) or {}).values())
+        terminate = getattr(ex, "terminate_workers", None)          # Python 3.14
+        if callable(terminate):
+            terminate()
+        else:
+            for process in processes:
+                try:
+                    process.terminate()
+                except Exception:  # noqa: BLE001 — gone already
+                    pass
+        for process in processes:
+            process.join(5)
+        diag.event("worker.pool_stopped", level="warning", workers=len(processes))
+        ex.shutdown(wait=True, cancel_futures=True)
+    else:
+        ex.shutdown(wait=False, cancel_futures=True)
+
+
 def map_files(fn: Callable[..., Any], calls: Sequence[Tuple[Any, ...]], min_files: int = PROCESS_MIN_FILES) -> List[Any]:
     """``[fn(*args) for args in calls]``, in order: shared over spawned worker processes when ``worker_plan`` would
     share a batch of that many files and there are at least ``min_files`` of them, else in this process. ``fn`` is a
     module-level function whose arguments and result are plain data. A call whose worker stopped abruptly (the pool
-    broke) is made again here, as it would have been without the pool."""
+    broke) is made again here, as it would have been without the pool. Stop (``stopping``) ends it between calls, or
+    at once over a pool, its processes terminated."""
     mode, workers = worker_plan(None, 0, len(calls))
+    name = getattr(fn, "__name__", "?")
     if mode != "process" or workers <= 1 or len(calls) < min_files:
-        return [fn(*args) for args in calls]
-    with diag.span("worker.map", function=getattr(fn, "__name__", "?"), calls=len(calls), workers=workers):
+        out = []
+        for args in calls:
+            stopping.check(name)
+            out.append(fn(*args))
+        return out
+    with diag.span("worker.map", function=name, calls=len(calls), workers=workers):
         with _process_pool(workers) as ex:
             with diag.com_quiet():          # the pool starts its processes here; see diagnostics.com_quiet
                 futures = [ex.submit(fn, *args) for args in calls]
             out = []
             for future, args in zip(futures, calls):
                 try:
-                    out.append(future.result())
+                    out.append(stopping.wait(future, name, lambda: stop_pool(ex)).result())
                 except BrokenProcessPool as e:
                     diag.event("worker.map_inline", level="warning", function=getattr(fn, "__name__", "?"),
                                reason=str(e))
@@ -869,9 +903,11 @@ def _run_batch(inputs: Sequence[str], job_name: str, params: Dict[str, Any], out
                 _transform_and_verify(batch, files, job_name, params, out_dir, workers, execution_spec, log,
                                       source_identities, source_refusals, worker_mode=worker_mode)
             stage = "render+geometry"
+            stopping.check(stage)
             with diag.span("batch.render"):
                 _render_and_compare(batch, renderer, do_render, workers, log)
             stage = "deliver"
+            stopping.check(stage)              # the last point a stop lands: delivery, once begun, finishes
             with diag.span("batch.delivery"):
                 if enforce_goals and goal_contract is not None:
                     _verify_delivery_goals(batch, goal_contract, goal_bindings or {}, log)
@@ -943,6 +979,7 @@ def _transform_and_verify(batch: BatchResult, files: List[Path], job_name: str, 
                    naming_refusal=refused.get(str(f)))
     if workers == 1 or len(files) == 1:
         for f in files:
+            stopping.check("transform+verify")
             results[str(f)] = _process_one(str(f), job_name, params, str(out_dir), out_names[str(f)], spec,
                                            refuse=refused.get(str(f)), trace_context=diag.context())
             _file_done(f, results[str(f)], log)
@@ -952,7 +989,7 @@ def _transform_and_verify(batch: BatchResult, files: List[Path], job_name: str, 
             with diag.com_quiet():          # the pool starts its processes here; see diagnostics.com_quiet
                 futs = {ex.submit(_process_one, str(f), job_name, params, str(out_dir), out_names[str(f)], spec, 1,
                                   refused.get(str(f)), diag.context()): f for f in files}
-            for fut in as_completed(futs):
+            for fut in stopping.as_completed(futs, "transform+verify", lambda: stop_pool(ex)):
                 f = futs[fut]
                 try:
                     r = fut.result()
@@ -969,6 +1006,7 @@ def _transform_and_verify(batch: BatchResult, files: List[Path], job_name: str, 
             log(f"a worker process stopped abruptly; running its {len(broken)} unfinished file(s) again, each alone "
                 f"in a fresh process, to find the cause")
         for f in broken:
+            stopping.check("transform+verify")
             results[str(f)] = _run_alone(f, job_name, params, out_dir, out_names[str(f)], spec, refused.get(str(f)))
             _file_done(f, results[str(f)], log)
     batch.timings["transform+verify"] = time.perf_counter() - t_start
@@ -1203,6 +1241,7 @@ def _render_and_compare(batch: BatchResult, renderer: str, do_render: bool, work
         refs = geometry_references(pairs, out_dir, backend, workers, cache, rlog, log)
         pages_dir = out_dir / "render" / "pages"
         for fr, pair in zip(renderable, pairs):
+            stopping.check("render+geometry")
             fr.render_messages = _file_messages(messages, [fr.source.name, fr.out_name])
             sp, op = pair.source_pdf, pair.output_pdf
             if not sp or not op:

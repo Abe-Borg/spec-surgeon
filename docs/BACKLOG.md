@@ -138,6 +138,16 @@ write-back over the originals unless asked for (T1 is the claim most of the trus
 Everything else is built and tested on fixtures; nothing is done on fixtures alone. These runs need real
 specifications, Windows and Word, and only the owner can do them. Record what a run finds as a new item above.
 
+- **Safe mode's kill switch (built 2026-10-29):** in the installed app with Word, over a batch of 20 or more real
+  specifications: press **Match headers and footers to template** and, while the preview's pages render, **Stop now**
+  in the bar above the buttons — the chat says the preview was withdrawn within a second or two, the window shows the
+  copies it showed before, and Task Manager shows no `WINWORD.EXE` the app started and no worker process of the
+  app's (a Word you had open yourself is still open, untouched). Preview again and **Create edited copies**,
+  then the top bar's red **Stop** while the copies are checked: no copy is listed, the preview waits with its ✗ marks
+  as they were, and Create then makes the copies. Export → PDF (Clean) and Stop: nothing lands in the folder. Then
+  once on a machine with LibreOffice and no Word: no `soffice.bin` left running after the stop, and the next
+  preview renders. Closing the window while a Safe-mode run is checking copies ends at once. A stop that does not land within 30 s is in the app log ("is still running … after Stop", with
+  every thread's stack): record it here.
 - **Remove specifier notes (M2, built 2026-10-29):** in Safe mode with Word rendering, the button over a real batch
   from each kind of master the owner starts from (MasterSpec sections and an owner's data-center masters): every note
   paragraph is gone (the CMT or note-style editor's notes, "NOTE TO SPECIFIER", "Retain or delete …", "Retain

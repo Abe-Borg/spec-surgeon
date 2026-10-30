@@ -19,6 +19,7 @@ import {
   DROP_PAUSED,
   DROP_TIP,
   NONE_TIP,
+  SAFE_STOP_TIP,
   STOP_TIP,
   actionButton,
   actionSentence,
@@ -38,6 +39,13 @@ function view(overrides: Partial<View> = {}): View {
 test("while busy the spot shows Stop now, whatever the action", () => {
   const button = actionButton(view({ action: { label: "Create edited copies", token: "t", kind: "approve" } }), true, false);
   assert.deepEqual(button, { kind: "stop", label: "Stop now", tip: STOP_TIP });
+});
+
+test("in Safe mode Stop now ends the work itself, and says so", () => {
+  const button = actionButton(view({ mode: "safe", action: { label: "Create edited copies", token: "t", kind: "approve" } }), true, false);
+  assert.deepEqual(button, { kind: "stop", label: "Stop now", tip: SAFE_STOP_TIP });
+  assert.match(SAFE_STOP_TIP, /preview being made.*copies being created and checked.*export/);
+  assert.doesNotMatch(SAFE_STOP_TIP, /\bAI\b/);
 });
 
 test("no action, no button", () => {

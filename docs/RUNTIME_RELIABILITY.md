@@ -90,6 +90,13 @@ each sample's events in its own journal) side by side, with the same results as
 inline; a preview of eight samples went from 4.8 s to 2.2 s. A call whose worker
 stopped abruptly is made again in the app's process.
 
+Stop in Safe mode (`stopping`) ends a pool at once: the waits on its futures look at
+Stop every `stopping.POLL_SECONDS` (0.25 s), and on a stop `batch.stop_pool`
+terminates its worker processes and drops the calls still waiting, so none goes on
+writing into the run's folder; the job then raises `stopping.Stopped` and nothing it
+made is used. A thread pool's running calls finish the file in hand. Default and
+Obliterate jobs are not armed: there a file operation already running finishes.
+
 The packaged app runs processes too. It once swapped processes for threads because
 its crash log held "Windows fatal exception: access violation" at every worker
 spawn (B3 of the 1.0 live runs); W2 (2026-10-22) showed those are handled
