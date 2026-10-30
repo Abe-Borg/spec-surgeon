@@ -97,7 +97,8 @@ it was, and once you have finished it the chip stops inviting. Help → How to u
    subfolders are not entered; the chat says how many documents they hold, so you can add those folders too).
    The ✕ beside a file takes it out of the conversation; with two or more documents listed, **Remove all
    documents** takes them all out at once after one confirmation (the template, pictures and tables stay, and the
-   files themselves are never touched).
+   files themselves are never touched). A removed document's edited copy leaves **Your edited copies** and Export
+   with it, so Export it first if you want to keep it; attached again, the document starts from its original.
 2. **Check the list of files.** The moment a file is attached, Spec Surgeon reads it (milliseconds, no model
    call) and lists it by its name. What it finds (typed numbers instead of automatic list numbering, no paragraph
    styles, text boxes in the headers or footers, an older compatibility mode, editing restrictions, pending tracked

@@ -138,6 +138,14 @@ write-back over the originals unless asked for (T1 is the claim most of the trus
 Everything else is built and tested on fixtures; nothing is done on fixtures alone. These runs need real
 specifications, Windows and Word, and only the owner can do them. Record what a run finds as a new item above.
 
+- **A removed document attached again is its original (built 2026-10-30):** in Default mode with Word, two real
+  specifications: one request over both and **Create edited copies**; the ✕ on the second — its copy leaves **Your
+  edited copies** and Export's count drops by one; attach it again — still no copy listed for it, and Export → Word
+  (Tracked Changes ON) saves the first one's only. Then a request kept to the first ("only <its name>"), or the second
+  set aside with the ✗ on its preview, and Create: What you've done so far gives the second neither run (attached
+  later, then left untouched or set aside), Export still saves the first one's copy only, and a next request over both
+  previews the second from its original (without the first change). In Obliterate, a copy delivered UNVERIFIED and
+  removed takes its mark with it: attached again, it shows none, and its next copy carries none ("in an earlier copy").
 - **Safe mode's kill switch (built 2026-10-29):** in the installed app with Word, over a batch of 20 or more real
   specifications: press **Match headers and footers to template** and, while the preview's pages render, **Stop now**
   in the bar above the buttons — the chat says the preview was withdrawn within a second or two, the window shows the

@@ -746,6 +746,11 @@ class DocumentTask:
         had_copies = bool(self.working)
         self.working.pop(str(path), None)
         self.applied.pop(str(path), None)
+        # its copy leaves with it, and its UNVERIFIED mark: attached again later, it is an original — no copy is listed
+        # or exported as its own, and a later run that does not deliver it (left out, set aside, refused) never moves
+        # the old copy back into the working set (``_advance_generation``) or counts it as a copy waiting on a recovery
+        self.results.pop(str(path), None)
+        self.unverified.pop(str(path), None)
         self.fresh = [k for k in self.fresh if k != str(path)]
         self.todo.pop(str(path), None)
         for run in [*self.runs, *(r for point in self.undo_points for r in point.get("runs", []))]:

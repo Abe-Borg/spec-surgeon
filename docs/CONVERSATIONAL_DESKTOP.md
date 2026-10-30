@@ -448,8 +448,11 @@ together, including files with the same name. Each file has
 a remove button; with two or more documents listed, **Remove all documents** takes every Word document out at once
 after one confirmation (`DocumentTask.remove_documents`, each as its ✕ would), leaving the template and the pictures
 and tables. It sits on the documents' title line, so it stays one click away when the list has folded under a plan
-or copies. **Add a template (optional)** attaches one reference document; it is never part of the batch,
-and if one of the documents is a copy of the template the window says so and asks you to remove one of them.
+or copies. A removed document takes its edited copy out of **Your edited copies** and Export, and its UNVERIFIED
+mark with it (`DocumentTask.remove`: `results`, `unverified`, the undo points); the copy's file stays in the scratch
+folder, unlisted. Attached again, it is an original in every mode: a later run that does not deliver it (left out,
+set aside with the ✗, refused), Undo and Discard never put its old copy back as the one the next change builds on.
+**Add a template (optional)** attaches one reference document; it is never part of the batch, and if one of the documents is a copy of the template the window says so and asks you to remove one of them.
 
 **Add a picture or table (optional)**, or dropping one, attaches a file for the edit to use: a picture
 (`.png`, `.jpg`, `.jpeg`, `.gif`, `.bmp`), for example a new logo to put in place of the old one or a detail to
