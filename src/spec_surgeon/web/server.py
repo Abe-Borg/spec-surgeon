@@ -27,7 +27,7 @@ from fastapi import FastAPI, File, Form, Request, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
-from .. import __version__, about, credentials, llm, recipes
+from .. import __version__, about, credentials, llm, recipes, stopping
 from ..ui_feedback import failed_preview_checks
 from .. import diagnostics as diag
 from ..document_task import LAUNCH_MODES, DocumentTask
@@ -428,13 +428,22 @@ class WindowState:
                                         for sv in event.get("samples", [])]
                 events.put(event)
 
+            # Stop in Safe mode, which calls no AI, ends the job itself (``stopping``); in Default and Obliterate it cuts
+            # the AI call off and a file operation already running finishes first (docs/CONVERSATIONAL_DESKTOP.md)
+            whole_job = cancel if task.mode == "safe" else None
+
             def target():
                 terminal: Dict[str, Any]
                 failure = ""
                 try:
-                    with llm.cancellation_scope(cancel), llm.model_progress_scope(progress), \
+                    with llm.cancellation_scope(cancel), stopping.scope(whole_job), \
+                            llm.model_progress_scope(progress), \
                             diag.span("web.job", action=action, queue_ms=round((time.perf_counter() - queued) * 1000, 3)):
                         task.perform(action, log=log, events=relay, **values)
+                except stopping.Stopped as e:
+                    # the task has said what the stop left (``DocumentTask._stopped``); nothing it made is used
+                    diag.app_log().info(f"Job {action} stopped by the user: {e}")
+                    terminal = {"type": "done", "state": self._payload(task.view(), busy=False), "stopped": True}
                 except Exception as e:  # noqa: BLE001 — every outcome reaches the page
                     diag.app_log().error(traceback.format_exc())
                     kind = type(e).__name__

@@ -344,6 +344,15 @@ other documents checked again, those copies join the ones your next request buil
 adding or removing documents, a change of mode, the to-do list, Discard and Undo wait until you save the ready copies
 or set the rest aside; the greyed button says why.
 
+Need to stop a button's work part-way, say a preview of sixty documents rendering through Word? **Stop now**, in the
+bar above the buttons while the work runs (and the red **Stop** in the top bar), is Safe mode's kill switch. Safe mode
+calls no AI, so Stop ends the work itself, at once: the worker processes are ended, and so is the private Word
+instance or LibreOffice the app started; your own Word is never touched. Nothing the stopped work made is kept. A
+preview being made is withdrawn, and the window shows what it showed before you pressed the button. A stopped
+**Create edited copies** makes no copy at all (copies reach your documents only once every one is made and checked)
+and its preview waits again, so you can create the copies later or discard it. A stopped Export saves nothing. Your
+originals are never written either way.
+
 Under the copies, **What you've done so far** lists every button you ran since the originals, oldest first, in the
 words of your line in the chat, with how many of the documents attached now carry each one and why any other does not
 (left untouched, set aside on the to-do list, or attached later). **Undo the last button** takes the newest off, Start

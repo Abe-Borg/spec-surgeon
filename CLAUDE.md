@@ -200,7 +200,13 @@ jobs). Details: `docs/CONVERSATIONAL_DESKTOP.md`.
     (`compiler.STREAMED_TOOLS`, `eager_input_streaming`); `llm` checks it and re-sends a call whose input is broken.
     The window's only spending limit is the user's spending check per request (Settings → Spending check,
     `DocumentTask._new_request` inside the conversation's ledger; the owner's decision of 2026-10-27, which removed the
-    pause after 48 calls); Stop is the kill switch (`llm.cancellation_scope`).
+    pause after 48 calls); Stop is the kill switch (`llm.cancellation_scope`). In Safe mode, which calls no AI, Stop
+    ends the job itself (`stopping.py`, armed for a Safe-mode job only by `web.server.WindowState.start_job`):
+    `stopping.check` between files and steps, `stopping.wait`/`as_completed` over worker pools (`batch.stop_pool`
+    terminates their processes), the Word workers' and LibreOffice's polls; `stopping.Stopped` is a `BaseException`
+    so no `except Exception` takes it for a file's failure, and `DocumentTask._stopped` says what it left (a preview
+    withdrawn, a Create with no copy and its preview waiting, an export with nothing saved). A new wait on work
+    running elsewhere looks at Stop; a new `except BaseException` re-raises.
     Fast mode (`speed="fast"`, Settings → Fast responses, `llm.set_fast_mode`) is the user's choice, off by default:
     it changes speed and price (`FAST_PRICES`), never the model, effort or prompt; a fast call the fast capacity
     cannot take is re-sent at standard speed. `compiler.compose_submission` is the one gate a submission passes.

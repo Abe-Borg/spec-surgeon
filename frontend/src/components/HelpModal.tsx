@@ -277,7 +277,7 @@ function HowToUse({ onStartTourAt }: { onStartTourAt: (chapter: string) => void 
             },
             {
               t: "Stop — the kill switch",
-              d: "While work runs, Stop beside the spending in the top bar (and the stop button in the chat) cuts off the AI step that is running at once and starts no other. Your progress is saved; Continue picks the conversation up where it stopped.",
+              d: "While work runs, Stop beside the spending in the top bar (and the stop button in the chat) cuts off the AI step that is running at once and starts no other. Your progress is saved; Continue picks the conversation up where it stopped. In Safe mode, which calls no AI, Stop (and Stop now above the buttons) ends the work itself: a preview being made is withdrawn, a Create makes no copy and its preview waits again, an export saves nothing.",
             },
             {
               t: "Your spending check",
@@ -461,7 +461,7 @@ function Workflows() {
         title="Stopped, paused or closed"
         tagline="Stop and pause keep your place; closing ends the conversation."
         steps={[
-          "Stop cuts off the running AI step at once; Continue picks up where it stopped.",
+          "Stop cuts off the running AI step at once; Continue picks up where it stopped. In Safe mode Stop ends the work itself and keeps nothing it made.",
           "Work pauses before a request could spend more than your spending check (Settings) until you press Continue.",
           "Closing the app ends the conversation and deletes its scratch folder, after one question if a copy was never saved: save what you want to keep with Export first. A window that never closed is restored at the next start.",
         ]}

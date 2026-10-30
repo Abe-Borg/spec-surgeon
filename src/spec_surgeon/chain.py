@@ -501,6 +501,8 @@ def _run_chain(inputs: Sequence[str], chain: Dict[str, Any], out_dir: Path, work
                     elif stage_in_place:
                         cf.reason += " — the file was left untouched"
             stage_label = "deliver"
+            from . import stopping
+            stopping.check(stage_label)        # Stop (``stopping``) lands before delivery, never during it
             with diag.span("chain.delivery"):
                 _deliver(result, current, in_place, verified_bytes, guard, log,
                          goal_contract if enforce_goals else None, goal_bindings or {},

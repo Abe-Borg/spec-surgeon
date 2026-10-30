@@ -12,7 +12,10 @@ tried again on the fresh one before its files are retried one by one.
 
 What LibreOffice says is kept: a chunk that fails is reported with its exit status and the end of its stderr/stdout
 (not just "Command … returned non-zero exit status"), and a file that comes out without a PDF is reported with what
-the process printed — LibreOffice exits 0 even when it could not load a file."""
+the process printed — LibreOffice exits 0 even when it could not load a file.
+
+Stop (Safe mode's kill switch, ``stopping``) kills every soffice tree that is running, as a timeout does, retires its
+profile and raises ``stopping.Stopped``; no chunk is retried."""
 from __future__ import annotations
 
 import configparser
@@ -28,6 +31,7 @@ from pathlib import Path
 from typing import Callable, Dict, List, Optional, Sequence, Set, Tuple
 
 from .. import diagnostics as diag
+from .. import stopping
 
 _CANDIDATES = [
     "soffice", "libreoffice",
@@ -197,22 +201,35 @@ def _kill_tree(proc: subprocess.Popen) -> None:
 
 def _run_tree(cmd: List[str], env: Dict[str, str], timeout: float) -> subprocess.CompletedProcess:
     """``subprocess.run(cmd, check=True, capture_output=True, timeout=timeout)`` whose timeout kills the whole
-    process tree (its own session on POSIX, a job of ``taskkill /T`` on Windows), not the launcher alone."""
+    process tree (its own session on POSIX, a job of ``taskkill /T`` on Windows), not the launcher alone. Stop
+    (``stopping``, looked at every ``stopping.POLL_SECONDS``) kills the tree the same way and raises
+    ``stopping.Stopped``."""
     kwargs: Dict[str, object] = {}
     if os.name == "nt":
         kwargs["creationflags"] = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
     else:
         kwargs["start_new_session"] = True
     proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env, **kwargs)  # noqa: S603
-    try:
-        out, err = proc.communicate(timeout=timeout)
-    except subprocess.TimeoutExpired:
+    deadline = time.monotonic() + timeout
+
+    def ended() -> Tuple[bytes, bytes]:
         _kill_tree(proc)
         try:
-            out, err = proc.communicate(timeout=30)
+            return proc.communicate(timeout=30)
         except subprocess.TimeoutExpired:
-            out, err = b"", b""
-        raise subprocess.TimeoutExpired(cmd, timeout, output=out, stderr=err) from None
+            return b"", b""
+    while True:
+        try:
+            out, err = proc.communicate(timeout=stopping.poll(max(0.0, deadline - time.monotonic())))
+            break
+        except subprocess.TimeoutExpired:
+            if stopping.requested():
+                ended()
+                raise stopping.Stopped("LibreOffice") from None
+            if time.monotonic() < deadline:
+                continue
+            out, err = ended()
+            raise subprocess.TimeoutExpired(cmd, timeout, output=out, stderr=err) from None
     if proc.returncode != 0:
         raise subprocess.CalledProcessError(proc.returncode, cmd, output=out, stderr=err)
     return subprocess.CompletedProcess(cmd, proc.returncode, out, err)
@@ -326,13 +343,21 @@ def render_groups(groups: Sequence[Tuple[Sequence[Path], Path]], workers: int = 
         return any(pdf_of(g, f).exists() for f in chunk)
 
     def run(g: int, chunk: List[Path], lease: ProfileLease, attempt: int = 1):
+        stopping.check("LibreOffice")              # no soffice starts after a stop
         out_dir = groups[g][1]
         t = time.perf_counter()
         for f in chunk:                             # a PDF from an earlier run is never taken for this one
             pdf_of(g, f).unlink(missing_ok=True)
+
+        def convert():
+            try:
+                return _convert_batch(soffice, chunk, out_dir, lease.path, timeout)
+            except stopping.Stopped:
+                retire_profile(lease.path)         # its tree was killed mid-file, as on a timeout
+                raise
         with diag.scope(render_attempt=attempt, render_profile=lease.index):
             try:
-                done = _convert_batch(soffice, chunk, out_dir, lease.path, timeout)
+                done = convert()
             except subprocess.CalledProcessError as e:
                 if came_out(g, chunk):
                     worked.add(lease.path)
@@ -346,7 +371,7 @@ def render_groups(groups: Sequence[Tuple[Sequence[Path], Path]], workers: int = 
                 detail(f"LibreOffice: profile {lease.index} failed to start ({failure_text(e)}); recreating it and "
                        f"trying the {len(chunk)} file(s) again")
                 reset_profile(lease.path)
-                done = _convert_batch(soffice, chunk, out_dir, lease.path, timeout)
+                done = convert()
             except subprocess.TimeoutExpired:
                 if came_out(g, chunk):
                     worked.add(lease.path)

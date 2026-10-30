@@ -310,6 +310,8 @@ export default function Chat({
       )}
       <ActionBar
         button={paused || (safe && button?.kind === "stop") ? null : button}
+        stop={safe && button?.kind === "stop" ? button : null}
+        onStop={onStop}
         held={held}
         onIncludeAll={onIncludeAll}
         aside={aside}

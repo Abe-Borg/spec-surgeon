@@ -189,7 +189,8 @@ Rules the page relies on:
   copies" when `blocking`), `continue` → "Continue" (stage `resume`: a request is open and the documents or the plan
   changed, or work stopped; never after an answer that ended the request), `save` → "Save N ready copies", `none` →
   no button. The button
-  lives in the conversation pane, above the composer; while `busy` the composer shows "Stop now" instead.
+  lives in the conversation pane, above the composer; while `busy` the composer shows "Stop now" instead (in Safe
+  mode, which has no composer, the action bar above the buttons does).
   `action.disabled_reason` is empty when the action is available; otherwise the button is disabled and this reason
   appears beside it and in its tooltip. Safe and Default refuse Create when no sample of the preview passed its
   checks; the server enforces the same gate even if a caller submits a current token directly. A sample that failed
@@ -349,7 +350,7 @@ explicitly injected clients are retained. Both key replacement and removal refus
 | POST | `/api/occurrences` | `{"skip": ["<key>", …]}` — every find-and-replace occurrence the user unticked in the preview's list, by its `key` (the whole unticked set: a key left out is an occurrence put back); the previewed plan is made again with those occurrences left as they are (backlog F1: each `replace_table` op's `skip` list is exactly the unticked occurrences of its own, the spec passes the gate again with those keys as the ones recorded from the user's unticks, and the preview is remade on the same documents; the approval token changes, so the page's marks start over); 400 for a body that is not a list of keys; the job's `error` when no preview waits or a key is not in the list; a plan the gate refuses keeps the preview as it was and says so in one `app` message | SSE stream |
 | POST | `/api/mode` | `{"mode": "safe \| default \| obliterate", "acknowledged"?: true}` — `obliterate` needs `show_obliterate` on and `acknowledged: true` (the user ticked its warning this time); entering or leaving it voids the plan | the view; Safe or Default is kept in settings.json, Obliterate never is (the next start opens in Default); 400 for another mode, a hidden Obliterate or a missing acknowledgement, and with `{"error"}` naming why for a switch across Obliterate or to Safe while `recovery_blocked` is set |
 | POST | `/api/handoff` | `{"paths": ["<left_untouched path>", …]}` — the documents go on the to-do list with the button's sentence as their request, and the mode becomes `default`; 400 for a path the last button did not leave untouched, or while a preview waits | the view |
-| POST | `/api/stop` | | `{"ok": true}` — the running model call is cut off; the stream then ends with `done` |
+| POST | `/api/stop` | | `{"ok": true}` — the running model call is cut off; the stream then ends with `done`. In Safe mode, which calls no AI, the job itself is ended (`stopping`: worker processes terminated, a private Word instance or LibreOffice ended, nothing it made used — a preview being made withdrawn, stage `done` or `empty` with `results` and `left_untouched` as before the button; a Create with no copy delivered, stage `preview` and the same `action.token`; an export with nothing saved), and the stream ends with `done` carrying `stopped: true` and one `app` message saying what the stop left. `{"ok": false}` when nothing runs |
 | POST | `/api/put-back` | `{"path": "<a todo entry's path>"}` | the view (the document is off the to-do list and back among the documents the next request works on; during a pass it joins them when the pass ends; a plan on screen is void when the documents in scope change); 400 with `{"error"}` for a path not on the list or while `recovery_blocked` is set, 409 while work runs |
 | POST | `/api/start-over` | | the view (the working set returns to the originals; the plan is void; the to-do list is cleared; nothing can be undone) |
 | POST | `/api/discard` | | Discard: the view (the waiting preview, or in Default and Obliterate the open request, withdrawn and nothing created; Safe mode: `results` and `left_untouched` as they were before the button was pressed; Default and Obliterate: the request ended, stage `done` or `empty`); 400 with `{"error"}` when `discard` is `""`, 409 while work runs |
@@ -416,7 +417,7 @@ Any report is a sign of life: a showing page (`visible`) that sends nothing for 
 | `results` | `results` | copies were written |
 | `question` | `questions`, `choices`, `chips` | the model needs the user |
 | `cost` | `cost` | the running spend, and the context gauge (`cost.context`) as each step of the conversation ends |
-| `done` | `state` | the job ended; `state` is the full view |
+| `done` | `state`, `stopped` (only when true) | the job ended; `state` is the full view; `stopped` when Stop ended it (an AI call cut off, or in Safe mode the job itself) |
 | `error` | `message`, `state`, `resend`? | the job failed; `state` is the full view after the failure (safe to retry); `resend` is the request's text when it was refused before it was recorded (no API key yet) — the composer takes it back |
 
 Order within a job: any number of `status`/`activity`/`thinking_delta`/`text_delta`, then `message` when a reply is

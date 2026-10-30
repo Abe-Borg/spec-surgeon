@@ -124,6 +124,7 @@ def expected() -> dict:
         "retryDelaysSeconds": [int(s) for s in const("llm.py", "RETRY_DELAYS")],
         "retryAfterCapSeconds": const("llm.py", "RETRY_AFTER_CAP"),
         "stopPollSeconds": const("llm.py", "STOP_POLL_SECONDS"),
+        "safeStopPollSeconds": const("stopping.py", "POLL_SECONDS"),
         "stoppedOutputTokensPerSecond": const("llm.py", "STOPPED_OUTPUT_RATE"),
         "recoveryAttemptsPerGroup": const("document_task.py", "RECOVERY_ATTEMPTS"),
         "stallRepetitions": const("resources.py", "DEFAULT_STALL_REPETITIONS"),
