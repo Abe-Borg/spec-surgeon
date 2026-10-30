@@ -225,7 +225,7 @@ test("the conversation's controls are held still during the tour, in one wording
     ["../src/components/Prompts.tsx", [/const held = busy \|\| tourActive;/, /TOUR_HOLD/]],
     ["../src/components/TodoCard.tsx", [/const held = busy \|\| tourActive;/, /TOUR_HOLD/]],
     ["../src/components/PauseCard.tsx", [/disabled=\{!canContinue \|\| busy \|\| tourActive\}/, /TOUR_HOLD/]],
-    ["../src/components/Header.tsx", [/disabled=\{busy \|\| tourActive\}/, /onStartTour/]],
+    ["../src/components/Header.tsx", [/disabled=\{busy \|\| tourActive \|\| !!modeHeld\(view, mode\)\}/, /onStartTour/]],
     ["../src/components/Chat.tsx", [/disabled=\{busy \|\| tourActive\}/, /TOUR_HOLD/, /data-tour="tour-chip"/, /chip-pulse/]],
   ];
   for (const [path, patterns] of holds) {

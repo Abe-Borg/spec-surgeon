@@ -51,6 +51,16 @@ export function modeChoice(current: Mode, chosen: Mode): "none" | "warn" | "swit
   return chosen === "obliterate" ? "warn" : "switch";
 }
 
+/** Why the switch to `chosen` waits ("" when it does not): while a run's saved copies wait on its recovery (the view's
+ *  `recovery_blocked`), a switch across Obliterate voids the plan and the check with it, and Safe mode cannot go on
+ *  with a check. Safe to Default stays open: that is where the check goes on (`DocumentTask.set_mode`). */
+export function modeHeld(view: { mode: Mode; recovery_blocked?: string }, chosen: Mode): string {
+  const blocked = view.recovery_blocked ?? "";
+  if (!blocked || chosen === view.mode) return "";
+  const crossing = (view.mode === "obliterate") !== (chosen === "obliterate");
+  return crossing || chosen === "safe" ? blocked : "";
+}
+
 /** The conversation's modes (the message box, the AI): Default and Obliterate. */
 export function converses(mode: Mode): boolean {
   return mode !== "safe";

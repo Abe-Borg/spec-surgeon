@@ -27,6 +27,12 @@ export const NONE = "None.";
 /** The model as it ships; SPEC_SURGEON_MODEL replaces it (the dossier's engine section says so). */
 const conversationModel = `${MODEL_NAME} (${F.model}) by default, ${F.conversationEffort} effort, up to ${grouped(F.maxOutputTokens)} output tokens per call.`;
 const recoveryModel = `${MODEL_NAME} (${F.model}) by default, ${F.recoveryEffort} effort (${F.codegenEffort} while it writes a custom method), up to ${grouped(F.maxOutputTokens)} output tokens per call.`;
+/** Why an action waits while a run's saved copies wait on the check of its other documents (DocumentTask._recovery_blocked):
+ *  said once here, so every card that names a waiting action says it the same way. */
+const WHILE_CHECKED =
+  "while a run that already saved some copies has its other documents checked again: those copies join what the " +
+  "next request builds on when the check ends (save the ready copies, or set the rest aside for later), so nothing " +
+  "ends it first; the page greys the button with the reason";
 const codegenModel = `${MODEL_NAME} (${F.model}) by default, ${F.codegenEffort} effort while it writes the method (the conversation's next call is back at ${F.conversationEffort}), up to ${grouped(F.maxOutputTokens)} output tokens per call.`;
 
 export const RUNTIME_CARDS: RuntimeCard[] = [
@@ -106,7 +112,8 @@ export const RUNTIME_CARDS: RuntimeCard[] = [
     bounds:
       `Milliseconds per file. A .docx is opened up to ${F.maxDocxMB} MiB; a picture or table over ` +
       `${F.maxTableOrPictureMB} MB is listed as too big and never read. Nothing beside the files you attach is looked ` +
-      "for. A dropped copy stays in the scratch folder until the window closes; the file you dropped is untouched.",
+      "for. A dropped copy stays in the scratch folder until the window closes; the file you dropped is untouched. " +
+      `Adding waits ${WHILE_CHECKED}.`,
   },
   {
     covers: ["A4", "A38"],
@@ -118,7 +125,9 @@ export const RUNTIME_CARDS: RuntimeCard[] = [
       "every Word document out at once, each as its ✕ would; the template and the pictures and tables stay.",
     sent: "Nothing.",
     ai: NONE,
-    bounds: "The file itself is not deleted or changed, and neither is a copy made of it earlier.",
+    bounds:
+      "The file itself is not deleted or changed, and neither is a copy made of it earlier. Removing waits " +
+      `${WHILE_CHECKED}.`,
   },
   {
     covers: ["A5", "B4", "B15"],
@@ -149,7 +158,9 @@ export const RUNTIME_CARDS: RuntimeCard[] = [
       "goes on from where it stopped. If Claude declines to answer, the chat says so in plain words and nothing is " +
       "changed. When it declines a follow-up reply straight away, before reading anything, that reply is taken back " +
       "out of the conversation, so it is not sent again with your next one; a first request, or a reply declined " +
-      "after Claude has read something, stays in the history and goes out with what follows.",
+      "after Claude has read something, stays in the history and goes out with what follows. While a run that already " +
+      "saved some copies has its other documents checked again, words about those documents go on with the check; " +
+      "words that would end it are not sent, and the chat says why.",
   },
   {
     covers: ["A6"],
@@ -320,7 +331,7 @@ export const RUNTIME_CARDS: RuntimeCard[] = [
       "delivered marked UNVERIFIED instead of being held back, with no recovery after it; its preview page already " +
       "says Did not pass, and the plan stands. The mark stays on every later copy built on it, in every mode, " +
       "until Start over, Undo or removing the document. Entering or leaving it " +
-      "voids the plan on screen.",
+      `voids the plan on screen, so it waits ${WHILE_CHECKED}.`,
     sent: "Nothing when you choose it. The conversation then sends what it sends in Default mode.",
     ai: NONE,
     bounds:
@@ -366,7 +377,8 @@ export const RUNTIME_CARDS: RuntimeCard[] = [
       "write and delete no file: the copies an undone run made stay where they were saved. Undo goes back one " +
       "run at a time, never while a preview waits or a request is open, and refuses when a copy it would go back to " +
       "is gone. Discard is not offered while the documents are being checked again after a run: save the ready " +
-      "copies, or set the rest aside for later.",
+      "copies, or set the rest aside for later. Undo, Discard, a recipe and choosing Safe mode also wait " +
+      `${WHILE_CHECKED} (Safe mode cannot go on with a check; from Safe mode, Default can always be chosen).`,
   },
   {
     covers: ["A35"],
@@ -628,7 +640,7 @@ export const RUNTIME_CARDS: RuntimeCard[] = [
     ai: NONE,
     bounds:
       "No copy and no original is deleted or changed. The to-do list is kept in the saved conversation; Start over " +
-      "clears it.",
+      `clears it. Working on the to-do list and Put back wait ${WHILE_CHECKED}.`,
   },
   {
     covers: ["A17", "A18", "A20"],

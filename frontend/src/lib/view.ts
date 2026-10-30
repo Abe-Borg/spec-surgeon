@@ -123,6 +123,7 @@ export const EMPTY_VIEW: View = {
   safe_note_hidden: false,
   saved_recipes: [],
   recipe_blocked: "",
+  recovery_blocked: "",
 };
 
 export const INITIAL_STATE: UiState = {
@@ -198,6 +199,7 @@ export function normalizeView(raw: unknown): View {
       (r) => !!r && typeof r === "object" && typeof r.id === "string" && Array.isArray(r.steps),
     ),
     recipe_blocked: typeof v.recipe_blocked === "string" ? v.recipe_blocked : "",
+    recovery_blocked: typeof v.recovery_blocked === "string" ? v.recovery_blocked : "",
   };
 }
 

@@ -339,7 +339,10 @@ originals, after the first one), and the copies the undone button made stay wher
 Default and Obliterate mode have the same ways back: **Discard preview** withdraws a plan and its preview, and **Drop
 this request** ends a request still open at a question, a pause or a reply to continue; nothing is created, and your
 next message starts a new request (the assistant is told the last one was withdrawn). **Undo the last change** goes
-back before the last run that made copies, one run at a time.
+back before the last run that made copies, one run at a time. While a run that already saved some copies has its
+other documents checked again, those copies join the ones your next request builds on only when that check ends, so
+adding or removing documents, a change of mode, the to-do list, Discard and Undo wait until you save the ready copies
+or set the rest aside; the greyed button says why.
 
 Need to stop a button's work part-way, say a preview of sixty documents rendering through Word? **Stop now**, in the
 bar above the buttons while the work runs (and the red **Stop** in the top bar), is Safe mode's kill switch. Safe mode

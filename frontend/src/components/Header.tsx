@@ -4,7 +4,7 @@ import { memo, useRef } from "react";
 import type { ExportKind, Mode, View } from "../types";
 import { contextPill, contextTip, costPill, dollars, requestPill } from "../lib/chat";
 import { HELP_TOPICS, sessionHeading, type HelpTopic } from "../lib/help";
-import { MODE_LABELS, MODE_TIPS } from "../lib/modes";
+import { MODE_LABELS, MODE_TIPS, modeHeld } from "../lib/modes";
 import { useFit } from "../lib/useFit";
 import { exportLabel } from "../lib/workbench";
 import ExportMenu from "./ExportMenu";
@@ -166,13 +166,13 @@ function Header({
                 ? "Finish the current work first"
                 : tourActive
                   ? "The tour switches modes as its chapters need"
-                  : MODE_TIPS[mode]
+                  : modeHeld(view, mode) || MODE_TIPS[mode]
             }
           >
             <button
               type="button"
               aria-pressed={view.mode === mode}
-              disabled={busy || tourActive}
+              disabled={busy || tourActive || !!modeHeld(view, mode)}
               onClick={() => view.mode !== mode && onMode(mode)}
               className={`rounded-md px-2.5 py-0.5 text-xs whitespace-nowrap transition-colors disabled:pointer-events-none ${
                 view.mode === mode

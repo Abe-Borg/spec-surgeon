@@ -453,7 +453,7 @@ function Workflows() {
           "At plan time: a file whose result cannot be predicted is listed under Left untouched before anything runs, and the preview of the others stands; the assistant says why in its next reply. When you create the others’ copies, it goes on your to-do list with that reason.",
           "At preview time: a document whose preview did not pass its checks while another’s did keeps its pages, marked Did not pass with the failed checks, and is listed under Left untouched; it gets no copy and never holds back the others. Only when no preview passes is Create unavailable.",
           "At delivery: a copy that fails a check is never delivered. Spec Surgeon looks at it again on its own and comes back with a question or a new plan, never a method for you to choose. A failed copy nothing will check again goes on your to-do list.",
-          "While that question is open, Save N ready copies keeps the copies that already passed; then Set the rest aside for later puts the others on your to-do list and ends the request.",
+          "While that question is open, Save N ready copies keeps the copies that already passed; then Set the rest aside for later puts the others on your to-do list and ends the request. Until the check ends, the copies it already saved wait to join the ones your next request builds on, so adding or removing documents, a change of mode, Put back and working on your to-do list wait too: the greyed button says why.",
           "Your to-do list says why each document is there. Work on the documents I set aside plans them on their own; Put back returns one to the others as it is. Nothing on the list is changed.",
         ]}
       />

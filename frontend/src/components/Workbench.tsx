@@ -178,6 +178,7 @@ function Workbench({
           onRemove={onRemove}
           onRemoveAll={onRemoveAll}
           hasCopies={(view.working?.generation ?? 0) > 0}
+          blocked={view.recovery_blocked ?? ""}
         />
 
         {view.samples.length === 0 && view.results.length === 0 && (busy || !hasPlan) && (
@@ -503,11 +504,17 @@ function Workbench({
                     <p className="truncate text-sm text-paper-ink">{item.name}</p>
                     {item.reason && <p className="mt-0.5 text-xs leading-snug text-paper-dim">{item.reason}</p>}
                   </div>
-                  <Tip tip={busy ? "Finish or stop the current work first" : "Back among the documents your next request works on, as it is"}>
+                  <Tip
+                    tip={
+                      busy
+                        ? "Finish or stop the current work first"
+                        : view.recovery_blocked || "Back among the documents your next request works on, as it is"
+                    }
+                  >
                     <button
                       type="button"
                       onClick={() => onPutBack(item.path)}
-                      disabled={busy}
+                      disabled={busy || !!view.recovery_blocked}
                       aria-label={`Put back ${item.name}`}
                       data-capability="todo.put-back"
                       className="shrink-0 text-xs text-accent underline decoration-accent/40 underline-offset-2 transition-colors hover:decoration-accent disabled:pointer-events-none disabled:opacity-50"

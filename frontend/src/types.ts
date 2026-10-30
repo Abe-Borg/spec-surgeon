@@ -514,6 +514,10 @@ export interface View {
   saved_recipes: SavedRecipe[];
   /** Why a saved recipe cannot run now (a request is open, a preview waits in Default mode); "" when it can. */
   recipe_blocked: string;
+  /** Why attaching, removing, a mode change across Obliterate or to Safe, Put back and the pass over the to-do list
+   *  wait ("" when they do not): a run's saved copies wait on its recovery, and join the working set when it ends;
+   *  "" from an older server. */
+  recovery_blocked: string;
 }
 
 /** The kinds the `status` frame names; anything else renders as "Working…". */

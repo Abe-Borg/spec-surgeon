@@ -101,7 +101,10 @@ Obliterate, below under "The conversation"):
   recovery fixes after it (Default mode) is one change: the save of its recovered copies keeps the point and the
   recipe steps its approval took (`_primary`), journalled while recovery waits (`pending_undo`, `pending_steps`,
   read back only with that recovery, `_restore_pending`), and they end with the request (`_invalidate`, `_compile`,
-  a run that delivered nothing); an outcome plan the user picks takes its own at its first save.
+  a run that delivered nothing); an outcome plan the user picks takes its own at its first save. While such a run's
+  saved copies wait on its recovery, nothing ends the check before they join the working set (below, "Recovery and
+  custom methods run internally"); a run that saved nothing ends with its check, its point and steps with it — words
+  that end it drop them too (`_send`), so an outcome plan picked after them never saves under the earlier plan.
 
 **What you've done so far** (`DocumentTask.runs`, `_done_view`; the view's `working.done`), under the copies, lists
 every run that delivered copies since the originals, oldest first, in every mode: the button's sentence (your line in
@@ -539,7 +542,8 @@ refused its plan, which is still to be made.
   discarded it", "the user dropped the request", among the exchanges above), so "the same, but italic" still reads.
   A pass over the to-do list ends with its request, and its documents wait on the list again as they did. Discard is
   not offered while recovery checks the documents again after a run: there the ready copies are saved and
-  **Set the rest aside for later** ends it.
+  **Set the rest aside for later** ends it. Undo waits for that too while the run's saved copies wait on the check,
+  and so does Discard on a reopened window whose check waits to continue.
 - **Undo the last change**, beside Start over, takes the working set back before the last run that delivered copies,
   exactly as Undo the last button does in Safe mode (the copies each document builds on, the history the assistant
   hears, the copies and Left untouched list shown, the ✗ entries that run added); it waits while a preview is open
@@ -818,6 +822,23 @@ numbers separated by commas.") or the same button. While a question is open, the
 verified can be saved; once they are, **Set the rest aside for later** puts the documents recovery has not fixed on
 the to-do list and ends the request. The independent checks and the source-change guards are the same as for a
 first run.
+
+A run that saved some copies while recovery checks its other documents is one change: those copies are listed at
+once (Export saves them), and they join the working set — what the next request builds on, What you've done so far
+and Undo — when the check ends, with the copies it fixes. Until then nothing ends the check first
+(`DocumentTask._recovery_blocked`, the view's `recovery_blocked`): adding or removing documents, a template, a
+picture or a table, Remove all documents, turning Obliterate on or off, choosing Safe mode (it cannot go on with a
+check; Safe to Default stays open, for a window reopened in Safe mode), Put back, working on the to-do list, a
+Safe-mode button, a saved recipe, Discard and Undo each wait, and the page greys them with the reason, which names
+the way out where the check is: continue it (a reopened window, a pause), create the copies it fixed (its preview),
+or answer its question, save the ready copies or set the rest aside. Words about the documents it still checks go on
+with it (`Session.recovery_takes_words`); words that would end it — at its preview, where everything it checks is
+fixed, or beside a question only a number answers — are not taken: the chat shows them with the reason, no model is
+called, and the preview and its button stand. Before 2026-10-29 those actions dropped the check, and the copies the
+run had saved stayed listed while the next request built on the originals, What you've done so far did not name
+them and Undo could not reach them. A run that saved nothing loses nothing by it: those actions go on as before (an
+attach voids the check and the request is checked again), and the run's undo point and recipe steps end with the
+check.
 
 With a plan per layout, recovery takes one layout at a time, each against that layout's own specification: the
 first layout whose documents did not pass is investigated at once, the others wait and are checked by themselves

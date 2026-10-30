@@ -353,6 +353,15 @@ class Session:
             log(f"Compile record (the model's whole exchange): {out / 'compile.json'}")
         return msg
 
+    def recovery_takes_words(self) -> bool:
+        """Typed words go on within the recovery that waits (``reply``): a document it checks still needs work and no
+        question is open that only a numbered candidate answers. Any other reply voids it (``_set_outcome``)."""
+        r, c = self.recovery, self.conversation
+        return (r is not None and c is not None and c.recovery_active
+                and any(f.status != "READY" for f in r.files)
+                and not any(q.get("kind") == "goal_binding" and q.get("status") == "open"
+                            for q in r.question_records))
+
     @_session_action
     def reply(self, text: str = "", choice_id: Optional[str] = None, log: Log = lambda m: None,
               render: bool = False, approve: bool = True, wording: Optional[str] = None) -> str:
@@ -374,10 +383,7 @@ class Session:
             self.turn = result_turn(c, result)
             self._save_chat()
             return result.to_text()
-        if (self.recovery is not None and c.recovery_active and text and chosen is None
-                and any(f.status != "READY" for f in self.recovery.files)
-                and not any(q.get("kind") == "goal_binding" and q.get("status") == "open"
-                            for q in self.recovery.question_records)):
+        if text and chosen is None and self.recovery_takes_words():
             from .recovery import resume_recovery
             from .continuous_recovery import result_turn
             result = resume_recovery(self.recovery.out_dir, request=text, client=self.client, log=log)

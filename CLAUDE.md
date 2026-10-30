@@ -128,6 +128,13 @@ request**, at a question, a pause or a reply to continue — ends the request (`
 request kept in `exchanges` as withdrawn, a pass's documents back on the to-do list). **Undo the last button** (Safe)
 or **Undo the last change** (`DocumentTask.undo`) pops `undo_points` (one per run that delivered copies, taken at
 approval, kept in the journal) to put the working set back one run, in every mode. Neither writes or deletes a file.
+A run that saved some copies while recovery checks its other documents is one change: those copies join the working
+set when the check ends (`_advance_generation`), so until Save the ready copies or Set the rest aside ends it, every
+action that would drop the check first waits with the reason (`DocumentTask._recovery_blocked`, the view's
+`recovery_blocked`: attach, remove, a mode change across Obliterate or to Safe, Put back, the to-do pass, a Safe-mode
+button, a recipe, Discard, Undo, and words not about the documents it checks, `Session.recovery_takes_words`); a run
+that saved nothing ends with its check, its undo point and steps with it. A new action that voids the outcome joins
+that list.
 There is no command line (removed 2026-10-21 with the
 library, workspaces, workflows, office profiles, spec QA audits, project evidence, evaluations and the named v0.1.0
 jobs). Details: `docs/CONVERSATIONAL_DESKTOP.md`.
