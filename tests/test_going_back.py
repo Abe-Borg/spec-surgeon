@@ -12,7 +12,7 @@ from pathlib import Path
 import pytest
 
 from make_fixtures import build, build_dirty
-from spec_surgeon.document_task import WORK_TODO, DocumentTask
+from spec_surgeon.document_task import RUN_SET_ASIDE, RUN_UNTOUCHED, WORK_TODO, DocumentTask
 from spec_surgeon.gui import Session
 
 TITLE = {"pattern": "SECTION {number} - {title}"}
@@ -736,7 +736,9 @@ def test_a_removed_document_comes_back_as_its_original_not_an_old_copy(tmp_path,
     press(task, "remove_highlight")
     press(task, "remove_comments")
     task.remove(files[1])
+    assert list(task.view()["results"]) == [str(files[0])]            # its copy leaves the copies list with it
     task.attach([files[1]])
+    assert list(task.results) == [str(files[0])] and list(task.export_set()) == [str(files[0])]
     task.undo()
     assert list(task.working) == [str(files[0])] and task.current_of(files[1]) == files[1]
     assert list(task.results) == [str(files[0])]                      # its old copy is not shown as its result
@@ -752,6 +754,69 @@ def test_a_removed_document_is_not_shown_again_by_discard(tmp_path, files):
     task.perform("recipe", recipe="remove_comments", inputs={})
     task.discard_preview()
     assert list(task.results) == [str(files[0])]
+
+
+@pytest.mark.parametrize("left_out", ["leave_out", "the ✗"])
+def test_a_removed_document_stays_its_original_through_a_run_that_does_not_deliver_it(tmp_path, left_out):
+    """Default mode keeps every copy its runs delivered in ``results`` (no button resets it), so a removed document's
+    copy leaves with it: attached again it is an original, never listed or exported as an old copy, and a later run
+    that does not deliver it — kept to the other document, or the ✗ — never makes that old copy the one the next
+    request builds on, nor counts the document among the run's."""
+    docs = [document(tmp_path / "A.docx"), document(tmp_path / "B.docx")]
+    a, b = (str(p) for p in docs)
+    second = {"spec": ITALIC, "leave_out": ["B.docx"]} if left_out == "leave_out" else {"spec": ITALIC}
+    task = chat_task(tmp_path, plan(), resp(tool("submit_editspec", second, "t2")))
+    task.attach(docs)
+    view = task.perform("send", text=REQUEST)
+    task.perform("primary", token=view["token"])
+    old = task.working[b]
+    task.remove(docs[1])
+    view = task.view()
+    assert list(view["results"]) == [a] and old not in view["export_state"]
+    task.attach([docs[1]])
+    view = task.view()
+    assert list(view["results"]) == [a] and old not in view["export_state"] and list(task.export_set()) == [a]
+    assert task.current_of(docs[1]) == docs[1]
+    view = task.perform("send", text=AGAIN)
+    assert view["stage"] == "preview"
+    task.perform("primary", token=view["token"], hold=[b] if left_out == "the ✗" else [])
+    assert list(task.working) == [a] and task.current_of(docs[1]) == docs[1]      # still its original
+    assert list(task.results) == [a] and old not in task.results.values()
+    assert task.runs[-1]["documents"] == [a] and b not in task.applied
+    assert task.runs[-1]["not"] == {b: RUN_SET_ASIDE if left_out == "the ✗" else RUN_UNTOUCHED}
+    assert [run["documents"] for run in task.view()["working"]["done"]] == [1, 1]
+
+
+def test_a_removed_document_takes_its_unverified_mark_with_it(tmp_path, monkeypatch):
+    """The UNVERIFIED mark belongs to the copy it was delivered with: removed, the document takes it along, and attached
+    again it is an original — the model is not told it was delivered UNVERIFIED, and its next copy, checked against
+    the original, carries no mark from an earlier copy."""
+    from spec_surgeon import batch
+    from spec_surgeon.verify.suite import CheckResult
+    real, planted = batch.run_suite, []
+
+    def failing(src, out, plan_, s, o):
+        rec = real(src, out, plan_, s, o)
+        if not planted and Path(s).name == "B.docx":
+            planted.append(s)
+            rec.set(CheckResult("V2", "Text preservation", "FAIL", "planted"))
+        return rec
+    monkeypatch.setattr(batch, "run_suite", failing)
+    docs = [document(tmp_path / "A.docx"), document(tmp_path / "B.docx")]
+    a, b = (str(p) for p in docs)
+    task = chat_task(tmp_path, plan(), plan(ITALIC, "t2"), mode="obliterate")
+    task.attach(docs)
+    view = task.perform("send", text=REQUEST)
+    task.perform("primary", token=view["token"])
+    assert planted and task.unverified == {b: ["V2 (Text preservation)"]}
+    task.remove(docs[1])
+    assert task.unverified == {} and task.view()["unverified"] == {}
+    task.attach([docs[1]])
+    view = task.perform("send", text=AGAIN)
+    assert "UNVERIFIED" not in task.session.client.requests[-1]["messages"][0]["content"]
+    task.perform("primary", token=view["token"])
+    assert all(f.status == "PASS" for f in task.session.last_batch.files) and set(task.working) == {a, b}
+    assert task.unverified == {}
 
 
 def test_start_over_clears_what_can_be_undone(tmp_path, files):
