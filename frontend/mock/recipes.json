@@ -107,6 +107,32 @@
    ]
   },
   {
+   "id": "canadian_numbering",
+   "label": "Convert to Canadian CSC PageFormat",
+   "group": "Fonts & formatting",
+   "summary": "Uses the bundled Canadian numbering scheme; ambiguous outlines are left untouched. No API key or template needed.",
+   "needs": [],
+   "fields": [
+    {
+     "name": "source",
+     "kind": "choice",
+     "label": "Current numbering",
+     "required": false,
+     "default": "automatic",
+     "options": [
+      {
+       "value": "automatic",
+       "label": "Automatic Word numbering"
+      },
+      {
+       "value": "typed",
+       "label": "CSI numbers typed as text"
+      }
+     ]
+    }
+   ]
+  },
+  {
    "id": "body_formatting",
    "label": "Match body formatting to template",
    "group": "Fonts & formatting",

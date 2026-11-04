@@ -135,6 +135,13 @@ export const SAFE_OPERATIONS: readonly TypicalOperation[] = [
     note: "Every language, or only other kinds of English. No text changes.",
   },
   {
+    task: "Convert CSI numbering to Canadian CSC PageFormat",
+    buttons: ["Convert to Canadian CSC PageFormat"],
+    can: "Yes, strict",
+    note: "Uses the bundled scheme without an API key or template. Choose automatic Word numbering or typed CSI. " +
+      "Mixed or ambiguous outlines are left untouched. Automatic numbering keeps styles; typed CSI takes the scheme's styles.",
+  },
+  {
     task:
       "Make reused specs look like the office master: outline styles and numbering, page, font, paragraph spacing",
     buttons: ["Match body formatting to template"],

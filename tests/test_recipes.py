@@ -84,7 +84,7 @@ def test_every_button_is_in_a_group_with_a_form_the_panel_can_render():
                     "remove_empty_paragraphs", "name_files", "title_property", "track_changes_off", "body_formatting",
                     "set_font", "page_setup", "issue_stamp", "end_of_section", "nonbreaking_spaces",
                     "clean_spaces", "quotes_dashes", "remove_hyperlinks", "freeze_fields", "remove_unused_styles",
-                    "author_company", "proofing_language", "remove_notes"}
+                    "author_company", "proofing_language", "remove_notes", "canadian_numbering"}
 
 
 def test_tracking_is_offered_only_where_the_operation_can_track_and_is_off_by_default():
@@ -1205,3 +1205,42 @@ def test_default_and_obliterate_clean_what_the_notes_button_leaves(tmp_path, mon
                     "Provide two [retain or delete] spare heads per cabinet.",
                     "Provide galvanized pipe in the preaction zones.", "Pipe shall be Schedule 40.",
                     "END OF SECTION 21 13 13"], body
+
+@pytest.mark.parametrize('kind', ['automatic', 'typed'])
+def test_canadian_button_without_a_template_or_ai(tmp_path, monkeypatch, kind):
+    from make_fixtures import build_styled_outline, build_typed
+    from spec_surgeon.ops import lists
+    source = tmp_path / 'spec.docx'
+    original = build_styled_outline() if kind == 'automatic' else build_typed(masterspec=True)
+    source.write_bytes(original)
+    task, copies = created(tmp_path, monkeypatch, [source], 'canadian_numbering', {'source': kind})
+    pkg = copies[source.name]
+    numbers = [r.text for r in lists.count(pkg.xml(pkg.main_part()), StyleSheet(pkg), lists.ListDefs.load(pkg))]
+    assert 'PART 1' in numbers and '1.1' in numbers and '.1' in numbers
+    assert not any(n == 'A.' for n in numbers)
+    assert source.read_bytes() == original
+
+
+def test_canadian_button_leaves_wrong_numbering_kind_untouched(tmp_path):
+    from make_fixtures import build_typed
+    source = tmp_path / 'typed.docx'
+    source.write_bytes(build_typed(masterspec=True))
+    built = recipes.build('canadian_numbering', {}, recipes.Context([source]))
+    assert built.gated and built.outcome is None and str(source.resolve()) in built.left_out
+
+
+def test_canadian_button_refuses_a_mixed_outline(tmp_path):
+    from make_fixtures import build_styled_outline
+    from spec_surgeon.ooxml import paragraphs
+    pkg = DocxPackage(build_styled_outline())
+    pars = paragraphs(pkg.xml(pkg.main_part()))
+    sheet = StyleSheet(pkg)
+    p = next(p for p in pars if sheet.paragraph_style_id(p) == 'SpPara')
+    p.find(W + 'pPr').find(W + 'pStyle').set(W + 'val', 'Normal')
+    p.find('.//' + W + 't').text = 'A. ' + p.find('.//' + W + 't').text
+    pkg.write_xml(pkg.main_part(), p.getroottree().getroot())
+    source = tmp_path / 'mixed.docx'
+    source.write_bytes(pkg.output_bytes())
+    for kind in ('automatic', 'typed'):
+        built = recipes.build('canadian_numbering', {'source': kind}, recipes.Context([source]))
+        assert built.gated and built.outcome is None

@@ -711,6 +711,42 @@ def _body_formatting(inputs: Dict[str, Any], ctx: Context) -> Built:
     return Built(spec=None, sources=[], request=request, outcome=plan, left_out=left, gated=True)
 
 
+CANADIAN_SOURCE = Field("source", "choice", "Current numbering", default="automatic", options=(
+    ("automatic", "Automatic Word numbering"), ("typed", "CSI numbers typed as text")))
+
+
+def _canadian_numbering(inputs: Dict[str, Any], ctx: Context) -> Built:
+    """Use the bundled scheme through the ordinary gate; ambiguous outlines are set aside."""
+    from .schemes import scheme_file, levels
+    from .package import DocxPackage
+    from .structure import role_summary
+    from .template_roles import NUMBERED
+    kind = _choice(inputs, CANADIAN_SOURCE)
+    ctx.template = scheme_file("csc")
+    ctx._batch = None
+    left = {}
+    for path in ctx.documents:
+        try:
+            summary = role_summary(DocxPackage.from_path(path))
+            kinds = {summary["roles"][r]["numbering"] for r in NUMBERED if r in summary["roles"]}
+            if kinds != {kind}:
+                left[str(path.resolve())] = "Not converted: the outline is missing, ambiguous, or does not use only the selected kind of numbering."
+        except Exception:
+            left[str(path.resolve())] = "Not converted: the document's outline could not be read."
+    params = {"template": str(ctx.template), "levels": levels("csc"), "counters": "keep", "styles": "keep"} if kind == "automatic" else {
+        "template": str(ctx.template), "levels": levels("csc"), "typed_as": "csi", "match": "counters", "tracked": False}
+    op = {"op": "convert_numbering" if kind == "automatic" else "convert_typed_numbers",
+          "select": {"include_tables": False}, "params": params}
+    request = "Convert to Canadian CSC PageFormat numbering using the bundled scheme."
+    if len(left) == len(ctx.documents):
+        return Built(None, [], request, left_out=left, gated=True)
+    return Built(_spec(request, "Convert to Canadian CSC PageFormat numbering.",
+                       "formatting" if kind == "automatic" else "untracked", [op],
+                       ["Numbers keep their values; a skip, duplicate or ambiguous outline is left untouched.",
+                        "Automatic numbering keeps paragraph styles; typed CSI numbers take the scheme's styles."]),
+                 [], request, left_out=left)
+
+
 # ---- text ----
 def _pairs(inputs: Dict[str, Any]) -> List[Dict[str, str]]:
     raw = inputs.get("pairs") or []
@@ -1245,6 +1281,9 @@ RECIPES: Tuple[Recipe, ...] = (
            (Field("image", "picture", "New logo", required=True),
             Field("old", "picture", "Old logo", optional_choice="Every picture in the headers",
                   help="Attach the old logo too to swap only that picture.")), _swap_logo),
+    Recipe("canadian_numbering", "Convert to Canadian CSC PageFormat", "Fonts & formatting",
+           "Uses the bundled Canadian numbering scheme; ambiguous outlines are left untouched. No API key or template needed.",
+           (), (CANADIAN_SOURCE,), _canadian_numbering),
     Recipe("body_formatting", "Match body formatting to template", "Fonts & formatting",
            "Gives each document your template's outline styles and numbering, its page, its font, and lets the styles "
            "set paragraph spacing, indents and alignment. Words, tables, headers and footers stay as they are.",

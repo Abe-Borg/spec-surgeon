@@ -596,6 +596,8 @@ sentence: attach it on its own, or ask for a plan that covers it.
 
 ## A document's outline, and the built-in numbering schemes
 
+Safe mode offers **Convert to Canadian CSC PageFormat** under **Fonts & formatting**. It uses the bundled scheme without an API key or an attached template. Choose automatic Word numbering or typed CSI numbers. The fixed recipe passes the ordinary gate, preview and independent verification. Mixed, missing or ambiguous outlines are left untouched. Automatic numbering keeps paragraph styles; typed CSI numbers take the Canadian scheme's styles.
+
 When a request depends on the parts of a specification (restyle the PART headings, give the articles the template's
 style, convert the numbering) and a document gives one of those parts no style or typed shape the app can select it by,
 the assistant reads that document's outline (`read_outline`, docs/SPEC_FORMATTER_MODES_DESIGN.md). The structure

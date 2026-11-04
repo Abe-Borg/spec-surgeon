@@ -256,6 +256,7 @@ mode you last used (Safe the first time; never Obliterate).
   holds a field or a section break sets its document aside with the reason. Clean copies; the preview lists every
   removed note. Default and Obliterate mode go further when asked: cut placeholders out of their sentences, delete
   copyright lines or headings, edit "to be determined", accept or reject tracked changes.
+- **Convert to Canadian CSC PageFormat** (Safe mode, under **Fonts & formatting**) uses the bundled Canadian numbering scheme without an API key or an attached template. Choose automatic Word numbering or CSI numbers typed as text, then preview and approve the copies. Numbers keep their values; mixed or ambiguous outlines are left untouched. Automatic numbering keeps paragraph styles; typed CSI numbers take the scheme's styles. This button converts numbering; it does not apply a complete office page or header template.
 - **Match body formatting to template** (Safe mode) makes each document look like your template without touching a
   word or a table. The form shows the template's style for each part of a section (the section number line, the
   title, PART, articles, paragraphs and subparagraphs, END OF SECTION), read from the template and changeable. Each
