@@ -76,6 +76,8 @@ XS = "{http://www.w3.org/2001/XMLSchema}"
 
 
 _LOCAL = threading.local()
+# libxml2 schema compilation can crash when several batch workers compile at once.
+_SCHEMA_COMPILE_LOCK = threading.Lock()
 
 
 def _schema(rel: str) -> etree.XMLSchema:
@@ -86,13 +88,14 @@ def _schema(rel: str) -> etree.XMLSchema:
     if rel in _LOCAL.schemas:
         return _LOCAL.schemas[rel]
     path = SCHEMA_DIR / rel
-    with open(path, "rb") as fh:
-        doc = etree.parse(fh, base_url=str(path))
-    for imp in doc.getroot().iter(XS + "import"):
-        local = LOCAL_IMPORTS.get(imp.get("schemaLocation") or "")
-        if local:
-            imp.set("schemaLocation", (SCHEMA_DIR / local).as_uri())
-    schema = etree.XMLSchema(doc)
+    with _SCHEMA_COMPILE_LOCK:
+        with open(path, "rb") as fh:
+            doc = etree.parse(fh, base_url=str(path))
+        for imp in doc.getroot().iter(XS + "import"):
+            local = LOCAL_IMPORTS.get(imp.get("schemaLocation") or "")
+            if local:
+                imp.set("schemaLocation", (SCHEMA_DIR / local).as_uri())
+        schema = etree.XMLSchema(doc)
     if len(_LOCAL.schemas) >= 16:
         _LOCAL.schemas.clear()
     _LOCAL.schemas[rel] = schema
