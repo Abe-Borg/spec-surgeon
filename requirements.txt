@@ -13,7 +13,7 @@ pywebview>=5.3                # the native window; on Windows it brings pythonne
 pywin32>=306; sys_platform == "win32"
 
 # Optional: the Claude layer — typed requests, visual check, custom transforms, recovery (needs ANTHROPIC_API_KEY)
-anthropic>=1.13       # optional: the conversation in the window, visual check, custom transforms, recovery
+anthropic>=2.0,<3     # optional: the conversation in the window, visual check, custom transforms, recovery; a new major on purpose (API version, license)
 
 # Development / tests
 pytest>=8

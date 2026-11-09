@@ -98,6 +98,15 @@ def test_pymupdf_stays_below_the_release_that_loads_a_layout_model():
     assert "pymupdf>=1.24,<2" in pyproject["project"]["dependencies"]
     requirements = (ROOT / "requirements.txt").read_text(encoding="utf-8")
     assert re.search(r"^pymupdf>=1\.24,<2\b", requirements, re.M)
+
+
+def test_anthropic_stays_on_the_major_it_was_checked_on():
+    """A major release of the SDK changes the API version it sends (2.0.0: 2026-10-21) and can change its license
+    (2.0.0: Apache-2.0, which the About box names): the app takes a new one on purpose, never by a rebuild."""
+    pyproject = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    assert pyproject["project"]["optional-dependencies"]["agent"] == ["anthropic>=2.0,<3"]
+    requirements = (ROOT / "requirements.txt").read_text(encoding="utf-8")
+    assert re.search(r"^anthropic>=2\.0,<3\s", requirements, re.M)
     probe = "import sys, spec_surgeon.verify.geometry, spec_surgeon.batch; print('onnxruntime' in sys.modules)"
     loaded = subprocess.run([sys.executable, "-c", probe], capture_output=True, text=True, check=True).stdout
     assert loaded.strip() == "False", "importing PyMuPDF loaded its layout model; reinstall with pip install -e ."

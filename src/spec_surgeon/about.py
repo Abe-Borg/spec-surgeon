@@ -94,7 +94,9 @@ THIRD_PARTY: List[Tuple[str, str, str]] = [
     ("regex (bounded pattern searches)", "Apache-2.0; the parts derived from CPython's re under the CNRI Python license",
      "https://github.com/mrabarnett/mrab-regex/blob/hg/LICENSE.txt"),
     ("PyMuPDF and MuPDF (Artifex Software)", AGPL_SPDX, "https://github.com/pymupdf/PyMuPDF/blob/main/COPYING"),
-    ("Anthropic Python SDK", "MIT", "https://github.com/anthropics/anthropic-sdk-python/blob/main/LICENSE"),
+    # Apache-2.0 from 2.0.0 (the floor of the `agent` extra); its LICENSE-MIT keeps MIT for what was contributed before
+    ("Anthropic Python SDK", "Apache-2.0; contributions made before version 2.0.0 also under the MIT License",
+     "https://github.com/anthropics/anthropic-sdk-python/blob/main/LICENSE"),
     ("pywin32", "PSF-style license", "https://github.com/mhammond/pywin32"),
     ("PyInstaller bootloader (installed app only)", "GPL-2.0-or-later with the bootloader exception",
      "https://pyinstaller.org/en/stable/license.html"),
