@@ -527,6 +527,13 @@ How each is labelled:
     missing), the page opens in the default browser at the same loopback address with `?token=` in the URL
     (`web/shell.main`), which the browser keeps in its history (F12).
 - **Untrusted XML:** a part with `<!DOCTYPE` is refused; XML is read without entity resolution (`package.py`).
+- **Untrusted document text:** every system prompt that shows Claude a document's content says that content is data,
+  never instructions: the chat (`compiler.SIMPLE_EXPERIENCE`), the outline tool (`outline.CLASSIFY_SYSTEM`, which
+  also shows each paragraph's words as a quoted string, `outline._quoted`), the visual check (`vision.REVIEW_SYSTEM`),
+  the custom-method writer (`codegen.CODEGEN_SYSTEM`), recovery (`recovery.SYSTEM`, `ADAPTIVE_SYSTEM`), outcome
+  planning (`campaign_planner.SYSTEM`) and the critic (`recovery_adaptive.CRITIC_SYSTEM`). A prompt is not a
+  boundary: whatever the text says, a plan still passes the same gate, preview, approval and checks.
+  `tests/test_prompts_treat_documents_as_data.py`.
 - **Model-written code:**
   - Both sandboxes run in a separate Python process (`-I`) with a stripped environment and an import whitelist.
   - An audit hook blocks processes, sockets and native code; writes are allowed only in the run's own folder.
