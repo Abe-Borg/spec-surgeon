@@ -6,7 +6,10 @@ from __future__ import annotations
 import hashlib
 import re
 import tomllib
+from importlib import metadata
 from pathlib import Path
+
+import pytest
 
 from spec_surgeon import __version__, about, updater
 
@@ -119,3 +122,15 @@ def test_about_text_says_everything_in_plain_words():
     names = [name for name, _, _ in about.THIRD_PARTY]
     for component in ("pywebview", "FastAPI", "uvicorn", "React", "Tailwind CSS"):        # the window's stack
         assert any(component in name for name in names), component
+
+
+def test_the_anthropic_sdk_s_license_is_the_one_the_installed_sdk_declares():
+    """The About box names the license the installed SDK declares in its own metadata: 2.0.0 moved it from MIT to
+    Apache-2.0 while the label still said MIT. A future change fails here instead of shipping unnoticed."""
+    try:
+        meta = metadata.metadata("anthropic")
+    except metadata.PackageNotFoundError:
+        pytest.skip("the Claude layer (the `agent` extra) is not installed")
+    declared = meta.get("License-Expression") or meta.get("License")
+    label = next(lic for name, lic, _ in about.THIRD_PARTY if name == "Anthropic Python SDK")
+    assert declared and label.split(";")[0] == declared

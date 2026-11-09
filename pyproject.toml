@@ -31,7 +31,9 @@ Releases = "https://github.com/Abe-Borg/spec-surgeon/releases"
 # 10/11). Node is needed only to rebuild the page (frontend/) — the built page is committed under web/static.
 gui = ["fastapi>=0.115", "uvicorn>=0.32", "python-multipart>=0.0.9", "pywebview>=5.3"]
 word = ["pywin32>=306; sys_platform == 'win32'"]
-agent = ["anthropic>=1.13"]
+# anthropic: a major release changes the API version the SDK sends (2.0.0 moved to 2026-10-21) and may change its
+# license (2.0.0 moved to Apache-2.0, as the About box says), so a new major is taken on purpose, never by a build.
+agent = ["anthropic>=2.0,<3"]
 # pytest-xdist: CI and `pytest -n auto` spread the suite over every core (each worker its own process).
 dev = ["pytest>=8", "pytest-xdist>=3.5", "python-docx>=1.1"]
 

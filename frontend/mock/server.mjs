@@ -1831,7 +1831,7 @@ async function handle(req, res) {
         version: VERSION,
         license: readFileSync(resolve(HERE, "../../LICENSE"), "utf8"),
         release_notes: `## Spec Surgeon ${VERSION}\n\n- The window is a web page in the style of Build-a-Spec.\n- One Word instance per batch and a render cache make previews faster.\n- Pictures and tables can be attached for the edit to use.\n`,
-        credits: ["Python: PSF License", "lxml: BSD-3-Clause", "PyMuPDF (MuPDF): AGPL-3.0", "Anthropic Python SDK: MIT", "pywebview: BSD-3-Clause"],
+        credits: ["Python: PSF License", "lxml: BSD-3-Clause", "PyMuPDF (MuPDF): AGPL-3.0", "Anthropic Python SDK: Apache-2.0; contributions made before version 2.0.0 also under the MIT License", "pywebview: BSD-3-Clause"],
         name: "Spec Surgeon",
         tagline: "Surgical edits to Word specifications with independent verification records.",
         github: "https://github.com/Abe-Borg/spec-surgeon",
@@ -1851,7 +1851,7 @@ async function handle(req, res) {
           { name: "pywebview (the native window)", license: "BSD-3-Clause", url: "https://github.com/r0x0r/pywebview/blob/master/LICENSE" },
           { name: "lxml", license: "BSD-3-Clause", url: "https://github.com/lxml/lxml/blob/master/LICENSE.txt" },
           { name: "PyMuPDF (MuPDF)", license: "AGPL-3.0", url: "https://github.com/pymupdf/PyMuPDF/blob/main/COPYING" },
-          { name: "Anthropic Python SDK", license: "MIT", url: "https://github.com/anthropics/anthropic-sdk-python/blob/main/LICENSE" },
+          { name: "Anthropic Python SDK", license: "Apache-2.0; contributions made before version 2.0.0 also under the MIT License", url: "https://github.com/anthropics/anthropic-sdk-python/blob/main/LICENSE" },
         ],
       });
     case "GET /api/update":

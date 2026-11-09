@@ -699,7 +699,7 @@ def _call(client, *, model, system, tools, messages, record, max_output_tokens, 
 
 # ---- diagnostics: what a failed call was, and the exchange as plain data ----------------------------------------------
 
-# The SDK and its HTTP stack: anthropic 1.x streams over httpx2/httpcore2, and a stream that drops mid-way raises the
+# The SDK and its HTTP stack: anthropic 2.x streams over httpx2/httpcore2, and a stream that drops mid-way raises the
 # transport's own error, unwrapped.
 API_ERROR_ROOTS = ("anthropic", "httpx", "httpcore", "httpx2", "httpcore2")
 _MISSING_CREDENTIALS = "Could not resolve authentication method"
