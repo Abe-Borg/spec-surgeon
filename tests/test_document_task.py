@@ -1079,9 +1079,10 @@ def test_the_message_after_an_answer_and_a_put_back_is_a_new_request_with_the_ex
     view = task.perform("send", text=EDIT)
     assert view["stage"] == "preview" and task.decisions == [EDIT]
     sent = fake.requests[-1]["messages"][0]["content"]
-    assert sent.startswith(f"REQUEST:\n{EDIT}\n\n")
-    assert "User decisions and revisions" not in sent and STATUS not in sent.split("\n\n")[0]
-    earlier = sent.split("EARLIER IN THIS CONVERSATION")[1].split("\n\n")[0]
+    assert sent.endswith(f"<request>\nREQUEST:\n{EDIT}\n</request>")       # the user's words come last
+    assert "User decisions and revisions" not in sent and STATUS not in sent.split("<request>")[1]
+    earlier = sent.split("<earlier>")[1].split("</earlier>")[0]
+    assert "EARLIER IN THIS CONVERSATION" in earlier
     assert f"“{STATUS}”" in earlier and f"“{FIRST_SENTENCE}”" in earlier
     assert "Say the word" not in sent                                   # the first sentence, not the whole answer
     assert len(task.session.planned_files()) == 3                       # the put-back document is in the plan
@@ -1155,7 +1156,7 @@ def test_the_journal_keeps_the_finished_exchanges_and_an_older_one_loads_without
     assert restored.exchanges == task.exchanges and restored.stage == "empty" and restored.decisions == []
     restored.perform("send", text=EDIT)                                  # the next request is told the exchange
     sent = restored.session.client.requests[-1]["messages"][0]["content"]
-    assert sent.startswith(f"REQUEST:\n{EDIT}") and f"“{STATUS}”" in sent and f"“{FIRST_SENTENCE}”" in sent
+    assert sent.endswith(f"<request>\nREQUEST:\n{EDIT}\n</request>") and f"“{STATUS}”" in sent and f"“{FIRST_SENTENCE}”" in sent
     data = json.loads(journal.read_text(encoding="utf-8"))
     del data["exchanges"]                                                # a journal from before the field
     journal.write_text(json.dumps(data), encoding="utf-8")

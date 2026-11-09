@@ -655,3 +655,31 @@ def test_the_opening_message_says_whether_a_template_is_attached(project):
     assert "A TEMPLATE FILE IS ATTACHED" in with_template and "NO TEMPLATE" not in with_template
     with pytest.raises(ValueError, match="no template is attached"):
         _Batch(files, None).read_template()
+
+
+def test_the_opening_message_puts_the_documents_first_and_the_users_words_last(project, tmp_path):
+    """Anthropic's long-context guidance: long data first, the query after it. Each part sits in its own tag, keeps
+    the heading the system prompt names it by, and the request (then the user's answers) ends the message."""
+    folder, tpl, _, _ = project
+    picture = tmp_path / "logo.png"
+    picture.write_bytes(png())
+    batch = _Batch(sorted(folder.glob("*.docx")), tpl, input_files=[picture])
+    request = "Make the title bold.\n\nUser decisions and revisions:\nOnly the first title."
+    msg = build_messages(request, batch, ["Both documents."],
+                         prior_failures=[{"file": "x.docx", "code": "no-match"}], history=["Applied bold."],
+                         fresh=["New.docx"], context="SET ASIDE AFTER A PREVIEW: plan for these only.",
+                         todo=["Old.docx: waiting"], earlier=["“What font is it?” — Arial."])[0]["content"]
+    order = ["batch", "input_files", "template", "prior_failures", "todo", "history", "earlier", "app_note",
+             "request", "answers"]
+    starts = [msg.index(f"<{tag}>\n") for tag in order]
+    assert starts == sorted(starts) and msg.startswith("<batch>\nTHE BATCH (")
+    for tag in order:                                              # every part closed, one of each
+        assert msg.count(f"<{tag}>\n") == 1 and msg.count(f"\n</{tag}>") == 1
+    assert msg.endswith("<request>\nREQUEST:\n" + request + "\n</request>\n\n"
+                        "<answers>\nTHE USER'S ANSWERS TO EARLIER QUESTIONS:\n- Both documents.\n</answers>")
+    batch_json = msg.split("<batch>\n")[1].split("\n</batch>")[0].split(":\n", 1)[1]
+    assert json.loads(batch_json) == json.loads(json.dumps(batch.summary(), ensure_ascii=False))
+    assert "INPUT FILES beside the documents" in msg.split("<input_files>")[1].split("</input_files>")[0]
+    assert "The REQUEST below is what the user wants now" in msg.split("<earlier>")[1]
+    plain = build_messages("x", _Batch(sorted(folder.glob("*.docx")), None), [])[0]["content"]
+    assert [tag for tag in order if f"<{tag}>" in plain] == ["batch", "template", "request"]   # only the parts it has

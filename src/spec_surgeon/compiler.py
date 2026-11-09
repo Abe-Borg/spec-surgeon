@@ -1746,28 +1746,61 @@ def check_submission(spec: Any, batch: _Batch, sources: Sequence[str],
     return compose_submission(spec, batch, sources, patterns, leave_out)[1]
 
 
+def _section(tag: str, body: str) -> str:
+    """One part of the first message inside its own XML tag, so where the documents' data ends and the user's words
+    begin is never a guess (a heading inside a document, or a blank line in the user's request, cannot blur it)."""
+    return f"<{tag}>\n{body}\n</{tag}>"
+
+
 def build_messages(request: str, batch: _Batch, answers: Sequence[str],
                    prior_failures: Optional[Sequence[Dict[str, Any]]] = None,
                    history: Optional[Sequence[str]] = None,
                    fresh: Optional[Sequence[str]] = None, context: Optional[str] = None,
                    todo: Optional[Sequence[str]] = None,
                    earlier: Optional[Sequence[str]] = None) -> List[Dict[str, Any]]:
-    """The first user message: the request, the user's answers, the changes already made to these copies (a request
-    that builds on a result), the exchanges answered before it, any prior pass's set-aside diagnostics, the attached
-    template, the input files a spec names, and the batch's profiles per structure pattern. ``context`` is the app's
-    own account of how these documents come to be planned (set aside after a preview, say); it is never the user's
-    words. ``todo``: one line per document waiting on the user's to-do list (its name and why), which THE BATCH does
-    not hold. ``earlier``: one line per request the window finished with Claude's answer and no plan (what the user
-    asked, the answer's first sentence), oldest first — context this request may refer to, never a request itself."""
-    parts = [f"REQUEST:\n{request}"]
-    if context and context.strip():
-        parts.append(context.strip())
+    """The first user message, long data first and the user's words last (Anthropic's long-context guidance: a query
+    placed after the documents it is about is answered better than one placed before them), each part in its own XML
+    tag: the batch's profiles per structure pattern (``<batch>``), the input files a spec names (``<input_files>``),
+    the attached template (``<template>``), any prior pass's set-aside diagnostics (``<prior_failures>``), the to-do
+    list (``<todo>``), the changes already made to these copies (``<history>``: a request that builds on a result), the
+    exchanges answered before it (``<earlier>``), the app's note on this pass (``<app_note>``), then the request
+    (``<request>``) and the user's answers (``<answers>``). Each part keeps its heading, the name the system prompt and
+    the tools use for it (THE BATCH, INPUT FILES). ``context`` is the app's own account of how these documents come to
+    be planned (set aside after a preview, say); it is never the user's words. ``todo``: one line per document waiting
+    on the user's to-do list (its name and why), which THE BATCH does not hold. ``earlier``: one line per request the
+    window finished with Claude's answer and no plan (what the user asked, the answer's first sentence), oldest first
+    — context this request may refer to, never a request itself. The message is fixed for the whole conversation, so
+    the order changes nothing that is cached."""
+    parts = [_section("batch", "THE BATCH (the overview of every file side by side, then the profiles per structure "
+                               "pattern):\n" + json.dumps(batch.summary(), ensure_ascii=False))]
+    if batch.inputs:
+        parts.append(_section("input_files",
+                              "INPUT FILES beside the documents — tables and pictures an op can read (read_input_file "
+                              "shows one; put the exact path in the op's params):\n"
+                              + json.dumps([input_overview(p) for p in batch.inputs], ensure_ascii=False)))
+    if batch.template:
+        parts.append(_section("template",
+                              f"A TEMPLATE FILE IS ATTACHED: {batch.template} — a prepared header/footer template, a "
+                              f"template spec (e.g. the architect's) or a file holding the user's own styles "
+                              f"(apply_style, map_styles); call read_template to see which (it lists the template's "
+                              f"styles), and put this exact path in the op's 'template' param"))
+    else:
+        parts.append(_section("template",
+                              "NO TEMPLATE FILE IS ATTACHED (read_template has nothing to read). If the request needs a "
+                              "template and one of the documents looks like one (its name or its folder says so), ask "
+                              "the user before treating it as the template: an attached document is edited like the "
+                              "others"))
+    if prior_failures:
+        parts.append(_section("prior_failures",
+                              "PRIOR PASS SET-ASIDE DIAGNOSTICS (these files failed the previous pass for the reasons "
+                              "below; inspect their structure and compile an EditSpec tailored to them):\n"
+                              + json.dumps(list(prior_failures)[:20], ensure_ascii=False)))
     if todo:
-        parts.append("ON THE USER'S TO-DO LIST (set aside for later: not in THE BATCH and out of every plan until the "
-                     "user works on them, with the reply \"Work on the documents I set aside\", or puts one back from "
-                     "the window; you cannot read, plan or bring them back):\n" + "\n".join(f"- {t}" for t in todo))
-    if answers:
-        parts.append("THE USER'S ANSWERS TO EARLIER QUESTIONS:\n" + "\n".join(f"- {a}" for a in answers))
+        parts.append(_section("todo",
+                              "ON THE USER'S TO-DO LIST (set aside for later: not in THE BATCH and out of every plan "
+                              "until the user works on them, with the reply \"Work on the documents I set aside\", or "
+                              "puts one back from the window; you cannot read, plan or bring them back):\n"
+                              + "\n".join(f"- {t}" for t in todo)))
     if history:
         block = ("CHANGES ALREADY MADE TO THESE COPIES (the documents you see carry them already; do not redo them, "
                  "plan only what is new):\n" + "\n".join(f"- {h}" for h in history))
@@ -1775,31 +1808,19 @@ def build_messages(request: str, batch: _Batch, answers: Sequence[str],
             block += ("\nEXCEPT " + ", ".join(fresh) + ": attached after those changes, an original that carries none of "
                       "them. One plan makes the same change to every document, so it gets only what is planned now; "
                       "say so to the user (they can start over from the originals to give it every change).")
-        parts.append(block)
+        parts.append(_section("history", block))
     if earlier:
-        parts.append("EARLIER IN THIS CONVERSATION (requests that ended without copies, oldest first: answered without "
-                     "a plan, or withdrawn by the user before anything was created; finished — do not answer or carry "
-                     "them out again. The REQUEST above is what the user wants now, and may refer to them):\n"
-                     + "\n".join(f"- {e}" for e in earlier))
-    if prior_failures:
-        parts.append("PRIOR PASS SET-ASIDE DIAGNOSTICS (these files failed the previous pass for the reasons below; "
-                     "inspect their structure and compile an EditSpec tailored to them):\n"
-                     + json.dumps(list(prior_failures)[:20], ensure_ascii=False))
-    if batch.template:
-        parts.append(f"A TEMPLATE FILE IS ATTACHED: {batch.template} — a prepared header/footer template, a "
-                     f"template spec (e.g. the architect's) or a file holding the user's own styles (apply_style, "
-                     f"map_styles); call read_template to see which (it lists the template's styles), and put this exact "
-                     f"path in the op's 'template' param")
-    else:
-        parts.append("NO TEMPLATE FILE IS ATTACHED (read_template has nothing to read). If the request needs a "
-                     "template and one of the documents looks like one (its name or its folder says so), ask the user "
-                     "before treating it as the template: an attached document is edited like the others")
-    if batch.inputs:
-        parts.append("INPUT FILES beside the documents — tables and pictures an op can read (read_input_file shows one; "
-                     "put the exact path in the op's params):\n"
-                     + json.dumps([input_overview(p) for p in batch.inputs], ensure_ascii=False))
-    parts.append("THE BATCH (the overview of every file side by side, then the profiles per structure pattern):\n"
-                 + json.dumps(batch.summary(), ensure_ascii=False))
+        parts.append(_section("earlier",
+                              "EARLIER IN THIS CONVERSATION (requests that ended without copies, oldest first: answered "
+                              "without a plan, or withdrawn by the user before anything was created; finished — do not "
+                              "answer or carry them out again. The REQUEST below is what the user wants now, and may "
+                              "refer to them):\n" + "\n".join(f"- {e}" for e in earlier)))
+    if context and context.strip():
+        parts.append(_section("app_note", context.strip()))
+    parts.append(_section("request", f"REQUEST:\n{request}"))
+    if answers:
+        parts.append(_section("answers", "THE USER'S ANSWERS TO EARLIER QUESTIONS:\n"
+                                         + "\n".join(f"- {a}" for a in answers)))
     return [{"role": "user", "content": "\n\n".join(parts)}]
 
 

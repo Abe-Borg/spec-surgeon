@@ -428,7 +428,7 @@ def test_the_exchange_records_every_call_the_pending_results_and_the_reply_as_se
     assert [(e["turn"], e.get("role"), bool(e.get("pending"))) for e in ex] == [
         (0, "user", False), (1, "assistant", False), (1, "user", True), (1, "user", False), (2, "assistant", False),
         (2, "user", True)]
-    assert ex[0]["content"].startswith("REQUEST:") and ex[0]["files"] == [str(f) for f in c.files]
+    assert ex[0]["content"] == c.messages[0]["content"] and ex[0]["files"] == [str(f) for f in c.files]
     first = ex[1]
     assert first["stop_reason"] == "tool_use" and first["model"] == "claude-opus-5-5" and first["usage"]["input_tokens"] == 100
     assert [b["type"] for b in first["content"]] == ["text", "tool_use"] and first["content"][1]["id"] == "a1"
