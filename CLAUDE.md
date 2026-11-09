@@ -189,8 +189,12 @@ jobs). Details: `docs/CONVERSATIONAL_DESKTOP.md`.
   - `schemes.py` — the bundled numbering schemes (`examples/schemes/`: CSC PageFormat and CSI, built byte-stable by
     `tests/make_scheme_examples.py`), offered by the chat as an app choice of kind `scheme` whose label the app writes;
     the window attaches a copy as the template and plans again (`DocumentTask._take_scheme`).
-  - `compiler.py`, `conversation.py`, `llm.py`, `vision.py` — request → EditSpec. `llm.call` is the one call site: the
-    system prompt carries its own 1-hour cache breakpoint, the history the automatic 5-minute one, and a `one_shot`
+  - `compiler.py`, `conversation.py`, `llm.py`, `vision.py` — request → EditSpec. The chat's first message
+    (`compiler.build_messages`) carries the long data first and the user's words last, each part in its own XML tag
+    under the heading the prompts name it by (`<batch>` THE BATCH … `<request>` REQUEST, then `<answers>`): Anthropic's
+    long-context guidance; the message is fixed for the conversation, so the order changes no caching. `llm.call` is
+    the one call site: the system prompt carries its own 1-hour cache breakpoint, the history the automatic 5-minute
+    one, and a `one_shot`
     call caches nothing after the system prompt; keep system prompts and tools byte-stable. No call runs at effort
     `max` (the owner's decision, 2026-10-22): `resources.EFFORTS` refuses it. The window's chat and its visual check
     run at medium, outcome planning and recovery at high, the outline tool's reading at high

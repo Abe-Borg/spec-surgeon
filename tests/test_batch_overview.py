@@ -369,7 +369,7 @@ def _batch_of(request) -> dict:
     content = request["messages"][0]["content"]
     if isinstance(content, list):
         content = "".join(block.get("text", "") for block in content if isinstance(block, dict))
-    return json.loads(content.split("THE BATCH (", 1)[1].split(":\n", 1)[1])
+    return json.loads(content.split("THE BATCH (", 1)[1].split(":\n", 1)[1].split("\n</batch>", 1)[0])
 
 
 def test_a_request_after_a_run_reads_the_copies_it_made(tmp_path):

@@ -82,7 +82,7 @@ def test_the_next_request_builds_on_the_copies_and_start_over_returns_to_the_ori
     view = task.perform("send", text="Also make that title italic.")
     sent = fake.requests[1]["messages"][0]["content"]
     assert "CHANGES ALREADY MADE TO THESE COPIES" in sent and "bold" in sent.lower()
-    assert "Also make that title italic." in sent and REQUEST not in sent.split("CHANGES ALREADY MADE")[0]
+    assert "Also make that title italic." in sent and REQUEST not in sent.split("<request>")[1]
     task.perform("primary", token=view["token"])
     second_copy = Path(task.results[str(source)])                # results stay keyed by the attached original
     assert second_copy != first_copy and second_copy.is_file()

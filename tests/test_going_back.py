@@ -159,8 +159,9 @@ def test_discard_withdraws_a_conversations_preview_and_the_next_message_is_a_new
     view = task.perform("send", text=AGAIN)
     assert view["stage"] == "preview" and task.decisions == [AGAIN]
     sent = task.session.client.requests[-1]["messages"][0]["content"]
-    assert sent.startswith(f"REQUEST:\n{AGAIN}\n\n")
-    earlier = sent.split("EARLIER IN THIS CONVERSATION")[1].split("\n\n")[0]
+    assert sent.endswith(f"<request>\nREQUEST:\n{AGAIN}\n</request>")
+    earlier = sent.split("<earlier>")[1].split("</earlier>")[0]
+    assert "EARLIER IN THIS CONVERSATION" in earlier
     assert ("“Make it italic instead.” — a plan was previewed and the user discarded it before anything was created"
             in earlier)
 
@@ -179,7 +180,7 @@ def test_discard_drops_a_request_still_open_at_a_question(tmp_path, mode):
     assert task.messages[-1]["text"] == "Request dropped; nothing was created. Your next message starts a new request."
     view = task.perform("send", text=AGAIN)
     sent = task.session.client.requests[-1]["messages"][0]["content"]
-    assert view["stage"] == "preview" and sent.startswith(f"REQUEST:\n{AGAIN}\n\n")
+    assert view["stage"] == "preview" and sent.endswith(f"<request>\nREQUEST:\n{AGAIN}\n</request>")
     assert "“" + REQUEST + "” — the user dropped the request before anything was created" in sent
 
 

@@ -72,7 +72,7 @@ def test_the_assistant_sets_a_document_aside_and_it_waits_on_the_to_do_list_acro
     sent = fake.requests[2]["messages"][0]["content"]
     assert "ON THE USER'S TO-DO LIST" in sent
     assert "- 20 Port.docx: You asked to set it aside for later: waiting on the owner's comments." in sent
-    assert "20 Port.docx" not in sent.split("THE BATCH (the overview")[1]   # not among the documents it may plan
+    assert "20 Port.docx" not in sent.split("<batch>")[1].split("</batch>")[0]   # not among the documents it may plan
     assert [Path(p).name for p in task.session.planned_files()] == ["21 Keep.docx", "22 Michigan.docx"]
     task.perform("primary", token=view["token"])
     # working on it: the request under way when it was set aside, and why it waited
