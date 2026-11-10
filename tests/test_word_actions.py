@@ -137,7 +137,8 @@ def test_a_save_that_changes_nothing_reads_as_nothing_changed(rich):
                                     "Bookmarks", "In ")) for line in lines)
     d1 = rec.get("D1").data
     assert d1["counts"] == {} and d1["formatting_only"] == {} and d1["page_setup"] == 0 and d1["styles"] == {
-        "added": [], "removed": [], "changed": []} and d1["relationships"] == {"added": [], "removed": []}
+        "added": [], "removed": [], "changed": [], "outside": []} and d1["relationships"] == {"added": [],
+                                                                                              "removed": []}
     # the same copy, read as a custom method's: its words 'move' between the renamed headers, and checks fail
     other = run_difference(rich, out, "a.docx", "copy.docx")
     assert text_changes_of(other.to_dict()) and not other.passed
@@ -781,3 +782,46 @@ def test_when_word_cannot_carry_out_claudes_plan_the_conversation_hears_why_and_
                for t in said(task))
     assert any(n.startswith("Word made no copy") for n in task.session.conversation.notes)
     assert task.results == {} and task.session.conversation is not None        # the user's next words go on from here
+
+
+def test_a_change_outside_the_style_and_list_definitions_is_said_not_set_aside(plain):
+    """The styles part holds more than its styles: the document's default formatting, which every style starts from.
+    A save that changes it changes the pages, so the report says so (and never that nothing it counts differs); the
+    latent-styles list, which Word writes again with each save and which formats nothing, is the one thing set
+    aside. The same for the numbering part's picture bullets."""
+    out, _ = save_again(plain, ["repair"])
+
+    def with_member(data: bytes, name: str, change) -> bytes:
+        made = io.BytesIO()
+        with zipfile.ZipFile(io.BytesIO(data)) as z, zipfile.ZipFile(made, "w") as target:
+            for n in z.namelist():
+                target.writestr(n, change(z.read(n)) if n == name else z.read(n))
+        return made.getvalue()
+
+    styles = member(out, "word/styles.xml")
+    assert b'<w:sz w:val="22"/>' in styles and b"<w:latentStyles" in styles
+    bigger = with_member(out, "word/styles.xml", lambda b: b.replace(b'<w:sz w:val="22"/>', b'<w:sz w:val="28"/>', 1))
+    rec = run_difference(plain, bigger, "a.docx", "copy.docx", rewritten=True)
+    lines = difference_lines(rec)
+    assert any(line.startswith("Styles: ") and "the document's default formatting" in line for line in lines), lines
+    assert not any(line.startswith("Nothing this report counts differs") for line in lines)
+    assert rec.get("D1").data["styles"]["outside"] == ["docDefaults"]
+    # the latent styles alone: Word's own list, written again with each save — nothing is said, and nothing differs
+    latent = with_member(out, "word/styles.xml",
+                         lambda b: b.replace(b"<w:latentStyles", b'<w:latentStyles w:count="999"', 1))
+    assert member(latent, "word/styles.xml") != styles
+    rec = run_difference(plain, latent, "a.docx", "copy.docx", rewritten=True)
+    assert not any(line.startswith("Styles") for line in difference_lines(rec))
+    assert difference_lines(rec)[1].startswith("Nothing this report counts differs")
+    # the numbering part outside its lists and definitions
+    assert b"</w:numbering>" in member(out, "word/numbering.xml")
+    bullets = with_member(out, "word/numbering.xml", lambda b: b.replace(
+        b"</w:numbering>", b'<w:numIdMacAtCleanup w:val="7"/></w:numbering>'))
+    rec = run_difference(plain, bullets, "a.docx", "copy.docx", rewritten=True)
+    assert not any(line.startswith("List numbering") for line in difference_lines(rec))      # Word's own counter
+    marker = b'<w:numPicBullet w:numPicBulletId="0"/>'
+    bullets = with_member(out, "word/numbering.xml", lambda b: b.replace(b">", b">" + marker, 2).replace(
+        marker, b"", 1) if b.count(b">") > 2 else b)
+    rec = run_difference(plain, bullets, "a.docx", "copy.docx", rewritten=True)
+    assert any(line.startswith("List numbering: ") and "picture bullets" in line for line in difference_lines(rec)), \
+        difference_lines(rec)

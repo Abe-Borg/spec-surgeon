@@ -38,7 +38,10 @@ part of the file again, so a byte or a part name says nothing, and the compariso
   header and footer by the sections that use it and as what), never by their names, which Word gives again;
 * paragraphs, tables, sections, styles, numbering and settings are compared without Word's own save marks
   (``_plain``: its revision-save ids, paragraph ids, spelling and page-break marks, the ``_GoBack`` bookmark, and how
-  a line's text is split into runs), so a count says markup that changed, not a file that was saved;
+  a line's text is split into runs), so a count says markup that changed, not a file that was saved. The styles
+  and numbering parts are read whole — the document's default formatting beside the style definitions, the picture
+  bullets beside the lists (``_outside``) — but for what Word writes again with each save and which formats nothing:
+  its list of latent styles, its own counters, the save's bookkeeping in the settings;
 * V4, V5a and V5c are N/A: the revision ids and the markup are Word's own writing, and a rule of this app's about
   them would say nothing about a file Word itself just wrote. V1 still fails a copy that does not open as a package
   (a part that does not parse, a reference to nothing), and V6 is the renderer opening it.
@@ -389,6 +392,34 @@ def _formatting_only(before, after, form=None) -> int:
 
 _TABLE_SHAPE = tuple(W + tag for tag in ("tblPr", "tblGrid", "tblPrEx", "trPr", "tcPr"))
 _SAVE_SETTINGS = ("rsids", "proofState")        # what Word's settings part records of a save itself
+# What Word writes again with each save in the styles and numbering parts, and which formats nothing: its own list of
+# the built-in styles a document does not define (their order and visibility in Word's panes), and a counter of its
+# own. Everything else outside the style and list definitions is read (``_outside``): the document's default
+# formatting changes every page.
+_SAVE_STYLES = ("latentStyles",)
+_SAVE_NUMBERING = ("numIdMacAtCleanup",)
+_OUTSIDE_WORDS = {"docDefaults": "the document's default formatting (the font, size and spacing every style starts "
+                                 "from)",
+                  "numPicBullet": "the picture bullets"}
+
+
+def _outside(root, own: Tuple[str, ...], skip: Tuple[str, ...]) -> Dict[str, bytes]:
+    """What a styles or numbering part holds beside its ``own`` definitions, by element name, in plain form
+    (``_plain``), without what Word's save writes of its own accord (``skip``)."""
+    found: Dict[str, bytes] = {}
+    for el in root:
+        if not isinstance(el.tag, str):
+            continue
+        name = etree.QName(el).localname
+        if name not in own and name not in skip:
+            found[name] = found.get(name, b"") + _plain(el)
+    return found
+
+
+def _outside_changed(before, after, own: Tuple[str, ...], skip: Tuple[str, ...]) -> List[str]:
+    """The names of what changed, came or went in a part outside its own definitions (``_outside``)."""
+    found = _keyed_difference(_outside(before, own, skip), _outside(after, own, skip))
+    return sorted(set(found["added"]) | set(found["removed"]) | set(found["changed"]))
 
 
 
@@ -667,7 +698,14 @@ def _what_changed(src: VPackage, out: VPackage, src_xml, out_xml, changed, added
         styles = _keyed_difference(_children_by(s_before, "style", "styleId", form),
                                    _children_by(s_after, "style", "styleId", form))
         said = [f"{len(styles[k])} {k} ({_named(styles[k])})" for k in ("added", "removed", "changed") if styles[k]]
-        if said or not rewritten:                # (Word writes the part again: its bytes alone say nothing)
+        if rewritten:
+            # Word writes the part again, so its bytes alone say nothing: what it holds beside the style definitions
+            # is read too — the document's default formatting — and only Word's own latent-styles list is set aside
+            styles["outside"] = _outside_changed(s_before, s_after, ("style",), _SAVE_STYLES)
+            if styles["outside"]:
+                said.append("changed outside the style definitions: "
+                            + _named([_OUTSIDE_WORDS.get(n, n) for n in styles["outside"]]))
+        if said or not rewritten:
             lines.append("Styles: " + ("; ".join(said) + "." if said else
                                        "the styles part changed outside its style definitions (defaults or latent "
                                        "styles)."))
@@ -686,6 +724,11 @@ def _what_changed(src: VPackage, out: VPackage, src_xml, out_xml, changed, added
             if n_after is not None else {}
         numbering = _keyed_difference(b_defs, a_defs)
         said = [f"{len(numbering[k])} {k}" for k in ("added", "removed", "changed") if numbering[k]]
+        if rewritten and n_before is not None and n_after is not None:
+            numbering["outside"] = _outside_changed(n_before, n_after, ("num", "abstractNum"), _SAVE_NUMBERING)
+            if numbering["outside"]:
+                said.append("changed outside the lists and their definitions: "
+                            + _named([_OUTSIDE_WORDS.get(n, n) for n in numbering["outside"]]))
         if said or not rewritten:
             lines.append("List numbering: " + (", ".join(said) + "." if said else "the numbering part changed."))
     settings: Dict[str, List[str]] = {}

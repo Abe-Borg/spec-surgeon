@@ -413,7 +413,9 @@ What it lifts (`Session.unguarded`; CLAUDE.md, "Modes"):
     `_paired`: the body, the notes, each header and footer by the sections that use it and as what) and the
     relationships and parts are said by the names the original gave them (`_renamed`, a picture by its bytes);
     paragraphs, tables, sections, styles, numbering and settings are compared without Word's own save marks
-    (`_plain`). V4, V5a and V5c are N/A — the ids and the markup are Word's own writing — and V1 still fails a copy
+    (`_plain`). The styles and numbering parts are read whole (`_outside`: the document's default formatting, the
+    picture bullets), but for Word's own latent-styles list and counters, which each save writes again and which
+    format nothing. V4, V5a and V5c are N/A — the ids and the markup are Word's own writing — and V1 still fails a copy
     that does not open as a package. A tracked change Word accepted or rejected is listed as "a tracked change of
     the original, settled in the copy" (`views["after"]`), never as sitting in the copy's tracked changes.
   - **Said before the button** (`_say_text_changes`): the verdict (`codegen.WORD_UNPROVEN` / `WORD_UNVERIFIED`), the
