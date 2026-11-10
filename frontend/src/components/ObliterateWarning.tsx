@@ -1,10 +1,23 @@
 import { useState } from "react";
-import { OBLITERATE_ACKNOWLEDGE, OBLITERATE_COSTS, OBLITERATE_GRANTS, OBLITERATE_KEPT } from "../lib/modes";
+import {
+  OBLITERATE_ACKNOWLEDGE,
+  OBLITERATE_COSTS,
+  OBLITERATE_GRANTS,
+  OBLITERATE_KEPT,
+  obliterateKeyNote,
+  obliterateSubject,
+} from "../lib/modes";
 import { ModalShell, primaryBtn, quietBtn } from "./ModalShell";
 
 interface Props {
   /** The conversation needs an API key; without one the warning says so and cannot be confirmed. */
   keyReady: boolean;
+  /** Opened from a to-do row (**Obliterate this one**): the document it turns the mode on for. Absent from the top
+   *  bar's switch, which turns it on for the conversation. */
+  subject?: string;
+  /** From a to-do row whose failed copy the app kept: taking it uses no AI, so the warning can be confirmed without
+   *  a key (lib/modes.ts obliterateKeyNote says what then still needs one). */
+  failedCopy?: boolean;
   onCancel: () => void;
   onConfirm: () => void;
 }
@@ -12,10 +25,13 @@ interface Props {
 /**
  * Obliterate's warning, shown every time the mode is chosen (CLAUDE.md, Modes): what it grants, what
  * it costs and what still holds, then a box to tick before the button turns it on. Nothing is remembered: the next
- * time it asks again, and a launch never opens in Obliterate.
+ * time it asks again, and a launch never opens in Obliterate. A to-do row's **Obliterate this one** opens the same
+ * warning, naming the one document the pass begins over.
  */
-export default function ObliterateWarning({ keyReady, onCancel, onConfirm }: Props) {
+export default function ObliterateWarning({ keyReady, subject, failedCopy = false, onCancel, onConfirm }: Props) {
   const [understood, setUnderstood] = useState(false);
+  const keyNote = obliterateKeyNote(keyReady, !!subject && failedCopy);
+  const canConfirm = keyReady || (!!subject && failedCopy);
   return (
     <ModalShell title="Obliterate mode" onClose={onCancel} wide>
       <div className="flex flex-col gap-3 text-sm">
@@ -23,12 +39,17 @@ export default function ObliterateWarning({ keyReady, onCancel, onConfirm }: Pro
           The conversation without the guardrails that protect your documents’ content. Use it only for a change the
           other modes refuse, and only when you will check every copy yourself.
         </p>
+        {subject && (
+          <p className="rounded-lg border border-warn/40 bg-warn/10 px-3 py-2 text-xs leading-relaxed text-ink" role="note">
+            {obliterateSubject(subject)}
+          </p>
+        )}
         <WarnList title="What it grants" items={OBLITERATE_GRANTS} tone="warn" />
         <WarnList title="What it costs" items={OBLITERATE_COSTS} tone="err" />
         <WarnList title="What still holds" items={OBLITERATE_KEPT} tone="ok" />
-        {!keyReady && (
+        {keyNote && (
           <p className="text-xs text-warn" role="status">
-            Obliterate mode uses the AI: connect your API key in Settings first.
+            {keyNote}
           </p>
         )}
         <label className="flex cursor-pointer items-start gap-2 rounded-lg border border-err/40 bg-err/5 px-3 py-2 text-xs text-ink">
@@ -47,7 +68,7 @@ export default function ObliterateWarning({ keyReady, onCancel, onConfirm }: Pro
           <button
             type="button"
             className={primaryBtn}
-            disabled={!understood || !keyReady}
+            disabled={!understood || !canConfirm}
             onClick={onConfirm}
             data-capability="obliterate.warning"
           >

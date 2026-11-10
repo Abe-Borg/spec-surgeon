@@ -1,10 +1,10 @@
 import { memo, useEffect, useRef } from "react";
-import type { Attachment, View } from "../types";
+import type { Attachment, TodoItem, View } from "../types";
 import type { Mark, Reviews } from "../lib/review";
 import type { Unticks } from "../lib/occurrences";
 import { changedTip, copiesNote, copyTip, doneCoverage, doneSteps, doneSubtitle, isSaved, notSavedTip, openTarget, planHasContent, runFolder, saveRecipeBlocked, saveRecipeTip, undoLink } from "../lib/workbench";
 import { TOUR_HOLD } from "../lib/tour";
-import { unverifiedLine } from "../lib/modes";
+import { failedCopyLine, unverifiedLine } from "../lib/modes";
 import DocumentsTray from "./DocumentsTray";
 import Markdown from "./Markdown";
 import PaperCard from "./PaperCard";
@@ -44,6 +44,9 @@ interface Props {
   onUndo: () => void;
   /** Takes a document off the to-do list, back among the documents the next request works on. */
   onPutBack: (path: string) => void;
+  /** A to-do row's **Obliterate this one** (shown only while Settings shows Obliterate mode): the warning, then
+   *  Obliterate mode for that one document. */
+  onObliterateTodo: (item: TodoItem) => void;
   onZoom: (src: string, title: string) => void;
   /** Safe mode's "Try these in Default mode" for what the last button left untouched. */
   onHandOff: (paths: string[]) => void;
@@ -128,6 +131,7 @@ function Workbench({
   onStartOver,
   onUndo,
   onPutBack,
+  onObliterateTodo,
   onZoom,
   onHandOff,
   onSaveRecipe,
@@ -503,7 +507,35 @@ function Workbench({
                   <div className="min-w-0 flex-1" title={item.path}>
                     <p className="truncate text-sm text-paper-ink">{item.name}</p>
                     {item.reason && <p className="mt-0.5 text-xs leading-snug text-paper-dim">{item.reason}</p>}
+                    {item.obliterate !== undefined && failedCopyLine(item.failed_copy) && (
+                      <p className="mt-0.5 text-xs leading-snug text-paper-dim">{failedCopyLine(item.failed_copy)}</p>
+                    )}
                   </div>
+                  {item.obliterate !== undefined && (
+                    <Tip
+                      tip={
+                        tourActive
+                          ? TOUR_HOLD
+                          : busy
+                            ? "Finish or stop the current work first"
+                            : item.obliterate ||
+                              (view.mode === "obliterate"
+                                ? "Begins the pass over this one document, in Obliterate mode"
+                                : "Opens Obliterate mode's warning; then the pass begins over this one document")
+                      }
+                    >
+                      <button
+                        type="button"
+                        onClick={() => onObliterateTodo(item)}
+                        disabled={busy || tourActive || !!item.obliterate}
+                        aria-label={`Obliterate ${item.name}`}
+                        data-capability="todo.obliterate"
+                        className="shrink-0 text-xs text-err underline decoration-err/40 underline-offset-2 transition-colors hover:decoration-err disabled:pointer-events-none disabled:opacity-50"
+                      >
+                        Obliterate this one
+                      </button>
+                    </Tip>
+                  )}
                   <Tip
                     tip={
                       busy

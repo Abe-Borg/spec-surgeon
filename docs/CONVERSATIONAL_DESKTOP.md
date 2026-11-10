@@ -324,6 +324,40 @@ What it lifts (`Session.unguarded`; CLAUDE.md, "Modes"):
   checks that failed (`DocumentTask._mark_unverified`) until Start over, Undo or removing the document, and the next
   request's history tells the assistant so.
 
+**From the to-do list** (the owner's decision of 2026-11-10). Obliterate is the top rung of a ladder: Safe, then
+Default for what Safe could not take, then Obliterate for the one or two documents neither could. By then the request
+is known, the reason is on record and the other documents show what done looks like, so the mode can start from one
+document on the list instead of from an empty conversation:
+
+- **The case file.** A document that goes on the to-do list because the engine stopped on it, or because its copy
+  failed a check, keeps a case file with its entry (`document_task._case_of_exception`, `_case_of_result`,
+  `_case_of_sample`; journalled with the entry, a malformed one dropped by `_restored_case`): the engine's code,
+  reason, operation and details; the failed checks as the checker named and summarised them; the copy that failed,
+  when it is the whole of the plan — a batch's result (moved to `failed/`) or a plan's own preview sample, with the
+  md5 of the bytes the checks read and the identity of the file it was made from, never a chain's (it stopped at the
+  step that failed); and a document of the same run that got a verified copy (`_run_sibling`). A Safe-mode button's
+  Left untouched entries keep one too, and **Try these in Default mode** carries it to the list. Safe and Default
+  never read it: their pass over the list tells the model the entry's one sentence, as before.
+- **Obliterate this one** (`DocumentTask.obliterate_todo`, `POST /api/todo/obliterate`), beside a document on the
+  list while Settings shows the mode. It opens the same warning, naming the document (none when the mode is already
+  on), turns the mode on as the switch does (`set_mode`: never kept for the next launch) and begins the pass over
+  that one document (`start_todo(only=)`), the request it was set aside from standing. Nothing is planned or created
+  by the click. The conversation that follows hears the case file in the app's note (`_case_note`), and its tools —
+  and a custom method's writer after it, whose brief carries the note — may read the worked example by label
+  (`_focus_examples` → `compiler._Batch.add_examples`): pinned like every source, and never among the batch's files,
+  so no plan, binding, template or leave-out can name it.
+- **Use the copy that failed, marked UNVERIFIED** (`USE_FAILED_COPY`, a reply the chat offers during such a pass;
+  `DocumentTask.use_failed_copy`). The page shows it as a card with one button, **Use the copy that failed**
+  (`FailedCopyCard`, from the view's `failed_copies`), while nothing is open; at a question it is among the suggested
+  replies. The copy a run or a preview made and held back joins the edited copies as it is —
+  what Obliterate's own run of the same plan delivers — with no AI call. It is taken only when it is still the bytes
+  the checks read, the document is still the file it was made from, and that file has not changed
+  (`_failed_copy_problem`: the source guard's identity); otherwise it is refused in the chat and nothing moves. Its
+  bytes are written to a new session folder (`accepted\outputs\`, beside `accepted.json`); the held-back copy stays
+  where it was. It is one change: an undo point, a line under What you've done so far (never a recipe step), the
+  plan's sentences in the copy's history, and the UNVERIFIED mark with the checks it failed. A document of the pass
+  with no such copy goes back on the list as it was.
+
 What holds, in every mode: copies only (the window never writes in place, and an unverified copy is never written
 back); the source guard (a source that moved is never delivered over); the sandbox, its import whitelist and its time
 and memory limits; the independent checker on every copy; built-in operations refusing what they cannot predict; and

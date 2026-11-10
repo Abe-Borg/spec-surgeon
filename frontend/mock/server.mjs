@@ -1633,6 +1633,25 @@ async function handle(req, res) {
       view.messages.push(msg("app", `${entry.name} is off your to-do list and back among the documents your next request works on.`));
       return json(res, 200, view);
     }
+    case "POST /api/todo/obliterate": {
+      // a to-do row's Obliterate this one: the mode for that one document, then the pass over it alone
+      if (view.busy) return busyRefusal();
+      const body = await readJson(req);
+      const entry = view.todo.find((t) => t.path === body.path);
+      if (!entry) return json(res, 400, { error: "That document is not on your to-do list." });
+      if (!settings.show_obliterate) return json(res, 400, { error: "Obliterate mode is hidden. Settings → Advanced shows it." });
+      if (view.focus.length) return json(res, 400, { error: "Finish the pass over your to-do list first, or drop it." });
+      if (view.mode !== "obliterate") {
+        if (body.acknowledged !== true) return json(res, 400, { error: "Read the Obliterate warning and confirm it first." });
+        view.mode = "obliterate";
+        view.connection = { ready: settings.key_present, origin: settings.origin };
+        view.messages.push(msg("app", OBLITERATE_ON));
+      }
+      view.todo = view.todo.filter((t) => t.path !== body.path);
+      view.focus = [body.path];
+      view.messages.push(msg("app", `Working on ${entry.name}, from your to-do list. Tell me what should be different for it, or continue to plan it again as before. The other copies stay as they are.`));
+      return json(res, 200, view);
+    }
     case "POST /api/discard": {
       if (view.busy) return busyRefusal();
       const withdrawn = discardOf(view);

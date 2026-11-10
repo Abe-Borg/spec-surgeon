@@ -11,6 +11,7 @@ import ActionBar from "./ActionBar";
 import Composer from "./Composer";
 import Prompts from "./Prompts";
 import PauseCard from "./PauseCard";
+import FailedCopyCard from "./FailedCopyCard";
 import TodoCard from "./TodoCard";
 
 interface Props {
@@ -298,6 +299,16 @@ export default function Chat({
                         tourActive={tourActive}
                         onSend={onSend}
                         onDefaultMode={safe ? () => onMode("default") : undefined}
+                      />
+                    );
+                  case "failed-copy":
+                    return (
+                      <FailedCopyCard
+                        key={item.key}
+                        items={item.items}
+                        busy={busy}
+                        tourActive={tourActive}
+                        onSend={onSend}
                       />
                     );
                   default:

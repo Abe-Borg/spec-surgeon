@@ -67,6 +67,8 @@ export const END_USER_CAPABILITIES = [
   "results.hand-off",
   "todo.card",
   "todo.put-back",
+  "todo.obliterate",
+  "todo.failed-copy",
   // the conversation
   "chat.starters",
   "chat.composer",

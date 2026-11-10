@@ -60,8 +60,10 @@ that ends a job is authoritative.
   "action": {"label": "Create edited copies", "token": "…", "kind": "approve | continue | save | none",
              "can_hold": true, "copies": 3, "unpreviewed": 1},
   "todo": [{"path": "C:/Specs/21 05 00.docx", "name": "21 05 00.docx", "why": "held | asked | refused | failed",
-            "reason": "You marked its preview as needing more work."}],
+            "reason": "You marked its preview as needing more work.",
+            "obliterate": "", "failed_copy": ["V2 (Text preservation)"]}],
   "focus": [],
+  "failed_copies": [{"path": "C:/Specs/21 05 00.docx", "name": "21 05 00.docx", "failed": ["V2 (Text preservation)"]}],
   "working": {"generation": 0, "from_originals": true, "can_start_over": false, "undo": "", "undo_blocked": ""},
   "budget": {"paused": false, "reason": "limit | unpriced | interrupted | "},
   "discard": "preview | request | ",
@@ -219,7 +221,17 @@ Rules the page relies on:
   set the rest aside). An older server sends neither field; the page reads that as the red X. While the list is
   non-empty and no pass is under way, the page shows a to-do card whose button sends the reply "Work on the
   documents I set aside" (as a chip), and the workbench lists them with a **Put back** beside each
-  (`POST /api/put-back`). `focus` lists the documents of that pass while it runs: they are the only documents in
+  (`POST /api/put-back`). Only while Settings shows Obliterate mode, an entry also carries `obliterate` — the row
+  offers **Obliterate this one** (`POST /api/todo/obliterate`): `""` when it can be pressed now, else why it waits (a
+  pass is under way, or `recovery_blocked`) — and, when the app kept a copy of that document that failed its checks
+  and it can still be taken, `failed_copy`, the checks it failed (`DocumentTask._todo_view`); with Obliterate hidden
+  neither is sent, and an entry reads as before. During an Obliterate pass over a document with such a copy,
+  `failed_copies` names each document of the pass whose failed copy can be taken, with the checks it failed, and
+  `chips` offers the reply "Use the copy that failed, marked UNVERIFIED" (`USE_FAILED_COPY`, sent through
+  `/api/send`): the app's own step, with no model call; a refusal is a chat message and nothing moves. The page shows
+  a card for it while the stage is `done`, `empty` or `resume` (at `question` the reply is among the chips); both are
+  empty outside Obliterate, outside a pass, while a preview waits and while recovery checks files.
+  `focus` lists the documents of that pass while it runs: they are the only documents in
   scope, the plan is made for them alone, and the pass ends when their copies are created. Documents on the to-do
   list are out of scope until the pass begins or they are put back; the server also offers the same reply in
   `chips` outside the question stage.
@@ -352,6 +364,7 @@ explicitly injected clients are retained. Both key replacement and removal refus
 | POST | `/api/handoff` | `{"paths": ["<left_untouched path>", …]}` — the documents go on the to-do list with the button's sentence as their request, and the mode becomes `default`; 400 for a path the last button did not leave untouched, or while a preview waits | the view |
 | POST | `/api/stop` | | `{"ok": true}` — the running model call is cut off; the stream then ends with `done`. In Safe mode, which calls no AI, the job itself is ended (`stopping`: worker processes terminated, a private Word instance or LibreOffice ended, nothing it made used — a preview being made withdrawn, stage `done` or `empty` with `results` and `left_untouched` as before the button; a Create with no copy delivered, stage `preview` and the same `action.token`; an export with nothing saved), and the stream ends with `done` carrying `stopped: true` and one `app` message saying what the stop left. `{"ok": false}` when nothing runs |
 | POST | `/api/put-back` | `{"path": "<a todo entry's path>"}` | the view (the document is off the to-do list and back among the documents the next request works on; during a pass it joins them when the pass ends; a plan on screen is void when the documents in scope change); 400 with `{"error"}` for a path not on the list or while `recovery_blocked` is set, 409 while work runs |
+| POST | `/api/todo/obliterate` | `{"path": "<a todo entry's path>", "acknowledged"?: true}` — **Obliterate this one**: Obliterate mode for that one document (`acknowledged: true` when the mode is not on yet: the user ticked its warning this time; not needed while it is on), then the pass over it alone (`focus`), its request standing; no model call, nothing planned or created | the view; 400 with `{"error"}` for a path not on the list, with Obliterate hidden, without the acknowledgement, while a pass is under way or while `recovery_blocked` is set. The mode is never kept in settings.json |
 | POST | `/api/start-over` | | the view (the working set returns to the originals; the plan is void; the to-do list is cleared; nothing can be undone) |
 | POST | `/api/discard` | | Discard: the view (the waiting preview, or in Default and Obliterate the open request, withdrawn and nothing created; Safe mode: `results` and `left_untouched` as they were before the button was pressed; Default and Obliterate: the request ended, stage `done` or `empty`); 400 with `{"error"}` when `discard` is `""`, 409 while work runs |
 | POST | `/api/undo` | | the view (the working set back to the copies from before the last run that delivered copies; `results`, `left_untouched` and the to-do entries that run's ✗ added as they were; no file written or deleted); 400 with `{"error"}` when there is nothing to undo, a preview waits, a request is open, `recovery_blocked` is set or a copy it would go back to is gone, 409 while work runs |
@@ -379,7 +392,7 @@ Every error is JSON `{"error": "one sentence for the user"}` with 400/404/409/50
 answers 400 `The request body must be a JSON object.` when the body is not one (`null`, a list, a string, a number, a
 boolean, JSON cut short, no body) — `server.json_object`, used by `/api/attach`, `/api/pick`, `/api/remove`,
 `/api/send`, `/api/choose`, `/api/primary`, `/api/recipe`, `/api/occurrences`, `/api/mode`, `/api/handoff`,
-`/api/put-back`, `/api/open` and `/api/settings`. The routes whose body is optional read a bad one as `{}`:
+`/api/put-back`, `/api/todo/obliterate`, `/api/open` and `/api/settings`. The routes whose body is optional read a bad one as `{}`:
 `/api/attach-folder`, `/api/export`, the tour's routes, and `/api/diagnostics` (400 for a body that is not JSON, a
 non-object taken as no reports). No route answers a text/plain 500.
 

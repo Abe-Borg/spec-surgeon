@@ -228,6 +228,16 @@ class SampleView:
     # changes) and for a sample the checker left no record of
     text_changes: Optional[List[Dict[str, Any]]] = None
     render_warnings: List[str] = field(default_factory=list)   # V6's warning: words the original's pages show, the copy's not
+    # What the to-do list's case file keeps of a plan's sample whose copy failed (``DocumentTask._case_of_sample``):
+    # the md5 of the bytes the checks read, and each check's name with a failed one's summary, as the checker gave
+    # them (V6/V7 once the pages were compared). Empty for a chain's or a custom method's sample; not saved.
+    output_md5: str = ""
+    record_checks: Dict[str, Dict[str, str]] = field(default_factory=dict)
+
+    def failed_marks(self) -> List[str]:
+        """The failed checks as a delivered copy lists them (``FileResult.unverified``): ``V2 (Text preservation)``."""
+        return [f"{key} ({self.record_checks[key]['name']})" if self.record_checks.get(key, {}).get("name") else key
+                for key, status in self.checks.items() if status == "FAIL"]
 
     def to_dict(self):
         return {"source": str(self.source), "output": str(self.output) if self.output else None, "passed": self.passed,
@@ -818,6 +828,10 @@ def _sample_geometry(samples: List[SampleView], out_dir: Path, backend: Optional
             s.geometry = dict(GEOMETRY_RENDERED_NOT_COMPARED)
             continue
         s.checks["V6"], s.checks["V7"] = v6.status, v7.status
+        if s.record_checks:
+            for check in (v6, v7):
+                s.record_checks[check.id] = {"name": check.name,
+                                             "summary": str(check.summary)[:600] if check.status == "FAIL" else ""}
         s.geometry = {"status": v7.status, "note": geometry_note(pair.plan, v7)}
         if v7.status == "FAIL":
             s.passed = False
@@ -998,6 +1012,7 @@ def _preview_sample(source: str, spec: Dict[str, Any], output: str, approved_md5
                 out = apply_spec(pkg, frags).output_bytes()
             stage = "write"
             r["output"] = output
+            r["output_md5"] = hashlib.md5(out).hexdigest()   # the bytes the checks below read
             with diag.span("preview.sample.write", output=output, size=len(out)):
                 Path(output).parent.mkdir(parents=True, exist_ok=True)
                 Path(output).write_bytes(out)
@@ -1076,8 +1091,13 @@ def _make_preview(spec: Dict[str, Any], inputs: Sequence[str], out_dir: Path, re
                             plan=r.get("plan"))
             if r["output"]:
                 sv.output = Path(r["output"])
+                sv.output_md5 = r.get("output_md5") or ""
             input_changed = input_changed or r["changed"]
             if r["record"] is not None:
+                sv.record_checks = {str(c.get("id")): {"name": str(c.get("name") or ""),
+                                                       "summary": str(c.get("summary") or "")[:600]
+                                                       if c.get("status") == "FAIL" else ""}
+                                    for c in r["record"].get("checks") or [] if isinstance(c, dict)}
                 _log_verification(log, f.name, VerificationRecord.from_dict(r["record"]))
             if sv.exception is not None:
                 log.detail(f"sample {f.name}: EXCEPTION [{sv.exception['code']}] at {sv.exception.get('stage')}: "

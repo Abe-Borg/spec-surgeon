@@ -167,7 +167,8 @@ red X, the ones you asked the assistant to set aside, a file the plan could not 
 not pass its checks (it goes there when you create the others' copies), and a file whose copy could not be made with
 nothing left to check it again. While files
 are being checked again after a run, **Set the rest aside for later** (offered once the ready copies are saved) puts
-what was not fixed there too and ends the request. Nothing on the list is changed. "Work on the documents I set aside"
+what was not fixed there too and ends the request. Nothing on the list is changed. With Obliterate mode shown in
+Settings, each document on the list also offers **Obliterate this one** (below, under the modes). "Work on the documents I set aside"
 (a reply the app offers) plans them on their own, from the request they were set aside from, with the assistant told
 why each one waited; **Put back** beside one returns it to the other documents as it is. Each new request tells the
 assistant what is on the list, so it can answer "what did I set aside?" without planning those files. The list is
@@ -323,7 +324,16 @@ mode you last used (Safe the first time; never Obliterate).
   costs: no proof that the rest of the file is untouched, content can be lost or invented without a refusal, a copy
   may need Word's repair, results can differ from run to run, and more AI spending. What still holds: copies only
   (your originals are never written), a source that changed is never delivered over, the custom method's sandbox, and
-  the independent checks on every copy, their results kept beside it. **Back to Default** (or any other mode) leaves
+  the independent checks on every copy, their results kept beside it. Obliterate is the last rung of a ladder —
+  Safe first, Default for what Safe could not take, Obliterate for the one or two documents neither could — so it
+  also starts from the to-do list: **Obliterate this one**, beside a document there, opens the same warning and then
+  turns the mode on for that one document, the request it was set aside from standing and every other document,
+  copy and to-do entry left as it is. The assistant is then told what the engine recorded of that document (the
+  refusal, or the checks its copy failed) and may read a document of the same run that took the change as a worked
+  example. When a copy was made and held back because it failed a check, the chat offers **Use the copy that
+  failed, marked UNVERIFIED**: after the app checks that this copy and the file it was made from are unchanged, it
+  joins your edited copies as it is, with no AI call, and **Undo the last change** takes it off again.
+  **Back to Default** (or any other mode) leaves
   it; the app never opens in it.
 
 On a batch from different projects, Safe mode's buttons work on every document they can change exactly and leave

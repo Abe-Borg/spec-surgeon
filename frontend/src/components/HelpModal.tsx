@@ -88,7 +88,12 @@ function HowToUse({ onStartTourAt }: { onStartTourAt: (chapter: string) => void 
                 <>
                   Shown only when Settings → Advanced → <Tag>Show Obliterate mode</Tag> is on, and chosen only after its
                   warning, every time; the app never opens in it. What you control: {OBLITERATE_GRANTS.join(" ")} What
-                  it costs: {OBLITERATE_COSTS.join(" ")} What still holds: {OBLITERATE_KEPT.join(" ")}
+                  it costs: {OBLITERATE_COSTS.join(" ")} What still holds: {OBLITERATE_KEPT.join(" ")} It is the last
+                  rung: Safe first, Default for what Safe could not take, Obliterate for the one or two documents
+                  neither could. <Tag>Obliterate this one</Tag>, beside a document on your to-do list, turns it on for
+                  that document alone after the same warning; when a copy of it was made and held back because it
+                  failed a check, the chat offers <Tag>Use the copy that failed, marked UNVERIFIED</Tag>, which takes
+                  that copy as it is with no AI call.
                 </>
               ),
             },
@@ -455,6 +460,7 @@ function Workflows() {
           "At delivery: a copy that fails a check is never delivered. Spec Surgeon looks at it again on its own and comes back with a question or a new plan, never a method for you to choose. A failed copy nothing will check again goes on your to-do list.",
           "While that question is open, Save N ready copies keeps the copies that already passed; then Set the rest aside for later puts the others on your to-do list and ends the request. Until the check ends, the copies it already saved wait to join the ones your next request builds on, so adding or removing documents, a change of mode, Put back and working on your to-do list wait too: the greyed button says why.",
           "Your to-do list says why each document is there. Work on the documents I set aside plans them on their own; Put back returns one to the others as it is. Nothing on the list is changed.",
+          "With Obliterate mode shown in Settings, a document on the list also offers Obliterate this one: the mode for that one document, with the assistant told what the engine recorded of it. If a copy of it was made and failed a check, Use the copy that failed, marked UNVERIFIED takes that copy as it is, with no AI call, and Undo the last change takes it off again.",
         ]}
       />
       <Recipe

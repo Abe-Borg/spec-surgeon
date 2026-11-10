@@ -78,6 +78,40 @@ On the owner's machine (Windows, Word): the W3 judge over every case, each failu
 behaviour recorded here with its evidence; the W4 recipe run once, its files and Word's resolutions checked in. The
 judge cannot see a repair prompt or how the Reviewing Pane draws the changes; those stay a manual look.
 
+### Obliterate: the cost ladder (O2–O8)
+
+The owner's decisions of 2026-11-10 (CLAUDE.md, "Standing decisions"). Obliterate is the emergency lever, reached
+last: Safe handles most of a batch, Default what Safe could not take, and Obliterate the one or two documents neither
+could, or a request far outside the norm on one or two specifications. Inside the copy nothing is refused for being
+unusual; the original and the machine stay protected; everything done is reported. O1 — the hand-off from the to-do
+list with the case file, and taking the copy that failed — is built (under "Waiting on the owner's machine").
+
+Rules for every item:
+
+1. **Obliterate only.** Hidden from the Default prompt and catalog, refused at the gate outside Obliterate; Safe and
+   Default plan, show and tell the model what they do today (`tests/test_obliterate.py::test_default_mode_is_untouched_by_all_of_it`).
+2. **The original and the machine.** Copies only, the source guard, no `force`; generated code stays contained; Word
+   opens copies in its private instance with macros disabled, links not updated, subdocuments not expanded.
+3. **Report, do not refuse.** The verifier stays independent (invariant 2) and runs on every copy; a copy no check
+   proves carries a mark, and a failed integrity check another.
+4. **Cheapest rung first.** Take the failed copy (O1), then clear the obstacle and run the same plan (O3, O5), then a
+   custom method (O2), then a rebuild (O8). Claude writing code is a late resort, never the first.
+5. One pull request per item; the trust surfaces, the Obliterate warning, the tour and capabilities in the same
+   change; a real-file run by the owner for each.
+
+| Item | What to build | What was decided |
+| --- | --- | --- |
+| O2 — the Obliterate record, and methods that just do the work | A new independent report in `verify/` of what differs between an original and a copy: parts added, removed and changed (a part no check reads by content named as such); words in and out; counts of paragraphs, tables, pictures, fields, text boxes and tracked changes; pages before and after. Integrity checks that need no prediction: the package opens, no new schema error, revision grammar, and "Word opens it cleanly" where Word is installed. An Obliterate custom method becomes one `apply`: no `plan()`, no prediction rounds, no never-excused list, no UNREAD failure. It runs on every document before approval, the preview shows each real result with its report, and Create delivers those exact bytes. Only errors and integrity failures go back to the writer. The method may write raw bytes into an existing part (`pkg.write`). Two marks: **UNVERIFIED** (an integrity check failed) and **UNPROVEN** (nothing failed; the change was shown, not proven) | Invariant 1 is lifted for this one path; built-in ops predict first in every mode. Sampling does not apply: with one or two documents each is its own sample |
+| O3 — the raw-XML operation, and "clear the obstacle, then the same plan" | `edit_xml`: a part, an XPath selection, an exact expected count, one action (set or remove an attribute; remove, replace or insert an element; set text). A V10 kind proves exactly those elements changed as stated and nothing else in the part did; the effect on words and pages comes from O2's report. Text it places passes the same read-it-first gate as any Obliterate wording. Claude may chain an obstacle-clearing step with the plan the other documents got; the second step is verified as today | Reverses "no raw-XML operation" for Obliterate only. A catch-all deletion is this op's remove; `force` stays out |
+| O4 — hands-on tools | A toggle in the Obliterate warning, off by default. A read-only part browser per document (the part list, the XML, search); save a part out through Export's write path; replace a part with an attached file, with a V10 kind proving the part equals that file byte for byte and nothing else moved | The cheaper version first: no XML editing inside the window (edit a part in your own editor, attach it back) |
+| O5 — named Word actions | A fixed menu, each action code in the existing Word worker (`render/word_worker.py`): repair; convert to `.docx`; accept all or reject all changes; unlink or update fields; numbers to typed text; remove protection; upgrade compatibility mode; text boxes to plain text; delete shapes. The user or Claude picks and chains them as plan steps. Results judged by O2's report (Word rewrites the whole file, so the comparison is by content and pages). Tests use a fake Word; real behaviour is proven on the owner's machine | Word may edit copies. No Claude-composed Word scripts: a case the menu cannot express is first a new menu item, logged with the document's refusal code. Reverses "text boxes as objects" and "numbers stay automatic" for Obliterate only |
+| O6 — rescue at attach | A file triage refuses offers **Try to rescue** in Obliterate: Word converts (`.doc`, `.docm`, Strict Open XML) or repairs it; a password is asked for and never stored, logged or sent to the model; the app strips a `<!DOCTYPE`, adds a missing body paragraph, or lifts the size limit. The rescued file becomes a new document with a permanent **salvaged** mark and then runs in any mode, verified against the salvaged baseline. A lock file, a folder or a missing file is still refused | When the original cannot be read, nothing can prove the rescue lost no content: the mark says so |
+| O7 — Export anyway | When a marked copy's clean version or PDF cannot be made the checked way, Export offers a Word-made one, named as unchecked in the summary | Amends invariant 7's exception ("never widen them"): the new choice is still fixed in code and named by the menu, never a model's |
+| O8 — optional, each on the owner's word | Rebuild from a clean template (the document's words, tables and pictures poured into a pristine template; the text-preservation check proves no word was lost). The outcome verifier (`goals.verify_goal`) on a rescued straggler where its request fits one of the effects it models. A pick, in the window, where a built-in op refused because it would not guess — for the refusal codes the owner's runs show most (log which codes reach Obliterate first) | Not started until asked for |
+
+Not in the plan: Claude-composed Word scripts, XML editing inside the window, replacing the import whitelist with an
+operating-system sandbox, writer budget dials, any write to an original.
+
 ### Hold the work in memory; write only on export (H2–H4)
 
 Owner question (2026-10-27): the window leaves many folders and files behind, several in one session — why, and can
@@ -138,6 +172,18 @@ write-back over the originals unless asked for (T1 is the claim most of the trus
 Everything else is built and tested on fixtures; nothing is done on fixtures alone. These runs need real
 specifications, Windows and Word, and only the owner can do them. Record what a run finds as a new item above.
 
+- **Obliterate from the to-do list (O1, built 2026-11-10):** over a real batch, with Word and with Obliterate shown in
+  Settings. Safe mode first (a button most of the batch takes), **Try these in Default mode** for what it left, a
+  Default request for those, and one or two that still wait on the to-do list — one the plan refused and one whose
+  copy failed a check. Each row reads its reason, and the one with a failed copy says a copy was made and which checks
+  it failed. **Obliterate this one** opens the warning naming the document; after **Turn on Obliterate** the mode is
+  on, the pass is over that document alone, and the other copies and to-do entries are as they were. For the failed
+  one the chat offers **Use the copy that failed, marked UNVERIFIED**: the copy joins Your edited copies with its
+  mark, no AI spending shows for it, it opens in Word, Export saves it, and **Undo the last change** takes it off.
+  For the refused one, a typed request: the assistant's reply shows it knows the engine's reason without being told,
+  and, asked to match a document that took the change, it reads that document as its example. With Obliterate hidden in Settings the to-do rows look as they
+  did, and a Default pass over the list behaves as before. Close and reopen a window that never closed: the rows and
+  their offers come back.
 - **A removed document attached again is its original (built 2026-10-30):** in Default mode with Word, two real
   specifications: one request over both and **Create edited copies**; the ✕ on the second — its copy leaves **Your
   edited copies** and Export's count drops by one; attach it again — still no copy listed for it, and Export → Word

@@ -356,7 +356,8 @@ class Conversation:
                  continuous_recovery: bool = False, word_sources=None, input_files: Sequence[Path] = (),
                  history: Sequence[str] = (), fresh: Sequence[str] = (), context: str = "",
                  todo: Sequence[str] = (), earlier: Sequence[str] = (), unguarded: bool = False,
-                 on_context: Optional[Callable[["Conversation"], None]] = None):
+                 on_context: Optional[Callable[["Conversation"], None]] = None,
+                 examples: Optional[Dict[str, Path]] = None):
         if mode not in ("chat", "compile"):
             raise ValueError(f"unknown conversation mode {mode!r}")
         self.max_calls = positive_integer("max_calls", MAX_CALLS_PER_TURN if max_calls is None else max_calls)
@@ -381,6 +382,9 @@ class Conversation:
         self._client_given = client is not None
         # Pictures and tables the user attached for the edit to use (INPUT FILES); nothing beside them is discovered.
         self.batch = compiler._Batch(self.files, self.template, input_files=[Path(p) for p in input_files])
+        # Obliterate's case file (``DocumentTask._focus_examples``): documents the tools may read as worked examples,
+        # by the labels the app's note names; never among the files a spec may plan (``_Batch.add_examples``)
+        self.batch.add_examples(examples)
         self.batch.work_dir = self.work_dir
         self.batch.max_image_tokens = max_image_tokens
         self.batch.analysis_limits = analysis_limits
@@ -576,8 +580,13 @@ class Conversation:
 
     def brief(self) -> str:
         """The conversation as a brief for the custom-transform writer: the request, what Claude understood, every
-        user reply and choice, and why no operation fits."""
+        user reply and choice, and why no operation fits. In Obliterate mode the app's note on how these documents
+        come to be planned rides along (the to-do list's case file: why each was set aside and the worked example its
+        tools may read): the writer starts from what the engine already found, not from the request alone."""
         out = [f"REQUEST: {self.request}"]
+        if self.unguarded and self.context.strip():
+            out.append("THE APP'S NOTE ON THESE DOCUMENTS (the app's account, never the user's words):\n"
+                       + self.context.strip())
         for e in self.entries[1:]:
             if e.role == "user":
                 out.append(f"USER: {e.text}")

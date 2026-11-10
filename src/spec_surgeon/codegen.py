@@ -1077,13 +1077,15 @@ def generate_op(request: str, proposal: str, samples: Sequence[Path], out_dir: P
                 max_context_tokens: int = DEFAULT_CONTEXT_TOKENS, analysis_limits=None,
                 goal_contract=None, goal_bindings=None, approved_words: Sequence[str] = (),
                 unguarded: bool = False, template: Optional[Path] = None,
-                input_files: Sequence[Path] = (), resume_from: Optional[Path] = None) -> GeneratedOp:
+                input_files: Sequence[Path] = (), resume_from: Optional[Path] = None,
+                examples: Optional[Dict[str, Path]] = None) -> GeneratedOp:
     """Look → generate → sandbox + verify on the samples → feed failures back: at most ``max_iter`` submissions and
     ``max_calls`` calls. Every tool call is answered in the next message. Existing
     outer budget scopes still apply to every call; local settings cannot bypass them — but the writer thinks at
     ``effort`` (``resources.CODEGEN_EFFORT``) inside them (``llm.effort_scope``), and the calls after it at theirs.
     ``template`` and ``input_files`` (Obliterate only: the files the user attached) are pinned and reach the method
-    as ``pkg.inputs``. ``resume_from`` names the folder of a writer the spending check paused (``out_dir`` itself,
+    as ``pkg.inputs``. ``examples`` (Obliterate only: the to-do list's case file, label → path) are documents the
+    writer's read tools may open as worked examples; the method itself never gets them. ``resume_from`` names the folder of a writer the spending check paused (``out_dir`` itself,
     ``GeneratedOp.budget_stop``): the loop goes on from its checkpoint with the same brief, pins, contract and
     approved words, its calls and attempts counting on; a checkpoint that cannot be continued is logged and the
     writer starts afresh (``load_writer_checkpoint``)."""
@@ -1095,7 +1097,8 @@ def generate_op(request: str, proposal: str, samples: Sequence[Path], out_dir: P
         result = _generate_op(request, proposal, samples, out_dir, client, model, max_iter, log, brief,
                               max_calls, max_output_tokens, effort, stall_repetitions, max_context_tokens,
                               analysis_limits, goal_contract, goal_bindings, approved_words, loose,
-                              template if loose else None, list(input_files) if loose else [], resume_from)
+                              template if loose else None, list(input_files) if loose else [], resume_from,
+                              dict(examples or {}) if loose else {})
         record.update(passed=result.passed, attempts=len(result.attempts), errors=len(result.errors),
                       budget_stop=result.budget_stop)
         return result
@@ -1104,7 +1107,7 @@ def generate_op(request: str, proposal: str, samples: Sequence[Path], out_dir: P
 def _generate_op(request, proposal, samples, out_dir, client, model, max_iter, log, brief,
                  max_calls, max_output_tokens, effort, stall_repetitions, max_context_tokens,
                  analysis_limits, goal_contract, goal_bindings, approved_words, unguarded=False, template=None,
-                 input_files=(), resume_from=None):
+                 input_files=(), resume_from=None, examples=None):
     from . import compiler, llm
     from .profile import profile
     from .package import DocxPackage
@@ -1154,10 +1157,15 @@ def _generate_op(request, proposal, samples, out_dir, client, model, max_iter, l
     batch.work_dir = out_dir
     batch.analysis_limits = analysis_limits
     batch.context_dir = out_dir
+    batch.add_examples(examples)              # read-only, by label; never a sample and never a pkg.inputs entry
     asked = (f"THE CONVERSATION WITH THE USER (what they asked, what was understood, every reply):\n{brief}"
              if brief else f"REQUEST: {request}")
     attached_note = ("\n\nATTACHED FILES (pkg.inputs keys; read them with read_template, read_input_file, list_parts "
                      "and read_xml_page):\n" + "\n".join(a["path"] for a in attachments)) if attachments else ""
+    if batch.examples:
+        attached_note += ("\n\nWORKED EXAMPLES (read-only: open them with the same tools by these labels, as the "
+                          "app's note in the conversation describes them; the method never receives them):\n"
+                          + "\n".join(sorted(batch.examples)))
     messages: List[Dict[str, Any]] = [{"role": "user", "content":
         f"{asked}\n\nWHY NO EXISTING OP FITS / PROPOSAL: {proposal}\n\nSAMPLE FILES (for the tools): "
         f"{[batch.label(Path(f)) for f in samples]}\n\nSAMPLE FILE PROFILES:\n"
