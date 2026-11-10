@@ -320,7 +320,10 @@ export const RUNTIME_CARDS: RuntimeCard[] = [
     bounds:
       `Counts toward the pause; the trials get at most ${F.recoveryAttemptsPerGroup} attempts per group of files, ` +
       "on copies only. The wording in Claude's proposed outcomes is approved by your pick of the choice, as any " +
-      "choice's is: read it beneath the choice before you pick.",
+      "choice's is: read it beneath the choice before you pick. What you type instead of picking, or in answer to " +
+      "a question the outcome plan asks, is read by the assistant, not by the outcome planner: the planning stops, " +
+      "the assistant is told what was asked and answers your message as any other, and outcomes are planned again " +
+      "only if the built-in plan still cannot be made.",
   },
   {
     covers: ["A28", "B22"],

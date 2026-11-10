@@ -29,6 +29,12 @@ revision after completion creates a new reviewed outcome and a separate recovery
 Verified copies are exported with that same approval; originals remain unchanged.
 Model-proposed wording still needs a visible user choice.
 
+A worded reply to the planner itself — to its own question, or typed instead of picking the outcomes it offers —
+goes to the assistant, which hears what the planner said and answers it as any message
+(`Conversation.planner_asked`, `_hand_back`; the owner's live runs of 2026-10-22/23, where such a reply went back
+to the planner whatever it said). When the built-in route still cannot do what is asked, the assistant's refusal
+or the failed preview starts the planning again, and the reply is among the decisions the planner reads.
+
 ## Reusable implementations
 
 Successful governed generated methods can now be stored in the bounded local repair

@@ -1432,13 +1432,24 @@ class ChainPreview(Preview):
     chain: Dict[str, Any] = field(default_factory=dict)
 
     def to_text(self) -> str:
-        from .chain import chain_name, stage_name
+        from .chain import chain_name, said_once, stage_does, stage_name
         stages = self.chain.get("stages") or []
         out = [f"PREVIEW — chain «{chain_name(self.chain)}»: {len(stages)} stage(s), run one after another on each file"]
+        # what every stage says alike is said once: a plan composed into steps carries the spec's own request,
+        # summary and assumptions on each (``chain.said_once``); each stage then says what it does
+        once = said_once(self.chain)
+        if once["request"] is not None:
+            out.append(f"request: {once['request']!r}")
+        if once["summary"] is not None and once["summary"] != chain_name(self.chain):   # a composed plan's name
+            out.append(f"summary: {once['summary']}")
+        out += [f"assumption: {a}" for a in once["assumptions"]]
         for i, st in enumerate(stages, 1):
             spec = st.get("spec") or {}
-            out.append(f"  stage {i} — {stage_name(st, i)}: {spec.get('request')!r} — {spec.get('summary') or ''}")
-            out += [f"     assumption: {a}" for a in spec.get("assumptions") or []]
+            own = ([repr(spec.get("request"))] if once["request"] is None else []) + \
+                ([str(spec.get("summary") or "")] if once["summary"] is None else [])
+            out.append(f"  stage {i} — {stage_name(st, i)}" + (": " + " — ".join(own) if own else ""))
+            out += [f"     does: {sentence}" for sentence in stage_does(st)]
+            out += [f"     assumption: {a}" for a in spec.get("assumptions") or [] if str(a) not in once["assumptions"]]
         out += [f"WARNING: {w}" for w in self.warnings]
         out.append("")
         out.append("EVERY STEP planned on every file (each later step on the bytes the step before it would make; a "

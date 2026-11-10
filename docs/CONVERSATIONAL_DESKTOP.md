@@ -1153,6 +1153,20 @@ words as any pick does (`Session.outcome` takes a custom method on its own, neve
 `continuous_recovery.approve`). The documents you left out of the request stay out of the outcomes and their trials
 (`Conversation.left_out`); they wait under **Left untouched**, and the planner is told they are out of scope.
 
+What you type in answer to the outcome planner — to a question of its own, or instead of picking its outcomes — is
+read by the assistant, not by the planner (`Conversation._hand_back`; before, every reply went back to the planner,
+which cannot leave a document out or answer a question, and in the owner's live runs of 2026-10-22/23 it ran its
+trials over every file after a message that asked for something else). The planner stops; the assistant is told
+what the planner said (its words are in the transcript, never in the assistant's own history), reads your reply as
+any message, and answers, asks or plans. If the built-in operations still cannot do it, the same refusal or failed
+preview brings the planner back, with your reply among the decisions it reads. Words typed after an outcome has
+been carried out, with no question of the planner's open, still revise that outcome through the planner.
+
+A plan the engine composes into ordered steps carries the plan's own request, summary and assumptions on every
+step. The preview's text — what the assistant reads back, cut at a length — and the visual check's brief say what
+the steps share once, and then, step by step, what each does in the sentence its operations write for themselves
+(`chain.said_once`, `chain.stage_does`); a chain whose steps were written apart keeps each step's own words.
+
 Normalizing a file (typed numbers to automatic numbering, clearing direct formatting, whitespace, pending
 tracked changes) is never automatic. It is only ever offered to you as an explicit first stage and runs only if
 you accept it.

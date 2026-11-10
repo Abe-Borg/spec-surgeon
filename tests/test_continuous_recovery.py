@@ -70,13 +70,78 @@ def test_an_outcome_plans_tracked_changes_carry_the_users_author_never_a_literal
         assert "Abraham" not in inspect.getsource(module), module.__name__
 
 
-def test_followup_question_stays_in_same_conversation_and_authority(tmp_path):
-    c, _ = conversation(tmp_path, resp(tool("need_user", {"question": "Which title?"})), proposal())
-    assert c.start().questions == ["Which title?"]
+def test_a_worded_reply_to_the_planners_question_is_the_assistants_to_read(tmp_path):
+    """Backlog S4 (the owner's live runs of 2026-10-22/23): after the outcome planner asked a question, the user's
+    next message went to that planner again, whatever it said. It goes to the assistant, which hears what the planner
+    asked; when the built-in route still cannot do it, the planner comes back with the reply among the decisions —
+    the same conversation, the same authority over the words."""
+    from spec_surgeon.conversation import OUTCOME_HANDBACK, OUTCOME_HANDBACK_NEXT
+    c, _ = conversation(tmp_path, resp(tool("need_user", {"question": "Which title?"})), refusal(), proposal())
+    assert c.start().questions == ["Which title?"] and c.planner_asked and c.recovery_active
     turn = c.reply("Use FIRE SUPPRESSION")
-    assert turn.choices[0].kind == "recovery_plan"
+    # requests: the assistant's refusal, the planner's question, then the ASSISTANT again — with the assistant's own
+    # tools, what the planner asked, and the user's words
+    assistant = c._client.requests[2]
+    assert {"ask_user", "submit_editspec"} <= {t["name"] for t in assistant["tools"]}
+    heard = str(assistant["messages"])
+    assert OUTCOME_HANDBACK in heard and "It asked: «Which title?»" in heard and OUTCOME_HANDBACK_NEXT in heard
+    assert "Use FIRE SUPPRESSION" in heard
+    # it still cannot do it with the built-in operations: the planner is back, and reads the reply as a decision
+    assert turn.choices[0].kind == "recovery_plan" and c.recovery_active and c.planner_asked
     assert "Use FIRE SUPPRESSION" in c.sources
+    assert "propose_plan" in {t["name"] for t in c._client.requests[-1]["tools"]}
     assert "Use FIRE SUPPRESSION" in str(c._client.requests[-1]["messages"])
+    assert len(c._client.requests) == 4
+
+
+def test_the_assistant_answers_a_reply_that_was_no_answer_to_the_planner(tmp_path):
+    """A reply that asks something else, or keeps the request to some documents, is answered by the assistant and
+    the planner runs nothing more: no outcome is planned over every file because the user spoke."""
+    c, _ = conversation(tmp_path, proposal(),
+                        resp(tool("ask_user", {"message": "Nothing has changed yet. Which document do you mean?"})))
+    offered = c.start()
+    assert offered.choices[0].kind == "recovery_plan" and c.planner_asked
+    turn = c.reply("wait, has anything changed yet?")
+    assert turn.status == "questions" and turn.message.startswith("Nothing has changed yet.") and not turn.choices
+    assert not c.recovery_active and not c.planner_asked
+    heard = str(c._client.requests[-1]["messages"])
+    # the planner's offer is named, never its whole contract: the assistant is told it was offered and not picked
+    assert "It offered, for the user to pick: «Use these outcomes and continue». The user did not pick it." in heard
+    assert "wait, has anything changed yet?" in heard and len(c._client.requests) == 3
+    # the outcomes that were offered can no longer be picked: the reply ended that turn
+    with pytest.raises(ValueError):
+        approve(c, offered.choices[0].id)
+
+
+def test_a_reply_to_the_planner_that_claude_declines_leaves_the_planners_question_open(tmp_path):
+    """A reply Claude declines is taken back with everything it carried (``Conversation._take_back``): the planner's
+    question is open again and the note that handed it over is gone, so the next reply is handed back afresh."""
+    from types import SimpleNamespace
+    from spec_surgeon.conversation import OUTCOME_HANDBACK
+    refused = resp(stop="refusal", details=SimpleNamespace(category="reasoning_extraction", explanation="blocked"))
+    c, _ = conversation(tmp_path, resp(tool("need_user", {"question": "Which title?"})), refused,
+                        resp(tool("ask_user", {"message": "The first one, then."})))
+    assert c.start().questions == ["Which title?"]
+    history = list(c.messages)
+    assert c.reply("Show me what you were thinking").status == "failed"
+    assert c.messages == history and c.notes == [] and c.planner_asked and c.recovery_active
+    assert "Show me what you were thinking" not in c.sources
+    turn = c.reply("The first title")
+    assert turn.message == "The first one, then." and not c.recovery_active
+    heard = str(c._client.requests[-1]["messages"])
+    assert heard.count(OUTCOME_HANDBACK) == 1 and "The first title" in heard and "what you were thinking" not in heard
+    assert "It asked: «Which title?»" in heard and "taken back" not in heard     # the planner's words, not the app's
+
+
+def test_a_planners_long_words_are_clipped_for_the_assistant(tmp_path):
+    from spec_surgeon.conversation import HANDBACK_CHARS, Turn
+    c, _ = conversation(tmp_path, resp(tool("ask_user", {"message": "Understood."})))
+    c.started, c.recovery_active = True, True
+    c._hand_back(Turn("questions", message="word " * 1000, questions=["Which   title?"]))
+    [note] = c.notes
+    said = note.split("It said to the user: «", 1)[1].split("»", 1)[0]
+    assert len(said) == HANDBACK_CHARS and said.endswith("…") and "It asked: «Which title?»" in note
+    assert not c.recovery_active
 
 
 @pytest.mark.parametrize("change", ["source", "proposal", "wording", "execution", "scope"])
