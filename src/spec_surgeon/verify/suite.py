@@ -414,6 +414,12 @@ def _run_suite(source: bytes, output: bytes, plan: Dict[str, Any], source_name: 
     untracked_expected = bool(plan.get("untracked_diffs_expected"))
     pred_removed = list(plan.get("members_removed", []))
     pred_added = list(plan.get("members_added", []))
+    # Parts a raw XML edit changes (``xml_edit``, Obliterate mode only): V10 compares each WHOLE with the source part
+    # as this verifier edits it itself, so nothing in it goes unchecked. Its text is not predicted block by block —
+    # no plan could, without making the edit — so the block-by-block checks below leave it to that comparison, and
+    # the record lists what the edit did to the words (D1).
+    from .xmledit import raw_parts
+    raw = set(raw_parts(plan))
 
     # V1 — package hash whitelist, predicted member removals/additions, member order, package integrity
     with _check(rec, "V1", "Package hash whitelist") as check:
@@ -486,6 +492,8 @@ def _run_suite(source: bytes, output: bytes, plan: Dict[str, Any], source_name: 
                 if ch.before != ch.after:
                     actual_text_changes.append({"part": part, "before": ch.before, "after": ch.after,
                                                 "before_index": ch.before_index, "after_index": ch.after_index})
+                if part in raw:
+                    continue                                   # (compared whole by V10's xml_edit)
                 if ch.before is not None and ch.after is not None and ch.struct_before != ch.struct_after:
                     # a structure-only declaration (before == after) counts for its own block only (source index); one
                     # beside a text change keeps the older text match
@@ -510,7 +518,9 @@ def _run_suite(source: bytes, output: bytes, plan: Dict[str, Any], source_name: 
         # a structure-only declaration (V3's business) is not a text change
         expected = sorted(((d["part"], d.get("before"), d.get("after")) for d in plan.get("diffs", [])
                            if not structure_only(d)), key=_total_key)
-        actual = sorted(((c["part"], c["before"], c["after"]) for c in actual_text_changes), key=_total_key)
+        actual = sorted(((c["part"], c["before"], c["after"]) for c in actual_text_changes if c["part"] not in raw),
+                        key=_total_key)
+        listed = sum(1 for c in actual_text_changes if c["part"] in raw)
         v2_ok = expected == actual
         missing = [e for e in expected if e not in actual]
         extra = [a for a in actual if a not in expected]
@@ -537,9 +547,11 @@ def _run_suite(source: bytes, output: bytes, plan: Dict[str, Any], source_name: 
                             + (f" (new text parts: {new_parts})" if new_parts else "")
                             + f"; diffs found: {len(actual)}; "
                             f"matches predicted list exactly: {'yes' if v2_ok else 'NO'}"
-                            + ("" if v2_ok else f" — missing {len(missing)}, unpredicted {len(extra)}"),
+                            + ("" if v2_ok else f" — missing {len(missing)}, unpredicted {len(extra)}")
+                            + (f"; raw XML edit of {sorted(raw)}: {listed} more text block(s) differ there, listed "
+                               f"(D1) and proven by V10's whole-part comparison, not predicted" if raw else ""),
                             {"parts": scope, "actual": actual_text_changes, "missing": missing, "unpredicted": extra,
-                             "views": views}))
+                             "views": views, **({"raw_parts": sorted(raw)} if raw else {})}))
         rec.set(CheckResult("V3", "Structural children", "PASS" if not struct_changes else "FAIL",
                             "w:tab(in w:r)/w:br/w:cr/noBreakHyphen/sym/fldChar/… per block: "
                             + ("identical on every aligned block, or changed exactly as the plan declared" if not struct_changes
@@ -554,16 +566,23 @@ def _run_suite(source: bytes, output: bytes, plan: Dict[str, Any], source_name: 
     with _check(rec, "V4", "Revision accounting") as check:
         cnt_b: Dict[str, int] = {}
         cnt_a: Dict[str, int] = {}
+        # the counts the plan's delta is held to: every text part but the raw ones (their count is listed, D1)
+        all_b: Dict[str, int] = {}
+        all_a: Dict[str, int] = {}
         ids_b, ids_a = set(), set()
         for part, root in src_xml.items():
             for k, i in _rev_elements(root):
-                cnt_b[k] = cnt_b.get(k, 0) + 1
+                all_b[k] = all_b.get(k, 0) + 1
+                if part not in raw:
+                    cnt_b[k] = cnt_b.get(k, 0) + 1
             r = _rev_ids(root)
             ids_b |= {(part, i) for i in r["ins"] + r["del"]}
         out_elems = []
         for part, root in out_xml.items():
             for k, i in _rev_elements(root):
-                cnt_a[k] = cnt_a.get(k, 0) + 1
+                all_a[k] = all_a.get(k, 0) + 1
+                if part not in raw:
+                    cnt_a[k] = cnt_a.get(k, 0) + 1
                 out_elems.append((part, k, i))
             r = _rev_ids(root)
             ids_a |= {(part, i) for i in r["ins"] + r["del"]}
@@ -608,6 +627,9 @@ def _run_suite(source: bytes, output: bytes, plan: Dict[str, Any], source_name: 
                             f"w:ins {ins_b}→{ins_a} (Δ{d_ins:+d}, predicted {pred.get('ins', 0):+d}); "
                             f"w:del {del_b}→{del_a} (Δ{d_del:+d}, predicted {pred.get('del', 0):+d})"
                             + (f"; {'; '.join(others)}" if others else "")
+                            + (f"; not counted here, the raw XML edit of {sorted(raw)}: tracked changes "
+                               f"{sum(all_b.values()) - sum(cnt_b.values())}→{sum(all_a.values()) - sum(cnt_a.values())} "
+                               f"there (listed, D1)" if raw else "")
                             + (f"; UNPREDICTED deltas {wrong}" if wrong else "")
                             + (f"; DUPLICATE ids {sorted(set(dup) | set(dup_all), key=_total_key)[:5]}"
                                if (dup or dup_all) else "; ids unique")
@@ -677,8 +699,9 @@ def _run_suite(source: bytes, output: bytes, plan: Dict[str, Any], source_name: 
                                 {"differences": rej_diffs[:20]}))
             check.update(parts_compared=len(parts), reject_mismatches=len(rej_diffs))
         else:
-            new_ids = sorted(ids_a - ids_b, key=_total_key)               # (part, id); an id may be None
-            prop_new = sum(1 for _, k, _ in new_elems if k in PROPERTY_REV)
+            # (a raw part's new revisions are the whole-part comparison's, V10: not this enumeration's)
+            new_ids = sorted((x for x in ids_a - ids_b if x[0] not in raw), key=_total_key)   # (part, id); id may be None
+            prop_new = sum(1 for p, k, _ in new_elems if k in PROPERTY_REV and p not in raw)
             prop_pred = sum(pred.get(k, 0) for k in PROPERTY_REV if pred.get(k, 0) > 0)
             ok = not new_ids and v2_ok and prop_new == prop_pred
             rec.set(CheckResult("V5b", "Untracked-edit check (enumerated-list mode)", "PASS" if ok else "FAIL",
@@ -759,6 +782,18 @@ def _run_suite(source: bytes, output: bytes, plan: Dict[str, Any], source_name: 
         except Exception as e:  # a check that cannot run is a failure, never a skip
             ok10, summary10, data10 = False, f"could not evaluate: {type(e).__name__}: {e}", {}
         rec.set(CheckResult("V10", "Property assertions", "PASS" if ok10 else "FAIL", summary10, data10))
+
+    # D1 — what a raw XML edit did, listed: its words are under V2's ``actual``, and here is what else differs (the
+    # Obliterate record's own report, ``verify/difference.py``). Never a failure: the user reads it before approving.
+    if raw:
+        from .difference import _what_changed
+        try:
+            lines, d1 = _what_changed(src, out, src_xml, out_xml, changed, added, removed, orphaned,
+                                      actual_text_changes, all_b, all_a)
+        except Exception as e:  # noqa: BLE001 — a report that cannot be written says so; the checks above stand
+            lines, d1 = [f"What changed could not be listed ({type(e).__name__}: {e})."], {"lines": []}
+            d1["lines"] = lines
+        rec.set(CheckResult("D1", "What changed", "NA", " ".join(lines)[:1200], d1))
 
     # V6, V7, V9 are filled in by the batch runner (they need renders / the write-back step)
     rec.set(CheckResult("V6", "Automated render comparison", "NA", "no renderer run yet"))

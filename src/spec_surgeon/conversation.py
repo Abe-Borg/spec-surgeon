@@ -416,6 +416,7 @@ class Conversation:
         # Obliterate mode (CLAUDE.md, Modes), fixed for the whole conversation: Claude may write wording
         # (no placed-words trace at the gate) and a custom method is offered whenever one could do the change at all
         self.unguarded = bool(unguarded)
+        self.batch.unguarded = self.unguarded       # describe_op reads Obliterate's own operation there, nowhere else
         self.system = compiler.system_prompt(chat=(mode == "chat"), unguarded=self.unguarded)
         self.messages: List[Dict[str, Any]] = []
         self.entries: List[Entry] = []

@@ -27,6 +27,10 @@ REQUEST_ONLY_OPS = ("resolve_tracked_changes", "set_document_properties", "set_d
                     "reply_to_comments", "resolve_comments")
 
 COMMON_ASSUMPTIONS: Dict[str, List[str]] = {
+    "edit_xml": ["Obliterate mode only; never tracked",
+                 "exactly the stated number of elements, or the file is left as it is",
+                 "the words it adds and removes are listed from the copy before approval, not predicted",
+                 "nothing else in the part changes; no other part changes"],
     "normalize_whitespace": ["ordinary spaces only; tabs, line breaks and non-breaking spaces stay", "tracked unless clean copies requested"],
     "normalize_punctuation": ["choose the quote, dash and section-number styles explicitly; numeric inch/foot marks are retained"],
     "protect_nonbreaking_spaces": ["default units: psi; spaced section numbers included; no words change"],
@@ -857,10 +861,10 @@ CUSTOM_TRANSFORM_LIMITS: Dict[str, Any] = {
 }
 
 
-def editspec_json_schema() -> Dict[str, Any]:
+def editspec_json_schema(unguarded: bool = False) -> Dict[str, Any]:
     """Appendix A, with every op's own select/params schema attached (oneOf by op name)."""
     op_items = []
-    for name, cls in sorted(OPS.items()):
+    for name, cls in offered_ops(unguarded).items():
         sel = dict(cls.select_schema or {})
         sel.setdefault("type", "object")
         if "properties" not in sel:
@@ -926,9 +930,15 @@ def worked_examples() -> List[Dict[str, Any]]:
     return [json.loads(f.read_text(encoding="utf-8")) for f in examples]
 
 
-def op_catalog(examples: bool = True) -> Dict[str, Any]:
+def offered_ops(unguarded: bool = False) -> Dict[str, Any]:
+    """The operations a conversation is told of: every registered op, less Obliterate's own (``Op.obliterate_only``:
+    ``edit_xml``) unless the conversation is in Obliterate mode. Safe and Default are told what they always were."""
+    return {name: cls for name, cls in sorted(OPS.items()) if unguarded or not cls.obliterate_only}
+
+
+def op_catalog(examples: bool = True, unguarded: bool = False) -> Dict[str, Any]:
     ops = {}
-    for name, cls in sorted(OPS.items()):
+    for name, cls in offered_ops(unguarded).items():
         ops[name] = {"mode": cls.mode, "description": cls.description, "select": cls.select_schema,
                      "params": cls.params_schema, "verification": cls.verification_profile,
                      "common_assumptions": COMMON_ASSUMPTIONS.get(name, [])}
@@ -973,35 +983,35 @@ def op_catalog(examples: bool = True) -> Dict[str, Any]:
             "an effective_font assertion {value, size, size_from}: font and size from the template spec's body_text, "
             "size_from the batch's body text sizes (profiles: fonts.body_text) — other sizes (headers, notes) stay",
         ],
-        "editspec_schema": editspec_json_schema(),
+        "editspec_schema": editspec_json_schema(unguarded),
     }
     if examples:
         cat["worked_examples"] = worked_examples()
     return cat
 
 
-def op_sheet() -> Dict[str, Any]:
+def op_sheet(unguarded: bool = False) -> Dict[str, Any]:
     """What the system prompt carries for every operation: mode, description, selectors and parameters, plus the
     grammar they share. Verification rules, common assumptions and worked examples stay behind ``describe_op``."""
     ops = {name: {"mode": cls.mode, "description": cls.description, "select": cls.select_schema,
-                  "params": cls.params_schema} for name, cls in sorted(OPS.items())}
+                  "params": cls.params_schema} for name, cls in offered_ops(unguarded).items()}
     return {"ops": ops, "selector_grammar": SELECTOR_GRAMMAR, "fill_rules": FILL_RULES,
             "reference_fills": REFERENCE_FILLS, "expect_checks": list(EXPECT_CHECKS), "expect_syntax": EXPECT_SYNTAX,
             "spec_assertions": list(SPEC_ASSERTION_KINDS), "modes": op_catalog(examples=False)["modes"],
             "rules": op_catalog(examples=False)["rules"]}
 
 
-def op_index() -> Dict[str, Any]:
+def op_index(unguarded: bool = False) -> Dict[str, Any]:
     """Small discovery index. Full schemas and examples are fetched with describe_op."""
     return {name: {"mode": cls.mode, "description": cls.description.split(". ", 1)[0][:180]}
-            for name, cls in sorted(OPS.items())}
+            for name, cls in offered_ops(unguarded).items()}
 
 
-def describe_op(name: str) -> Dict[str, Any]:
+def describe_op(name: str, unguarded: bool = False) -> Dict[str, Any]:
     """Return current operation documentation, including only its relevant examples."""
-    if name not in OPS:
+    if name not in offered_ops(unguarded):
         raise ValueError(f"Unknown operation {name!r}; choose a name from the operation index.")
-    catalog = op_catalog(examples=False)
+    catalog = op_catalog(examples=False, unguarded=unguarded)
     return {"name": name, **catalog["ops"][name],
             **{key: catalog[key] for key in ("selector_grammar", "fill_rules", "reference_fills",
                                             "expect_checks", "expect_syntax", "spec_assertions")},

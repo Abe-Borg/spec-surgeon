@@ -84,12 +84,35 @@ needs the warning acknowledged each time (`DocumentTask.set_mode(acknowledged=Tr
 left, and is never what a launch opens in (`settings.MODES`, `web.server.launch_mode`). Pinned by
 `tests/test_obliterate.py` and, for the record itself, `tests/test_obliterate_record.py`.
 
+Obliterate also has one built-in operation the other modes do not: **`edit_xml`**, the raw XML edit (`ops/edit_xml.py`,
+`Op.obliterate_only`; the owner's decision, 2026-11-10): one XML part (never `.rels` or `[Content_Types].xml`), an
+XPath, the exact count of elements it selects, and one action (`ACTIONS`: set or remove an attribute; remove, replace,
+insert; set text; unwrap). It is a built-in op, so it predicts first: the prediction is the edit itself, the V10
+assertion `xml_edit` with a digest of the selected elements' places, and the verifier's twin (`verify/xmledit.py`)
+judges and evaluates the XPath itself, makes the same edit in its own copy of the part and compares the part whole.
+What the edit does to the words is NOT predicted: for the parts such an assertion names (`raw_parts(plan)`)
+`verify/suite.py` leaves the part to that comparison in V2, V3, V4's counts and V5b and adds D1 "What changed"; the
+words and D1's lines are listed before approval from the verifier's record (`preview.raw_listing` →
+`SampleView.raw_xml`/`text_changes`/`changes`, `DocumentTask._say_raw_changes`). Its copies are verified, never
+UNPROVEN; the checks of the file still run, so a broken result fails them and is delivered UNVERIFIED. It touches its
+part whole, so it is always a step of its own and never tracked; "clear the obstacle, then the same plan" is explicit
+stages (a flat list of ops is planned whole on the source, so the plan's own refusal would come first): a case file
+keeps the plan the document was set aside from (`DocumentTask._case_plan`, `CASE_PLAN`) and the pass's note says how
+(`CLEAR_THEN_SAME`). Safe and Default never see it: `catalog.offered_ops` keeps it out of their catalog, schema,
+prompts and `describe_op` (their prompts and tools stay byte-stable), the gate refuses a plan that names it
+(`compiler._mode_errors`, `[obliterate-only]`), and a custom method may never assert its kind
+(`verify.xmledit.OP_ONLY_KINDS`, `codegen.hard_limits`). Its XPath is bounded on both sides (`check_xpath` /
+`_v_judge`: `MAX_XPATH_CHARS`, `XPATH_TIMEOUT_S`, no root path inside `[ ]`, no `following`/`preceding` axis). Text it
+places is traced like any Obliterate wording (`compiler.placed_words`). Pinned by `tests/test_edit_xml.py` and
+`tests/test_edit_xml_window.py`.
+
 Obliterate is the top rung of a ladder (the owner's decision, 2026-11-10): Safe, then Default for what Safe could not
 take, then Obliterate for the one or two documents neither could, so it also starts from the to-do list. A document
 that goes on the list because the engine stopped on it or its copy failed a check keeps a **case file** with its entry
 (`document_task._case_of_exception`, `_case_of_result`, `_case_of_sample`; journalled, `_restored_case`): the engine's
 record, the failed checks, the copy that failed when it is the whole of the plan (a batch's result or a plan's own
-preview sample, never a chain's) and a document of the same run that got a verified copy. **Obliterate this one**
+preview sample, never a chain's), a document of the same run that got a verified copy, and the plan the document was
+set aside from (JSON, `_case_plan`). **Obliterate this one**
 (`DocumentTask.obliterate_todo`, `/api/todo/obliterate`) turns the mode on for one such document, behind the same
 setting and warning, and begins the pass over it alone (`start_todo(only=)`); its conversation hears the case file
 (`_case_note`) and may read the worked example, which no spec can name (`_focus_examples`,
@@ -175,6 +198,8 @@ jobs). Details: `docs/CONVERSATIONAL_DESKTOP.md`.
     `selectors.py`, `table_select.py`, `prose.py` (the words of `describe()`), one module per op, shared cores
     (`textedit.py`, `slots.py`, `effective.py`, `lists.py`, `style_import.py`, `images.py`, `hf_common.py`),
     `elsewhere.py` (flags naming where a change kept to one place leaves the same words, and a fill in another case than the template; `plan_spec` runs it),
+    `edit_xml.py` (the raw XML edit, Obliterate only — Modes, above; an op only Obliterate may plan sets
+    `obliterate_only`),
     `patterns.py` (`compile_pattern`: the one way a user- or model-written pattern is compiled under `ops/` — and
     outside it, for the model's read tools' `regex` and an outcome contract's locators — the `regex` module in its
     `V0` (`re`) behaviour, `REGEX_TIMEOUT_S` = 2 s on each text searched, `MAX_PATTERN_CHARS` = 1000 except for an
@@ -189,7 +214,8 @@ jobs). Details: `docs/CONVERSATIONAL_DESKTOP.md`.
     a kind whose module writes none gets that module's docstring, so every kind has one), `reader.py`,
     `textcheck.py`, `edits.py`, `xsd.py`, `geometry.py` (V6/V7's page evidence, and `shown_words`: the words the
     original's pages show that the copy's do not, less what the plan removes — V6's warning, never a FAIL;
-    `report.words_missing_sentence` is its one wording), `difference.py` (the Obliterate record, `run_difference`:
+    `report.words_missing_sentence` is its one wording), `xmledit.py` (V10 `xml_edit`, the raw XML edit's twin, and `raw_parts`: the parts whose text the suite leaves to
+    its whole-part comparison — Modes, above), `difference.py` (the Obliterate record, `run_difference`:
     what differs between an original and a copy with nothing predicted, in a `VerificationRecord` every reader of a
     record reads — Modes, above), `template_layout.py` (V7's template reference: the template
     as each document's plan makes it show, its fills in the slots and each section at the document's own text
@@ -358,6 +384,7 @@ journal and the newest session folders' records (all in the window's scratch fol
 
 1. Copy `src/spec_surgeon/ops/set_font.py`; keep `@register`, `name`, `mode`, `params_schema`, `select_schema`,
    `verification_profile`, `describe()`, `plan()`, `apply()`; import it at the bottom of `ops/__init__.py`.
+   (An op only Obliterate may plan also sets `obliterate_only = True`: `catalog.offered_ops` and the gate do the rest.)
    `describe(select, params)` returns one or two sentences built with `ops/prose.py` (inches and points, quoted exact
    text, no identifiers, no JSON): the line that records the change in the history the model hears.
 2. `plan()` fills the fragment analytically from the source: `intended_parts`, `diffs`, members, `rev_delta`,
@@ -404,7 +431,8 @@ Standing decisions from the earlier rounds (their plans are in the git history):
   machine stay protected (copies only, the source guard, the sandbox's containment), and everything done is reported
   (the verifier on every copy, the marks, the words added and removed). Decided, for Obliterate only: a custom method
   just does the work and the verifier reports the difference, the user approving the actual result (built: invariant 1
-  is lifted for that one path; built-in ops predict first in every mode); a raw-XML operation Claude plans,
+  is lifted for that one path; built-in ops predict first in every mode); a raw-XML operation Claude plans (built:
+  `edit_xml`, Modes; a catch-all deletion is its `remove`),
   with a read-only part browser and swap-a-part behind a toggle (in-app XML editing is not built); Word may edit
   copies through a fixed menu of named actions the user or Claude chains (Claude-composed Word scripts are not
   built: a miss is first a new menu item); a file refused at attach may be rescued; Export may make a marked copy's

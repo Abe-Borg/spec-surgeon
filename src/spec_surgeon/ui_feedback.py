@@ -330,6 +330,24 @@ def refusal_message(exception, step: bool = True):
     if code == "name-collision":
         return head + ("Two documents would have the same output filename. Check their section numbers and titles "
                        "before trying again.")
+    if code == "xml-count" and "found" in details:
+        found, expected = details.get("found"), details.get("expected")
+        first = details.get("matches") or []
+        return head + (f"The raw XML edit states {expected} element{'' if expected == 1 else 's'} in "
+                       f"{details.get('part') or 'the part'}, and its XPath selects {found} in this document, so "
+                       f"nothing was changed."
+                       + (f" It selects: {'; '.join(str(x) for x in first[:3])}." if first else ""))
+    if code == "xml-part" and details.get("part"):
+        why = {"missing": "This document has no part named", "bookkeeping": "A raw XML edit does not change",
+               "not-xml": "This part is not XML a raw edit can read:"}.get(details.get("why"), "The raw XML edit cannot change")
+        return head + f"{why} {details['part']}."
+    if code == "xml-action" and details.get("element"):
+        return head + (f"The raw XML edit cannot {str(details.get('action') or 'change').replace('_', ' ')} the "
+                       f"<{details['element']}> it selects in {details.get('part') or 'the part'}: "
+                       f"{details.get('why') or 'the action does not fit it'}.")
+    if code == "xpath-timeout":
+        return head + ("The raw XML edit's XPath took too long on this document, so nothing was changed. Select by "
+                       "the element's own name and attributes.")
     if exception.get("kind") in {"internal-error", "environment"}:
         return head + "The change could not be completed for this file. The diagnostic record has the technical details."
     plain = _plain_reason(reason, operation)

@@ -275,8 +275,8 @@ function occurrences(skipped = []) {
 }
 
 // document_task.OBLITERATE_ON / OBLITERATE_OFF
-const OBLITERATE_ON = "Obliterate mode is on. Claude may write wording and custom methods that change anything Word stores, and a copy whose checks fail is delivered marked UNVERIFIED instead of being held back. Copies only; your originals are never written. What was planned before is void.";
-const OBLITERATE_OFF = "Obliterate mode is off: every placed word is yours again, custom methods are formatting only, and a copy whose checks fail is held back. What was planned in Obliterate mode is void.";
+const OBLITERATE_ON = "Obliterate mode is on. Claude may write wording and custom methods that change anything Word stores, and a copy whose checks fail is delivered marked UNVERIFIED instead of being held back. A custom method predicts nothing: you approve the copies it made, and each is delivered marked UNPROVEN. Claude may also plan a raw XML edit: the app proves the edit itself, and lists the words it changes before you approve. Copies only; your originals are never written. What was planned before is void.";
+const OBLITERATE_OFF = "Obliterate mode is off: every placed word is yours again, custom methods are formatting only, raw XML edits are refused, and a copy whose checks fail is held back. What was planned in Obliterate mode is void.";
 
 function results() {
   return DOCS.map((d) => ({ source: d.path, output: `${RUN_DIR}/${name(d.path)}`, name: name(d.path), saved_to: "" }));

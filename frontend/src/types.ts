@@ -166,14 +166,20 @@ export interface Sample {
   geometry?: { status: "PASS" | "FAIL" | "NA"; note: string; at?: "run" } | null;
   /** A custom method's sample: the words its copy adds and removes, as the independent checker read them (its V2
    *  record), one entry per changed paragraph; [] when the method changes no words; null for an ordinary plan's
-   *  sample (the chat's sentences say what changes) and for a sample without a record; absent from older servers. */
+   *  sample (the chat's sentences say what changes) and for a sample without a record; absent from older servers.
+   *  For a plan with a raw XML edit (`raw_xml`): the words that edit's step changes in the parts it edits. */
   text_changes?: TextChange[] | null;
   /** A custom method made this copy in Obliterate mode: nothing was predicted for it, so it is never shown as
    *  checked. With no failed check it is "not proven"; with one it did not pass. Absent from older servers. */
   unproven?: boolean;
   /** Such a copy's other changes beside its words, in the independent reader's own sentences (counts of
-   *  paragraphs, tables and pictures, formatting, styles, numbering, settings, parts); [] when it found none. */
+   *  paragraphs, tables and pictures, formatting, styles, numbering, settings, parts); [] when it found none.
+   *  For a plan with a raw XML edit (`raw_xml`): what that edit's step changes beside the words. */
   changes?: string[];
+  /** The plan holds a raw XML edit (Obliterate mode only): the edit itself is proven, element by element, and what
+   *  it does to the words is listed from this copy (`text_changes`, `changes`), not predicted. The sample is checked
+   *  like any plan's (`passed`), never `unproven`. Absent from older servers. */
+  raw_xml?: boolean;
   /** The custom method could make no copy of this document (`failures` says why): Create makes none, and the
    *  document goes on the to-do list. */
   no_copy?: boolean;

@@ -323,7 +323,7 @@ export const RUNTIME_CARDS: RuntimeCard[] = [
       "choice's is: read it beneath the choice before you pick.",
   },
   {
-    covers: ["A28"],
+    covers: ["A28", "B22"],
     title: "Obliterate mode: showing it, choosing it, leaving it",
     you:
       "Settings → Advanced → Show Obliterate mode, then Show it; then Obliterate in the top bar, tick the box under " +
@@ -339,15 +339,30 @@ export const RUNTIME_CARDS: RuntimeCard[] = [
       `${F.obliterateCheckRounds} times first; its copies are delivered marked UNPROVEN), and a copy that fails its check is ` +
       "delivered marked UNVERIFIED instead of being held back, with no recovery after it; its preview page already " +
       "says Did not pass, and the plan stands. The mark stays on every later copy built on it, in every mode, " +
-      "until Start over, Undo or removing the document. Entering or leaving it " +
+      "until Start over, Undo or removing the document. Claude may also plan a raw XML edit, an operation the " +
+      "other modes do not have and refuse: one part of the file, an XPath that names elements of it (at most " +
+      `${grouped(F.maxXPathChars)} characters, with ${F.xpathTimeoutSeconds} s to run on the part), exactly how many ` +
+      "elements that is, and one action — set or remove an attribute, remove, replace, insert, set the text, or " +
+      "unwrap. A document where the XPath finds another number of elements is set aside untouched. The " +
+      "independent checker finds the elements with its own reading of the XPath, makes the same edit in its own " +
+      "copy of the part and compares the whole part with the copy's: exactly those elements changed as stated, and " +
+      "nothing else in that part did. What the edit does to the words is not predicted. It is listed from the " +
+      "sample copies, in the chat and under each preview, before the button: the words added and removed, then " +
+      "what else changed. Text the edit places passes the same check as any wording in this mode. The file's " +
+      "own relationship and content-type parts are never edited this way. Entering or leaving the mode " +
       `voids the plan on screen, so it waits ${WHILE_CHECKED}.`,
-    sent: "Nothing when you choose it. The conversation then sends what it sends in Default mode.",
+    sent:
+      "Nothing when you choose it. The conversation then sends what it sends in Default mode; after the preview " +
+      "of a raw XML edit, also the app's list of the words that edit changes, with your next message.",
     ai: NONE,
     bounds:
       "Copies only; your originals are never written, and a source that changed while the work ran is never " +
       `delivered over. A custom method still runs in its own process (${F.customMethodSeconds} s, ` +
       `${F.customMethodMemoryMB} MB) under the import whitelist, and the independent checker still runs on every ` +
-      "copy; its results are kept beside it.",
+      "copy; its results are kept beside it. A raw XML edit is made as stated even when the result is markup " +
+      "Word repairs or will not open: the checks of the file say so on the copy, which is then delivered marked " +
+      "UNVERIFIED. It runs as a step of its own, so a plan that follows it is planned on the copy it made and " +
+      "checked as in any mode.",
   },
   {
     covers: ["A42", "A43", "B21"],

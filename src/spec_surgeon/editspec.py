@@ -370,7 +370,9 @@ def validate_spec(spec: Dict[str, Any]) -> None:
         if bad:
             raise SpecError(f"op #{i} ({o['op']}): unknown key(s) {sorted(bad)}; known: {sorted(OP_KEYS)}", "spec")
         if o["op"] not in OPS:
-            raise SpecError(f"op #{i}: unknown op {o['op']!r}; known: {sorted(OPS)}", "spec")
+            # (an operation of Obliterate mode alone is not named to a conversation that cannot use it)
+            raise SpecError(f"op #{i}: unknown op {o['op']!r}; known: "
+                            f"{sorted(n for n, c in OPS.items() if not c.obliterate_only)}", "spec")
         for k in ("select", "params", "expect"):
             if k in o and not isinstance(o[k], dict):
                 raise SpecError(f"op #{i} ({o['op']}): '{k}' must be an object", "spec")

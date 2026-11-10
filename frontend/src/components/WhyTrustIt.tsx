@@ -42,7 +42,9 @@ export default function WhyTrustIt({ onDeepDive }: { onDeepDive: () => void }) {
                 out an outcome plan you are shown — which runs in a sandbox on copies, predicts its own change, and must pass
                 the same checker. Obliterate mode lifts the formatting-only limit and the prediction (there the
                 program just does the work, the checker reports what it changed, and you approve the copies
-                themselves) and lets a failed check through, never the sandbox or the copies-only rule.
+                themselves) and lets a failed check through, never the sandbox or the copies-only rule. It also adds
+                one operation the other modes refuse, a raw XML edit: the checker proves that exactly the elements
+                the plan names changed as stated, and lists the words that changes before you approve.
               </>
             ),
           },

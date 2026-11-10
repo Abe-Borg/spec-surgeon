@@ -158,6 +158,8 @@ def expected() -> dict:
         "analysisMemoryMB": const("resources.py", "DEFAULT_ANALYSIS_MEMORY_MB"),
         "regexTimeoutSeconds": const("ops/patterns.py", "REGEX_TIMEOUT_S"),
         "maxPatternChars": const("ops/patterns.py", "MAX_PATTERN_CHARS"),
+        "xpathTimeoutSeconds": const("ops/edit_xml.py", "XPATH_TIMEOUT_S"),
+        "maxXPathChars": const("ops/edit_xml.py", "MAX_XPATH_CHARS"),
         "maxTableOrPictureMB": const("inputs.py", "MAX_BYTES") // MIB,
         "maxDocxMB": class_const("package_limits.py", "ArchiveLimits", "max_archive_bytes") // MIB,
         "wordTimeoutSeconds": int(const("render/word_worker.py", "DEFAULT_TIMEOUT")),
@@ -210,6 +212,9 @@ def test_secondary_sources_agree():
     # the checker's own deadline and length limit, written independently, are the same numbers
     assert const("verify/patterns.py", "V_REGEX_TIMEOUT_S") == f["regexTimeoutSeconds"]
     assert const("verify/patterns.py", "V_MAX_PATTERN_CHARS") == f["maxPatternChars"]
+    # and its own for a raw XML edit's XPath
+    assert const("verify/xmledit.py", "V_XPATH_TIMEOUT_S") == f["xpathTimeoutSeconds"]
+    assert const("verify/xmledit.py", "V_MAX_XPATH_CHARS") == f["maxXPathChars"]
     vp = re.search(r'"pages": \{"type": "array", "items": \{"type": "integer", "minimum": 1\}, "maxItems": (\d+)\}',
                    source("compiler.py"))
     assert vp and int(vp.group(1)) == f["viewPagesPerCall"], "view_pages' schema says the same page count"
@@ -280,7 +285,7 @@ def test_the_ledger_covers_the_facts_and_the_rule():
     for key in ("DEFAULT_SPENDING_LIMIT_USD", "AUTO_STEPS", "CHECK_INTERVAL", "SANDBOX_TIMEOUT", "DEFAULT_MEMORY_MB",
                 "MAX_CASES", "STOPPED_OUTPUT_RATE", "RETRY_DELAYS", "CONVERSATION_EFFORT", "RECOVERY_EFFORT",
                 "CODEGEN_EFFORT", "UNGUARDED_CHECK_ROUNDS", "SHOWN_ROUNDS", "STREAMED_TOOLS", "REGEX_TIMEOUT_S",
-                "MAX_PATTERN_CHARS",
+                "MAX_PATTERN_CHARS", "XPATH_TIMEOUT_S", "MAX_XPATH_CHARS",
                 "CONTEXT_WINDOWS", "DEFAULT_CONTEXT_TOKENS"):
         assert key in ledger, f"the ledger names no source for {key}"
 

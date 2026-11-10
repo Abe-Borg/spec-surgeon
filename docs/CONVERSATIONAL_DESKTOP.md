@@ -341,6 +341,36 @@ What it lifts (`Session.unguarded`; CLAUDE.md, "Modes"):
     come the copy's other changes, D1's sentences (`SampleView.changes`, `preview.shown_changes_lines`). The words
     list shows for a Default custom method too (which is formatting only, so it reads "No words change"); a Default
     method still predicts in `plan()`, is held to it by the whole suite, and shows **Checked**.
+- **The raw XML edit** (`edit_xml`, `ops/edit_xml.py`; the owner's decision of 2026-11-10, backlog O3). The one
+  built-in operation only this mode has: a part, an XPath, an exact count and one action (set or remove an
+  attribute; remove, replace or insert elements; set text; unwrap). It is a built-in operation, so it predicts first
+  — what it predicts is the edit itself, carried as the V10 assertion `xml_edit` with a digest of the places of the
+  selected elements — and it refuses what it cannot state exactly: another count than stated (`xml-count`), a part
+  that is missing, not XML, or the package's own bookkeeping (`xml-part`), an action an element cannot take or that
+  would change nothing (`xml-action`), an XPath past its deadline (`xpath-timeout`).
+  - **Proven by a twin.** `verify/xmledit.py` shares no code with the operation: it judges and evaluates the XPath
+    itself, checks the count and the places, refuses for itself what the operation had to refuse, makes the same
+    edit in its own copy of the source part and compares that with the copy's part whole (`markup.tree_difference`).
+  - **The words are listed, not predicted.** For the parts a raw edit changes (`raw_parts(plan)`), `verify/suite.py`
+    leaves the part's text to that whole-part comparison: V2 lists the part's changes without holding them to a
+    prediction (`data.raw_parts`), V3, the counts of V4 and V5b skip the part, and the record gains D1 "What
+    changed". Any other part is checked as always. `preview.raw_listing` reads that record into
+    `SampleView.text_changes` and `.changes` (`raw_xml` true), the chat says both before the button
+    (`DocumentTask._say_raw_changes`), and the model hears them with the next message. The copy is verified, never
+    UNPROVEN; the checks of the file itself still run, so an edit that breaks the schema, repeats a revision id or
+    leaves a reference pointing at nothing fails that check and the copy is delivered UNVERIFIED.
+  - **A step of its own.** It touches its part whole, so `editspec.stage_cuts` never merges it with another change
+    of that part, and it is never tracked. "Clear the obstacle, then the same plan" is explicit stages — a flat list
+    of ops is planned whole on the document as it is, so the plan's own refusal would come first: the case file
+    keeps the plan the document was set aside from (`DocumentTask._case_plan`, at most `CASE_PLAN` characters),
+    and the pass's note tells Claude to submit the edit as the first stage and that plan, unchanged, as the next
+    (`CLEAR_THEN_SAME`). Each stage is planned on the copy the one before it made and checked on its own.
+  - **This mode only.** `Op.obliterate_only`; `catalog.offered_ops` keeps it out of Safe's and Default's catalog,
+    schema, prompts and `describe_op`; the gate refuses a plan that names it outside Obliterate
+    (`compiler._mode_errors`, `[obliterate-only]`), in a spec, a stage or a layout; a custom method's writer is
+    never offered its assertion kind and may not assert it (`verify.xmledit.OP_ONLY_KINDS`, `codegen.hard_limits`).
+    Text it places (`set_text`'s text, the text inside `xml`) is traced like any Obliterate wording
+    (`compiler.placed_words`).
 - **Holding back.** A copy that fails a check is delivered to the run's `outputs/` instead of `failed/`, its record
   kept with every failure and V9 saying *delivered UNVERIFIED*; a chain's step hands its copy on and the chain's copy
   carries everything that failed. The preview already says so: a sample whose copy fails a check shows **Did not

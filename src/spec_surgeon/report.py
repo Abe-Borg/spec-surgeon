@@ -166,6 +166,36 @@ FAILURE_EXPLANATIONS: Dict[str, Tuple[str, str]] = {
         "nested repeats that tries every way to match before it gives up. The file was set aside before anything was "
         "changed. Simplify the pattern (anchored words, short character classes, no nested repeats) and run again.",
     ),
+    "xml-count": (
+        "Raw XML Edit Found Another Number of Elements",
+        "A raw XML edit (Obliterate mode) states exactly how many elements it changes, and in this file its XPath "
+        "selects a different number. Nothing was changed: the plan never touches more or fewer elements than were "
+        "approved. The reason gives the number found and the first elements; fix the XPath or the count and run again.",
+    ),
+    "xml-part": (
+        "Raw XML Edit Names a Part It Cannot Change",
+        "A raw XML edit (Obliterate mode) names a part this file does not have, one that is not XML, or one of the "
+        "package's own bookkeeping members (its relationships and content types), which a raw edit does not change. "
+        "Name the part as the file lists it.",
+    ),
+    "xml-action": (
+        "Raw XML Edit Cannot Be Done to a Selected Element",
+        "A raw XML edit (Obliterate mode) selects an element its action cannot be done to: the part's root removed or "
+        "replaced, an element inside another selected one, an attribute that is not there, text set on an element that "
+        "holds other elements, an element unwrapped that holds text of its own, or an edit that would leave every "
+        "selected element as it already is. The reason names the element; select the elements the action fits.",
+    ),
+    "xpath-timeout": (
+        "XPath Took Too Long",
+        "The XPath of a raw XML edit (Obliterate mode) ran for more than two seconds on this file's part. The file "
+        "was set aside before anything was changed. Select by the element's own name, attributes and children "
+        "rather than by a search of the whole part.",
+    ),
+    "obliterate-only": (
+        "Operation of Obliterate Mode Only",
+        "The plan names an operation that only Obliterate mode has (the raw XML edit). It was refused before anything "
+        "was planned. Obliterate mode is turned on in the window, after its warning.",
+    ),
     "conflict": (
         "Two Operations Touch the Same Thing",
         "Two operations in the spec would change the same paragraph, property or part; the engine never guesses an "

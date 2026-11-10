@@ -63,6 +63,9 @@ export const TRUST_FACTS = {
   // Text patterns in a plan (ops/patterns.py; the checker's twin verify/patterns.py)
   regexTimeoutSeconds: 2,
   maxPatternChars: 1000,
+  // A raw XML edit's XPath, Obliterate mode only (ops/edit_xml.py; the checker's twin verify/xmledit.py)
+  xpathTimeoutSeconds: 2,
+  maxXPathChars: 1000,
   // Attachments (inputs.py, package_limits.py)
   maxTableOrPictureMB: 20,
   maxDocxMB: 256,

@@ -3083,7 +3083,8 @@ def check_properties(src: VPackage, out: VPackage, plan: Dict[str, Any], source_
         if (src.read(part) != out.read(part) or ctx.expected_removed.get(part)) and part not in ctx.verified_parts:
             residual_parts.append(part)
             _residual_text_part(ctx, part, errs)
-    if ctx.styles_part and src.read(ctx.styles_part) != out.read(ctx.styles_part):
+    if (ctx.styles_part and ctx.styles_part not in ctx.verified_members       # (a kind compared the styles part whole)
+            and src.read(ctx.styles_part) != out.read(ctx.styles_part)):
         residual_parts.append(ctx.styles_part)
         _residual_styles(ctx, errs)
     residual_parts += _residual_members(ctx, errs)
@@ -3187,6 +3188,12 @@ KINDS.update(FOOTNOTE_KINDS)
 # custom methods: list label formatting at named levels
 from .numberinglabels import NUMBERING_LABEL_KINDS  # noqa: E402
 KINDS.update(NUMBERING_LABEL_KINDS)
+# Obliterate mode only (docs/BACKLOG.md O3): one stated change to the XML of one part, compared whole. A built-in
+# operation's kind alone (``OP_ONLY_KINDS``): no custom method's plan may assert it.
+from .xmledit import OP_ONLY_KINDS, XML_EDIT_CONTRACT, XML_EDIT_EXAMPLE, XML_EDIT_KINDS  # noqa: E402,F401
+KINDS.update(XML_EDIT_KINDS)
+KIND_CONTRACTS["xml_edit"] = XML_EDIT_CONTRACT
+KIND_EXAMPLES["xml_edit"] = XML_EDIT_EXAMPLE
 
 # every kind has a contract: a kind whose module wrote none gets that module's docstring, which states its reading
 for _kind_name, _kind_fn in KINDS.items():         # (not _name / _fn: those are this module's helpers)

@@ -368,6 +368,26 @@ export const OBLITERATE_OPERATIONS: readonly TypicalOperation[] = [
       "changes no words is said to change none. Create delivers the copies you were shown.",
   },
   {
+    task:
+      "Clear the one thing that stops a document — a content control bound to data, a text box, a field that will " +
+      "not resolve — then run the plan the other documents got",
+    can: "Yes, via a raw XML edit",
+    note:
+      "One stated change to the XML of one part: which elements (an XPath), exactly how many, and what is done to " +
+      "each. A document where the count differs is set aside untouched. The independent checker makes the same " +
+      "edit itself and compares the whole part, so nothing else in it changed. The words the edit changes are not " +
+      "predicted: they are listed from the copies, in the chat and under each preview, before you approve. The " +
+      "plan then runs as the next step on the copy the edit made, checked as in any mode.",
+  },
+  {
+    task: "Change markup no operation names: an attribute, a setting, an element of any part",
+    can: "Yes, via a raw XML edit",
+    note:
+      "Made exactly as stated, even when the result is markup Word repairs or will not open: the checks say so on " +
+      "the copy, and a copy that fails one is delivered marked UNVERIFIED. The file's own relationship and " +
+      "content-type parts are not edited this way; a custom method can change those.",
+  },
+  {
     task: "Deliver a copy that fails a check anyway",
     can: "Yes, marked UNVERIFIED",
     note:

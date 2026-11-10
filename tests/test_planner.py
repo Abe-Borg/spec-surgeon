@@ -125,12 +125,20 @@ def test_plan_batch_skips_the_spec_template(folder, tmp_path):
 
 
 def test_catalog_and_schema_cover_every_op():
+    # every operation a mode offers: Obliterate's catalog is every op; the other modes' leaves out the ones that are
+    # Obliterate's alone (``Op.obliterate_only``), from the entries and from the schema alike
+    for unguarded in (False, True):
+        cat = op_catalog(unguarded=unguarded)
+        offered = {name for name, cls in OPS.items() if unguarded or not cls.obliterate_only}
+        assert set(cat["ops"]) == offered
+        for name, entry in cat["ops"].items():
+            assert entry["description"] and entry["common_assumptions"], name
+        consts = [item["properties"]["op"]["const"]
+                  for item in cat["editspec_schema"]["properties"]["ops"]["items"]["oneOf"]]
+        assert sorted(consts) == sorted(offered)
+    assert set(op_catalog(unguarded=True)["ops"]) == set(OPS) and set(OPS) - set(cat["ops"]) == set()
     cat = op_catalog()
-    assert set(cat["ops"]) == set(OPS)
-    for name, entry in cat["ops"].items():
-        assert entry["description"] and entry["common_assumptions"], name
-    consts = [item["properties"]["op"]["const"] for item in cat["editspec_schema"]["properties"]["ops"]["items"]["oneOf"]]
-    assert sorted(consts) == sorted(OPS)
+    assert set(OPS) - set(cat["ops"]) == {"edit_xml"}
     assert {e["request"] for e in cat["worked_examples"]} >= {"change all font to Arial", "remove all headers and footers"}
     json.dumps(cat)
 

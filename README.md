@@ -326,7 +326,21 @@ mode you last used (Safe the first time; never Obliterate).
   list what it changes, as the checker read it, and **Create edited copies** delivers those same copies, never a
   new run of the method. A copy made this way is never called verified: it is delivered marked **UNPROVEN** (what
   it changed was shown to you, not proven), or **UNVERIFIED** when a check of its file failed. A document the method
-  could make no copy of says why on its card and goes on your to-do list. And a copy that fails a check is
+  could make no copy of says why on its card and goes on your to-do list. Claude may also plan a **raw XML edit**,
+  an operation the other modes do not have and refuse: one part of the file, an XPath that names elements of it,
+  exactly how many elements that is in this document, and one action for each (set or remove an attribute, remove,
+  replace, insert, set the text, or unwrap — the element goes and what it held stays). A document where the XPath
+  finds another number of elements is set aside untouched, with what it found. This is the cheap way past the one
+  thing a built-in operation refused to guess about — a text box in a paragraph to delete, a content control bound
+  to data, a field that will not resolve: the edit clears exactly that, and the plan the other documents got then
+  runs as the next step, checked as in any mode. The edit itself is proven: the independent checker finds the
+  elements with its own reading of the XPath, makes the same edit in its own copy of the part and compares the whole
+  part, so exactly those elements changed as stated and nothing else in that part did. What the edit does to the
+  words is not predicted; it is listed from the sample copies, in the chat and under each preview, before you
+  approve — the words added and removed, then what else changed. Such a copy is checked, not UNPROVEN; an edit that
+  leaves markup Word repairs or will not open is made as stated and fails the check of its file, and the copy is
+  then delivered marked **UNVERIFIED**. The file's own relationship and content-type parts are not edited this way.
+  And a copy that fails a check is
   delivered anyway, marked **UNVERIFIED**
   with the checks it failed, instead of being held back (the mark stays on every later copy built on it). What it
   costs: no proof that the rest of the file is untouched (a custom method's copy is checked only for being a file
@@ -338,8 +352,9 @@ mode you last used (Safe the first time; never Obliterate).
   also starts from the to-do list: **Obliterate this one**, beside a document there, opens the same warning and then
   turns the mode on for that one document, the request it was set aside from standing and every other document,
   copy and to-do entry left as it is. The assistant is then told what the engine recorded of that document (the
-  refusal, or the checks its copy failed) and may read a document of the same run that took the change as a worked
-  example. When a copy was made and held back because it failed a check, the chat offers **Use the copy that
+  refusal, or the checks its copy failed) and the plan the other documents got, and may read a document of the same
+  run that took the change as a worked example; where one thing stopped the document, it clears that with a raw XML
+  edit and runs the same plan as the next step. When a copy was made and held back because it failed a check, the chat offers **Use the copy that
   failed, marked UNVERIFIED**: after the app checks that this copy and the file it was made from are unchanged, it
   joins your edited copies as it is, with no AI call, and **Undo the last change** takes it off again.
   **Back to Default** (or any other mode) leaves
@@ -596,6 +611,12 @@ recorded for the requests that follow.
   mode lifts the plain-formatting limit and the prediction, and nothing about the sandbox: there the checker reports
   what a method changed and no check says the change is the one asked for (above, and
   [docs/CONVERSATIONAL_DESKTOP.md](docs/CONVERSATIONAL_DESKTOP.md)).
+- The raw XML edit exists in Obliterate mode only. Its XPath is XPath 1.0 over a fixed table of prefixes (others can
+  be declared with the edit), at most 1,000 characters, with 2 seconds to run on a part; inside `[ ]` it may not
+  start a path at the root of the part, and it may not use the `following` or `preceding` axis. It changes one XML
+  part per edit, never the package's relationship or content-type parts, and is never tracked. To clear an obstacle
+  and then run a plan, the two are separate steps of one request; a plan whose template operation carries bindings
+  cannot follow another step, so that case is two requests.
 - The installer is unsigned: the checksum checks prove the download is the file the release lists, not who published it.
 - Costs shown for Claude calls are estimates from a built-in price table.
 - The structure reader knows seven numbered levels (PART, article and five below); PageFormat's eighth and ninth

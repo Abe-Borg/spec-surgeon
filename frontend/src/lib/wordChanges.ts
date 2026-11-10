@@ -19,6 +19,10 @@ export interface WordChangeLine {
 
 export const NO_WORDS_CHANGE = "No words change: the checker read the same words in this copy as in the original.";
 export const WORDS_CHANGE_TITLE = "Words the method changes, as the independent checker read them:";
+/** The same two sentences for a plan with a raw XML edit (`samples[].raw_xml`): its words are listed, not predicted. */
+export const RAW_NO_WORDS_CHANGE =
+  "The raw XML edit changes no words: the checker read the same words in this copy as in the original, in the parts it edits.";
+export const RAW_WORDS_CHANGE_TITLE = "Words the raw XML edit changes, as the independent checker read them:";
 
 const quote = (words: string[]): string => words.map((w) => `\u201c${w}\u201d`).join(", ");
 
