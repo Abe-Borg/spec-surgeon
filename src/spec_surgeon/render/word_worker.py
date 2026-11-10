@@ -237,7 +237,7 @@ def _worker(connection, request):
                     # (saved in a folder of its own: never over the private copy Word has open, whatever its name)
                     (scratch / "out").mkdir(exist_ok=True)
                     report = ws.run_actions(Path(request["source"]), scratch / "out" / "edited.docx",
-                                            request["actions"])
+                                            request["actions"], password=request.get("password"))
                     result = {"ok": True, "version": version, "report": report}
                 else:
                     raise ValueError("unknown Word worker action")
@@ -255,10 +255,11 @@ def _worker(connection, request):
             connection.close()
 
 
-def run_word(action, source, *, pdf=None, timeout=None, actions=None, output=None):
+def run_word(action, source, *, pdf=None, timeout=None, actions=None, output=None, password=None):
     """Run through startup, COM work and Quit within one deadline; publish only success. ``actions`` and ``output``
     (the ``actions`` action): the named Word actions to run on ``source``, in order, and where the copy Word saves is
-    published once Word has closed."""
+    published once Word has closed. ``password`` (the rescue at attach): what Word opens the copy with; it goes to the
+    worker in its request, in memory, and is written nowhere."""
     seconds = _timeout(timeout)
     source = Path(source).resolve()
     context = multiprocessing.get_context("spawn")
@@ -266,7 +267,8 @@ def run_word(action, source, *, pdf=None, timeout=None, actions=None, output=Non
         scratch = Path(directory)
         receive, send = context.Pipe(duplex=False)
         request = {"action": action, "source": str(source), "scratch": str(scratch), "context": diag.context(),
-                   "actions": [str(a) for a in actions or []]}
+                   "actions": [str(a) for a in actions or []],
+                   **({} if password is None else {"password": str(password)})}
         process = context.Process(target=_worker, args=(send, request), name="SpecSurgeon-Word")
         owned_handle = None
         failed = True

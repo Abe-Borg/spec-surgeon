@@ -45,7 +45,7 @@ QUIET_ROUTES = frozenset({"/api/state", "/api/update", "/api/image", "/api/healt
 SLOW_REQUEST_MS = 2000
 WAITS_ON_USER = frozenset({"/api/pick", "/api/part/save"})    # a native dialog: slow because the user takes their time
 KNOWN_FAILURES = {"ValueError", "TrialsFailed", "TransformFailed", "SpecError", "FileNotFoundError", "PermissionError"}
-MODEL_FREE_JOBS = ("word_actions",)      # jobs that call no AI in a conversation mode: Stop ends the job itself
+MODEL_FREE_JOBS = ("word_actions", "rescue")     # jobs that call no AI in a conversation mode: Stop ends the job itself
 NOT_BUILT = """<!doctype html><meta charset="utf-8"><title>Spec Surgeon</title>
 <body style="font-family:system-ui;margin:3rem;max-width:40rem"><h1>Spec Surgeon</h1>
 <p>The window's page has not been built. From the project folder:</p>
@@ -328,7 +328,11 @@ class WindowState:
             attachments.append({"path": a["path"], "name": Path(a["path"]).name,
                                 "kind": "template" if a["template"] else "reference" if a.get("reference") else "document",
                                 "state": a["state"], "notes": list(a["notes"]), "reason": a["reason"],
-                                "current": a.get("current", a["path"])})
+                                "current": a.get("current", a["path"]),
+                                # Obliterate's rescue at attach: what Try to rescue would try for this refused
+                                # document (Obliterate mode alone), and the permanent mark of a rescued one
+                                **({"rescue": a["rescue"]} if a.get("rescue") else {}),
+                                **({"salvaged": dict(a["salvaged"])} if isinstance(a.get("salvaged"), dict) else {})})
         messages = [{"id": f"m{i}", "role": m["role"], "text": m["text"], "at": m.get("at")}
                     for i, m in enumerate(raw["messages"])]
         plan = {"groups": raw["groups"], "targets": raw["targets"], "set_aside": raw["set_aside"],
@@ -363,8 +367,10 @@ class WindowState:
             entry = exported.get(output) or {}
             return {"saved_to": entry.get("to", "") if state in ("saved", "changed", "replaced") else "",
                     "changed_since_saved": state == "changed", "saved_file_changed": state == "replaced"}
+        salvaged = raw.get("salvaged") or {}
         results = [{"source": source, "output": output, "name": Path(output).name,
-                    "unverified": list(unverified.get(source, [])), **saved(output)}
+                    "unverified": list(unverified.get(source, [])), **saved(output),
+                    **({"salvaged": salvaged[source]} if salvaged.get(source) else {})}
                    for source, output in raw["results"].items()]
         return {"version": self.version, "busy": busy, "stage": stage, "mode": raw.get("mode", "default"),
                 "hands_on": raw.get("hands_on") is True,
@@ -745,6 +751,8 @@ def create_app(state: WindowState, *, dev: bool = False) -> FastAPI:
         except ValueError as e:
             return error(str(e))
         kind = str(body.get("kind") or "documents")
+        if kind == "documents" and state.task.mode == "obliterate":
+            kind = "rescuable"                   # Obliterate alone: a .doc or .docm can be attached, to be rescued
         paths = state.shell.pick_files(kind)
         if paths is None:
             return error("This window has no native file dialog; drop the files on the page instead.", 501)
@@ -1002,6 +1010,37 @@ def create_app(state: WindowState, *, dev: bool = False) -> FastAPI:
         except OSError as e:
             return error(upload_failure(name, e))
         return stream("replace_part", path=path, part=part, file=str(target))
+
+    # ---- Obliterate's rescue at attach (docs/WEB_API.md, "Try to rescue"; ``rescue.py``) ----
+    @app.post("/api/rescue")
+    async def rescue(request: Request):
+        """**Try to rescue**: ``{"path", "password"?}`` — the one thing that could make a refused document a file the
+        engine takes, tried on a copy; what comes of it is attached in the refused file's place, marked SALVAGED. A
+        job, as a button's ``/api/recipe``, with no AI call. ``password`` is for an encrypted document: it is handed
+        to Word for this one attempt and is never stored, journalled or logged (no route logs a body). Refused
+        outside Obliterate mode, and for a file that is not a refused document with something to try."""
+        if state.busy:
+            return busy_error()
+        if state.tutorial.active:
+            return error("End the tour first; this attaches a document to your own conversation.", 409)
+        try:
+            body = await json_object(request)
+            path = str(body.get("path") or "")
+            password = body.get("password")
+            if password is not None and not isinstance(password, str):
+                raise ValueError("The password must be text.")
+            task = state.task
+            if task.mode != "obliterate":
+                raise ValueError("Try to rescue is Obliterate mode's: turn Obliterate on first.")
+            found = next((a for a in task.attachments if str(a.path) == str(Path(path)) and not a.template
+                          and not a.reference), None)
+            if found is None:
+                raise ValueError("That file is not attached.")
+            if not found.refused or not found.rescue:
+                raise ValueError(f"There is nothing to rescue in {found.path.name}.")
+        except ValueError as e:
+            return error(str(e))
+        return stream("rescue", path=path, password=password or "")
 
     # ---- Obliterate's named Word actions (docs/WEB_API.md, "Word actions"; ``word_actions.py``) ----
     @app.post("/api/word-actions")

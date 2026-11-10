@@ -98,7 +98,12 @@ function HowToUse({ onStartTourAt }: { onStartTourAt: (chapter: string) => void 
                   that copy as it is with no AI call. The warning also carries one box, empty every time:{" "}
                   <Tag>Also turn on the hands-on tools</Tag>. {HANDS_ON_SAYS.join(" ")} While the mode is on, each
                   document also carries <Tag>Word actions</Tag>: {WORD_SAYS.join(" ")} A document Word cannot
-                  finish, or finds nothing to do in, gets no copy and the reason.
+                  finish, or finds nothing to do in, gets no copy and the reason. A file the app refused when you
+                  attached it carries <Tag>Try to rescue</Tag> in this mode (and an old .doc or a .docm can be
+                  attached to be rescued): the app mends it or has Word convert or repair a private copy, your file
+                  is never changed, and what comes of it is attached marked Salvaged, a mark it and its copies keep
+                  because nothing can prove the rescue kept everything. A password you type for it goes to Word
+                  for that one attempt and is kept nowhere; the rescued document has none.
                 </>
               ),
             },

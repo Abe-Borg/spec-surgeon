@@ -24,6 +24,8 @@ BACKGROUNDS = {"clay": "#262624", "blueprint": "#121a26", "graphite": "#1b1d1f",
                "linen": "#f5f1ea"}
 MIN_SIZE = (1100, 700)
 FILE_TYPES = {"documents": ("Word documents (*.docx)",), "template": ("Word documents (*.docx)",),
+              # Obliterate mode alone (``/api/pick``): a .doc or .docm is attached refused, with Try to rescue
+              "rescuable": ("Word documents (*.docx;*.doc;*.docm)",),
               "references": ("Pictures and tables (*.png;*.jpg;*.jpeg;*.gif;*.bmp;*.xlsx;*.csv;*.json)",)}
 
 

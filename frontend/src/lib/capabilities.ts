@@ -91,6 +91,9 @@ export const END_USER_CAPABILITIES = [
   "word.actions",
   "word.run",
   "word.every",
+  // Obliterate's rescue at attach (a refused document; no AI)
+  "rescue.try",
+  "rescue.password",
   "window.reload",
 ] as const;
 

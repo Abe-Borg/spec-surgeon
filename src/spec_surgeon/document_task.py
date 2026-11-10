@@ -25,6 +25,7 @@ import contextlib
 import json
 import os
 import re
+import shutil
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -37,6 +38,7 @@ from . import diagnostics as diag
 from . import llm, review_display, saved_recipes, stopping
 from .gui import Session
 from .inputs import KINDS as REFERENCE_KINDS
+from .rescue import FORMATS as RESCUE_FORMATS
 from .recovery_state import atomic_json
 from .resources import DEFAULT_MAX_CALLS, DEFAULT_MAX_OUTPUT_TOKENS
 from .settings import spending_check
@@ -73,6 +75,10 @@ HANDS_ON_ON = ("Hands-on tools are on. Parts, beside each document, shows the pa
 HANDS_ON_OFF = "Hands-on tools are off."
 HANDS_ON_NEEDED = "The hands-on tools are off. Obliterate mode's warning turns them on, or its strip above the message box."
 PART_ONLY_THERE = "The part was replaced in {name} only; this document was not asked about."
+# Obliterate's rescue at attach (the owner's decision of 2026-11-10; docs/BACKLOG.md O6)
+RESCUE_OBLITERATE_ONLY = "Try to rescue is Obliterate mode's: turn Obliterate on first."
+SALVAGED_MEANS = ("the app rescued it from {name}, a file it could not read as it was, so nothing proves the rescued "
+                  "document holds everything that file did; its copies are checked against the rescued document")
 # Obliterate's named Word actions (the owner's decision of 2026-11-10; docs/BACKLOG.md O5), picked from the menu
 WORD_ONLY_THERE = "Word ran its actions on {name} only; this document was not asked about."
 WORD_LABEL = "Word actions"
@@ -138,6 +144,8 @@ STOPPED = {
                "and none of this run's did. The preview is still waiting; create the copies again, or discard it."),
     "export": ("Stopped. Nothing was saved: the files are written only once every one is made and checked. Your "
                "edited copies are as they were."),
+    "rescue": ("Stopped. Nothing was rescued: the file is as it was, still refused, and nothing else in this "
+               "conversation changed."),
 }
 # said when the app takes a custom method on its own (``_collect_conversation``), Claude's proposal after it
 CUSTOM_METHOD_WRITTEN = ("Claude is writing a one-off custom method for this and trying it on copies of your documents; "
@@ -299,6 +307,13 @@ class Attachment:
     notes: List[str] = field(default_factory=list)
     reason: str = ""                        # the refusal, one sentence
     pattern_id: str = ""
+    # Obliterate's rescue at attach (``rescue.py``; docs/BACKLOG.md O6). ``rescue``: what could be tried for this
+    # refused document (``rescue.KINDS``; '' when nothing can), read once when the file is checked and offered in
+    # Obliterate mode alone. ``salvaged``: this document IS a rescue's result — the file it was rescued from, what
+    # was done and what the user must know — a mark it keeps for as long as it is attached, on itself and on every
+    # copy made from it; kept in the journal.
+    rescue: str = ""
+    salvaged: Optional[Dict[str, Any]] = None
 
     @property
     def refused(self) -> bool:
@@ -306,7 +321,8 @@ class Attachment:
 
     def to_dict(self) -> Dict[str, Any]:
         return {"path": str(self.path), "template": self.template, "reference": self.reference, "state": self.state,
-                "notes": list(self.notes), "reason": self.reason, "pattern_id": self.pattern_id}
+                "notes": list(self.notes), "reason": self.reason, "pattern_id": self.pattern_id,
+                **({"salvaged": dict(self.salvaged)} if self.salvaged else {})}
 
 
 def _fingerprint(value):
@@ -340,8 +356,25 @@ def triage(path: Path, *, template: bool = False) -> Attachment:
     except ImportError:                     # the triage module is optional until it ships with the package
         return Attachment(Path(path), template=template)
     found = triage_file(path)
+    kind = ""
+    if found.refused and not template:
+        from . import rescue
+        kind = rescue.kind_of(Path(path), getattr(found, "code", ""))
     return Attachment(Path(path), template=template, state=found.state, notes=list(found.notes),
-                      reason=found.reason, pattern_id=getattr(found, "pattern_id", "") or "")
+                      reason=found.reason, pattern_id=getattr(found, "pattern_id", "") or "", rescue=kind)
+
+
+def _restored_salvaged(value) -> Optional[Dict[str, Any]]:
+    """A journal's record of a rescued document, in the shape ``DocumentTask._rescue`` wrote it; None for anything
+    else (the document is then attached with no mark only if its file never was a rescue's, which a journal the app
+    wrote cannot say)."""
+    if not isinstance(value, dict) or not isinstance(value.get("from"), str):
+        return None
+    strings = lambda v: isinstance(v, list) and all(isinstance(x, str) for x in v)  # noqa: E731
+    if not strings(value.get("steps", [])) or not strings(value.get("notes", [])):
+        return None
+    return {"from": value["from"], "kind": str(value.get("kind") or ""), "steps": list(value.get("steps", [])),
+            "notes": list(value.get("notes", []))}
 
 
 def _md5(data: bytes) -> str:
@@ -608,6 +641,7 @@ class DocumentTask:
         self._resume_recovery = None
         self._resume_layouts = []           # layout batch folders still to recover, from the journal
         self._words_said_for = None         # the custom method's preview whose word changes the chat has said
+        self.archive_limits: Dict[str, int] = {}    # the size limits a rescue raised for this window (journalled)
         self._raw_said_for = None           # the plan's preview whose raw XML edit the chat has said the words of
         self.hands_on = False               # Obliterate's hands-on tools: on only while the mode is, never kept
         self._parts_reader = None           # (the file's identity, ``hands_on.Reader``): the file the browser is on
@@ -794,6 +828,8 @@ class DocumentTask:
             path = Path(value).resolve()
             suffix = path.suffix.lower()
             usable = suffix == ".docx" or (not template and suffix in REFERENCE_KINDS)
+            if not template and self.mode == "obliterate" and suffix in RESCUE_FORMATS:
+                usable = True                    # Obliterate alone: attached refused, with Try to rescue beside it
             if not path.is_file() or not usable or path.name.startswith("~$"):
                 raise ValueError(f"Choose a Word .docx file: {path.name}" if template else
                                  f"Choose Word .docx documents, pictures (.png, .jpg, .gif, .bmp) or tables (.xlsx, .csv, "
@@ -823,7 +859,8 @@ class DocumentTask:
             # Every file is triaged before any is attached: an exception from one (the stress test's F6, a malformed
             # zip beside a valid document) leaves the attachments, the fresh list, the pass and the session as they
             # were. A triage refusal is not an exception: the file is attached, refused, with its reason.
-            found = [(path, triage(path) if path.suffix.lower() == ".docx" else triage_reference(path))
+            found = [(path, triage(path) if path.suffix.lower() in (".docx", *RESCUE_FORMATS)
+                      else triage_reference(path))
                      for path in checked if path not in known]
             for path, attachment in found:
                 self.attachments.append(attachment)
@@ -1003,6 +1040,14 @@ class DocumentTask:
             missing = [Path(d).name for d in docs if d not in carrying]
             lines.append(f"{summary} (not in {', '.join(missing)})" if len(missing) <= len(carrying) else
                          f"{summary} (only in {', '.join(Path(d).name for d in carrying)})")
+        # a document the app rescued at attach (Obliterate's Try to rescue): whatever mode plans on it hears that the
+        # rescue itself is unproven, as the user is told on the document and on each of its copies
+        for d in docs:
+            record = self._salvaged_of(d)
+            if record:
+                lines.append(f"{Path(d).name} is SALVAGED: the app rescued it from {record['from']}, a file it could "
+                             "not read as it was, so nothing proves it holds everything that file did; plan on it "
+                             "with that in mind")
         # a copy delivered UNVERIFIED (Obliterate mode), or built on one: the model plans on a copy whose content the
         # checks could not vouch for, and must hear so — the mark says which checks failed, and where
         for d in docs:
@@ -1578,7 +1623,7 @@ class DocumentTask:
 
     def perform(self, action, *, text="", token="", choice_id="", chip=False, hold=(), wording=None, recipe="",
                 inputs=None, skip=(), kind="", folder="", steps=None, rev=None, path="", part="", file="",
-                actions=(), every=False, log=lambda _: None, events=None):
+                actions=(), every=False, password="", log=lambda _: None, events=None):
         """Worker entry point. One ledger covers every nested model call and every turn. ``events`` is the window's
         live channel (docs/WEB_API.md: status, activity, text_delta, thinking_delta, message, plan, samples, results,
         question, cost); without one the job runs silently and the view says everything at the end. ``hold`` (the
@@ -1593,7 +1638,9 @@ class DocumentTask:
         the part's place: Obliterate's hands-on tools, a plan the app builds with no AI call (``_replace_part``).
         ``path``, ``actions`` and ``every`` (the ``word_actions`` action) are a document, the named Word actions to
         run on its copy in order, and whether every other document in scope gets them too: Obliterate's menu of Word
-        actions, a plan the app builds with no AI call (``_word_actions``)."""
+        actions, a plan the app builds with no AI call (``_word_actions``). ``path`` and ``password`` (the ``rescue``
+        action) are a refused document and, when it is encrypted, the password Word opens it with — handed to Word
+        and kept nowhere (``_rescue``)."""
         self.problem = ""
         self._events = events
         self.save(in_progress=True)
@@ -1634,6 +1681,8 @@ class DocumentTask:
                     self._replace_part(path, part, file, checkpointed_log)
                 elif action == "word_actions":
                     self._word_actions(path, actions, every, checkpointed_log)
+                elif action == "rescue":
+                    self._rescue(path, password, checkpointed_log)
                 else:
                     raise ValueError("Unknown task action")
         except stopping.Stopped:
@@ -1666,6 +1715,9 @@ class DocumentTask:
         what the job left in its scratch folder is never read as a result."""
         if action == "export":
             self.say(STOPPED["export"])
+        elif action == "rescue":
+            # Obliterate's Try to rescue: nothing was attached, so nothing that was planned or shown is touched
+            self.say(STOPPED["rescue"])
         elif action == "primary" and self.stage == "preview":
             self.todo = todo
             self._pending_undo = self._pending_steps = None
@@ -2183,6 +2235,118 @@ class DocumentTask:
         s._set_outcome(spec=outcome, source="hands-on", left_out=list(left_out), left_out_reasons=left_out)
         diag.event("task.replace_part", document=attachment.path.name, part=part, bytes=chosen.stat().st_size)
         self._settle(log)
+
+    # ---- Obliterate's rescue at attach (docs/BACKLOG.md O6) ----
+    def _salvaged_of(self, origin: str) -> Optional[Dict[str, Any]]:
+        """The rescue record of the attached document ``origin`` (its path), or None: it is an ordinary document."""
+        found = next((a for a in self.attachments if str(a.path) == str(origin) and not a.template
+                      and not a.reference), None)
+        return found.salvaged if found is not None else None
+
+    def salvaged_line(self, origin: str) -> str:
+        """What the SALVAGED mark of a document, or of a copy made from it, says; '' for an ordinary one."""
+        record = self._salvaged_of(origin)
+        return f"SALVAGED: {SALVAGED_MEANS.format(name=record['from'])}." if record else ""
+
+    def _rescue(self, path, password, log):
+        """**Try to rescue** (Obliterate mode alone; ``rescue.py``): the one thing that could make a refused
+        document a file the engine takes — the app's own mending, or Word converting or repairing a private copy —
+        and, when a document comes of it, that document attached in the refused file's place with its permanent
+        mark, SALVAGED (``Attachment.salvaged``). The user's file is read and never written. ``password``: what Word
+        opens an encrypted file with, for this one attempt; it is handed to ``rescue.rescue_file`` and to nothing
+        else — no message, journal, log or model sees it. No AI call. A rescue that makes no document says why and
+        leaves the refused file as it was; one that only raises this window's size limits attaches the user's own
+        file, unmarked (nothing in it changed)."""
+        from . import rescue
+        if self.mode != "obliterate":
+            raise ValueError(RESCUE_OBLITERATE_ONLY)
+        key = Path(str(path))
+        attachment = next((a for a in self.attachments if a.path == key and not a.template and not a.reference),
+                          None)
+        if attachment is None:
+            raise ValueError("That file is not attached.")
+        name = attachment.path.name
+        if not attachment.refused or not attachment.rescue:
+            raise ValueError(f"There is nothing to rescue in {name}.")
+        blocked = self._recovery_blocked()
+        if blocked:
+            self._revision += 1
+            self.say(f"{rescue.LABEL}: {blocked}")
+            return
+        kind = attachment.rescue
+        secret = password if isinstance(password, str) and password else None
+        if kind == "password" and secret is None:
+            self._revision += 1
+            self.say(f"{rescue.LABEL}: {name} is protected with a password. Press {rescue.LABEL} again and type it: "
+                     f"it is given to Word for this one attempt and kept nowhere.")
+            return
+        self._emit({"type": "status", "kind": "checking", "text": "Trying to rescue the file…"})
+        log(f"Trying to rescue {name} ({kind})…")
+        work = Path(self.session.out_root) / "rescued" / time.strftime("%Y%m%d-%H%M%S")
+        n = 2
+        while work.exists():
+            work, n = work.with_name(f"{work.name.split('-r')[0]}-r{n}"), n + 1
+        limits = rescue.limits_now()
+        try:
+            done = rescue.rescue_file(attachment.path, kind, work, password=secret)
+            # Stop pressed while the file was being mended or converted: nothing is attached, and nothing that
+            # was planned or shown is touched (``_stopped``)
+            stopping.check("the rescue")
+        except stopping.Stopped:
+            rescue.restore_limits(limits)
+            shutil.rmtree(work, ignore_errors=True)
+            raise
+        except rescue.NeedsPassword as why:
+            shutil.rmtree(work, ignore_errors=True)      # (the app's own folder, made a moment ago and empty of use)
+            attachment.rescue = "password"       # now known: the next press asks for it before Word is tried
+            self._revision += 1
+            self.say(f"{rescue.LABEL}: {why} " + ("Press it again and type the password; it is given to Word for "
+                                                  "that one attempt and kept nowhere." if not why.wrong else
+                                                  "Nothing was rescued; press it again to try another."))
+            diag.event("task.rescue", document=name, kind=kind, outcome="needs-password", wrong=why.wrong)
+            self.save()
+            return
+        except rescue.RescueFailed as why:
+            shutil.rmtree(work, ignore_errors=True)
+            self._revision += 1
+            self.say(f"{rescue.LABEL}: {name} was not rescued. {str(why).rstrip('.')}. The file is as it was.")
+            diag.event("task.rescue", document=name, kind=kind, outcome="failed")
+            self.save()
+            return
+        at = self.attachments.index(attachment)
+        self.attachments.remove(attachment)
+        if done.limits:
+            self.archive_limits.update(done.limits)
+        target = done.path if done.path is not None else attachment.path
+        try:
+            self.attach([target])
+        except ValueError as why:                # (a rescued file the window cannot attach after all)
+            self.attachments.insert(at, attachment)
+            self._sync()
+            self._revision += 1
+            self.say(f"{rescue.LABEL}: {name} was not rescued. {why}")
+            self.save()
+            return
+        fresh = next((a for a in self.attachments if a.path == Path(target).resolve() and not a.template
+                      and not a.reference), None)
+        if fresh is not None:
+            self.attachments.remove(fresh)       # in the refused file's own place in the list
+            self.attachments.insert(min(at, len(self.attachments)), fresh)
+            if done.path is not None:
+                fresh.salvaged = {"from": name, "kind": done.kind, "steps": list(done.steps),
+                                  "notes": list(done.notes)}
+        self._sync()
+        self._revision += 1
+        if done.path is None:
+            self.say(f"Opened {name} past the size limit. " + " ".join(done.steps) + " Nothing in the file was "
+                     "changed, so it carries no mark; the limits stay raised until this window closes.")
+        else:
+            self.say(f"Rescued {name}. " + " ".join(done.steps) + f" It is attached as {Path(target).name}, marked "
+                     f"{rescue.MARK}; your file was read and not changed. {done.holds} {rescue.UNPROVEN}"
+                     + "".join(f" {note}" for note in done.notes))
+        diag.event("task.rescue", document=name, kind=kind, outcome="rescued" if done.path else "limits",
+                   steps=len(done.steps))
+        self.save()
 
     # ---- Obliterate's named Word actions (docs/BACKLOG.md O5) ----
     def word_menu(self) -> Optional[Dict[str, Any]]:
@@ -3710,7 +3874,9 @@ class DocumentTask:
 
     def _results_view(self) -> List[Dict[str, Any]]:
         return [{"source": source, "output": output, "name": Path(output).name,
-                 "unverified": list(self.unverified.get(source, []))}
+                 "unverified": list(self.unverified.get(source, [])),
+                 # a copy of a document the app rescued carries that document's mark, for good
+                 **({"salvaged": line} if (line := self.salvaged_line(source)) else {})}
                 for source, output in self.results.items()]
 
     def view(self):
@@ -3823,7 +3989,10 @@ class DocumentTask:
                 "failed_copies": failed_copies,
                 "can_hold": self.stage == "preview" and s.recovery is None,
                 "copies_to_create": copies, "unpreviewed": unpreviewed,
-                "attachments": [{**a.to_dict(), "current": str(self.current_of(a.path))} for a in self.attachments],
+                "attachments": [{**a.to_dict(), "current": str(self.current_of(a.path)),
+                                 # what Try to rescue would try for a refused document: Obliterate mode alone
+                                 **({"rescue": a.rescue} if self.mode == "obliterate" and a.refused and a.rescue
+                                    else {})} for a in self.attachments],
                 "groups": groups,
                 "effects": [c for g in groups for c in g["changes"]],
                 "assumptions": list(dict.fromkeys(a for g in groups for a in g["assumptions"])),
@@ -3838,6 +4007,9 @@ class DocumentTask:
                 "warnings": list(dict.fromkeys(warnings)), "worth_knowing": worth_knowing(pages),
                 "results": dict(self.results),
                 "unverified": {k: list(v) for k, v in self.unverified.items()},
+                # the copies of a document the app rescued, each with what its mark says (none: the key is absent)
+                **({"salvaged": lines} if (lines := {k: line for k in self.results
+                                                    if (line := self.salvaged_line(k))}) else {}),
                 "exported": {k: dict(v) for k, v in self.exported.items()}, "export_folder": self.export_folder,
                 "export_state": states,
                 "unsaved": [path for path, state in states.items() if state != "saved"],
@@ -4061,14 +4233,15 @@ class DocumentTask:
         self.export_folder = str(folder)
         self.say(self._export_said(kind, folder, len(plan), already, missing, renderer,
                                    sum(1 for origin, *_ in plan if failed_marks(self.unverified.get(origin))),
-                                   sum(1 for origin, *_ in plan if unproven_only(self.unverified.get(origin)))))
+                                   sum(1 for origin, *_ in plan if unproven_only(self.unverified.get(origin))),
+                                   sum(1 for origin, *_ in plan if self._salvaged_of(origin))))
         result = {"folder": str(folder), "kind": kind, "saved": saved, "already": already, "missing": missing}
         self.save()
         return result
 
     @staticmethod
     def _export_said(kind: str, folder: Path, count: int, already: int, missing: Dict[str, str], renderer: str,
-                     shaky: int, shown: int = 0) -> str:
+                     shaky: int, shown: int = 0, salvaged: int = 0) -> str:
         """What the chat says after an export: what was saved where, what was already there, and each document
         without a file with why."""
         there = f" ({already} already there, unchanged)" if already else ""
@@ -4090,6 +4263,9 @@ class DocumentTask:
         if shown:
             said += (f" {shown} {'was' if shown == 1 else 'were'} made from an edited copy marked UNPROVEN: a custom "
                      f"method made it, and what it changed was shown to you, not proven.")
+        if salvaged:
+            said += (f" {salvaged} {'was' if salvaged == 1 else 'were'} made from a document the app rescued "
+                     f"(SALVAGED): nothing proves the rescued document holds everything the file it came from did.")
         if missing:
             said += " Not saved: " + "; ".join(f"{name} — {str(why).rstrip('.')}" for name, why in missing.items()) + "."
         return said
@@ -4113,6 +4289,7 @@ class DocumentTask:
             "pending_undo": self._pending_undo, "pending_steps": self._pending_steps,
             "recipe_run": self.session.outcome_source in OWN_PLANS,
             "exported": self.exported, "export_folder": self.export_folder,
+            **({"archive_limits": dict(self.archive_limits)} if self.archive_limits else {}),
             "budget": self._budget.to_dict(), "request": self._request_budget.to_dict(), "in_progress": in_progress})
 
     def _kept_run_steps(self) -> Dict[str, Dict[str, Any]]:
@@ -4294,6 +4471,13 @@ class DocumentTask:
             if not isinstance(entries, list) or not all(isinstance(e, dict) and isinstance(e.get("path"), str)
                                                         for e in entries):
                 raise ValueError("The saved conversation could not be read.")
+        # the size limits a rescue raised for this window (Obliterate's Try to rescue) are raised again first: a
+        # document attached past them opens as it did
+        limits = data.get("archive_limits")
+        if isinstance(limits, dict) and all(isinstance(k, str) and type(v) is int for k, v in limits.items()):
+            from . import rescue
+            rescue.apply_limits(limits)
+            self.archive_limits = dict(limits)
         # Attachments are triaged again: a file may have changed, moved or been fixed since.
         self.attachments = []
         for entry in entries:
@@ -4301,6 +4485,8 @@ class DocumentTask:
             template, reference = bool(entry.get("template")), bool(entry.get("reference"))
             if path.is_file():
                 self.attachments.append(triage_reference(path) if reference else triage(path, template=template))
+                if not template and not reference:       # a rescued document keeps its mark
+                    self.attachments[-1].salvaged = _restored_salvaged(entry.get("salvaged"))
             else:
                 self.attachments.append(Attachment(path, template=template, reference=reference, state="refused",
                                                    reason=f"{path.name} is no longer at {path.parent}."))

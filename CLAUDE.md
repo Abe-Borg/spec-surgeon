@@ -164,6 +164,32 @@ machine has Word: `tests/fake_word.py` stands behind the one seam (`word_actions
 whole file again as Word does; what Word itself does with a real document is the owner's real-file run. Pinned by
 `tests/test_word_actions.py`.
 
+Obliterate also has **a rescue at attach** (the owner's decision, 2026-11-10; `rescue.py`): a document the
+attach-time check refuses (`triage.Triage.code` says why, in one word, for this alone) carries **Try to rescue**, and
+a `.doc` or `.docm` can be attached there to be rescued (`rescue.FORMATS`; `DocumentTask.attach` takes them in
+Obliterate alone, and the native dialog offers them, `/api/pick` `rescuable`). `rescue.kind_of` names the one thing
+to try: the app's own, with no Word — `doctype` (each part with a document type declaration parsed with entities
+unresolved, no DTD loaded and no network, and written again from its root; refused when the part uses an entity the
+declaration defines: that text exists nowhere else), `no-paragraph` (one empty paragraph added to the body),
+`too-large` (nothing written: the archive limits the file is past raised in this process's environment, to
+`HEADROOM` times what it measures and never past `CEILING`; `DocumentTask.archive_limits`, journalled, raised again
+at a restart) — or Word's, through the same seam as the Word actions (`word_actions.run_word_actions`, the worker's
+`convert` and `repair`, a private copy, macros disabled): `format` (`.doc`, `.docm`), `strict`, `unopenable`, and
+`password` (an encrypted document, `rescue.encrypted`, or any file Word answers with its password error). **The
+password is handed to Word for that one attempt and written nowhere** — no message, view, journal, log, span or
+model; Word is always given one (`NO_PASSWORD` when none was typed) so it never stops to ask behind a hidden window.
+What Word saves is checked by `triage_file` and mended once more by the app if that is all it lacks (`MAX_STEPS`).
+A document that comes of it is written under the scratch folder's `rescued\`, attached in the refused file's place
+(`DocumentTask._rescue`, `/api/rescue`; a job with no AI: Stop ends it and touches nothing else) and carries
+`Attachment.salvaged` for as long as it is attached: **SALVAGED**, a permanent mark on the document and on every copy
+made from it, in every mode and across a restart (`salvaged_line`, the view's `salvaged`, Export's summary, the
+history the model hears). It proves nothing about content — the file could not be read as it was, so there is
+nothing to compare with — and from then on the document is one like any other, its copies verified against the
+salvaged file. The user's file is read and never written (invariant 4 untouched); a document rescued with its
+password has NONE afterwards, and the chat and the mark say so. A file past the size limits is attached as it is,
+unmarked: nothing in it changed. A lock file, a folder, a missing file and any other kind of file are still
+refused. Safe and Default refuse as before and are told nothing new. Pinned by `tests/test_rescue.py`.
+
 Obliterate is the top rung of a ladder (the owner's decision, 2026-11-10): Safe, then Default for what Safe could not
 take, then Obliterate for the one or two documents neither could, so it also starts from the to-do list. A document
 that goes on the list because the engine stopped on it or its copy failed a check keeps a **case file** with its entry
@@ -371,6 +397,9 @@ jobs). Details: `docs/CONVERSATIONAL_DESKTOP.md`.
     gate; what it cannot match is left out with the reason, `Session.left_out_reasons`).
   - `hands_on.py` — Obliterate's hands-on tools, the reading half: a document's parts listed, one shown as text, a
     search across them (`Reader`; read-only, no model — Modes, above).
+  - `rescue.py` — Obliterate's rescue at attach: what can be tried for a refused file (`kind_of`), the app's own
+    mending and Word's conversion or repair of a private copy (`rescue_file`), the size limits raised for the
+    window, and the password that goes to Word and nowhere else (Modes, above).
   - `word_actions.py` — Obliterate's named Word actions: the fixed menu (`MENU`, `check`), what a plan of them must
     be (`plan_problem`), the one seam to Word (`run_word_actions`) and one document through Word and the verifier
     (`trial`). The commands themselves are `render/word_actions.py` (Modes, above).
@@ -505,7 +534,8 @@ Standing decisions from the earlier rounds (their plans are in the git history):
   editing is not built); Word may edit
   copies through a fixed menu of named actions the user or Claude chains (built: the Word actions, Modes — a plan of
   their own, with nothing planned after them in the same approval; Claude-composed Word scripts are not
-  built: a miss is first a new menu item); a file refused at attach may be rescued; Export may make a marked copy's
+  built: a miss is first a new menu item); a file refused at attach may be rescued (built: Try to rescue, Modes;
+  the rescued document is marked SALVAGED for good); Export may make a marked copy's
   clean version anyway. Until an item is built, the invariants and the Modes section describe the code as it is.
 - In Safe and Default, a custom method may do more kinds of formatting, never more kinds of change: a family is added
   only behind a V10 kind that proves the content it touches is the source's, and the sandbox's limits stay as they are.

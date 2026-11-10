@@ -221,6 +221,12 @@ export async function* replacePart(path: string, part: string, file: File): Asyn
 export const wordActions = (path: string, actions: string[], every = false) =>
   streamJob("/api/word-actions", every ? { path, actions, every: true } : { path, actions });
 
+/** Obliterate's Try to rescue: the one thing that could make a refused document a file the engine takes; what
+ *  comes of it is attached in the file's place, marked SALVAGED — a job with no AI call. `password`: an encrypted
+ *  document's, sent with this one request and kept nowhere (docs/WEB_API.md, `POST /api/rescue`). */
+export const rescue = (path: string, password?: string) =>
+  streamJob("/api/rescue", password ? { path, password } : { path });
+
 /** Safe mode's "Try these in Default mode": the documents the last button left untouched go on the to-do list. */
 export async function handOff(paths: string[]): Promise<View> {
   return normalizeView(await post<unknown>("/api/handoff", { paths }));

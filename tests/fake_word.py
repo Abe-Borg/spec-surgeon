@@ -283,23 +283,43 @@ def save_again(data: bytes, actions: List[str], *, rename: bool = True) -> Tuple
     return out.getvalue(), report
 
 
+class WrongPassword(RuntimeError):
+    """What the Word worker reports when Word refuses a file for its password (error 5408)."""
+
+    def __init__(self):
+        super().__init__("COM error 0x80020009 (Exception occurred.): Microsoft Word: The password is incorrect. "
+                         "Word cannot open the document. [scode 0x800A1520]")
+        self.code, self.reason, self.details = "word-com", str(self), {"stage": "word_open"}
+
+
 class FakeWord:
     """In place of ``word_actions.run_word_actions``: ``calls`` keeps every run (the file's name, its actions);
     ``fail`` maps a file's name to the exception Word stops with; ``nothing`` names files Word finds nothing to do
-    in; ``rename`` turns the renaming of header and footer parts off."""
+    in; ``rename`` turns the renaming of header and footer parts off. For the rescue at attach: ``saves`` maps a
+    file's name to the .docx Word reads out of it (a file this stand-in could not open itself: a .doc, a broken
+    package), and ``passwords`` maps a file's name to the password Word needs to open it. ``given`` keeps the
+    password each run was handed, which the app must pass to Word and keep nowhere."""
 
-    def __init__(self, fail: Optional[Dict[str, BaseException]] = None, nothing=(), rename: bool = True):
+    def __init__(self, fail: Optional[Dict[str, BaseException]] = None, nothing=(), rename: bool = True,
+                 saves: Optional[Dict[str, bytes]] = None, passwords: Optional[Dict[str, str]] = None):
         self.calls: List[Tuple[str, List[str]]] = []
         self.fail = dict(fail or {})
         self.nothing = set(nothing)
         self.rename = rename
+        self.saves = dict(saves or {})
+        self.passwords = dict(passwords or {})
+        self.given: List[Optional[str]] = []
 
-    def __call__(self, source, actions, output, timeout=None):
+    def __call__(self, source, actions, output, timeout=None, password=None):
         name = Path(source).name
         self.calls.append((name, list(actions)))
+        self.given.append(password)
         if name in self.fail:
             raise self.fail[name]
-        data, report = save_again(Path(source).read_bytes(), list(actions), rename=self.rename)
+        if name in self.passwords and password != self.passwords[name]:
+            raise WrongPassword()
+        read = self.saves[name] if name in self.saves else Path(source).read_bytes()
+        data, report = save_again(read, list(actions), rename=self.rename)
         if name in self.nothing:
             report = [{**entry, "count": 0} for entry in report]
         Path(output).write_bytes(data)

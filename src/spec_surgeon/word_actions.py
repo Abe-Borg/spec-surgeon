@@ -179,13 +179,14 @@ def available(fresh: bool = False) -> bool:
     return _AVAILABLE
 
 
-def run_word_actions(source: Path, actions: Sequence[str], output: Path,
-                     timeout: Optional[float] = None) -> List[Dict[str, Any]]:
+def run_word_actions(source: Path, actions: Sequence[str], output: Path, timeout: Optional[float] = None,
+                     password: Optional[str] = None) -> List[Dict[str, Any]]:
     """Word runs ``actions`` on ``source`` (a private copy) and saves the result as ``output``; the worker's report
-    per action comes back. The one seam to Word: tests replace it."""
+    per action comes back. The one seam to Word: tests replace it. ``password`` (the rescue at attach,
+    ``rescue.py``): what Word opens the copy with — handed on, never kept."""
     from .render.word_worker import run_word
     result = run_word("actions", Path(source), actions=list(actions), output=Path(output),
-                      timeout=timeout or TIMEOUT_S)
+                      timeout=timeout or TIMEOUT_S, password=password)
     return list(result.get("report") or [])
 
 

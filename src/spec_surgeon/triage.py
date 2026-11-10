@@ -60,6 +60,7 @@ class Triage:
     state: str = "ok"                       # one of STATES
     notes: List[str] = field(default_factory=list)
     reason: str = ""                        # the refusal: one sentence naming the file and what to do
+    code: str = ""                          # the refusal's kind (``REFUSALS``): what Obliterate's rescue reads
     pattern_id: str = ""                    # the fingerprint's structural pattern (empty when the file never opened)
     facts: Dict[str, Any] = field(default_factory=dict)
 
@@ -72,8 +73,8 @@ class Triage:
                 "pattern_id": self.pattern_id, "facts": dict(self.facts)}
 
 
-def _refusal(path: Path, reason: str, **kw) -> Triage:
-    return Triage(path, "refused", reason=reason, **kw)
+def _refusal(path: Path, reason: str, code: str, **kw) -> Triage:     # ``code``: ``rescue.KINDS`` reads it, alone
+    return Triage(path, "refused", reason=reason, code=code, **kw)
 
 
 def _compat_mode(settings: Optional[etree._Element]) -> Optional[int]:
@@ -109,15 +110,15 @@ def triage_file(path) -> Triage:
     name = path.name
     if name.startswith("~$"):
         return _refusal(path, f"{name} is Word's lock file for an open document, not a document; close the document "
-                              f"in Word and attach the .docx itself.")
+                              f"in Word and attach the .docx itself.", "lock")
     if not path.is_file():
         if path.exists():
-            return _refusal(path, f"{name} is a folder, not a file; attach the .docx files inside it.")
+            return _refusal(path, f"{name} is a folder, not a file; attach the .docx files inside it.", "folder")
         return _refusal(path, f"{name} was not found at {path.parent}; check that the file still exists and attach "
-                              f"it again.")
+                              f"it again.", "missing")
     if path.suffix.lower() != ".docx":
         return _refusal(path, f"{name} is not a .docx file: .docm and .doc files are not supported; save it as .docx "
-                              f"in Word.")
+                              f"in Word.", "not-docx")
     try:
         pkg = DocxPackage.from_path(path)
         pkg.read(CT_PART)                               # KeyError without the manifest Word writes in every package
@@ -130,18 +131,19 @@ def triage_file(path) -> Triage:
         pkg.check_no_doctype()
     except UnsupportedFormat as exc:
         return _refusal(path, f"{name} is a Strict Open XML document, which cannot be opened as a Word package; in "
-                              f"Word, save it again as 'Word Document (*.docx)'.", facts={"error": str(exc)})
+                              f"Word, save it again as 'Word Document (*.docx)'.", "strict",
+                        facts={"error": str(exc)})
     except XmlDoctype as exc:                       # its message is one sentence: the part, and what to do
-        return _refusal(path, f"{name}: {exc}", facts={"error": str(exc), "part": exc.part})
+        return _refusal(path, f"{name}: {exc}", "doctype", facts={"error": str(exc), "part": exc.part})
     except ArchiveLimitError as exc:
         return _refusal(path, f"{name} is larger than this app opens ({exc}); split the document or save a smaller "
-                              f"copy in Word.", facts={"error": str(exc)})
+                              f"copy in Word.", "too-large", facts={"error": str(exc)})
     except _OPEN_ERRORS as exc:
         if isinstance(exc, RuntimeError) and "password" in str(exc):    # zipfile: an encrypted member, no password
             return _refusal(path, f"{name} is password-protected; remove the password in Word and save it again as "
-                                  f".docx.", facts={"error": f"{type(exc).__name__}: {exc}"[:300]})
+                                  f".docx.", "password", facts={"error": f"{type(exc).__name__}: {exc}"[:300]})
         return _refusal(path, f"{name} cannot be opened as a Word package; open it in Word and save it again as "
-                              f".docx.", facts={"error": f"{type(exc).__name__}: {exc}"[:300]})
+                              f".docx.", "unopenable", facts={"error": f"{type(exc).__name__}: {exc}"[:300]})
 
     hygiene = details["body_hygiene"]
     parts = details["parts"]
@@ -175,7 +177,7 @@ def triage_file(path) -> Triage:
     }
     if not has_text and doc.find(f"{W}body/{W}p") is None:          # Word always writes a paragraph to anchor on
         return _refusal(path, f"{name} has no paragraph in its body to add to; open it in Word and save it again.",
-                        pattern_id=details["pattern_id"], facts=facts)
+                        "no-paragraph", pattern_id=details["pattern_id"], facts=facts)
     notes: List[str] = [] if has_text else [NOTE_EMPTY_BODY]
     if protection["enforced"]:
         notes.append(NOTE_PROTECTED)

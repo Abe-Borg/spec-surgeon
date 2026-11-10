@@ -24,6 +24,7 @@ export const OBLITERATE_GRANTS: readonly string[] = [
   "Claude may write a custom method that changes anything Word stores: text in any part, text boxes, shapes, structure — not only formatting. The method predicts nothing and just does the work, so you approve the copies it made, not a plan; each is delivered marked UNPROVEN.",
   "A copy whose checks fail is delivered anyway, marked UNVERIFIED with the checks it failed, instead of being held back; the mark stays on every later copy built on it.",
   "Claude may plan a raw XML edit: one stated change to the XML of one part of a file — which elements, exactly how many, and what is done to each. The app proves that exactly those elements changed as stated and nothing else in that part did. What the edit does to the words is not predicted: it is listed for you from the copies before you approve.",
+  "A file the app refuses when you attach it may be rescued: Try to rescue, beside it, has the app mend it (a document type declaration written out, a missing paragraph added, the size limits raised) or has Word convert or repair a private copy — an old .doc, a .docm, a Strict Open XML document, a broken file, one protected with a password you type. What comes of it is attached as a new document. Your file is read and never changed, and no AI is used.",
   "Microsoft Word itself may change a copy, through a fixed menu of named actions — repair, accept or reject every tracked change, update or unlink fields, turn automatic numbers into typed text, remove protection, leave compatibility mode, turn text boxes into plain text, delete drawn shapes. You pick them from Word actions beside a document (no AI is used), or Claude names them in a plan. Word saves the whole file again, so nothing is predicted: you approve the copies Word made, and each is delivered marked UNPROVEN.",
 ];
 
@@ -31,6 +32,7 @@ export const OBLITERATE_GRANTS: readonly string[] = [
 export const OBLITERATE_COSTS: readonly string[] = [
   "No proof that the rest of the file is untouched: a failed check is a warning, not a stop, and a custom method's copy is checked only for being a file Word opens. A copy Word made is checked for less still: that it opens as a file, nothing more, because every byte of it is Word's own writing.",
   "Content can be lost or invented without a refusal, and a copy may need Word's repair to open: a raw XML edit is made as stated even when the result is not a file Word accepts, and the checks say so on the copy.",
+  "A rescued document is marked SALVAGED for good, and so is every copy made from it: the file could not be read as it was, so nothing proves the rescue kept everything it held. A document rescued with its password has none afterwards, and neither have its copies.",
   "The same request can give different results from one run to the next.",
   "More AI spending: custom methods are written and tested on your files.",
 ];
@@ -42,6 +44,7 @@ export const OBLITERATE_KEPT: readonly string[] = [
   "A custom method still runs in a separate process, under the same import whitelist and time and memory limits, writing only in its own folder.",
   "The independent checks still run on every copy, and their results are kept beside it.",
   "Before you approve a custom method, its copy of every document is made, and the chat and each copy's card list what it changes — the words added and removed, and what else differs — as the independent checker read it, never as the method describes it. Create delivers those same copies.",
+  "A password you type for a rescue is given to Word for that one attempt and kept nowhere: it is not saved, not written to any log or record, and never sent to an AI model. A lock file, a folder, a missing file and any other kind of file are still refused.",
   "Word is asked only for actions on the app's fixed menu: no script or command is written for it, by you or by Claude. It opens a private copy of the document — never your file — in an instance of its own, with macros disabled and links not updated, and Create never runs it again: the copy you were shown is the copy delivered.",
 ];
 

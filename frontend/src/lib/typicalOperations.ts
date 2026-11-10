@@ -389,6 +389,17 @@ export const OBLITERATE_OPERATIONS: readonly TypicalOperation[] = [
   },
   {
     task:
+      "Work on a file the app refuses when you attach it: an old .doc, a .docm, a password-protected or damaged " +
+      "document, one saved as Strict Open XML",
+    can: "Yes, with Try to rescue",
+    note:
+      "Beside the refused file in Obliterate mode. The app mends it, or Word converts or repairs a private copy; " +
+      "your file is never changed. The rescued document is marked Salvaged for good, and so are its copies: " +
+      "nothing proves the rescue kept everything, so compare it with your file in Word. A document rescued with " +
+      "its password has none afterwards. Most rescues need Microsoft Word on this computer.",
+  },
+  {
+    task:
       "Have Word itself do it: unlink every field, accept every tracked change, turn automatic numbers into typed " +
       "text, turn text boxes into plain text, delete drawn shapes, repair a file",
     can: "Yes, with Word actions",
