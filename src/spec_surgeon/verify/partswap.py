@@ -14,12 +14,16 @@ The check:
 2. the output has the member, and its bytes — read from the output package and hashed here — are exactly ``size``
    long and hash to ``sha256``.
 
-That is the whole of what the op predicts, and it is exact. The member is then one a kind compared whole
-(``ctx.verified_parts`` for a text part, ``ctx.verified_members`` for any other), so the residual leaves it to this
-kind; V1 holds every other member to the source's bytes. The suite reads ``verify.xmledit.raw_parts`` for the same
-member: its text is not predicted block by block, so V2, V3, the counts of V4 and V5b leave it to this comparison and
-the record lists what the new part did to the words instead (V2's entries for it, the text its reader does not read,
-and D1).
+That is the whole of what the op predicts, and it is exact. Whether the new bytes are a part Word reads in that
+place is not this kind's to say: V1 does — a part that is not well-formed XML, one whose root element is not the
+source's (``reader.root_problems``: the body part a ``w:styles`` has no schema error and is no document), a
+relationships part that lacks what a relationship needs, a reference left pointing at nothing.
+
+The member is then one a kind compared whole (``ctx.verified_parts`` for a text part, ``ctx.verified_members`` for
+any other), so the residual leaves it to this kind; V1 holds every other member to the source's bytes. The suite
+reads ``verify.xmledit.raw_parts`` for the same member: its text is not predicted block by block, so V2, V3, the
+counts of V4 and V5b leave it to this comparison and the record lists what the new part did to the words instead
+(V2's entries for it, the text its reader does not read, and D1).
 
 The verifier never reads the user's file: it is not given it. That the asserted digest is the file's is the plan's
 word, pinned when the user chose the file and checked again when the op applies; what this kind proves is that the

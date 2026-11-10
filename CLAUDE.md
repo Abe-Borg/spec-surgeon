@@ -128,7 +128,8 @@ verifier's `part_bytes` (`verify/partswap.py`) hashes the output member itself; 
 (`verify.xmledit.raw_parts`), so its words are listed, not predicted (`SampleView.raw_what` `"part"`), exactly as
 for `edit_xml`. Any member can be replaced, `.rels` and `[Content_Types].xml` included: the bytes are placed as given
 and the checks say what Word would not open — a changed part that is no longer well-formed XML is one failed check
-(V1; `verify/suite._unreadable_record`), never an exception out of the suite. A hands-on run is no recipe step
+(V1; `verify/suite._unreadable_v1`), never an exception out of the suite; V1 also fails a changed part whose root
+element is not its role's (`verify.reader.root_problems`) and names a relationship that lacks its id, type or target. A hands-on run is no recipe step
 (`saved_recipes.WHY_PART`). Pinned by `tests/test_hands_on.py`.
 
 Obliterate is the top rung of a ladder (the owner's decision, 2026-11-10): Safe, then Default for what Safe could not

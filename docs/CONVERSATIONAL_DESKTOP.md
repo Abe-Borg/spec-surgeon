@@ -414,8 +414,13 @@ What it lifts (`Session.unguarded`; CLAUDE.md, "Modes"):
     and not read.
   - **What Word would not open.** The bytes are placed as given, so any member can be replaced, `.rels` and
     `[Content_Types].xml` included. A changed part that was XML and no longer parses is one failed check — V1 says
-    which part and why, the part-by-part checks are "not evaluated" (`verify/suite._unreadable_record`) — never an
-    exception out of the suite; the sample shows Did not pass in the file's own words
+    which part and why, the part-by-part checks are "not evaluated" (`verify/suite._unreadable_v1`,
+    `_unreadable_rest`) — never an exception out of the suite. V1 also fails a changed part whose root element is
+    no longer its role's (the body part a `w:styles`: valid to the schema, no document to Word;
+    `verify.reader.root_problems`, for parts of Office's own vocabularies, in the Obliterate record too) and names
+    a relationship that lacks its id, type or target (`VPackage.integrity_problems`: the readers skip such a
+    relationship instead of raising); under those sits a net — a replaced relationships or content-types part on
+    which a reader still raises is the same one failed check (`_structure_fault`); the sample shows Did not pass in the file's own words
     (`ui_feedback.SHOWN_CHECK_MESSAGES`, as for any raw sample) and the copy is delivered UNVERIFIED.
 - **Holding back.** A copy that fails a check is delivered to the run's `outputs/` instead of `failed/`, its record
   kept with every failure and V9 saying *delivered UNVERIFIED*; a chain's step hands its copy on and the chain's copy

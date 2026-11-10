@@ -68,7 +68,8 @@ def _lines(raw: bytes, part: str) -> Dict[str, Any]:
         note = f"Not well-formed XML ({' '.join(str(error).split())[:160]}): shown as its own text."
     lines = []
     for line in text.splitlines():
-        lines.append(line if len(line) <= LINE_CHARS else line[:LINE_CHARS] + f" … ({len(line) - LINE_CHARS:,} more characters on this line)")
+        lines.append(line if len(line) <= LINE_CHARS else
+                     line[:LINE_CHARS] + f" … ({len(line) - LINE_CHARS:,} more characters on this line)")
     return {"lines": lines, "note": note}
 
 

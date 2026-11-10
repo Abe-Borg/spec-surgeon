@@ -21,8 +21,8 @@ CHECK_MESSAGES = {
 # The same ids as an Obliterate custom method's copy fails them (``verify.run_difference``): nothing was predicted
 # for it, so its checks are of the file itself — what Word repairs or refuses.
 SHOWN_CHECK_MESSAGES = {
-    "V1": "The copy's file has a fault Word repairs or refuses: a part that does not parse, a broken reference or a "
-          "part without its content type.",
+    "V1": "The copy's file has a fault Word repairs or refuses: a part that does not parse or is not the kind its "
+          "place in the file calls for, a broken reference or a part without its content type.",
     "V4": "The copy's tracked changes carry an id Word cannot tell apart or cannot read.",
     "V5a": CHECK_MESSAGES["V5a"],
     "V5c": CHECK_MESSAGES["V5c"],

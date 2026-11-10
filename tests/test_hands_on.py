@@ -41,7 +41,8 @@ from spec_surgeon.preview import (PART_NO_WORDS_CHANGE, PART_OTHER_CHANGES_HEAD,
 from spec_surgeon.report import FAILURE_EXPLANATIONS
 from spec_surgeon.settings import Settings
 from spec_surgeon.ui_feedback import UNPROVEN_MARK, refusal_message
-from spec_surgeon.verify import run_suite
+from spec_surgeon.verify import run_difference, run_suite
+from spec_surgeon.verify.reader import VPackage
 from spec_surgeon.verify.props import KIND_CONTRACTS, KINDS, OP_ONLY_KINDS
 from spec_surgeon.web.server import TOKEN_HEADER, WindowState, create_app
 from test_document_task import SPEC, document
@@ -136,6 +137,70 @@ def test_a_part_that_is_no_longer_xml_is_one_failed_check_never_an_exception(sou
     # a member that was never XML is no such case
     plan, out, rec = swap(source, tmp_path, "docProps/thumbnail.jpeg", b"<not xml either", "t.jpeg")
     assert rec.passed
+
+
+WNS = 'xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"'
+RELS = "word/_rels/document.xml.rels"
+RELNS = 'xmlns="http://schemas.openxmlformats.org/package/2006/relationships"'
+
+
+def test_a_part_that_is_not_the_kind_its_place_calls_for_fails_the_package_check(source, tmp_path):
+    """The schema knows w:styles and w:document alike, so a body part that is a w:styles has no schema error; Word
+    reads a part by its place in the package. The root element of a part of Office's own vocabularies is checked."""
+    plan, out, rec = swap(source, tmp_path, DOC, f"<w:styles {WNS}/>".encode())
+    assert set(failed(rec)) == {"V1"}, failed(rec)
+    assert "word/document.xml: its root element is <styles> where the source's is <document>" in failed(rec)["V1"]
+    assert rec.get("V10").status == "PASS"                         # the swap itself is what was asked
+    plan, out, rec = swap(source, tmp_path, "word/styles.xml", f"<w:document {WNS}><w:body/></w:document>".encode())
+    assert "its root element is <document> where the source's is <styles>" in failed(rec).get("V1", "")
+    plan, out, rec = swap(source, tmp_path, RELS, f"<w:styles {WNS}/>".encode(), "x.rels")
+    assert "<styles> where the source's is <Relationships>" in " ".join(rec.get("V1").data["integrity"])
+    # the Obliterate record, which a custom method's copy is read by, says the same of such a copy
+    shown = run_difference(source, swap(source, tmp_path, DOC, f"<w:styles {WNS}/>".encode())[1], "a.docx", "b.docx")
+    assert shown.get("V1").status == "FAIL" and "its root element is <styles>" in " ".join(shown.get("V1").data["integrity"])
+    # the user's own data may have any root: stored XML in a namespace of theirs
+    work = DocxPackage(source).copy()
+    work.write("customXml/item1.xml", b'<data xmlns="urn:mine"><v>1</v></data>')
+    mine = work.output_bytes()
+    plan, out, rec = swap(mine, tmp_path, "customXml/item1.xml", b'<other xmlns="urn:mine"/>')
+    assert "V1" not in failed(rec), failed(rec)
+    # and the same root passes, whatever else the part now holds
+    plan, out, rec = swap(source, tmp_path, DOC, member(source, DOC).replace(b"FM Approved", b"UL Listed"))
+    assert rec.passed
+
+
+def test_a_relationships_part_that_lacks_what_a_relationship_needs_is_a_failed_check_never_a_crash(source, tmp_path,
+                                                                                                    monkeypatch):
+    for lacking, relationship in (("Type", '<Relationship Id="rId1" Target="nowhere.xml"/>'),
+                                  ("Target", '<Relationship Id="rId1" Type="x"/>'),
+                                  ("Id", '<Relationship Type="x" Target="styles.xml"/>'),
+                                  ("Id, Type, Target", "<Relationship/>")):
+        new = f"<Relationships {RELNS}>{relationship}</Relationships>".encode()
+        plan, out, rec = swap(source, tmp_path, RELS, new, "document.xml.rels")
+        assert "V1" in failed(rec) and rec.get("V10").status == "PASS", lacking
+        assert f"relationship in {RELS} without its {lacking}" in rec.get("V1").data["integrity"]
+        shown = run_difference(source, out, "a.docx", "b.docx")     # the Obliterate record reads it too
+        assert shown.get("V1").status == "FAIL"
+    # the net under what the readers do not foresee: one that raises on the copy's bookkeeping alone
+    new = member(source, RELS) + b"<!-- mine -->"
+    real = VPackage.referenced_members
+
+    def touchy(self):
+        if self.read(RELS) == new:
+            raise KeyError("a shape no reader foresaw")
+        return real(self)
+    monkeypatch.setattr(VPackage, "referenced_members", touchy)
+    plan, out, rec = swap(source, tmp_path, RELS, new, "document.xml.rels")
+    assert set(failed(rec)) == {"V1"}
+    assert failed(rec)["V1"].startswith(f"RELATIONSHIPS OR CONTENT TYPES THAT DO NOT READ in the copy: {RELS} (KeyError")
+    assert rec.get("V2").status == "NA" and "does not read as the package's relationships" in rec.get("V2").summary
+    # when no bookkeeping part changed, a reader's exception is the verifier's own defect, and goes on as one
+
+    def defect(self):
+        raise KeyError("a verifier defect")
+    monkeypatch.setattr(VPackage, "referenced_members", defect)
+    with pytest.raises(KeyError, match="a verifier defect"):
+        swap(source, tmp_path, DOC, member(source, DOC).replace(b"FM Approved", b"UL Listed"))
 
 
 # ---- refusals ------------------------------------------------------------------------------------------------------
@@ -527,8 +592,9 @@ def test_a_part_that_changes_no_words_says_so_and_a_broken_one_is_delivered_unve
     assert said(task)[-1] == ("The words this changes could not be listed for a.docx: the copy could not be read "
                               "part by part. Its preview says which check failed.")
     assert sample["passed"] is False and sample["failures"] == [
-        {"check": "V1", "reason": "The copy's file has a fault Word repairs or refuses: a part that does not parse, "
-                                  "a broken reference or a part without its content type."}]
+        {"check": "V1", "reason": "The copy's file has a fault Word repairs or refuses: a part that does not parse "
+                                  "or is not the kind its place in the file calls for, a broken reference or a part "
+                                  "without its content type."}]
     task.perform("primary", token=view["token"])
     assert task.stage == "done" and task.unverified[str(a)] == ["V1 (Package hash whitelist)"]
     assert member(Path(task.results[str(a)]).read_bytes(), DOC) == b"<w:document unfinished"

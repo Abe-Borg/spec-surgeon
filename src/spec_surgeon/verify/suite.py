@@ -14,7 +14,7 @@ from typing import Any, Dict, Iterator, List, Optional, Sequence, Tuple
 from lxml import etree
 
 from .. import telemetry as diag
-from .reader import VPackage, W
+from .reader import VPackage, W, root_problems
 from .textcheck import blocks, diff_blocks, accept_view, reject_view, view_texts
 from .props import check_properties
 from .explain import explain_record
@@ -411,28 +411,59 @@ def _unreadable(src: VPackage, out: VPackage, before: Dict[str, str], after: Dic
     return found
 
 
+def _structure_fault(src: VPackage, out: VPackage, before: Dict[str, str], after: Dict[str, str]) -> List[Tuple[str, str]]:
+    """``(member, why)`` for the changed relationship and content-type members of a copy whose package bookkeeping
+    cannot be read as every later check reads it — a reader raises on it — while the source's can. [] when none of
+    those members changed, or when the copy's reads. The readers take incomplete relationships in their stride
+    (``VPackage.integrity_problems`` names them); this is the net under what they do not foresee, so that a
+    replaced bookkeeping part is a failed check and never an exception out of the suite."""
+    books = [n for n in out.names if n in before and before[n] != after[n]
+             and (n.endswith(".rels") or n == "[Content_Types].xml")]
+    if not books:
+        return []
+
+    def read(pkg: VPackage) -> None:
+        pkg.integrity_problems()
+        pkg.referenced_members()
+        pkg.text_parts()
+        for name in pkg.names:
+            if name.endswith(".xml"):
+                pkg.rid_problems(name)
+    try:
+        read(out)
+    except Exception as e:  # noqa: BLE001 — whatever the reader says of the copy, it is the reason
+        why = " ".join(f"{type(e).__name__}: {e}".split())[:300]
+        read(src)                       # the source's own reads, or the fault is no copy's: that exception goes on
+        return [(name, why) for name in books]
+    return []
+
+
 def _unreadable_v1(rec: VerificationRecord, before: Dict[str, str], after: Dict[str, str],
-                   unread: List[Tuple[str, str]], intended: set) -> None:
-    """V1 of a copy with a changed part that is not well-formed XML: the one failed check, which says so, with what
-    else the package comparison can still tell."""
+                   unread: List[Tuple[str, str]], intended: set, structure: bool = False) -> None:
+    """V1 of a copy with a changed part that is not well-formed XML — or (``structure``) whose relationships or
+    content types do not read: the one failed check, which says so, with what else the package comparison can still
+    tell."""
     changed = sorted(n for n in before if n in after and before[n] != after[n])
     unexpected = sorted(set(changed) - intended)
+    what = "RELATIONSHIPS OR CONTENT TYPES THAT DO NOT READ" if structure else "NOT WELL-FORMED XML"
     rec.set(CheckResult("V1", "Package hash whitelist", "FAIL",
-                        "NOT WELL-FORMED XML in the copy: " + "; ".join(f"{n} ({why})" for n, why in unread)
+                        f"{what} in the copy: " + "; ".join(f"{n} ({why})" for n, why in unread)
                         + f". Word does not open such a file. changed {changed} ⊆ intended {sorted(intended)}: "
                         + ("yes" if not unexpected else "NO " + str(unexpected)),
                         {"changed": changed, "added": sorted(set(after) - set(before)),
                          "removed": sorted(set(before) - set(after)), "unexpected": unexpected,
-                         "integrity": [f"{n}: not well-formed XML" for n, _why in unread], "orphaned": [],
+                         "integrity": [f"{n}: {'does not read' if structure else 'not well-formed XML'}"
+                                       for n, _why in unread], "orphaned": [],
                          "order": None, "metadata_changes": [], "unreadable": [n for n, _why in unread]}))
 
 
-def _unreadable_rest(rec: VerificationRecord, unread: List[Tuple[str, str]]) -> VerificationRecord:
+def _unreadable_rest(rec: VerificationRecord, unread: List[Tuple[str, str]], structure: bool = False) -> VerificationRecord:
     """The rest of that record: every part-by-part check not evaluated, with the reason — never an exception out of
     the suite, and never a pass."""
     names = ", ".join(name for name, _why in unread)
+    why = "does not read as the package's relationships or content types" if structure else "is not well-formed XML"
     for check_id, name in _PART_CHECKS:
-        rec.set(CheckResult(check_id, name, "NA", f"not evaluated: the copy's {names} is not well-formed XML (V1)"))
+        rec.set(CheckResult(check_id, name, "NA", f"not evaluated: the copy's {names} {why} (V1)"))
     rec.set(CheckResult("V6", "Automated render comparison", "NA", "no renderer run yet"))
     rec.set(CheckResult("V7", "Geometry assertion", "NA", "no renderer run yet"))
     rec.set(CheckResult("V9", "Overwrite guard", "NA", "not delivered yet"))
@@ -476,12 +507,17 @@ def _run_suite(source: bytes, output: bytes, plan: Dict[str, Any], source_name: 
 
     # V1 — package hash whitelist, predicted member removals/additions, member order, package integrity
     unread: List[Tuple[str, str]] = []
+    structure = False
     with _check(rec, "V1", "Package hash whitelist") as check:
         hb, ha = src.hashes(), out.hashes()
         # a changed part of the copy that does not read: this one check fails, and nothing is compared part by part
         unread = _unreadable(src, out, hb, ha)
+        structure = False
+        if not unread:
+            unread = _structure_fault(src, out, hb, ha)
+            structure = bool(unread)
         if unread:
-            _unreadable_v1(rec, hb, ha, unread, intended)
+            _unreadable_v1(rec, hb, ha, unread, intended, structure)
             check.update(unreadable_parts=len(unread))
         else:
             added = sorted(set(ha) - set(hb))
@@ -505,6 +541,9 @@ def _run_suite(source: bytes, output: bytes, plan: Dict[str, Any], source_name: 
                        or hb.get(_rels_of(n)) != ha.get(_rels_of(n)))]
             for n in touched:
                 new_problems |= out.rid_problems(n) - src.rid_problems(n)
+            # a changed part whose root element is no longer its role's (the body part a w:styles): the schema knows
+            # both elements and says nothing, and Word does not open the file
+            new_problems |= root_problems(src, out, changed)
             new_problems = sorted(new_problems)
             src_refd, out_refd = src.referenced_members(), out.referenced_members()
             orphaned = sorted(n for n in out.names if n in src_refd and n not in out_refd)
@@ -527,7 +566,7 @@ def _run_suite(source: bytes, output: bytes, plan: Dict[str, Any], source_name: 
                          unexpected_parts=len(unexpected), integrity_problems=len(new_problems), orphaned_members=len(orphaned))
 
     if unread:
-        return _unreadable_rest(rec, unread)
+        return _unreadable_rest(rec, unread, structure)
 
     # V2/V3 — text preservation and structural children over the UNION of source and output text parts
     with _check(rec, "V2", "Text preservation", shared_computation="V2/V3") as text_check, \
