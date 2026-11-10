@@ -497,7 +497,8 @@ def test_a_custom_sample_whose_words_moved_fails_and_is_never_called_passed(fold
     assert line.startswith("21 13 13 – WET-PIPE.docx: Page layout differs from what the plan predicts")
     verdict = codegen.samples_verdict(g, [line])
     assert verdict == [codegen.SAMPLES_LAYOUT, line] and codegen.SAMPLES_PASSED not in verdict
-    assert codegen.samples_verdict(_method(unguarded=True), [line])[0] == codegen.SAMPLES_LAYOUT_UNVERIFIED
+    # an Obliterate method predicts no layout, so its verdict is never a layout one (the test below)
+    assert codegen.samples_verdict(_method(unguarded=True), [line]) == [codegen.SAMPLES_UNPROVEN]
 
 
 def test_a_custom_sample_with_no_layout_reference_by_design_says_why(folder, tmp_path, monkeypatch):
@@ -531,12 +532,52 @@ def test_a_custom_copy_whose_words_moved_is_held_like_any_failed_check(folder, t
     assert {c["id"]: c["status"] for c in record["checks"]}["V7"] == "FAIL"
 
 
-def test_in_obliterate_a_custom_copy_whose_words_moved_is_delivered_unverified(folder, tmp_path, monkeypatch):
+def test_an_obliterate_methods_pages_are_shown_never_compared_and_a_copy_the_renderer_cannot_open_is_unverified(
+        folder, tmp_path, monkeypatch):
+    """An Obliterate method predicts nothing, a layout included: its pages are rendered and shown beside the
+    original's, and V7 says there is no reference to compare them with — a copy whose lines moved fails nothing. The
+    renderer opening the copy is still a check of its file: one it cannot open is delivered marked UNVERIFIED."""
     from spec_surgeon import codegen
+    from test_obliterate import FREE_HEADER
+    [f] = sorted(folder.glob("*.docx"))
+    g = codegen.GeneratedOp(source=FREE_HEADER, name="set_header_distance", passed=True, unguarded=True)
+    g.trials = [codegen.trial(g.source, f, {}, {}, tmp_path / "trial", **codegen.trial_options(g))]
+    assert g.trials[0].passed and g.trials[0].plan["geometry_reference"] == "none"
     fake_renderer(monkeypatch, shift_outputs=6.0)
-    [t] = codegen.run_generated(_method(unguarded=True), [str(folder)], tmp_path / "run", renderer="fake",
-                                do_render=True)
-    assert t.passed and t.output.is_file() and t.unverified == ["V7 (Geometry assertion)"]
+    gp = preview_generated(g, tmp_path / "pv", renderer="fake", do_render=True)
+    [sv] = gp.samples
+    assert sv.checks["V6"] == "PASS" and sv.checks["V7"] == "NA" and sv.passed is True and sv.unproven
+    assert sv.geometry == {"status": "NA", "note": NO_LAYOUT_REFERENCE}
+    [t] = codegen.run_generated(g, [str(folder)], tmp_path / "run", renderer="fake", do_render=True)
+    assert t.passed and t.output.is_file() and t.unverified == [] and t.unproven
+    assert t.record.get("V6").status == "PASS" and t.record.get("V7").status == "NA"
+    # a renderer that returns no page for the copy: V6 fails — in the preview, before the approval, as at the run —
+    # and in Obliterate the copy is delivered with that mark, once
+    from spec_surgeon.preview import COPY_NOT_OPENED, V6_MARK
+    drawn = render_mod.render_pdf_groups
+
+    def without_the_copy(groups, backend, workers=4, log=None, detail=None, cache=None):
+        made = drawn(groups, backend, workers, log=log, detail=detail, cache=cache)
+        copies = ("samples", "outputs", "output", "output-in")
+        return [{f: pdf for f, pdf in group.items() if not any(part in Path(f).parts for part in copies)}
+                for group in made]
+    monkeypatch.setattr(render_mod, "render_pdf_groups", without_the_copy)
+    [t] = codegen.run_generated(g, [str(folder)], tmp_path / "run2", renderer="fake", do_render=True)
+    assert t.passed and t.output.is_file() and t.unverified == [V6_MARK]
+    assert g.trials[0].unverified == []                                # the run marked its own copy of the trial
+    gp = preview_generated(g, tmp_path / "pv2", renderer="fake", do_render=True)
+    [sv] = gp.samples
+    assert sv.checks["V6"] == "FAIL" and sv.passed is False and sv.geometry == {"status": "FAIL", "note": COPY_NOT_OPENED}
+    assert [f["check"] for f in failed_preview_checks(sv)] == ["V6"]
+    assert g.trials[0].unverified == [V6_MARK] and codegen.samples_verdict(g)[0] == codegen.SAMPLES_UNVERIFIED
+    [t] = codegen.run_generated(g, [str(folder)], tmp_path / "run3", renderer="fake", do_render=True)
+    assert t.unverified == [V6_MARK]
+    # a method written in Default mode is unchanged: a sample the renderer could not draw is a warning, not a verdict
+    plain = _proved(_method(), folder, tmp_path / "plain")
+    gp = preview_generated(plain, tmp_path / "pv3", renderer="fake", do_render=True)
+    assert gp.samples[0].passed is True and gp.samples[0].checks["V6"] != "FAIL"
+    assert gp.samples[0].geometry == GEOMETRY_AT_RUN
+    assert any("render failed" in w for w in gp.warnings)
 
 
 def test_a_custom_run_without_rendering_says_why_its_pages_were_not_checked(folder, tmp_path):

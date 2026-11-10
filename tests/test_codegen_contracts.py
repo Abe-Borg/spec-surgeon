@@ -97,21 +97,22 @@ def test_an_unknown_name_is_a_readable_answer_not_an_exception(name):
 
 def test_the_tool_is_a_read_tool_in_both_tool_lists_and_every_prompt_names_it():
     assert "describe_assertion_kind" in CODEGEN_READ_TOOLS
-    for tools in (CODEGEN_TOOLS, CODEGEN_TOOLS_UNGUARDED):
-        names = [t["name"] for t in tools]
-        assert names.index("describe_assertion_kind") < names.index("submit_op")
-        schema = next(t for t in tools if t["name"] == "describe_assertion_kind")["input_schema"]
-        assert schema["required"] == ["name"] and set(schema["properties"]) == {"name"}
+    names = [t["name"] for t in CODEGEN_TOOLS]
+    assert names.index("describe_assertion_kind") < names.index("submit_op")
+    schema = next(t for t in CODEGEN_TOOLS if t["name"] == "describe_assertion_kind")["input_schema"]
+    assert schema["required"] == ["name"] and set(schema["properties"]) == {"name"}
+    # an Obliterate method predicts nothing and writes no assertion: its writer has no contract to look up
+    assert "describe_assertion_kind" not in [t["name"] for t in CODEGEN_TOOLS_UNGUARDED]
     plain = system_prompt()
     assert "Read a kind's contract with describe_assertion_kind before you write its assertion" in plain
     assert "read each kind's contract with describe_assertion_kind" in plain
     unguarded = system_prompt(unguarded=True)
-    assert "Read a kind's contract with describe_assertion_kind before you write its assertion" in unguarded
+    assert "describe_assertion_kind" not in unguarded and "V10 assertion kinds: " not in unguarded
     governed = system_prompt(goal_contract={"kind": "format_section_title", "target": {"title": "FIRE SUPPRESSION"},
                                             "run": {"b": True}})
     assert "Read a kind's contract with describe_assertion_kind before you write its assertion" in governed
-    # the governed and Obliterate prompts list every kind the verifier evaluates: each has a contract to read
-    for prompt, lead in ((unguarded, "V10 assertion kinds: "), (governed, "Available kind names: ")):
+    # the governed prompt lists every kind the verifier evaluates: each has a contract to read
+    for prompt, lead in ((governed, "Available kind names: "),):
         start = prompt.index(lead) + len(lead)
         listed = json.loads(prompt[start:prompt.index("]", start) + 1])
         assert listed == sorted(KINDS) and all(KIND_CONTRACTS[k] for k in listed)

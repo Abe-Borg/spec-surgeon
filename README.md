@@ -314,14 +314,23 @@ mode you last used (Safe the first time; never Obliterate).
   Obliterate**). What you control: Claude may write wording itself (every word it places must be in its reply to
   you, which the app checks before the plan is previewed); when no operation
   fits, Claude may write a custom method that changes anything Word stores, not only formatting, and may use the
-  template, pictures and tables you attached (a check the method fails goes back to Claude first, to fix or to keep
-  with a reason you read beside the copy; a change to a part no check reads, such as a chart, an embedded file,
-  stored data or the theme, fails a check of its own, UNREAD, so such a copy is never called verified; the words the
-  method's sample copies add and remove are listed before you approve, in the chat and under each sample, as the
-  independent checker read them); and a copy that fails a check is
+  template, pictures and tables you attached. Such a method predicts nothing: it just does the work on a copy, and
+  the independent checker then reads the original and the copy and reports what differs — the words added and
+  removed; the paragraphs, tables, pictures, text boxes, fields and tracked changes counted before and after; the
+  formatting, styles, numbering, settings, relationships and parts that changed; and any changed part it compared
+  by its bytes only (a chart, an embedded file, stored data, the theme), named as not read. It also checks that the
+  copy is a file Word opens: every part well-formed, every reference pointing at something, tracked-change ids and
+  markup Word accepts, no new schema error, and, when pages are rendered, that the renderer opened it. Claude reads
+  that report before it settles on the method, and a copy whose file is broken goes back to Claude first. The
+  method's copy of every document is then made before you approve anything: the chat and each copy's preview card
+  list what it changes, as the checker read it, and **Create edited copies** delivers those same copies, never a
+  new run of the method. A copy made this way is never called verified: it is delivered marked **UNPROVEN** (what
+  it changed was shown to you, not proven), or **UNVERIFIED** when a check of its file failed. A document the method
+  could make no copy of says why on its card and goes on your to-do list. And a copy that fails a check is
   delivered anyway, marked **UNVERIFIED**
   with the checks it failed, instead of being held back (the mark stays on every later copy built on it). What it
-  costs: no proof that the rest of the file is untouched, content can be lost or invented without a refusal, a copy
+  costs: no proof that the rest of the file is untouched (a custom method's copy is checked only for being a file
+  Word opens), content can be lost or invented without a refusal, a copy
   may need Word's repair, results can differ from run to run, and more AI spending. What still holds: copies only
   (your originals are never written), a source that changed is never delivered over, the custom method's sandbox, and
   the independent checks on every copy, their results kept beside it. Obliterate is the last rung of a ladder —
@@ -584,7 +593,8 @@ recorded for the requests that follow.
   complex-script fonts and sizes are not modelled. A toggle set at more than one style level is refused.
 - Custom transforms are plain formatting on text parts, the styles part and (for list labels only) the numbering
   part, write edited copies only, and run in a sandbox that is not an operating-system security boundary. Obliterate
-  mode lifts the plain-formatting limit and nothing else about the sandbox (above, and
+  mode lifts the plain-formatting limit and the prediction, and nothing about the sandbox: there the checker reports
+  what a method changed and no check says the change is the one asked for (above, and
   [docs/CONVERSATIONAL_DESKTOP.md](docs/CONVERSATIONAL_DESKTOP.md)).
 - The installer is unsigned: the checksum checks prove the download is the file the release lists, not who published it.
 - Costs shown for Claude calls are estimates from a built-in price table.

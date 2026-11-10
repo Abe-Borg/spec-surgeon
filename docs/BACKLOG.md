@@ -78,13 +78,17 @@ On the owner's machine (Windows, Word): the W3 judge over every case, each failu
 behaviour recorded here with its evidence; the W4 recipe run once, its files and Word's resolutions checked in. The
 judge cannot see a repair prompt or how the Reviewing Pane draws the changes; those stay a manual look.
 
-### Obliterate: the cost ladder (O2–O8)
+### Obliterate: the cost ladder (O3–O8)
 
 The owner's decisions of 2026-11-10 (CLAUDE.md, "Standing decisions"). Obliterate is the emergency lever, reached
 last: Safe handles most of a batch, Default what Safe could not take, and Obliterate the one or two documents neither
 could, or a request far outside the norm on one or two specifications. Inside the copy nothing is refused for being
-unusual; the original and the machine stay protected; everything done is reported. O1 — the hand-off from the to-do
-list with the case file, and taking the copy that failed — is built (under "Waiting on the owner's machine").
+unusual; the original and the machine stay protected; everything done is reported. Built, each under "Waiting on the
+owner's machine": O1 — the hand-off from the to-do list with the case file, and taking the copy that failed — and O2
+— the Obliterate record (`verify/difference.py`: the independent report of what differs between an original and a
+copy, with the integrity checks that need no prediction) and custom methods that just do the work (one `apply`, every
+document's copy made before approval and delivered as shown, marked UNPROVEN or UNVERIFIED). O3, O5 and O6 judge
+their results by O2's record.
 
 Rules for every item:
 
@@ -101,7 +105,6 @@ Rules for every item:
 
 | Item | What to build | What was decided |
 | --- | --- | --- |
-| O2 — the Obliterate record, and methods that just do the work | A new independent report in `verify/` of what differs between an original and a copy: parts added, removed and changed (a part no check reads by content named as such); words in and out; counts of paragraphs, tables, pictures, fields, text boxes and tracked changes; pages before and after. Integrity checks that need no prediction: the package opens, no new schema error, revision grammar, and "Word opens it cleanly" where Word is installed. An Obliterate custom method becomes one `apply`: no `plan()`, no prediction rounds, no never-excused list, no UNREAD failure. It runs on every document before approval, the preview shows each real result with its report, and Create delivers those exact bytes. Only errors and integrity failures go back to the writer. The method may write raw bytes into an existing part (`pkg.write`). Two marks: **UNVERIFIED** (an integrity check failed) and **UNPROVEN** (nothing failed; the change was shown, not proven) | Invariant 1 is lifted for this one path; built-in ops predict first in every mode. Sampling does not apply: with one or two documents each is its own sample |
 | O3 — the raw-XML operation, and "clear the obstacle, then the same plan" | `edit_xml`: a part, an XPath selection, an exact expected count, one action (set or remove an attribute; remove, replace or insert an element; set text). A V10 kind proves exactly those elements changed as stated and nothing else in the part did; the effect on words and pages comes from O2's report. Text it places passes the same read-it-first gate as any Obliterate wording. Claude may chain an obstacle-clearing step with the plan the other documents got; the second step is verified as today | Reverses "no raw-XML operation" for Obliterate only. A catch-all deletion is this op's remove; `force` stays out |
 | O4 — hands-on tools | A toggle in the Obliterate warning, off by default. A read-only part browser per document (the part list, the XML, search); save a part out through Export's write path; replace a part with an attached file, with a V10 kind proving the part equals that file byte for byte and nothing else moved | The cheaper version first: no XML editing inside the window (edit a part in your own editor, attach it back) |
 | O5 — named Word actions | A fixed menu, each action code in the existing Word worker (`render/word_worker.py`): repair; convert to `.docx`; accept all or reject all changes; unlink or update fields; numbers to typed text; remove protection; upgrade compatibility mode; text boxes to plain text; delete shapes. The user or Claude picks and chains them as plan steps. Results judged by O2's report (Word rewrites the whole file, so the comparison is by content and pages). Tests use a fake Word; real behaviour is proven on the owner's machine | Word may edit copies. No Claude-composed Word scripts: a case the menu cannot express is first a new menu item, logged with the document's refusal code. Reverses "text boxes as objects" and "numbers stay automatic" for Obliterate only |
@@ -172,6 +175,21 @@ write-back over the originals unless asked for (T1 is the claim most of the trus
 Everything else is built and tested on fixtures; nothing is done on fixtures alone. These runs need real
 specifications, Windows and Word, and only the owner can do them. Record what a run finds as a new item above.
 
+- **Obliterate's custom methods that just do the work (O2, built 2026-11-10):** with Word, Obliterate shown in
+  Settings and an API key, on one or two real specifications no built-in operation can change the way you want (a
+  header built as text boxes, a cover page of shapes). Ask for the change in Obliterate mode. Before the button: the
+  chat says nothing proves the change and lists the words each copy adds and removes and what else it changes; every
+  document has its own preview card, badged **Not proven**, with the same lists and its before/after pages; a
+  document the method cannot take shows **No copy** with the reason and is not counted on the button. Read one
+  card's list against the copy opened in Word: the words, the paragraph, table and picture counts, and any part the
+  list names as changed and not read. **Create edited copies** makes no new AI call; each copy is listed marked
+  **UNPROVEN**, opens in Word without a repair prompt, and is byte for byte the copy its card showed (its record in
+  the session's `run\records` is the Obliterate record, mode `shown`, with D1 "What changed"). Ask for a change that
+  breaks the file on purpose if you can find one (or use a document Word already repairs): a copy whose file fails a
+  check shows **Did not pass** with the check, and is delivered marked **UNVERIFIED**. Then make a Safe-mode or
+  Default change on top of an UNPROVEN copy: the new copy keeps the mark behind "in an earlier copy". Export → Word
+  and PDF: the note counts the UNPROVEN copies. Last, the same kind of request in Default mode on a formatting-only
+  change: the method predicts, its sample shows **Checked**, and nothing says UNPROVEN.
 - **Obliterate from the to-do list (O1, built 2026-11-10):** over a real batch, with Word and with Obliterate shown in
   Settings. Safe mode first (a button most of the batch takes), **Try these in Default mode** for what it left, a
   Default request for those, and one or two that still wait on the to-do list — one the plan refused and one whose
@@ -377,13 +395,14 @@ specifications, Windows and Word, and only the owner can do them. Record what a 
   custom method over a real specification folder with Word rendering: each sample card gives the page-layout verdict
   (V7) by the method's plan, not "checked when the copies are created"; the copies' records carry V6 and V7 from
   Word, never "no renderer run yet"; a method whose words move where its plan says none do shows "Did not pass" on
-  the sample, the chat says the page-layout check failed before the button, and Create is unavailable. The same in
-  Obliterate: the copy is delivered marked UNVERIFIED with V7 beside it.
+  the sample, the chat says the page-layout check failed before the button, and Create is unavailable. In Obliterate
+  a custom method predicts no layout (O2): its pages are shown beside the original's and never compared, and a copy
+  Word could not open is marked UNVERIFIED with V6 beside it.
 - **Parts no check reads, page counts, refused calls (the deep-dive stress test's follow-ups, built 2026-10-28):** in
   Obliterate, a custom method over a real specification that changes the theme's accent colours (the report's
-  four-file theme batch): every copy reads UNVERIFIED with UNREAD naming the theme part, or with Claude's reason when
-  it kept the check, and opens in Word with the colours asked for; a Default request for the same is refused with
-  the reason. A preview of a long specification (17 pages or more) with the visual check on: its findings never say a
+  four-file theme batch): every copy reads UNPROVEN, its card and the chat name the theme part as changed and not
+  read by the report (O2 replaced the UNREAD check with that line), and it opens in Word with the colours asked for;
+  a Default request for the same is refused with the reason. A preview of a long specification (17 pages or more) with the visual check on: its findings never say a
   later page was not rendered. A request sent with a revoked or mistyped key: the chat says the request failed
   (HTTP 401), and the pill and the request's spending stay where they were.
 - **Default mode:** a choice's drafted wording edited before it is picked, and the copy carrying the edit.

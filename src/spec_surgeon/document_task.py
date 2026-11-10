@@ -30,7 +30,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence
 
-from .ui_feedback import PREVIEW_FAILED, failed_preview_checks, failed_sample_message, refusal_message
+from .ui_feedback import (PREVIEW_FAILED, UNPROVEN_MARK, failed_marks, failed_preview_checks, failed_sample_message,
+                          plain_problem, refusal_message, unproven_only)
 
 from . import diagnostics as diag
 from . import llm, review_display, saved_recipes, stopping
@@ -52,8 +53,9 @@ INTERRUPTED = "Previous work stopped before its final usage was recorded."
 MODES = ("safe", "default", "obliterate")
 LAUNCH_MODES = ("safe", "default")
 OBLITERATE_ON = ("Obliterate mode is on. Claude may write wording and custom methods that change anything Word stores, "
-                 "and a copy whose checks fail is delivered marked UNVERIFIED instead of being held back. Copies only; "
-                 "your originals are never written. What was planned before is void.")
+                 "and a copy whose checks fail is delivered marked UNVERIFIED instead of being held back. A custom "
+                 "method predicts nothing: you approve the copies it made, and each is delivered marked UNPROVEN. "
+                 "Copies only; your originals are never written. What was planned before is void.")
 OBLITERATE_OFF = ("Obliterate mode is off: every placed word is yours again, custom methods are formatting only, and a "
                   "copy whose checks fail is held back. What was planned in Obliterate mode is void.")
 REPLAN = " Continue plans your request again under these rules, or say what you want."
@@ -962,9 +964,16 @@ class DocumentTask:
         # checks could not vouch for, and must hear so — the mark says which checks failed, and where
         for d in docs:
             marks = self.unverified.get(d)
-            if marks:
-                lines.append(f"{Path(d).name} was delivered UNVERIFIED (Obliterate mode): {'; '.join(marks)} failed, "
+            failed = failed_marks(marks)
+            if failed:
+                lines.append(f"{Path(d).name} was delivered UNVERIFIED (Obliterate mode): {'; '.join(failed)} failed, "
                              "so its copy may have lost or changed content; plan on it with that in mind")
+            elif marks:
+                # UNPROVEN: a custom method made it in Obliterate mode, and nothing was predicted for it
+                earlier = all(str(m).startswith(EARLIER_COPY) for m in marks)
+                lines.append(f"{Path(d).name} is UNPROVEN (Obliterate mode): a custom method made "
+                             f"{'an earlier copy of it' if earlier else 'its copy'}, and what that changed was shown "
+                             "to the user, not proven; plan on it with that in mind")
         return lines
 
     def _focus_context(self) -> str:
@@ -2798,7 +2807,8 @@ class DocumentTask:
             seen = [c["summary"] for g in self._groups() for c in g["changes"]]
             self._binned += [self._set_aside(Path(t.source), seen, why=WHY_FAILED,
                                              reason=f"Its copy could not be made: "
-                                                    f"{'; '.join(t.problems[:2]).rstrip('.') or 'the method stopped'}.",
+                                                    + ("; ".join(plain_problem(x) for x in t.problems[:2]).rstrip(".")
+                                                       or "the method stopped") + ".",
                                              case=_case_of_exception({"code": "generated-failed",
                                                                       "reason": "; ".join(t.problems)}))
                              for t in s.last_trials if not t.passed]
@@ -2829,11 +2839,16 @@ class DocumentTask:
                      (f" Left untouched: {', '.join(e['name'] for e in self.left_untouched)} — each one's reason is "
                       "under Left untouched." if self.left_untouched else ""))
         else:
-            shaky = sum(1 for k in self.results if k in self.unverified)
+            shaky = sum(1 for k in self.results if failed_marks(self.unverified.get(k)))
+            shown = sum(1 for k in self.results if unproven_only(self.unverified.get(k)))
             self.say(f"{n} document {'copy is' if n == 1 else 'copies are'} ready. You can open them, describe "
                      f"another change to make on top of them, or start over from the originals." +
                      (f" {shaky} {'was' if shaky == 1 else 'were'} delivered UNVERIFIED: a check failed, and each "
-                      f"one's failed checks are beside it." if shaky else ""))
+                      f"one's failed checks are beside it." if shaky else "") +
+                     (f" {shown} {'is' if shown == 1 else 'are'} UNPROVEN: a custom method made "
+                      f"{'it' if shown == 1 else 'them'}, and what it changed was shown to you, not proven. Check "
+                      f"{'it' if shown == 1 else 'each'} in Word before you use {'it' if shown == 1 else 'them'}."
+                      if shown else ""))
         self._attach_sibling(self._binned)      # each case file names a document of this run that took the change
         self._advance_generation()
         binned, self._binned = self._binned, []
@@ -2977,7 +2992,10 @@ class DocumentTask:
         for item in s.last_trials or []:
             if item.passed and item.output:
                 self.results[str(self.origin_of(item.source))] = str(item.output)
-                self._mark_unverified(str(self.origin_of(item.source)), getattr(item, "unverified", None))
+                # an Obliterate method's copy: its failed checks, and that nothing was predicted for it
+                marks = list(getattr(item, "unverified", None) or []) + (
+                    [UNPROVEN_MARK] if getattr(item, "unproven", False) else [])
+                self._mark_unverified(str(self.origin_of(item.source)), marks)
 
     def pdf_info(self) -> Dict[str, Any]:
         """Whether this computer can make PDFs (Export → PDF (Clean)), and with what: asked once, and again at each
@@ -3001,31 +3019,38 @@ class DocumentTask:
             self.unverified[origin] = marks
 
     def _say_text_changes(self):
-        """A custom method's preview has no plan sentence to say what it changes (the window shows no plan card, and
-        the method's words are checked against its own plan only), so before the approval button the chat says the
-        words its sample copies add and remove — the independent checker's reading of each copy (V2), never the
-        method's or the model's (``preview.text_changes_of``) — or that no words change; once per preview. Before
-        them, a method kept with failed checks, or with a check the writer kept with a reason (Obliterate), or whose
-        sample pages failed the page-layout check in the preview (``preview.layout_failures``), has its verdict said
-        too (``codegen.samples_verdict``): its copies are delivered marked UNVERIFIED (outside Obliterate a failed
-        layout makes Create unavailable, ``Session.run_blocked_reason``), and that is said where the user reads, not
-        only in the notes the model hears."""
-        from .codegen import SAMPLES_KEPT, SAMPLES_LAYOUT, SAMPLES_LAYOUT_UNVERIFIED, SAMPLES_PASSED, \
-            SAMPLES_UNVERIFIED, kept_lines, samples_verdict, unverified_lines
-        from .preview import layout_failures, text_changes_lines
+        """A custom method's preview has no plan sentence to say what it changes (the window shows no plan card), so
+        before the approval button the chat says the words its sample copies add and remove — the independent
+        checker's reading of each copy (V2), never the method's or the model's (``preview.text_changes_of``) — or that
+        no words change; once per preview. Before them the method's verdict is said where the user reads, not only in
+        the notes the model hears (``codegen.samples_verdict``): a method whose sample pages failed the page-layout
+        check in the preview (``preview.layout_failures``; Create is then unavailable,
+        ``Session.run_blocked_reason``); and an Obliterate method always — nothing was predicted for its copies, so
+        each is delivered UNPROVEN, or UNVERIFIED with the checks of its file it failed. After the words, an
+        Obliterate method's other changes are said too: the counts, styles, numbering, settings and parts the
+        independent reader found changed in each copy (``preview.shown_changes_lines``), and the documents it could
+        make no copy of, each with the reason (``preview.no_copy_lines``)."""
+        from .codegen import SAMPLES_LAYOUT, SAMPLES_PASSED, SAMPLES_UNPROVEN, SAMPLES_UNVERIFIED, samples_verdict
+        from .preview import layout_failures, no_copy_lines, shown_changes_lines, text_changes_lines
         s = self.session
         gp = s.generated_preview if s.generated is not None else None
         if gp is None or gp is self._words_said_for:
             return
         self._words_said_for = gp
         layout = layout_failures(getattr(gp, "samples", None) or [])
-        if unverified_lines(s.generated) or kept_lines(s.generated) or layout:
-            heads = (SAMPLES_PASSED, SAMPLES_UNVERIFIED, SAMPLES_KEPT, SAMPLES_LAYOUT, SAMPLES_LAYOUT_UNVERIFIED)
+        if getattr(s.generated, "unguarded", False) or layout:
+            heads = (SAMPLES_PASSED, SAMPLES_UNPROVEN, SAMPLES_UNVERIFIED, SAMPLES_LAYOUT)
             self.say("\n\n".join(line if line in heads else f"• {line}"
                                   for line in samples_verdict(s.generated, layout)))
         lines = text_changes_lines(getattr(gp, "samples", None) or [])
         if lines:
             self.say("\n\n".join(lines))         # a paragraph each: the page shows a note of several as a block
+        other = shown_changes_lines(getattr(gp, "samples", None) or [])
+        if other:
+            self.say("\n\n".join(other))
+        none = no_copy_lines(getattr(gp, "samples", None) or [])
+        if none:                                 # an Obliterate method's documents it could make no copy of
+            self.say("\n\n".join(none))
 
     # ---- what the window shows ----
     def _groups(self):
@@ -3135,7 +3160,10 @@ class DocumentTask:
                              "pages_before": sv.pages_before, "pages_after": sv.pages_after, "passed": sv.passed,
                              "failures": failed_preview_checks(sv), "geometry": sv.geometry,
                              "text_changes": getattr(sv, "text_changes", None),
-                             "set_aside": str(sv.source) in aside}
+                             "set_aside": str(sv.source) in aside,
+                             "unproven": bool(getattr(sv, "unproven", False)),
+                             "changes": list(getattr(sv, "changes", None) or []),
+                             "no_copy": bool(getattr(sv, "problem", ""))}
                             for sv in samples],
                 "occurrences": self._occurrences_view(preview),
                 "warnings": list(dict.fromkeys(getattr(preview, "warnings", []) or [])),
@@ -3226,6 +3254,10 @@ class DocumentTask:
             runnable = [Path(f).resolve() for f in s.runnable_files()]
             shown = {Path(sv.source).resolve() for sv in samples}
             copies, unpreviewed = len(runnable), sum(1 for f in runnable if f not in shown)
+            if s.generated is not None and getattr(s.generated, "unguarded", False):
+                # an Obliterate method's copies are made already: a document it could make none of gets none
+                made = {Path(t.source).resolve() for t in s.generated.trials if t.passed}
+                copies = sum(1 for f in runnable if f in made)
         batch_plan = getattr(preview, "batch_plan", None)
         labels = {"preview": "Create edited copies", "resume": "Continue", "budget": "Continue"}
         if self.mode == "safe":
@@ -3517,14 +3549,15 @@ class DocumentTask:
                 self._digest(current, fresh=True)  # the fingerprint of what was just read, for the next view
         self.export_folder = str(folder)
         self.say(self._export_said(kind, folder, len(plan), already, missing, renderer,
-                                   sum(1 for origin, *_ in plan if self.unverified.get(origin))))
+                                   sum(1 for origin, *_ in plan if failed_marks(self.unverified.get(origin))),
+                                   sum(1 for origin, *_ in plan if unproven_only(self.unverified.get(origin)))))
         result = {"folder": str(folder), "kind": kind, "saved": saved, "already": already, "missing": missing}
         self.save()
         return result
 
     @staticmethod
     def _export_said(kind: str, folder: Path, count: int, already: int, missing: Dict[str, str], renderer: str,
-                     shaky: int) -> str:
+                     shaky: int, shown: int = 0) -> str:
         """What the chat says after an export: what was saved where, what was already there, and each document
         without a file with why."""
         there = f" ({already} already there, unchanged)" if already else ""
@@ -3543,6 +3576,9 @@ class DocumentTask:
         if shaky:
             said += (f" {shaky} {'was' if shaky == 1 else 'were'} made from an edited copy delivered UNVERIFIED; "
                      f"its failed checks are beside it in the window.")
+        if shown:
+            said += (f" {shown} {'was' if shown == 1 else 'were'} made from an edited copy marked UNPROVEN: a custom "
+                     f"method made it, and what it changed was shown to you, not proven.")
         if missing:
             said += " Not saved: " + "; ".join(f"{name} — {str(why).rstrip('.')}" for name, why in missing.items()) + "."
         return said

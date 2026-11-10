@@ -17,8 +17,15 @@ import {
   failedCopyLine,
   modeChoice,
   modeHeld,
+  OTHER_CHANGES_TITLE,
+  UNPROVEN_MEANS,
+  copyMark,
+  failedMarks,
+  isUnprovenMark,
   obliterateKeyNote,
   obliterateSubject,
+  resultsLead,
+  sampleBadge,
   unverifiedLine,
 } from "../src/lib/modes.ts";
 import { normalizeView } from "../src/lib/view.ts";
@@ -72,6 +79,59 @@ test("the view keeps Obliterate and a copy's failed checks; an unknown mode read
   );
   assert.equal(unverifiedLine([]), "");
   assert.equal(unverifiedLine(undefined), "");
+});
+
+test("a copy a custom method made is UNPROVEN, never UNVERIFIED unless a check failed, and never unmarked", () => {
+  const unproven = "UNPROVEN (a custom method made it: what it changed was shown to you, not proven)";
+  const earlier = `in an earlier copy: ${unproven}`;
+  assert.equal(isUnprovenMark(unproven), true);
+  assert.equal(isUnprovenMark(earlier), true);
+  assert.equal(isUnprovenMark("V1 (Package integrity)"), false);
+  assert.equal(copyMark(undefined), "");
+  assert.equal(copyMark([]), "");
+  assert.equal(copyMark([unproven]), "UNPROVEN");
+  assert.equal(copyMark([earlier]), "UNPROVEN"); // a later copy built on it keeps the mark
+  assert.equal(copyMark(["V1 (Package integrity)", unproven]), "UNVERIFIED");
+  assert.deepEqual(failedMarks(["V1 (Package integrity)", unproven]), ["V1 (Package integrity)"]);
+  assert.equal(unverifiedLine([unproven]), `UNPROVEN — ${UNPROVEN_MEANS}. Check it in Word before you use it.`);
+  assert.equal(
+    unverifiedLine(["V1 (Package integrity)", unproven]),
+    "UNVERIFIED — V1 (Package integrity) failed. A custom method made it, so the rest of what it changed was shown to you, not proven. Check it in Word before you use it.",
+  );
+  // the results card says what each mark among the copies means, and only those
+  const plain = resultsLead([{ unverified: [] }, {}]);
+  assert.match(plain, /^Each copy was checked against the plan, word for word\./);
+  assert.doesNotMatch(plain, /UNPROVEN|UNVERIFIED/);
+  const shown = resultsLead([{ unverified: [unproven] }]);
+  assert.match(shown, /A copy marked UNPROVEN was made by a custom method that predicted nothing/);
+  assert.doesNotMatch(shown, /UNVERIFIED|checked against the plan/);
+  const mixed = resultsLead([{ unverified: [] }, { unverified: ["V2 (Text preservation)"] }, { unverified: [unproven] }]);
+  assert.match(mixed, /A copy with no mark was checked against the plan\. A copy marked UNVERIFIED failed a check .* A copy marked UNPROVEN/);
+  assert.match(mixed, /Your originals stay intact\. $/);
+});
+
+test("a preview card's badge never calls a custom method's Obliterate copy checked", () => {
+  assert.deepEqual(
+    [sampleBadge({ passed: true }).label, sampleBadge({ passed: true }).tone],
+    ["Checked", "ok"],
+  );
+  const shown = sampleBadge({ passed: true, unproven: true });
+  assert.deepEqual([shown.label, shown.tone], ["Not proven", "warn"]);
+  assert.match(shown.title, /nothing proves the change is the one you asked for/);
+  assert.match(shown.title, /marked UNPROVEN/);
+  const broken = sampleBadge({ passed: false, unproven: true });
+  assert.deepEqual([broken.label, broken.tone], ["Did not pass", "err"]);
+  assert.match(broken.title, /still created, marked UNVERIFIED/);
+  const none = sampleBadge({ passed: false, unproven: true, no_copy: true });
+  assert.deepEqual([none.label, none.tone], ["No copy", "err"]);
+  assert.match(none.title, /goes on your to-do list/);
+  // Safe and Default are as they were
+  assert.match(sampleBadge({ passed: false }).title, /the plan needs another look/);
+  assert.match(sampleBadge({ passed: false, set_aside: true }).title, /no copy of it is made/);
+  assert.ok(OTHER_CHANGES_TITLE.endsWith(":"));
+  // the warning says a custom method's copies are approved as copies, and what their mark is
+  assert.ok(OBLITERATE_GRANTS.some((g) => g.includes("UNPROVEN") && g.includes("predicts nothing")));
+  assert.ok(OBLITERATE_KEPT.some((k) => k.includes("Create delivers those same copies")));
 });
 
 test("while a run's saved copies wait on its recovery, the switches that would end the check wait with its reason", () => {

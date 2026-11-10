@@ -153,6 +153,7 @@ def expected() -> dict:
         "customMethodMemoryMB": const("process_limits.py", "DEFAULT_MEMORY_MB"),
         "customMethodAttempts": const("resources.py", "DEFAULT_MAX_ATTEMPTS"),
         "obliterateCheckRounds": const("codegen.py", "UNGUARDED_CHECK_ROUNDS"),
+        "obliterateReportRounds": const("codegen.py", "SHOWN_ROUNDS"),
         "analysisSeconds": const("resources.py", "DEFAULT_ANALYSIS_SECONDS"),
         "analysisMemoryMB": const("resources.py", "DEFAULT_ANALYSIS_MEMORY_MB"),
         "regexTimeoutSeconds": const("ops/patterns.py", "REGEX_TIMEOUT_S"),
@@ -278,7 +279,8 @@ def test_the_ledger_covers_the_facts_and_the_rule():
     assert "The trust surfaces are a contract" in claude
     for key in ("DEFAULT_SPENDING_LIMIT_USD", "AUTO_STEPS", "CHECK_INTERVAL", "SANDBOX_TIMEOUT", "DEFAULT_MEMORY_MB",
                 "MAX_CASES", "STOPPED_OUTPUT_RATE", "RETRY_DELAYS", "CONVERSATION_EFFORT", "RECOVERY_EFFORT",
-                "CODEGEN_EFFORT", "UNGUARDED_CHECK_ROUNDS", "STREAMED_TOOLS", "REGEX_TIMEOUT_S", "MAX_PATTERN_CHARS",
+                "CODEGEN_EFFORT", "UNGUARDED_CHECK_ROUNDS", "SHOWN_ROUNDS", "STREAMED_TOOLS", "REGEX_TIMEOUT_S",
+                "MAX_PATTERN_CHARS",
                 "CONTEXT_WINDOWS", "DEFAULT_CONTEXT_TOKENS"):
         assert key in ledger, f"the ledger names no source for {key}"
 

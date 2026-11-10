@@ -428,15 +428,23 @@ class Session:
                 gp = self.generated_preview
                 name, failed = self.generated.name, unverified_lines(self.generated)
                 shown = gp.to_text()[:4000] if gp is not None else ""
-                if not failed:
+                if failed:                        # Obliterate: kept with failed checks, never called passed
+                    c.note(f"The one-off custom transform {name!r} made copies whose files FAILED checks — "
+                           + "; ".join(failed) + " — and is kept (Obliterate mode: a copy that fails a check is "
+                           f"delivered marked UNVERIFIED with those checks beside it); the user reviews its preview.\n"
+                           + shown,
+                           display=f"Custom transform {name!r}: checks of its copies' files failed: "
+                                   + "; ".join(failed) + ".")
+                elif self.generated.unguarded:    # Obliterate: nothing was predicted, so nothing is called verified
+                    c.note(f"The one-off custom transform {name!r} made its copies and the independent reader found "
+                           f"no fault in their files. Nothing was predicted, so nothing proves the change is the one "
+                           f"asked for: the user reads what each copy changes in its preview, and each is delivered "
+                           f"marked UNPROVEN.\n" + shown,
+                           display=f"Custom transform {name!r} made its copies; what each changes is listed, not proven.")
+                else:
                     c.note(f"The one-off custom transform {name!r} passed verification on the sample files; the user "
                            f"reviews its preview.\n" + shown,
                            display=f"Custom transform {name!r} passed verification on the sample files.")
-                else:                             # Obliterate: kept with failed checks, never called passed
-                    c.note(f"The one-off custom transform {name!r} FAILED checks on the sample files — "
-                           + "; ".join(failed) + " — and is kept (Obliterate mode: every copy it makes is delivered "
-                           f"marked UNVERIFIED with those checks beside it); the user reviews its preview.\n" + shown,
-                           display=f"Custom transform {name!r} failed checks on the sample files: " + "; ".join(failed) + ".")
             except TransformFailed as e:          # the recorded outcome (no attempt passed, or the call failed)
                 c.note(str(e))
                 if c.continuous_recovery and e.recoverable:
@@ -584,41 +592,64 @@ class Session:
             raise ValueError("The original files changed; press Preview to prepare the transform again.")
         message = self._generate_custom(pending, log, render)
         if self.conversation is not None:
-            from .codegen import kept_lines, samples_verdict, unverified_lines
-            from .preview import layout_failures, text_changes_lines
-            failed, kept = unverified_lines(self.generated), kept_lines(self.generated)
-            # samples whose rendered pages failed V7 in the preview: never called passed either
+            from .codegen import samples_verdict, unverified_lines
+            from .preview import layout_failures, no_copy_lines, shown_changes_lines, text_changes_lines
+            failed = unverified_lines(self.generated)
+            # samples whose rendered pages failed V7 in the preview: never called passed either (a method written in
+            # Safe or Default mode; an Obliterate method predicts no layout)
             layout = layout_failures(getattr(self.generated_preview, "samples", None) or [])
-            if not failed and not kept and not layout:
-                self.conversation.note("The custom transform passed its independent sample verification.",
-                                       display="Custom transform prepared; review the resulting preview before Run.")
-            elif failed:
+            if failed:
                 # Obliterate: a method kept with failed checks is never called passed — this note is what the model
                 # plans on next turn, and its transcript line is what the user reads
                 self.conversation.note("\n".join(samples_verdict(self.generated, layout)),
                                        display="Custom transform prepared, with failed checks — "
-                                       + "; ".join(failed + layout)
-                                       + ". Review the preview before Run: its copies are delivered marked UNVERIFIED.")
+                                       + "; ".join(failed)
+                                       + ". Review the preview before Run: a copy that fails a check is delivered "
+                                         "marked UNVERIFIED.")
+            elif getattr(self.generated, "unguarded", False):
+                # Obliterate: nothing was predicted, so the copies are shown, never called verified
+                self.conversation.note("\n".join(samples_verdict(self.generated)),
+                                       display="Custom transform prepared. Nothing proves its change is the one asked "
+                                       "for: review what each copy changes before Run; its copies are delivered "
+                                       "marked UNPROVEN.")
             elif layout:
                 self.conversation.note("\n".join(samples_verdict(self.generated, layout)),
                                        display="Custom transform prepared; its sample pages failed the page-layout "
                                        "check (V7) — " + "; ".join(layout) + ". "
-                                       + ("Review the preview before Run: a copy that fails it is delivered marked "
-                                          "UNVERIFIED." if self.unguarded else
-                                          "Create is unavailable for this method; ask for the change another way."))
-            else:                                 # Obliterate: the samples passed; a kept check is not a failure
-                self.conversation.note("\n".join(samples_verdict(self.generated)),
-                                       display="Custom transform prepared; the samples passed, and the writer kept "
-                                       + "; ".join(kept) + " (a copy that fails it is delivered marked UNVERIFIED with "
-                                       "that reason). Review the resulting preview before Run.")
+                                       "Create is unavailable for this method; ask for the change another way.")
+            else:
+                self.conversation.note("The custom transform passed its independent sample verification.",
+                                       display="Custom transform prepared; review the resulting preview before Run.")
             # the words the method's sample copies add and remove, as the independent checker read them (never the
             # method's or the model's account): a note of its own, so the transcript keeps them beside the verdict and
             # the model hears them next turn; the window says them before the button (``DocumentTask._say_text_changes``)
             words = text_changes_lines(getattr(self.generated_preview, "samples", None) or [])
             if words:
                 self.conversation.note("\n".join(words))
+            # Obliterate: what else each copy changes (the verifier's D1 report), the model hearing it too
+            other = shown_changes_lines(getattr(self.generated_preview, "samples", None) or [])
+            if other:
+                self.conversation.note("\n".join(other))
+            none = no_copy_lines(getattr(self.generated_preview, "samples", None) or [])
+            if none:
+                self.conversation.note("\n".join(none))
             self._save_chat()
         return message
+
+    @staticmethod
+    def _every_copy(g, files: Sequence[Path], folder: Path, log: Log) -> None:
+        """An Obliterate method's copy of every document, in the documents' order: the writer's trials of the samples
+        as they are, and one trial now of each other document (``folder``). A document whose copy cannot be made keeps
+        the reason (its preview says so, and Create sets it aside)."""
+        from .codegen import trial, trial_options
+        made = {Path(t.source).resolve(): t for t in g.trials}
+        rest = [f for f in files if Path(f).resolve() not in made]
+        if rest:
+            log(f"Making the method's copy of the other {len(rest)} document(s)…")
+        for i, f in enumerate(rest):
+            made[Path(f).resolve()] = trial(g.source, Path(f), g.select, g.params, folder / f"{i:03d}",
+                                            **trial_options(g))
+        g.trials = [made[Path(f).resolve()] for f in files if Path(f).resolve() in made]
 
     def _pending_files(self, pending) -> List[Path]:
         """The files a custom transform being prepared is for: the attached documents without those left out."""
@@ -626,7 +657,7 @@ class Session:
         return [f for f in self.files() if f not in out]
 
     def _generate_custom(self, pending, log: Log, render: bool) -> str:
-        from .codegen import generate_op, kept_lines, pick_samples, unverified_lines
+        from .codegen import generate_op, pick_samples, unverified_lines
         from .preview import approval_inputs, _approval_token_from_inputs, explain_approval_change
         request, proposal, files, brief, out = (pending[k] for k in ("request", "proposal", "files", "brief", "out"))
         # A writer the spending check paused (``GeneratedOp.budget_stop``) goes on in its own folder from its checkpoint
@@ -665,6 +696,10 @@ class Session:
                 recoverable=bool(g.attempts) and not g.budget_stop and not any("error" in e for e in g.transcript))
         intent = "\n".join([f"A ONE-OFF CUSTOM TRANSFORM ({g.name}) for: {request}", f"WHAT IT SHOULD DO: {proposal}"]
                            + ([f"THE CONVERSATION:\n{brief}"] if brief else []))
+        if g.unguarded:
+            # Obliterate: nothing is predicted, so every document's copy is made and read now — the user approves the
+            # results themselves, and Create delivers these bytes (``codegen.run_generated``)
+            self._every_copy(g, files, writer_dir / "sandbox" / "rest", log)
         key = self._generated_key(g)
         inputs = approval_inputs(key, files)
         try:
@@ -678,14 +713,15 @@ class Session:
             log("A file changed while the custom transform was being written and tried — it runs only once Preview has "
                 "tried it again on the files as they are now:" + "".join(f"\n  • {w}" for w in moved))
         self._show_generated(g, out, token, inputs, intent, render, log, left_out=pending.get("left_out") or [])
-        failed, kept = unverified_lines(g), kept_lines(g)   # Obliterate: kept with failed checks is never "passed"
-        return ((f"An AI-written transform ({g.name}) passed verification on {len(samples)} sample file(s). "
-                 if not failed else
-                 f"An AI-written transform ({g.name}) ran on {len(samples)} sample file(s) but FAILED checks — "
-                 + "; ".join(failed) + " (Obliterate mode: it is kept, and its copies are delivered marked UNVERIFIED "
-                 "with those checks beside them). ")
-                + (f"The writer kept {'; '.join(kept)}, which no sample failed: a copy that fails it is delivered "
-                   "marked UNVERIFIED with that reason. " if kept else "")
+        failed = unverified_lines(g)              # Obliterate: kept with failed checks is never "passed"
+        made = sum(1 for t in g.trials if t.passed)
+        return ((f"An AI-written transform ({g.name}) made {made} cop{'y' if made == 1 else 'ies'}, and checks of "
+                 f"their files FAILED — " + "; ".join(failed) + " (Obliterate mode: it is kept, and a copy that fails "
+                 "a check is delivered marked UNVERIFIED with those checks beside it). " if failed else
+                 f"An AI-written transform ({g.name}) made {made} cop{'y' if made == 1 else 'ies'}. Nothing was "
+                 f"predicted, so nothing proves the change is the one asked for: read what each copy changes; each "
+                 f"is delivered marked UNPROVEN. " if g.unguarded else
+                 f"An AI-written transform ({g.name}) passed verification on {len(samples)} sample file(s). ")
                 + f"It is saved at {g.path} — Run writes edited copies only (never over your files)." +
                 ("\nA file changed while it was written: press Preview to try it again on the files as they are now."
                  if moved else ""))
@@ -705,8 +741,20 @@ class Session:
                         **({"goal_binding": g.goal_bindings.get(str(f))}
                            if getattr(g, "goal_contract", None) is not None else {})) for i, f in enumerate(samples)]
         bad = [f"{t.source.name}: {'; '.join(t.problems[:2])}" for t in trials if not t.passed]
-        if bad:
+        # an Obliterate method is tried on every document, and one it cannot take keeps its reason while the others
+        # go on (its preview says why; Create gives it no copy): only a method that makes no copy at all is refused
+        if bad and (not getattr(g, "unguarded", False) or len(bad) == len(trials)):
             raise exc(f"{refusal} — " + " | ".join(bad))
+        if getattr(g, "unguarded", False):
+            # An Obliterate method's approval is of its copies (``preview.generated_key``'s ``results``): the key is
+            # taken over the copies just made, and stands only when no file moved while they were made
+            import copy as _copy
+            probe = _copy.copy(g)
+            probe.trials = trials
+            key = self._generated_key(probe)
+            after = approval_inputs(key, files)
+            token = _approval_token_from_inputs(key, after) if after["files"] == inputs["files"] else ""
+            inputs = after if token else {**after, "files": inputs["files"]}
         return token, inputs, trials
 
     @_session_action
@@ -747,7 +795,8 @@ class Session:
         passes is refused, and the session stays as it was (Run keeps refusing)."""
         from .codegen import pick_samples
         g = self.generated
-        samples = pick_samples(files)
+        # an Obliterate method's copies are the thing approved: every document's is made again, not a sample's
+        samples = list(files) if getattr(g, "unguarded", False) else pick_samples(files)
         out = self._next_session_dir()            # a new folder: the old preview stays as it was until this passes
         log(f"The files changed since the custom transform {g.name!r} was tried — trying it again on "
             f"{[f.name for f in samples]}…")
@@ -771,14 +820,19 @@ class Session:
             return self.continue_custom_transform(log, render)
         if self.generated is not None:
             files = self.planned_files()
-            if approval_token(self._generated_key(self.generated), files) != self.generated_token:
+            from .codegen import kept_copies_changed
+            if (approval_token(self._generated_key(self.generated), files) != self.generated_token
+                    or kept_copies_changed(self.generated)):   # (Obliterate: a copy shown is no longer those bytes)
                 self._prove_again(files, render, log)   # stale: Run would refuse forever — re-prove, then preview
             elif (self.generated_preview is None
                   or bool(getattr(self.generated_preview, "rendered", False)) != bool(render)):
                 self._preview_again(render, log)        # Render pages changed: pages and the visual check follow it
             gp = self.generated_preview
-            return ((gp.to_text() + "\n\n") if gp is not None else "") + \
-                "AI-written transform verified. Review its preview before Run."
+            return ((gp.to_text() + "\n\n") if gp is not None else "") + (
+                # an Obliterate method predicts nothing: its copies are shown, never called verified
+                "AI-written transform prepared; nothing proves its change is the one asked for. Review what each "
+                "copy changes before Run." if getattr(self.generated, "unguarded", False) else
+                "AI-written transform verified. Review its preview before Run.")
         if self.spec is None:
             raise ValueError("nothing to preview — describe the change first")
         files = self.planned_files()              # the same set Run checks and runs (no template, nothing left out)
@@ -1125,6 +1179,15 @@ class Session:
                            reason="generated_inputs_changed", changes=what)
                 raise ValueError("a file changed (or the folder changed) since the AI-written transform was tested — "
                                  "press Preview again" + ("".join(f"\n  • {w}" for w in what) if what else ""))
+            from .codegen import kept_copies_changed
+            stale = kept_copies_changed(self.generated)
+            if stale:
+                # an Obliterate method's approval is of the copies shown: one that changed or is gone voids it, for
+                # every document — Preview makes each copy again (``make_preview``), and that is approved afresh
+                diag.event("session.approval.refused", level="warning", gate="approval_digest",
+                           reason="generated_copies_changed", documents=stale)
+                raise ValueError("a copy you were shown changed or is gone since it was checked — press Preview again"
+                                 + "".join(f"\n  • {name}" for name in stale))
             selected = self._selected(files, only)
             out = (self.out_dir or self.new_out_dir()) / "run"
             diag.event("session.approval.accepted", approval_digest=self.generated_token,

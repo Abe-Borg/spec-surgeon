@@ -6,6 +6,11 @@ hook that only admits the whitelisted modules, finds the one ``Op`` subclass, an
 it was given runs ``plan`` (predict first) and ``apply``; it writes ``out.docx`` and ``plan.json`` next to the
 request. The parent process verifies the result with the independent verifier — the generated code never sees it.
 
+An Obliterate method (``unguarded``; the owner's decision of 2026-11-10) predicts nothing: the runner calls its one
+``apply(pkg)`` on the working copy and writes the copy, with a ``plan.json`` that says only that nothing was
+predicted (``free_plan``). The parent then reads what differs with the verifier's own report
+(``verify.run_difference``), under the same whitelist, audit hook and limits.
+
 Before the generated source is executed, ``install_guard`` adds a Python audit hook (defence in depth under the
 whitelist): from then on this process may write, remove or rename only inside its own working directory, and may not
 start a process, open a socket or load native code. lxml's C-level file access is not audited — the whitelist
@@ -86,6 +91,15 @@ SAFE_BUILTINS = (
 )
 
 
+def free_plan(name: str) -> dict:
+    """The plan of a method that predicts nothing (Obliterate): no diff, part, revision or assertion, and no layout
+    reference — the pages are shown beside the copy, never compared with a prediction."""
+    return {"job": f"generated:{name}", "mode": "shown", "ops": [], "diffs": [], "intended_parts": [],
+            "rev_delta": {}, "members_added": [], "members_removed": [], "property_assertions": [], "notes": [],
+            "flags": [], "geometry_reference": "none",
+            "geometry_reason": "a custom method in Obliterate mode predicts no layout: its pages are shown, not compared"}
+
+
 def _guarded_import(allowed):
     def imp(name, globals=None, locals=None, fromlist=(), level=0):
         if level != 0 or not any(name == a or name.startswith(a + ".") for a in allowed):
@@ -149,26 +163,36 @@ def main(argv=None) -> int:
         pkg.goal = copy.deepcopy(req.get("goal_contract"))
         pkg.binding = copy.deepcopy(req.get("goal_binding"))
         pkg.author = req.get("author")         # an Obliterate method's tracked changes carry it
-        frag = op.plan(pkg, req.get("select") or {}, req.get("params") or {})
-        frag.op = frag.op or getattr(cls, "name", "generated")
-        plan = merge_fragments([frag], job=f"generated:{getattr(cls, 'name', 'op')}", params=req.get("params") or {})
+        free = req.get("unguarded") is True and req.get("goal_contract") is None
+        frag = plan = None
+        if not free:
+            frag = op.plan(pkg, req.get("select") or {}, req.get("params") or {})
+            frag.op = frag.op or getattr(cls, "name", "generated")
+            plan = merge_fragments([frag], job=f"generated:{getattr(cls, 'name', 'op')}",
+                                   params=req.get("params") or {})
         work = pkg.copy()
         work.inputs = pkg.inputs
         work.goal = copy.deepcopy(req.get("goal_contract"))
         work.binding = copy.deepcopy(req.get("goal_binding"))
         work.author = req.get("author")
-        op.apply(work, frag)
+        if free:
+            op.apply(work)                      # Obliterate: the method just does the work; nothing was predicted
+        else:
+            op.apply(work, frag)
         output = work.output_bytes()
         if len(output) > limits["output_bytes"]:
             raise SandboxLimitError("generated document exceeded its configured output allowance")
         (out_dir / "out.docx").write_bytes(output)
-        d = plan.to_dict()
-        d.pop("transform_data", None)
+        if free:
+            d = free_plan(str(getattr(cls, "name", None) or "op"))
+        else:
+            d = plan.to_dict()
+            d.pop("transform_data", None)
         plan_json = json.dumps(d, default=str).encode("utf-8")
         if len(plan_json) > min(limits["output_bytes"], 16 * 1024 * 1024):
             raise SandboxLimitError("generated plan exceeded its configured output allowance")
         (out_dir / "plan.json").write_bytes(plan_json)
-        result = {"ok": True, "op_name": getattr(cls, "name", None), "mode": plan.mode, "isolation": isolation}
+        result = {"ok": True, "op_name": getattr(cls, "name", None), "mode": d["mode"], "isolation": isolation}
     except Exception as e:  # everything is reported, nothing is raised past the process boundary
         code = "resource-limit" if isinstance(e, MemoryError) else getattr(e, "code", None)
         try:

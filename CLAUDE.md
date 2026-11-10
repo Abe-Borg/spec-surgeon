@@ -13,6 +13,8 @@ files go to clients, so the one failure that matters is content lost or invented
 
 1. **Predict first.** `Op.plan()` computes every prediction (diffs, parts, members, revision deltas, assertions and
    their target counts) from the SOURCE, analytically; never by running the transform on a copy and reading the result.
+   One exception, the owner's (2026-11-10): a custom method written in Obliterate mode predicts nothing and is its
+   `apply()` alone (Modes, below); every built-in op predicts first in every mode.
 2. **The verifier shares no code with the transforms.** `src/spec_surgeon/verify/` imports nothing from `ops/`,
    `editspec.py`, `ooxml.py`, `package.py`, `goals.py`, `goal_contracts.py` or the Claude layer
    (`tests/test_independence.py`). It has its own readers, text extraction, selectors, style chains and definitions.
@@ -54,22 +56,33 @@ is the owner's decision to lift, for that mode only, the guardrails that protect
 trace (invariant 6: `compose_submission(unguarded=, shown=)` traces placed words to the user's words or to the reply
 the user reads, `Conversation.shown_text`, never to nothing; Claude may write wording once its reply shows it;
 `compiler.UNGUARDED_RULES` rewrites the prompt's rules it lifts), a custom method's formatting-only limits
-(`codegen` skips `hard_limits`, and a copy that changes a part no check reads fails `UNREAD`, from V10's
-`unread_members`, `codegen._check_unread`; `UNGUARDED_LIMITS`; the writer gets the `GOAL_FROM` helpers and the user's attachments
-as `pkg.inputs`, pinned in `GeneratedOp.attachments`, and its failed checks go back to it `UNGUARDED_CHECK_ROUNDS`
-times, to fix or to keep with a reason in `GeneratedOp.accepted_failures`; `NEVER_KEPT_CHECKS` can never be kept; after the
-rounds the latest method is used and never called passed: `codegen.samples_verdict` words the note, the message and the
-plan's details; in every mode the words a method's sample copies add and remove are listed before approval from the
-verifier's V2 record, never from the method or the model — `preview.text_changes_of` → `SampleView.text_changes`, said
-by `DocumentTask._say_text_changes` and shown under each sample), and
+and its prediction (the method just does the work: one class with `apply(self, pkg)`, no `plan()`, selector or
+parameters, written under `codegen.FREE_SYSTEM`; the writer gets the `GOAL_FROM` helpers, `pkg.set_bytes` and the
+user's attachments as `pkg.inputs`, pinned in `GeneratedOp.attachments`. Nothing is predicted, so the suite cannot hold
+the copy to a plan: the verifier's own report reads it instead — `verify.run_difference`, the Obliterate record: the
+words added and removed in V2's shape, D1 "What changed" (counts, formatting, tables, page setup, styles, numbering,
+settings, relationships, parts, and every changed part it compared by bytes only), and the checks that need no
+prediction (V1 package integrity, V4 revision ids, V5a schema, V5c revision grammar; V6 when the pages are rendered).
+The writer reads that report after a submission runs and takes the method with `confirm_op`, at most `SHOWN_ROUNDS`
+reports; a copy whose file fails a check goes back `UNGUARDED_CHECK_ROUNDS` times, after which the latest method is
+used. The method's copy of every document is made before approval (`Session._every_copy`), the approval names each
+copy's bytes (`preview.generated_key`'s `results`), and Create delivers those copies without running the method again
+(`codegen._kept_trial`; a shown copy that changed or is gone refuses Create and has Preview make every copy again,
+`codegen.kept_copies_changed`). No such copy is called verified or passed: each is marked UNPROVEN
+(`ui_feedback.UNPROVEN_MARK`), and UNVERIFIED when a check of its file failed — `codegen.samples_verdict` words the
+note, the message and the plan's details. In every mode the words a method's copies add and remove are listed before
+approval from the verifier's V2 record, never from the method or the model — `preview.text_changes_of` →
+`SampleView.text_changes`, said by `DocumentTask._say_text_changes` and shown under each sample; an Obliterate method's
+other changes follow them, `SampleView.changes`, `preview.shown_changes_lines`), and
 the holding back of a copy that fails a check (`deliver_unverified`: delivered to `outputs/` marked UNVERIFIED, its
 failed checks in `FileResult.unverified`/`ChainFile.unverified`, no recovery; the mark stays on every later copy built
 on it, `DocumentTask._mark_unverified`, in every mode). The verifier still runs on every copy
-and reports; invariants 1, 2, 3, 4, 5 (built-in ops still refuse what they cannot predict; Obliterate's way past a
-refusal is a custom method) and 7 bind every mode, and so do copies only, the source guard, the sandbox and its
+and reports; invariant 1 binds every built-in op, and invariants 2, 3, 4, 5 (built-in ops still refuse what they
+cannot predict; Obliterate's way past a refusal is a custom method) and 7 bind every mode, and so do copies only, the source guard, the sandbox and its
 whitelist, and the governed outcome path (never unguarded). Obliterate is hidden unless `Settings.show_obliterate`,
 needs the warning acknowledged each time (`DocumentTask.set_mode(acknowledged=True)`), voids the plan when entered or
-left, and is never what a launch opens in (`settings.MODES`, `web.server.launch_mode`). Pinned by `tests/test_obliterate.py`.
+left, and is never what a launch opens in (`settings.MODES`, `web.server.launch_mode`). Pinned by
+`tests/test_obliterate.py` and, for the record itself, `tests/test_obliterate_record.py`.
 
 Obliterate is the top rung of a ladder (the owner's decision, 2026-11-10): Safe, then Default for what Safe could not
 take, then Obliterate for the one or two documents neither could, so it also starts from the to-do list. A document
@@ -176,7 +189,9 @@ jobs). Details: `docs/CONVERSATIONAL_DESKTOP.md`.
     a kind whose module writes none gets that module's docstring, so every kind has one), `reader.py`,
     `textcheck.py`, `edits.py`, `xsd.py`, `geometry.py` (V6/V7's page evidence, and `shown_words`: the words the
     original's pages show that the copy's do not, less what the plan removes — V6's warning, never a FAIL;
-    `report.words_missing_sentence` is its one wording), `template_layout.py` (V7's template reference: the template
+    `report.words_missing_sentence` is its one wording), `difference.py` (the Obliterate record, `run_difference`:
+    what differs between an original and a copy with nothing predicted, in a `VerificationRecord` every reader of a
+    record reads — Modes, above), `template_layout.py` (V7's template reference: the template
     as each document's plan makes it show, its fills in the slots and each section at the document's own text
     width, the template's vertical layout kept — live QA finding F08 — but the source's own header/footer distances
     where the plan keeps them, `keeps_distances` — the deep-dive stress test's D4), `explain.py`, `patterns.py` (the verifier's
@@ -238,7 +253,9 @@ jobs). Details: `docs/CONVERSATIONAL_DESKTOP.md`.
     state on disk, and `generate_op(resume_from=)` continues it from its checkpoint in the same folder —
     `Session._generate_custom` keeps the folder in `pending["paused"]`; a trial is verified without pages, so its
     samples get V6/V7 in the preview by the plan the trial predicted, `FileTrial.plan`, and `run_generated` renders
-    and compares every copy before delivering any, `_check_layout`), `goals.py`, `goal_contracts.py`,
+    and compares every copy before delivering any, `_check_layout`; an Obliterate method is its `apply()` alone, read
+    by `verify.run_difference`, its tools `CODEGEN_TOOLS_UNGUARDED` with `confirm_op` and no
+    `describe_assertion_kind`, and its copies kept from before the approval — Modes, above), `goals.py`, `goal_contracts.py`,
     `goal_operations.py` (reviewed outcome contracts; a target with `all: true` is bound once, by count), `recovery*.py` (one checkpoint per model call, at the turn's end), `continuous_recovery.py`, `campaign_planner.py`
     (bounded investigation of set-aside files: the outcome plan is a choice the user picks, its words beneath it —
     `Session.outcome` auto-takes a custom transform only — and the documents the user left out of the request stay
@@ -386,8 +403,8 @@ Standing decisions from the earlier rounds (their plans are in the git history):
   Obliterate is the emergency lever: inside the copy nothing is refused for being unusual, the original and the
   machine stay protected (copies only, the source guard, the sandbox's containment), and everything done is reported
   (the verifier on every copy, the marks, the words added and removed). Decided, for Obliterate only: a custom method
-  just does the work and the verifier reports the difference, the user approving the actual result (invariant 1 is
-  lifted for that one path once built; built-in ops predict first in every mode); a raw-XML operation Claude plans,
+  just does the work and the verifier reports the difference, the user approving the actual result (built: invariant 1
+  is lifted for that one path; built-in ops predict first in every mode); a raw-XML operation Claude plans,
   with a read-only part browser and swap-a-part behind a toggle (in-app XML editing is not built); Word may edit
   copies through a fixed menu of named actions the user or Claude chains (Claude-composed Word scripts are not
   built: a miss is first a new menu item); a file refused at attach may be rescued; Export may make a marked copy's

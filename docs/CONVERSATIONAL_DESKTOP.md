@@ -286,39 +286,68 @@ What it lifts (`Session.unguarded`; CLAUDE.md, "Modes"):
   (`compiler.UNGUARDED_RULES`) instead of leaving them in to contradict the mode; "never invent project facts,
   requirements or citations" stays.
 - **Custom methods.** When no operation fits, the custom method is offered whenever any method could make the change,
-  and it may change anything Word stores: the writer's prompt drops the plain-formatting limits and `codegen` skips
-  `hard_limits`. The writer gets what that takes: the governed path's helpers (`GOAL_FROM`: text edits, tracked
-  revisions with `pkg.author`, parts and relationships; `allowed_imports(unguarded=True)`, re-checked by the sandbox),
-  the V10 assertion kinds that let a correct change prove itself, and the files the user attached (a template,
+  and it may change anything Word stores. There the method just does the work (the owner's decision of 2026-11-10):
+  it predicts nothing, so it is one class with `apply(self, pkg)` and no `plan()`, selector or parameters, written
+  under a prompt of its own (`codegen.FREE_SYSTEM`); `codegen` skips `hard_limits`, and the suite, which holds a copy
+  to its plan, does not apply. The writer gets what the work takes: the governed path's helpers (`GOAL_FROM`: text
+  edits, tracked revisions with `pkg.author`, parts and relationships; `allowed_imports(unguarded=True)`, re-checked
+  by the sandbox), `pkg.set_bytes` for a member that is not XML, and the files the user attached (a template,
   pictures, tables) as `pkg.inputs` — pinned by digest when the method is written (`GeneratedOp.attachments`, part of
   its approval), refused at any later trial if one changed (`stale-input`), readable with `read_template` and
-  `read_input_file`. A trial whose only failures are its checks — the verifier read the copy, the source did not
-  move — goes back to the writer up to `codegen.UNGUARDED_CHECK_ROUNDS` times: it fixes what it did not intend, or
-  resubmits with `accept_failures` (a check and its reason, which the user reads beside every copy:
-  `GeneratedOp.accepted_failures`, in the approval too; V1, V4, V5a, V5c and V9 can never be kept, since their
-  failure is a member, revision or XML the method got wrong, or a source that moved: `codegen.NEVER_KEPT_CHECKS`).
-  After those rounds the latest method is used with its failures listed, never called passed: the notes the model
-  hears, the transcript lines beside them, the chat before the button (the app's own note, ahead of the words below:
-  `DocumentTask._say_text_changes`), the window's message and the plan group's details name the checks each
-  sample failed, as the preview and the delivered copies list them (`codegen.samples_verdict`,
-  `codegen.unverified_lines`; a check the writer kept with a reason that no sample failed is named apart, never as a
-  failure: `codegen.kept_lines`); a writer that stops otherwise (an API error, a stall, its attempts) leaves the best such
-  method, but the pause for the user's go-ahead never does. A custom method has no plan sentence (`Op.describe`) and the
-  gate's trace of placed words does not reach it, so before approval the window lists the words its sample copies add
-  and remove — in the chat, as the app's own note before the button, and under each sample's pages — taken from the
-  independent checker's V2 record of each copy (`preview.text_changes_of` → `SampleView.text_changes`,
-  `DocumentTask._say_text_changes`), never from the method's plan or the model: the exact words quoted, the part named
-  ("footer", "body paragraph 12"), the same change in several documents said once; a method that changes no words is
-  said to change none. Where a part carries tracked changes, the checker reads the copy in its accept-all and
-  reject-all views too (V2's `views`), and the words are what either view removes or adds, said to sit in the copy's
-  tracked changes — a tracked deletion reads as the words it takes out, never as no change. The same list shows for a Default custom method (which is formatting only, so it reads "No
-  words change").
+  `read_input_file`.
+  - **The Obliterate record.** Each copy is read by the independent verifier with nothing predicted beside it
+    (`verify.run_difference`, `verify/difference.py`). It lists what differs — the words added and removed, in V2's
+    own shape; and D1 "What changed": the paragraphs, tables, pictures, text boxes, fields, hyperlinks, sections,
+    content controls, bookmarks, notes, comments and page breaks counted before and after; tracked changes before
+    and after; the paragraphs whose formatting changed without their words, the tables whose own layout changed, the
+    sections whose page setup changed; styles, numbering and settings added, removed and changed; relationships and
+    parts added, removed or left unreferenced (an outside address, such as a hyperlink's, is read as it is written,
+    so a link that leads somewhere else is said with both addresses); and every changed part it compared by its bytes only (a chart, an
+    embedded file, stored data, the theme), named as not read. None of that is ever a failure. It fails a copy only
+    for what Word repairs or refuses: a part that is not well-formed XML, a relationship to nothing, a member with no
+    content type, an `r:` reference that names no relationship, a revision id Word cannot tell apart or read, a new
+    schema error, tracked-change markup outside Word's grammar (V1, V4, V5a, V5c), each measured against what the
+    original already got wrong — and, once pages are rendered, a copy the renderer could not open (V6, in the
+    preview and at the run). V7 has no layout to compare: the pages are shown beside the original's.
+  - **The writer reads the report.** A submission that runs comes back with what it changed in each sample
+    (`codegen.trial_report`): the writer takes the method with `confirm_op`, or submits a fixed one, at most
+    `codegen.SHOWN_ROUNDS` reports (the same method sent again is a confirmation). A copy whose file fails a check
+    goes back up to `codegen.UNGUARDED_CHECK_ROUNDS` times first; after those rounds the latest method is used with
+    its failures listed. A writer that stops otherwise (an API error, a stall, its attempts) leaves the best method
+    that ran — fewest failed checks, then the latest — but the pause for the user's go-ahead never does.
+  - **You approve results.** The method's copy of every document is made before the button (`Session._every_copy`:
+    the samples the writer tried, and every other document), each with its own preview card: **Not proven** (never
+    Checked), or **Did not pass** with the checks its file failed; a document the method could make no copy of says
+    why, is counted out of the button's number, and goes on the to-do list when the others are created. The approval
+    names each copy's bytes (`preview.generated_key`'s `results`), and Create delivers those copies without running
+    the method again (`codegen._kept_trial`). A copy that is no longer the bytes that were checked (changed, or
+    gone) voids the approval for every document: Create is refused, and Preview makes each copy again
+    (`codegen.kept_copies_changed`, read by `Session.run` and `Session.make_preview`).
+  - **Never called verified.** The notes the model hears, the transcript lines beside them, the chat before the
+    button (the app's own note, ahead of the words below: `DocumentTask._say_text_changes`), the window's message
+    and the plan group's details say UNPROVEN, or UNVERIFIED with the checks each copy failed
+    (`codegen.samples_verdict`, `codegen.unverified_lines`), and never that a copy passed. A delivered copy carries
+    the mark UNPROVEN (`ui_feedback.UNPROVEN_MARK`), and UNVERIFIED when a check of its file failed; the copies list
+    shows which, the done message and Export's note count both, and the mark stays on every later copy built on it.
+  - **What it changes, said before approval.** A custom method has no plan sentence (`Op.describe`) and the gate's
+    trace of placed words does not reach it, so before approval the window lists the words its copies add and remove
+    — in the chat, as the app's own note before the button, and under each copy's pages — taken from the independent
+    checker's V2 record of each copy (`preview.text_changes_of` → `SampleView.text_changes`,
+    `DocumentTask._say_text_changes`), never from the method or the model: the exact words quoted, the part named
+    ("footer", "body paragraph 12"), the same change in several documents said once; a method that changes no words
+    is said to change none. Where a part carries tracked changes, the checker reads the copy in its accept-all and
+    reject-all views too (V2's `views`), and the words are what either view removes or adds, said to sit in the
+    copy's tracked changes — a tracked deletion reads as the words it takes out, never as no change. After the words
+    come the copy's other changes, D1's sentences (`SampleView.changes`, `preview.shown_changes_lines`). The words
+    list shows for a Default custom method too (which is formatting only, so it reads "No words change"); a Default
+    method still predicts in `plan()`, is held to it by the whole suite, and shows **Checked**.
 - **Holding back.** A copy that fails a check is delivered to the run's `outputs/` instead of `failed/`, its record
   kept with every failure and V9 saying *delivered UNVERIFIED*; a chain's step hands its copy on and the chain's copy
   carries everything that failed. The preview already says so: a sample whose copy fails a check shows **Did not
   pass** and the plan stands (no outcome investigation; a chain's sample goes on through every step, as the run will),
-  and a custom method's sample shows the checks it failed, never a pass. The copies list marks it **UNVERIFIED** with
-  the checks it failed, and the done message counts them. No recovery runs after a run in this mode; a document whose copy could not be made at all
+  and a custom method's copy shows the checks it failed, or **Not proven**, never a pass. The copies list marks a
+  copy **UNVERIFIED** with the checks it failed, or **UNPROVEN** when a custom method made it and none failed, and
+  the done message counts both. No recovery runs after a run in this mode; a document whose copy could not be made at all
   goes on the to-do list as in Default. The mark stays with the document: a later copy that builds on an unverified
   one was checked against it, not against the original, so in every mode it is marked *in an earlier copy* with the
   checks that failed (`DocumentTask._mark_unverified`) until Start over, Undo or removing the document, and the next
@@ -671,8 +700,9 @@ the line says the pages were rendered); or the plan is done in steps and only it
 (a step whose reference is its own input is checked step by step when the copies are created). A custom method's
 samples are checked by the plan the method predicted (its trials are verified without pages), and its copies are
 rendered and compared before any is delivered, as a plan's are: a sample whose layout check fails is said in the chat
-before the button and, outside Obliterate, makes Create unavailable; in Obliterate its copies are delivered marked
-UNVERIFIED with that check beside them. If no renderer can
+before the button and makes Create unavailable. A custom method written in Obliterate mode predicts no layout: its
+pages are rendered and shown, never compared (V7 says there is no reference), and a copy the renderer could not open
+while it opened the original fails V6 on its card and is delivered marked UNVERIFIED with that check. If no renderer can
 provide usable page evidence, each preview
 says that page appearance was not checked for its document and asks you to open the edited copy in Word.
 

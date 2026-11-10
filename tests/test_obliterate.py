@@ -233,252 +233,436 @@ def test_the_conversation_says_obliterate_and_offers_a_custom_method_past_the_fo
     assert "formatting-only custom fallback" not in t.message
 
 
-# ---- custom methods -------------------------------------------------------------------------------------------------
+# ---- custom methods: the method just does the work (the owner's decision of 2026-11-10) ----------------------------
+#
+# A custom method written in Obliterate mode predicts nothing. It is one class with ``apply(self, pkg)``; the
+# independent verifier reports what differs in each copy (``verify.run_difference``) and checks what needs no
+# prediction; the writer reads that report and confirms the method; every document's copy is made before approval, and
+# Create delivers those bytes. No copy of such a method is ever called verified: UNPROVEN, or UNVERIFIED when a check of
+# its file failed.
 
-def test_a_custom_method_past_the_limits_passes_with_its_failed_checks_only_in_obliterate(folder, tmp_path):
+FREE_HEADER = '''from spec_surgeon.ops.base import Op, JobException
+from spec_surgeon.package import W, DocxPackage
+
+
+class SetHeaderDistance(Op):
+    name = "set_header_distance"
+    description = "Set the header distance of every section to 900 twips."
+
+    def apply(self, pkg):
+        main = pkg.main_part()
+        root = pkg.xml(main)
+        for sp in DocxPackage.sect_prs(root):
+            sp.find(W + "pgMar").set(W + "header", "900")
+        pkg.write_xml(main, root)
+'''
+FREE_WORDS = '''from spec_surgeon.ops.base import Op, JobException
+from spec_surgeon.package import W
+
+
+class RenameTitle(Op):
+    name = "rename_title"
+    description = "Say WATER wherever the body says SPEC."
+
+    def apply(self, pkg):
+        main = pkg.main_part()
+        root = pkg.xml(main)
+        found = 0
+        for t in root.iter(W + "t"):
+            if t.text and "SPEC" in t.text:
+                t.text = t.text.replace("SPEC", "WATER")
+                found += 1
+        if not found:
+            raise JobException("the body does not say SPEC", "not-found")
+        pkg.write_xml(main, root)
+'''
+# a method whose copy Word would repair: every header reference names a relationship that does not exist
+FREE_BROKEN = FREE_HEADER.replace("import W, DocxPackage", "import W, R, DocxPackage").replace(
+    '            sp.find(W + "pgMar").set(W + "header", "900")',
+    '            for ref in sp.findall(W + "headerReference"):\n'
+    '                ref.set(R + "id", "rId999")')
+V1_LINE = "V1 (Package integrity)"
+CONFIRM = object()
+
+
+def header_at(twips: int) -> str:
+    """FREE_HEADER at another distance: a different module each time, for a writer that keeps submitting."""
+    return FREE_HEADER.replace('"900"', f'"{twips}"')
+
+
+def broken_at(n: int) -> str:
+    return FREE_BROKEN.replace("rId999", f"rId{n}")
+
+
+def writer(*turns):
+    """A scripted Obliterate writer: each turn is a module's source (``submit_op``) or ``CONFIRM`` (``confirm_op``)."""
+    return FakeClient(*[resp(tool("confirm_op", {}, f"t{i}") if turn is CONFIRM else
+                             tool("submit_op", {"source": turn}, f"t{i}")) for i, turn in enumerate(turns)])
+
+
+def answer(fake, call: int) -> dict:
+    """The tool result the writer's call number ``call`` (from 1) got back, as the next request carries it."""
+    return fake.requests[call]["messages"][-1]["content"][0]
+
+
+def test_an_obliterate_method_is_its_apply_alone_and_its_copy_is_shown_never_proven(folder, tmp_path):
+    from spec_surgeon.preview import text_changes_of
+    from spec_surgeon.verify import difference
+    assert FREE_BROKEN != FREE_HEADER
     f = sorted(folder.glob("*.docx"))[0]
     before = f.read_bytes()
+    # Safe and Default: a method predicts in plan() and is held to plain formatting, as it always was
     guarded = trial(TEXT_OP, f, {}, {"twips": 900}, tmp_path / "g")
     assert not guarded.passed and any("may not change" in p for p in guarded.problems), guarded.problems
-    loose = trial(TEXT_OP, f, {}, {"twips": 900}, tmp_path / "u", unguarded=True)
-    assert loose.passed and loose.unverified and loose.output.is_file()      # the checks reported, did not stop it
-    assert loose.to_dict()["unverified"] == loose.unverified
-    wrong = trial(UNASSERTED_OP, f, {}, {"twips": 900}, tmp_path / "w", unguarded=True)
-    assert wrong.passed and any(p.startswith("V10 (") for p in wrong.unverified)
-    clean = trial(GOOD_OP, f, {}, {"twips": 900}, tmp_path / "c", unguarded=True)
-    assert clean.passed and clean.unverified == []
-    assert f.read_bytes() == before                                         # only a copy was touched
+    assert codegen.check_source(FREE_WORDS) == ["the Op subclass must define plan()"]
+    assert "unproven" not in guarded.to_dict()
+    # Obliterate: apply(self, pkg) and nothing else — a method written the other way is told so
+    assert codegen.check_source(FREE_WORDS, unguarded=True) == []
+    old_way = codegen.check_source(GOOD_OP, unguarded=True)
+    assert any("defines no plan()" in p for p in old_way) and any("def apply(self, pkg)" in p for p in old_way)
+    loose = trial(FREE_WORDS, f, {}, {}, tmp_path / "u", unguarded=True)
+    assert loose.passed and loose.unproven and loose.unverified == [] and loose.output.is_file()
+    assert loose.record.job == difference.JOB and loose.record.get("V10").status == "NA"
+    assert loose.plan["mode"] == "shown" and loose.plan["property_assertions"] == [] and loose.plan["diffs"] == []
+    [words] = text_changes_of(loose.record.to_dict())                 # the verifier's reading, with no plan beside it
+    assert words["removed"] == ["SPEC"] and words["added"] == ["WATER"]
+    assert loose.to_dict()["unproven"] is True
+    # a copy whose file is broken is made all the same, and says what it failed
+    broken = trial(FREE_BROKEN, f, {}, {}, tmp_path / "b", unguarded=True)
+    assert broken.passed and broken.unproven and broken.unverified == [V1_LINE]
+    assert "rId999" in broken.record.get("V1").summary
+    assert f.read_bytes() == before                                   # only copies were touched
+    # a method that cannot do the work on a file makes no copy of it, with its reason
+    other = tmp_path / "No such word.docx"
+    other.write_bytes(build("21 09 00", "FIRE PUMPS"))
+    refused = trial(FREE_WORDS, other, {}, {}, tmp_path / "r", unguarded=True)
+    assert not refused.passed and "the body does not say SPEC" in refused.problems[0] and not refused.unproven
     # a governed outcome contract is never unguarded
     governed = trial(TEXT_OP, f, {}, {"twips": 900}, tmp_path / "gov", unguarded=True,
                      goal_contract={"kind": "document_effects", "effects": []})
-    assert not governed.unverified
+    assert not governed.unverified and not governed.unproven
 
 
-def write_op(*submissions):
-    """A scripted writer: each submission is (source, params, accept_failures or None)."""
-    return FakeClient(*[resp(tool("submit_op", {"source": src, "params": params,
-                                                **({"accept_failures": keep} if keep else {})}, f"t{i}"))
-                        for i, (src, params, keep) in enumerate(submissions)])
-
-
-def test_an_obliterate_methods_failed_checks_go_back_to_the_writer_before_it_is_used(folder, tmp_path):
-    """Item 1: a method that ran but failed checks is not used at once — the failures go back to the writer, which
-    fixes them; the copy it then makes shows no failure."""
+def test_the_writer_reads_what_its_method_changed_and_confirms_it(folder, tmp_path):
     f = sorted(folder.glob("*.docx"))[:1]
-    fake = write_op((UNASSERTED_OP, {"twips": 900}, None), (GOOD_OP, {"twips": 900}, None))
+    fake = writer(FREE_HEADER, CONFIRM)
     g = codegen.generate_op("move the header", "set the header distance", f, tmp_path / "cg", client=fake,
                             unguarded=True)
-    assert g.passed and g.source == GOOD_OP and len(g.attempts) == 2
-    back = fake.requests[1]["messages"][-1]["content"][0]
-    assert back["is_error"] and "RAN, BUT 1 CHECK(S) FAILED" in back["content"] and "V10 FAIL" in back["content"]
-    assert [t.unverified for t in g.trials] == [[]]
-    # Default mode is unchanged: the same failure is a problem to fix, as it always was
-    fake = write_op((UNASSERTED_OP, {"twips": 900}, None), (GOOD_OP, {"twips": 900}, None))
+    assert g.passed and g.source == FREE_HEADER and g.select == {} and g.params == {}
+    assert len(g.attempts) == 1 and g.calls == 2 and g.check_rounds == 0 and g.name == "set_header_distance"
+    report = answer(fake, 1)
+    assert not report.get("is_error")
+    assert report["content"].startswith("RAN on 1 sample file(s). WHAT IT CHANGED, as the independent reader found it")
+    assert f"{f[0].name}:" in report["content"] and "No words differ." in report["content"]
+    assert "Page setup: the settings of 2 sections changed" in report["content"]
+    assert f"call confirm_op" in report["content"] and f"report 1 of {codegen.SHOWN_ROUNDS}" in report["content"]
+    [t] = g.trials
+    assert t.passed and t.unproven and t.unverified == []
+    assert codegen.samples_verdict(g) == [codegen.SAMPLES_UNPROVEN] and codegen.unverified_lines(g) == []
+    # its tools: the module alone goes in (no selector, parameter or plan), and there is no assertion to look up
+    tools = {t["name"]: t for t in fake.requests[0]["tools"]}
+    assert set(tools["submit_op"]["input_schema"]["properties"]) == {"source", "notes"}
+    assert "confirm_op" in tools and "describe_assertion_kind" not in tools
+    assert {"show_xml", "find_paragraphs", "read_template", "read_input_file"} <= set(tools)
+    assert fake.requests[0]["tools"] == codegen.CODEGEN_TOOLS_UNGUARDED
+    # Safe and Default are unchanged: a failure is a problem to fix, a pass is used at once, and there is no confirm_op
+    fake = FakeClient(resp(tool("submit_op", {"source": UNASSERTED_OP, "params": {"twips": 900}}, "a")),
+                      resp(tool("submit_op", {"source": GOOD_OP, "params": {"twips": 900}}, "b")))
     guarded = codegen.generate_op("x", "y", f, tmp_path / "g", client=fake)
-    assert guarded.passed and "FAILED — fix and submit again" in fake.requests[1]["messages"][-1]["content"][0]["content"]
+    assert guarded.passed and "FAILED — fix and submit again" in answer(fake, 1)["content"]
+    assert not guarded.unguarded and not guarded.trials[0].unproven
+    assert codegen.samples_verdict(guarded) == [codegen.SAMPLES_PASSED]
+    assert "confirm_op" not in json.dumps(codegen.CODEGEN_TOOLS) and fake.requests[0]["tools"] == codegen.CODEGEN_TOOLS
 
 
-def test_a_failed_check_the_writer_keeps_on_purpose_carries_its_reason_to_every_copy(folder, tmp_path):
-    f = sorted(folder.glob("*.docx"))
-    why = "the request moves the footer with the header"
-    fake = write_op((UNASSERTED_OP, {"twips": 900}, None),
-                    (UNASSERTED_OP, {"twips": 900}, [{"check": "v10", "reason": why}, {"check": "V2"}]))
-    g = codegen.generate_op("move both", "set both distances", f[:1], tmp_path / "cg", client=fake, unguarded=True)
-    assert g.passed and g.accepted_failures == {"V10": why} and len(g.attempts) == 2   # V2 without a reason: dropped
-    assert any(f"Claude says this is part of the change: {why}" in u for u in g.trials[0].unverified)
-    assert preview.generated_key(g)["accepted_failures"] == {"V10": why}     # what the user approves, reasons included
-    assert codegen.unverified_lines(g) == [f"{f[0].name}: {g.trials[0].unverified[0]}"] and why in codegen.unverified_lines(g)[0]
-    results = codegen.run_generated(g, [str(p) for p in f], tmp_path / "run")
-    assert all(r.passed and any(why in u for u in r.unverified) for r in results)
+def test_a_report_that_is_not_what_was_asked_is_fixed_before_the_method_is_used(folder, tmp_path):
+    """The report is the writer's own look at the result. It changed the words when the request was the header: the
+    report says so, the writer fixes the method, and the one it confirms is the one used."""
+    f = sorted(folder.glob("*.docx"))[:1]
+    fake = writer(FREE_WORDS, FREE_HEADER, CONFIRM)
+    g = codegen.generate_op("move the header; keep every word", "set the header distance", f, tmp_path / "cg",
+                            client=fake, unguarded=True)
+    assert g.passed and g.source == FREE_HEADER and len(g.attempts) == 2 and g.calls == 3
+    first, second = answer(fake, 1)["content"], answer(fake, 2)["content"]
+    assert "words removed “SPEC”; words added “WATER”" in first and "No words differ." not in first
+    assert "No words differ." in second and f"report 2 of {codegen.SHOWN_ROUNDS}" in second
+    # the same method sent again after its report is a confirmation, not another attempt
+    fake = writer(FREE_HEADER, FREE_HEADER)
+    again = codegen.generate_op("x", "y", f, tmp_path / "again", client=fake, unguarded=True)
+    assert again.passed and again.source == FREE_HEADER and len(again.attempts) == 1 and again.calls == 2
+    # confirm_op with nothing to confirm is answered, and the writer goes on
+    fake = writer(CONFIRM, FREE_HEADER, CONFIRM)
+    late = codegen.generate_op("x", "y", f, tmp_path / "late", client=fake, unguarded=True)
+    assert late.passed and answer(fake, 1)["is_error"] and "no report to confirm" in answer(fake, 1)["content"]
 
 
-def test_a_package_integrity_check_can_never_be_kept_as_part_of_the_change(folder, tmp_path, monkeypatch):
-    """V1, V4, V5a, V5c and V9 mean a member, revision or XML the method got wrong, or a source that moved — never a
-    change the request asks for: accept_failures cannot keep them, and the writer is told why."""
-    import spec_surgeon.verify as verify_module
-    real = verify_module.run_suite
+def test_a_copy_whose_file_is_broken_goes_back_to_the_writer_before_the_method_is_used(folder, tmp_path):
+    f = sorted(folder.glob("*.docx"))[:1]
+    fake = writer(FREE_BROKEN, CONFIRM, FREE_HEADER, CONFIRM)
+    g = codegen.generate_op("move the header", "set the header distance", f, tmp_path / "cg", client=fake,
+                            unguarded=True)
+    back = answer(fake, 1)
+    assert back["is_error"] and back["content"].startswith(
+        f"RAN, BUT 1 CHECK(S) OF THE COPIES' FILES FAILED (round 1 of {codegen.UNGUARDED_CHECK_ROUNDS})")
+    assert "V1 FAIL" in back["content"] and "rId999" in back["content"]
+    # a broken copy's report is never offered for confirmation
+    assert answer(fake, 2)["is_error"] and "no report to confirm" in answer(fake, 2)["content"]
+    assert g.passed and g.source == FREE_HEADER and g.check_rounds == 1 and len(g.attempts) == 2
+    assert [t.unverified for t in g.trials] == [[]]
 
-    def failing(src, out, plan, s, o):
-        rec = real(src, out, plan, s, o)
-        rec.set(CheckResult("V1", "Package whitelist", "FAIL", "planted"))
-        return rec
-    monkeypatch.setattr(verify_module, "run_suite", failing)
+
+def test_after_its_rounds_a_broken_method_is_used_and_its_copies_are_unverified(folder, tmp_path):
     f = sorted(folder.glob("*.docx"))[:1]
     rounds = codegen.UNGUARDED_CHECK_ROUNDS
-    keep = [{"check": "v1", "reason": "the request adds a part"}]
-    fake = write_op((GOOD_OP, {"twips": 900}, None),
-                    *[(GOOD_OP, {"twips": 900 + i}, keep) for i in range(1, rounds + 1)])
+    fake = writer(*[broken_at(900 + i) for i in range(rounds + 1)], CONFIRM)
     g = codegen.generate_op("x", "y", f, tmp_path / "cg", client=fake, unguarded=True)
-    assert g.passed and g.accepted_failures == {} and len(g.attempts) == rounds + 1
-    assert g.trials[0].unverified[0].startswith("V1 (") and "Claude says" not in g.trials[0].unverified[0]
-    back = fake.requests[2]["messages"][-1]["content"][0]["content"]
-    assert "accept_failures cannot keep V1" in back and "fix the method" in back
-    assert "cannot keep" not in fake.requests[1]["messages"][-1]["content"][0]["content"]   # nothing was asked yet
-    assert codegen._accepted_failures(keep) == {}
-    assert codegen._never_kept(keep + [{"check": "V5a", "reason": "r"}, {"check": "V10", "reason": "r"}]) == ["V1", "V5A"]
-    assert "V1, V4, V5A, V5C and V9 can never be kept" in json.dumps(codegen.CODEGEN_TOOLS_UNGUARDED)
-    assert "V1, V4, V5A, V5C, V9 can never be kept" in codegen.system_prompt(unguarded=True)
-
-
-def test_after_its_rounds_the_latest_method_is_used_with_its_failures_shown(folder, tmp_path):
-    f = sorted(folder.glob("*.docx"))[:1]
-    rounds = codegen.UNGUARDED_CHECK_ROUNDS
-    fake = write_op(*[(UNASSERTED_OP, {"twips": 900 + i}, None) for i in range(rounds + 1)])
-    g = codegen.generate_op("x", "y", f, tmp_path / "cg", client=fake, unguarded=True)
-    assert g.passed and len(g.attempts) == rounds + 1 and len(fake.requests) == rounds + 1
-    assert g.params == {"twips": 900 + rounds}                                # the latest
-    assert g.trials[0].unverified and g.trials[0].unverified[0].startswith("V10 (")
-    # the same method sent back unchanged is a stall: the writer stops, and that method is shown with its failures
-    fake = write_op(*[(UNASSERTED_OP, {"twips": 900}, None)] * (rounds + 1))
+    assert g.passed and len(g.attempts) == rounds + 1 and g.check_rounds == rounds
+    assert g.source == broken_at(900 + rounds)                                  # the latest
+    last = answer(fake, rounds + 1)
+    assert not last.get("is_error") and "STILL FAILING after the rounds allowed" in last["content"]
+    assert "delivered marked UNVERIFIED" in last["content"]
+    assert g.trials[0].unverified == [V1_LINE] and g.trials[0].unproven
+    line = f"{f[0].name}: {V1_LINE}"
+    assert codegen.unverified_lines(g) == [line]
+    assert codegen.samples_verdict(g) == [codegen.SAMPLES_UNVERIFIED, line]
+    # the same broken method sent back unchanged is a stall: the writer stops, and the method that ran is shown
+    fake = writer(*[FREE_BROKEN] * (rounds + 1))
     stalled = codegen.generate_op("x", "y", f, tmp_path / "stall", client=fake, unguarded=True)
     assert stalled.passed and len(stalled.attempts) < rounds + 1 and "stalled" in stalled.errors[0]
+    assert stalled.trials[0].unverified == [V1_LINE]
+    # of two methods that ran, the one with fewer failed checks is the one kept when the writer stops
+    from fake_claude import api_error, raise_on_enter
+    fake = FakeClient(resp(tool("submit_op", {"source": FREE_HEADER}, "a")),
+                      resp(tool("submit_op", {"source": FREE_BROKEN}, "b")),
+                      raise_on_enter(api_error("Overloaded", status=400)))
+    best = codegen.generate_op("x", "y", f, tmp_path / "best", client=fake, unguarded=True)
+    assert best.passed and best.source == FREE_HEADER and best.trials[0].unverified == []
+
+
+def test_the_writer_may_read_only_so_many_reports(folder, tmp_path):
+    """The report is a look at the result, and looking is bounded: after ``SHOWN_ROUNDS`` reports the next method
+    that runs is used without another call."""
+    f = sorted(folder.glob("*.docx"))[:1]
+    looks = codegen.SHOWN_ROUNDS
+    fake = writer(*[header_at(900 + i) for i in range(looks + 1)])
+    g = codegen.generate_op("x", "y", f, tmp_path / "cg", client=fake, unguarded=True, max_iter=looks + 5)
+    assert g.passed and g.source == header_at(900 + looks) and len(fake.requests) == looks + 1
+    assert f"report {looks} of {looks}; after the last, the latest method is used" in answer(fake, looks)["content"]
 
 
 def test_a_writer_that_stops_leaves_its_best_method_but_a_pause_leaves_it_to_the_user(folder, tmp_path):
     from fake_claude import api_error, raise_on_enter
     from spec_surgeon import llm
     f = sorted(folder.glob("*.docx"))[:1]
-    fake = FakeClient(resp(tool("submit_op", {"source": UNASSERTED_OP, "params": {"twips": 900}})),
+    fake = FakeClient(resp(tool("submit_op", {"source": FREE_HEADER})),
                       raise_on_enter(api_error("Overloaded", status=400)))
     g = codegen.generate_op("x", "y", f, tmp_path / "cg", client=fake, unguarded=True)
-    assert g.passed and g.source == UNASSERTED_OP and g.trials[0].unverified     # shown with its failed checks
+    assert g.passed and g.source == FREE_HEADER and g.trials[0].unproven       # shown to the user, who approves or not
     # the window's pause for the user's go-ahead stops the writer: nothing is used on its own
-    fake = FakeClient(resp(tool("submit_op", {"source": UNASSERTED_OP, "params": {"twips": 900}})),
-                      resp(tool("submit_op", {"source": GOOD_OP, "params": {"twips": 900}}, "t2")))
+    fake = writer(FREE_HEADER, CONFIRM)
     with llm.budget_scope(llm.CallBudget(max_calls=1, max_cost_usd=None, max_total_tokens=None, effort="medium")):
         paused = codegen.generate_op("x", "y", f, tmp_path / "paused", client=fake, unguarded=True)
-    assert not paused.passed and len(fake.requests) == 1
+    assert not paused.passed and paused.budget_stop and len(fake.requests) == 1
+    # continued, the writer has its whole exchange but no copy in hand: it submits the method again, then confirms
+    again = writer(CONFIRM, FREE_HEADER, CONFIRM)
+    with llm.budget_scope(llm.CallBudget(max_calls=10)):
+        resumed = codegen.generate_op("x", "y", f, tmp_path / "paused", client=again, unguarded=True,
+                                      resume_from=tmp_path / "paused")
+    assert resumed.passed and resumed.source == FREE_HEADER and resumed.calls == 4
+    assert len(again.requests[0]["messages"]) > 1                               # it went on, it did not start over
+    assert "no report to confirm" in answer(again, 1)["content"]
 
 
-def test_a_method_kept_with_failed_checks_is_never_called_passed(folder, tmp_path):
-    """Finding F5 (P2): after its rounds the latest method is used with its failed checks (above). The notes the model
-    hears next turn and the transcript lines the user reads beside them, the window's message and the plan group's
-    details then name the failed checks and never say the samples passed; a method that passes clean keeps today's
-    sentences."""
-    from types import SimpleNamespace
+def test_an_obliterate_method_is_never_called_passed_or_verified(folder, tmp_path):
+    """Finding F5 (P2), under the method that just does the work: the notes the model hears next turn, the transcript
+    lines the user reads beside them, the window's messages and the plan group's details say UNPROVEN for a method
+    whose copies show no fault, name the failed checks and say UNVERIFIED for one whose copies failed a check, and
+    never say either passed; a method written in Default mode keeps its sentences."""
     files = sorted(folder.glob("*.docx"))[:1]
     rounds = codegen.UNGUARDED_CHECK_ROUNDS
     offer = resp(tool("submit_editspec", {"spec": UNSUPPORTED, "custom_transform": "outside_limits",
                                           "custom_transform_reason": "text boxes are not formatting"}))
-    stubborn = [resp(tool("submit_op", {"source": UNASSERTED_OP, "params": {"twips": 900 + i}}, f"t{i}"))
-                for i in range(rounds + 1)]
 
-    def prepared(name, *writer):
-        """The window in Obliterate mode: the request, the custom method offered and taken at once, its preview."""
-        task = task_for(tmp_path / name, FakeClient(offer, *writer), obliterate_allowed=True)
-        task.set_mode("obliterate", acknowledged=True)
+    def turns(*sources):
+        return [resp(tool("confirm_op", {}, f"w{i}") if s is CONFIRM else tool("submit_op", {"source": s}, f"w{i}"))
+                for i, s in enumerate(sources)]
+    stubborn = turns(*[broken_at(900 + i) for i in range(rounds + 1)], CONFIRM)
+
+    def prepared(name, *script, mode="obliterate"):
+        """The window with the request made, the custom method offered and taken at once, and its preview."""
+        task = task_for(tmp_path / name, FakeClient(offer, *script), obliterate_allowed=True)
+        if mode == "obliterate":
+            task.set_mode("obliterate", acknowledged=True)
         task.attach(files)
         view = task.perform("send", text=UNSUPPORTED["request"])
         assert view["stage"] == "preview" and task.session.generated is not None, view
         return task, task.session.conversation
 
+    # a copy with no fault found: UNPROVEN, everywhere it is said
+    task, c = prepared("shown", *turns(FREE_HEADER, CONFIRM))
+    g = task.session.generated
+    assert codegen.unverified_lines(g) == [] and codegen.samples_verdict(g) == [codegen.SAMPLES_UNPROVEN]
+    assert sum(n == codegen.SAMPLES_UNPROVEN for n in c.notes) == 1
+    assert any(n.startswith("The one-off custom transform") and "marked UNPROVEN" in n for n in c.notes)
+    assert not any("passed" in n or "UNVERIFIED" in n for n in c.notes), c.notes
+    shown = [m["text"] for m in task.messages if m["role"] == "app"]
+    assert shown.count(codegen.SAMPLES_UNPROVEN) == 1 and not any("passed" in t for t in shown[-3:])
+    app = [e.text for e in c.entries if e.role == "app"]
+    assert any(t.startswith("Custom transform prepared. Nothing proves its change is the one asked for") for t in app)
+    assert not any("passed" in t for t in app), app
+    [group] = task._plan_view()["groups"]
+    assert group["changes"][0]["details"][1:] == [codegen.SAMPLES_UNPROVEN]
+    sample = task._samples_view()["samples"][0]
+    assert sample["unproven"] is True and sample["passed"] is True and sample["failures"] == []
+    assert any(line.startswith("Page setup:") for line in sample["changes"])
+
+    # a copy whose file failed a check: UNVERIFIED, with the check, and never "passed"
     task, c = prepared("kept", *stubborn)
     g = task.session.generated
     [line] = codegen.unverified_lines(g)
-    assert line == f"{files[0].name}: {g.trials[0].unverified[0]}" and "V10 (Property assertions)" in line
-    assert codegen.samples_verdict(g) == [codegen.SAMPLES_UNVERIFIED, line]
-    # what the model hears next turn: the failed check by name, "UNVERIFIED", and never "passed"
+    assert line == f"{files[0].name}: {V1_LINE}" and codegen.samples_verdict(g) == [codegen.SAMPLES_UNVERIFIED, line]
     assert sum(n.startswith(codegen.SAMPLES_UNVERIFIED) and n.endswith(line) for n in c.notes) == 1
-    assert any(n.startswith("The one-off custom transform") and "FAILED checks on the sample files" in n and line in n
+    assert any(n.startswith("The one-off custom transform") and "FAILED checks" in n and line in n
                and "marked UNVERIFIED" in n for n in c.notes)
     assert not any("passed" in n for n in c.notes), c.notes
-    # the chat says it before the button, ahead of the words, in the same sentences (the plan group is not shown)
     shown = [m["text"] for m in task.messages if m["role"] == "app"]
-    assert f"{codegen.SAMPLES_UNVERIFIED}\n\n• {line}" in shown
-    assert shown.index(f"{codegen.SAMPLES_UNVERIFIED}\n\n• {line}") == len(shown) - 2
-    assert sum(codegen.SAMPLES_UNVERIFIED in t for t in shown) == 1 and not any("passed" in t for t in shown[-2:])
-    # the transcript lines the user reads beside them
+    assert f"{codegen.SAMPLES_UNVERIFIED}\n\n• {line}" in shown and not any("passed" in t for t in shown[-3:])
     app = [e.text for e in c.entries if e.role == "app"]
     assert any(t.startswith("Custom transform prepared, with failed checks") and line in t for t in app)
-    assert any(t.endswith(f"failed checks on the sample files: {line}.") for t in app)
     assert not any("passed" in t for t in app), app
-    # the plan group's details
     [group] = task._plan_view()["groups"]
-    [change] = group["changes"]
-    assert change["details"][1:] == [codegen.SAMPLES_UNVERIFIED, line] and codegen.SAMPLES_PASSED not in change["details"]
-    # the window's message
+    assert group["changes"][0]["details"][1:] == [codegen.SAMPLES_UNVERIFIED, line]
+    sample = task._samples_view()["samples"][0]
+    assert sample["passed"] is False and sample["unproven"] is True
+    assert [x["check"] for x in sample["failures"]] == ["V1"]
+    # the window's own message
     s = Session(documents=files, out_root=tmp_path / "msg", client=FakeClient(offer, *stubborn), unguarded=True,
                 visual_check=False)
     s.compile(UNSUPPORTED["request"], lambda m: None)
     said = s.reply(choice_id=s.turn.choices[0].id, log=lambda m: None, render=False)
-    assert "FAILED checks" in said and line in said and "marked UNVERIFIED" in said and "passed" not in said
-    # a check the writer kept with a reason that no sample failed is not a failure: the samples passed, and the kept
-    # check is named apart, with its reason (a copy that fails it carries it)
-    clean = trial(GOOD_OP, files[0], {}, {"twips": 900}, tmp_path / "ct", unguarded=True)
-    assert clean.passed and not clean.unverified
-    kept = SimpleNamespace(trials=[clean], accepted_failures={"V10": "the footer moves too"})
-    assert codegen.unverified_lines(kept) == []
-    assert codegen.kept_lines(kept) == ["V10 — Claude says this is part of the change: the footer moves too"]
-    assert codegen.samples_verdict(kept) == [codegen.SAMPLES_PASSED, codegen.SAMPLES_KEPT, *codegen.kept_lines(kept)]
-    assert codegen.kept_lines(g) == [] and codegen.samples_verdict(SimpleNamespace(trials=[clean])) == [codegen.SAMPLES_PASSED]
-    why = "the footer moves with the header"
-    task, c = prepared("kept-clean", resp(tool("submit_op", {"source": UNASSERTED_OP, "params": {"twips": 900}}, "t0")),
-                       resp(tool("submit_op", {"source": GOOD_OP, "params": {"twips": 900},
-                                               "accept_failures": [{"check": "V10", "reason": why}]}, "t1")))
-    g = task.session.generated
-    assert g.accepted_failures == {"V10": why} and codegen.unverified_lines(g) == []
-    [kept_line] = codegen.kept_lines(g)
-    assert kept_line.endswith(why)
-    assert any(n.startswith(codegen.SAMPLES_PASSED) and codegen.SAMPLES_KEPT in n and n.endswith(kept_line) for n in c.notes)
-    assert not any("FAILED" in n for n in c.notes), c.notes
-    assert any(e.role == "app" and e.text.startswith("Custom transform prepared; the samples passed, and the writer kept")
-               and kept_line in e.text for e in c.entries)
-    assert task._plan_view()["groups"][0]["changes"][0]["details"][1:] == [codegen.SAMPLES_PASSED, codegen.SAMPLES_KEPT,
-                                                                           kept_line]
-    assert (f"{codegen.SAMPLES_PASSED}\n\n{codegen.SAMPLES_KEPT}\n\n• {kept_line}"
-            in [m["text"] for m in task.messages if m["role"] == "app"])
-    # a method that passes clean keeps today's sentences, in Obliterate too
-    task, c = prepared("clean", resp(tool("submit_op", {"source": GOOD_OP, "params": {"twips": 900}}, "w1")))
-    assert codegen.unverified_lines(task.session.generated) == []
+    assert "FAILED" in said and line in said and "marked UNVERIFIED" in said and "passed" not in said
+    s = Session(documents=files, out_root=tmp_path / "msg2", client=FakeClient(offer, *turns(FREE_HEADER, CONFIRM)),
+                unguarded=True, visual_check=False)
+    s.compile(UNSUPPORTED["request"], lambda m: None)
+    said = s.reply(choice_id=s.turn.choices[0].id, log=lambda m: None, render=False)
+    assert "made 1 copy" in said and "marked UNPROVEN" in said and "passed" not in said
+
+    # a method written in Default mode keeps its sentences: it predicted, and the suite held it to that
+    possible = resp(tool("submit_editspec", {"spec": UNSUPPORTED, "custom_transform": "possible",
+                                             "custom_transform_reason": "formatting only"}))
+    task = task_for(tmp_path / "clean", FakeClient(possible, resp(tool("submit_op", {"source": GOOD_OP,
+                                                                                      "params": {"twips": 900}}, "w1"))))
+    task.attach(files)
+    view = task.perform("send", text=UNSUPPORTED["request"])
+    assert view["stage"] == "preview" and not task.session.generated.unguarded
+    c = task.session.conversation
     assert any("passed its independent sample verification" in n for n in c.notes)
     assert any("passed verification on the sample files" in n for n in c.notes)
-    assert not any("UNVERIFIED" in n or "FAILED" in n for n in c.notes), c.notes
+    assert not any("UNVERIFIED" in n or "UNPROVEN" in n or "FAILED" in n for n in c.notes), c.notes
     assert task._plan_view()["groups"][0]["changes"][0]["details"][1:] == [codegen.SAMPLES_PASSED]
-    assert not any(codegen.SAMPLES_PASSED in m["text"] or codegen.SAMPLES_KEPT in m["text"] for m in task.messages)
+    assert not any(codegen.SAMPLES_PASSED in m["text"] or "UNPROVEN" in m["text"] for m in task.messages)
+    sample = task._samples_view()["samples"][0]
+    assert sample["unproven"] is False and sample["changes"] == [] and sample["passed"] is True
 
 
-def test_an_obliterate_method_has_the_text_and_revision_helpers_and_its_wording_change_passes_every_check(
-        tmp_path, monkeypatch):
-    """Item 2: the writer is told it may change wording, tracked or plain — and now has the helpers that let a correct
-    change assert itself, so it is not marked UNVERIFIED."""
-    from test_governed_codegen import CONTENT_OP
+FREE_TITLE = '''from spec_surgeon.ops.base import Op, JobException
+from spec_surgeon.ooxml import paragraphs, RevisionStamp, max_revision_id, file_uses_date_utc
+from spec_surgeon.ops.textedit import Edit, RunText, plan_paragraph, edits_to_data, apply_part_edits
+
+TRACKED = False
+
+
+class ReplaceTitle(Op):
+    name = "replace_title"
+    description = "Say WATER where the title says FIRE."
+
+    def apply(self, pkg):
+        part = pkg.main_part()
+        root = pkg.xml(part)
+        frag = self.fragment({}, {})
+        data = {}
+        for i, p in enumerate(paragraphs(root)):
+            if RunText(p).text == "FIRE SUPPRESSION":
+                edits = plan_paragraph(frag, part, i, p, [Edit(0, 4, "WATER")], TRACKED, set(), "title",
+                                       author=pkg.author)
+                data[str(i)] = edits_to_data(edits)
+        if not data:
+            raise JobException("title not found", "not-found")
+        stamp = RevisionStamp.now(pkg.author, file_uses_date_utc(pkg)) if TRACKED else None
+        apply_part_edits(root, data, TRACKED, stamp, [max_revision_id(pkg) + 1])
+        pkg.write_xml(part, root)
+'''
+
+
+def test_an_obliterate_method_changes_wording_tracked_or_plain_and_the_report_says_which(tmp_path, monkeypatch):
+    """The writer is told it may change wording, tracked or plain, and has the helpers that make a revision Word
+    accepts: the copy fails no check of its file, and the report counts the tracked changes it added."""
+    from spec_surgeon.preview import text_changes_of
+    from spec_surgeon.verify import difference_lines
     source = tmp_path / "source.docx"
     source.write_bytes(build("21 00 00", "FIRE SUPPRESSION"))
     monkeypatch.setenv("SPEC_SURGEON_AUTHOR", "Obliterate Tester")
-    op = CONTENT_OP.replace('author="Tester"', "author=pkg.author").replace('RevisionStamp.now("Tester"',
-                                                                            "RevisionStamp.now(pkg.author")
-    assert codegen.check_source(op) and codegen.check_source(op, unguarded=True) == []
     for tracked in (False, True):
-        t = trial(op, source, {}, {"replacement": "WATER", "tracked": tracked}, tmp_path / f"t{tracked}",
-                  unguarded=True)
-        assert t.passed and t.unverified == [], (t.problems, t.unverified)
-        xml = __import__("zipfile").ZipFile(t.output).read("word/document.xml").decode("utf-8")
+        op = FREE_TITLE.replace("TRACKED = False", f"TRACKED = {tracked}")
+        assert codegen.check_source(op, unguarded=True) == []
+        t = trial(op, source, {}, {}, tmp_path / f"t{tracked}", unguarded=True)
+        assert t.passed and t.unverified == [] and t.unproven, (t.problems, t.unverified)
+        xml = zipfile.ZipFile(t.output).read("word/document.xml").decode("utf-8")
         assert ("WATER" in xml) and (('w:author="Obliterate Tester"' in xml) is tracked)
-    refused = trial(op, source, {}, {"replacement": "WATER"}, tmp_path / "guarded")      # Default: whitelist
+        assert any(e["removed"] == ["FIRE"] and e["added"] == ["WATER"] for e in text_changes_of(t.record.to_dict()))
+        assert any(line.startswith("Tracked changes:") for line in difference_lines(t.record)) is tracked
+    refused = trial(FREE_TITLE, source, {}, {}, tmp_path / "guarded")           # Default: the whitelist, and plan()
     assert not refused.passed and any("is not allowed" in p for p in refused.problems)
     prompt = codegen.system_prompt(unguarded=True)
     assert "pkg.add_member" in prompt and "plan_paragraph" in prompt and "pkg.inputs" in prompt
-    assert "apply() mutates the working package only through" not in prompt   # no rule left to contradict it
+    assert "self.fragment({}, {})" in prompt and "pkg.set_bytes" in prompt
+    # nothing of the predict-and-assert method is left to contradict it
+    assert "property_assertions" not in prompt.split("Reference ops from the library")[0]
+    assert "confirm_op" in prompt and "Nothing is predicted and nothing is asserted" in prompt
 
 
-ATTACHED_OP = GOOD_OP.replace("        twips = params.get(\"twips\")",
-                              "        if len(pkg.inputs) != params.get(\"expect_inputs\"):\n"
-                              "            raise JobException(f\"{len(pkg.inputs)} attached file(s)\", \"inputs\")\n"
-                              "        twips = params.get(\"twips\")")
+FREE_ATTACHED = '''from spec_surgeon.ops.base import Op, JobException
+from spec_surgeon.package import W, DocxPackage
+
+EXPECTED = 2
+
+
+class UseAttachments(Op):
+    name = "use_attachments"
+    description = "Add the attached picture as a part and take the header distance of the attached template."
+
+    def apply(self, pkg):
+        if len(pkg.inputs) != EXPECTED:
+            raise JobException(f"{len(pkg.inputs)} attached file(s)", "inputs")
+        picture = [data for path, data in pkg.inputs.items() if path.endswith(".png")][0]
+        template = [data for path, data in pkg.inputs.items() if path.endswith(".docx")][0]
+        source = DocxPackage(template)
+        distance = DocxPackage.sect_prs(source.xml(source.main_part()))[0].find(W + "pgMar").get(W + "header")
+        main = pkg.main_part()
+        root = pkg.xml(main)
+        for sp in DocxPackage.sect_prs(root):
+            sp.find(W + "pgMar").set(W + "header", distance)
+        pkg.write_xml(main, root)
+        pkg.add_member("word/media/attached.png", picture, "image/png")
+        pkg.edit_rels(main, add=[{"type": "http://schemas.openxmlformats.org/officeDocument/2006/relationships/image",
+                                  "target": "media/attached.png"}])
+        pkg.set_bytes("docProps/thumbnail.jpeg", picture)
+'''
 
 
 def test_an_obliterate_method_gets_the_users_attachments_pinned_when_it_was_written(folder, tmp_path):
-    """Item 3: the template and the pictures or tables the user attached reach the method as ``pkg.inputs`` — the
-    bytes pinned when it was written; a file changed since is refused, never read afresh."""
+    """The template and the pictures or tables the user attached reach the method as ``pkg.inputs`` — the bytes pinned
+    when it was written; the copies made before approval are the ones delivered, so a file changed afterwards changes
+    no copy, and a method tried again refuses it rather than read it afresh."""
     import hashlib
-    assert ATTACHED_OP != GOOD_OP
+    from spec_surgeon.verify import difference_lines
     f = sorted(folder.glob("*.docx"))
     template = tmp_path / "template.docx"
-    template.write_bytes(build("00 00 00", "TEMPLATE"))
+    template.write_bytes(build("00 00 00", "TEMPLATE", header_distance_twips=432))
     logo = tmp_path / "logo.png"
     logo.write_bytes(b"\x89PNG fake logo")
-    fake = FakeClient(resp(tool("read_template", {}, "r1")),
-                      resp(tool("submit_op", {"source": ATTACHED_OP, "params": {"twips": 900, "expect_inputs": 2}})))
+    fake = FakeClient(resp(tool("read_template", {}, "r1")), resp(tool("submit_op", {"source": FREE_ATTACHED}, "s1")),
+                      resp(tool("confirm_op", {}, "c1")))
     g = codegen.generate_op("use my logo", "put the logo in", f[:1], tmp_path / "cg", client=fake, unguarded=True,
                             template=template, input_files=[logo])
     assert g.passed and g.trials[0].unverified == [], g.attempts
@@ -486,34 +670,52 @@ def test_an_obliterate_method_gets_the_users_attachments_pinned_when_it_was_writ
     assert g.attachments[1]["sha256"] == hashlib.sha256(logo.read_bytes()).hexdigest()
     first = fake.requests[0]
     assert str(logo.resolve()) in first["messages"][0]["content"] and "ATTACHED FILES" in first["messages"][0]["content"]
-    names = [t["name"] for t in first["tools"]]
-    assert {"read_template", "read_input_file"} <= set(names)
-    submit = next(t for t in first["tools"] if t["name"] == "submit_op")
-    assert "accept_failures" in submit["input_schema"]["properties"]
-    assert not fake.requests[1]["messages"][-1]["content"][0].get("is_error")       # read_template answered
+    assert not answer(fake, 1).get("is_error")                                  # read_template answered
+    # the report names the part it added, the relationship, and the member whose bytes it replaced (set_bytes)
+    lines = "\n".join(difference_lines(g.trials[0].record))
+    assert "Parts added: word/media/attached.png" in lines and "Relationships: 1 added (image → attached.png)" in lines
+    assert "docProps/thumbnail.jpeg" in lines and "not read by this report" in lines
+    out = zipfile.ZipFile(g.trials[0].output)
+    assert out.read("word/media/attached.png") == logo.read_bytes() == out.read("docProps/thumbnail.jpeg")
+    assert b'w:header="432"' in out.read("word/document.xml")
     assert preview.generated_key(g)["attachments"] == g.attachments
-    assert all(r.passed for r in codegen.run_generated(g, [str(p) for p in f], tmp_path / "run"))
-    logo.write_bytes(b"\x89PNG another logo")                                         # changed after it was written
-    stale = codegen.run_generated(g, [str(f[0])], tmp_path / "run2")
-    assert not stale[0].passed and "[stale-input]" in stale[0].problems[0]
-    # Default mode: no attachment reaches a method, and its tools are unchanged
-    plain = trial(ATTACHED_OP, f[0], {}, {"twips": 900, "expect_inputs": 2}, tmp_path / "plain",
-                  attachments=g.attachments)
-    assert not plain.passed and "0 attached file(s)" in plain.problems[0]
-    assert "accept_failures" not in json.dumps(codegen.CODEGEN_TOOLS)
+    # changed after the method was written: a new trial refuses the stale file, never reads it afresh
+    logo.write_bytes(b"\x89PNG another logo")
+    stale = trial(g.source, f[0], {}, {}, tmp_path / "stale", **codegen.trial_options(g))
+    assert not stale.passed and "[stale-input]" in stale.problems[0]
+    # Safe and Default: no attachment reaches a method, and its tools are unchanged
+    assert "read_input_file" not in json.dumps(codegen.CODEGEN_TOOLS)
+    assert codegen.trial_options(codegen.GeneratedOp(source="x")) == {}
 
 
 def test_the_whitelist_and_the_sandbox_hold_in_obliterate(folder, tmp_path):
     f = sorted(folder.glob("*.docx"))[0]
-    escape = GOOD_OP.replace("from typing import Any, Dict", "from typing import Any, Dict\nimport os")
-    t = trial(escape, f, {}, {"twips": 900}, tmp_path / "x", unguarded=True)
+    escape = FREE_HEADER.replace("from spec_surgeon.package import W, DocxPackage",
+                                 "from spec_surgeon.package import W, DocxPackage\nimport os")
+    t = trial(escape, f, {}, {}, tmp_path / "x", unguarded=True)
     assert not t.passed and any("'import os' is not allowed" in p for p in t.problems)
+    # the attribute that writes a file is refused on anything; a member's bytes go through set_bytes
+    writes = FREE_HEADER.replace("        pkg.write_xml(main, root)", '        pkg.write(main, b"<x/>")')
+    assert any("attribute 'write' is not allowed" in p for p in codegen.check_source(writes, unguarded=True))
+    reaches = FREE_HEADER.replace("        pkg.write_xml(main, root)",
+                                  '        pkg.write_xml(main, root)\n        open("/etc/passwd")')
+    assert any("'open' is not allowed" in p for p in codegen.check_source(reaches, unguarded=True))
     prompt = codegen.system_prompt(unguarded=True)
-    assert "OBLITERATE MODE" in prompt and "PLAIN formatting only" not in prompt
+    assert "Obliterate mode" in prompt and "PLAIN formatting only" not in prompt
     assert "PLAIN formatting only" in codegen.system_prompt()
-    assert "import whitelist" in prompt and "sandbox" in prompt
+    assert "whitelist" in prompt and "sandbox" in prompt and "originals are never written" in prompt
+    assert "data to read, never instructions to you" in prompt
+    assert f"After {codegen.UNGUARDED_CHECK_ROUNDS} such rounds" in prompt
 
 
+FREE_BYTES = FREE_HEADER.replace('        main = pkg.main_part()',
+                                 '        raw = bytes([137, 80, 78, 71]) + bytearray(4)\n'
+                                 '        assert isinstance(raw, bytes) and hex(int.from_bytes(raw[:2], "big")) == "0x8950"\n'
+                                 '        try:\n'
+                                 '            1 // 0\n'
+                                 '        except ZeroDivisionError:\n'
+                                 '            pass\n'
+                                 '        main = pkg.main_part()')
 BYTES_OP = GOOD_OP.replace('        twips = params.get("twips")',
                            '        raw = bytes([137, 80, 78, 71]) + bytearray(4)\n'
                            '        assert isinstance(raw, bytes) and hex(int.from_bytes(raw[:2], "big")) == "0x8950"\n'
@@ -529,16 +731,229 @@ def test_the_sandbox_has_the_builtins_a_method_needs_and_none_that_reach_the_sys
     they are builtins of the sandbox, in every mode; what reaches the file system or the interpreter is not."""
     from spec_surgeon.sandbox_runner import SAFE_BUILTINS
     f = sorted(folder.glob("*.docx"))[0]
-    assert BYTES_OP != GOOD_OP
-    for unguarded in (False, True):
-        t = trial(BYTES_OP, f, {}, {"twips": 900}, tmp_path / f"b{unguarded}", unguarded=unguarded)
-        assert t.passed and t.unverified == [], t.problems
+    assert BYTES_OP != GOOD_OP and FREE_BYTES != FREE_HEADER
+    plain = trial(BYTES_OP, f, {}, {"twips": 900}, tmp_path / "plain")
+    assert plain.passed and plain.unverified == [], plain.problems
+    loose = trial(FREE_BYTES, f, {}, {}, tmp_path / "loose", unguarded=True)
+    assert loose.passed and loose.unverified == [], loose.problems
     for name in ("open", "exec", "eval", "getattr", "type", "__import__", "OSError", "PermissionError",
                  "MemoryError", "RecursionError", "SystemExit", "BaseException"):
         assert name not in SAFE_BUILTINS
     prompt = codegen.system_prompt(unguarded=True)
     assert "the sandbox has ONLY these names: " + ", ".join(sorted(SAFE_BUILTINS)) in prompt
     assert "the sandbox has ONLY these names: " + ", ".join(sorted(SAFE_BUILTINS)) in codegen.system_prompt()
+
+
+def test_every_documents_copy_is_made_before_approval_and_create_delivers_those_bytes(tmp_path):
+    """Nothing is predicted, so the user approves results: the method's copy of every document — sample or not — is
+    made and read before the button, each has its card, and Create delivers exactly those bytes, marked UNPROVEN. No
+    method runs again after the approval."""
+    import hashlib
+    from spec_surgeon.ui_feedback import UNPROVEN_MARK
+    from spec_surgeon.resources import DEFAULT_SAMPLE_FILES
+    folder = tmp_path / "specs"
+    folder.mkdir()
+    files = []
+    for i in range(DEFAULT_SAMPLE_FILES + 2):                         # more documents than the writer samples
+        files.append(folder / f"21 {i:02d} 00 – SPEC {i}.docx")
+        files[-1].write_bytes(build(f"21 {i:02d} 00", f"SPEC {i}"))
+    originals = {f: f.read_bytes() for f in files}
+    fake = FakeClient(resp(tool("submit_editspec", {"spec": UNSUPPORTED, "custom_transform": "outside_limits",
+                                                     "custom_transform_reason": "beyond formatting"})),
+                      resp(tool("submit_op", {"source": FREE_WORDS}, "w0")), resp(tool("confirm_op", {}, "w1")))
+    task = task_for(tmp_path, fake, obliterate_allowed=True)
+    task.set_mode("obliterate", acknowledged=True)
+    task.attach(files)
+    view = task.perform("send", text=UNSUPPORTED["request"])
+    assert view["stage"] == "preview"
+    g = task.session.generated
+    tried = len(g.attempts[-1]["trials"])
+    assert tried < len(files)                                         # the writer tried it on samples only…
+    assert [Path(t.source) for t in g.trials] == [f.resolve() for f in files]   # …and every document has its copy
+    cards = task._samples_view()["samples"]
+    assert [c["name"] for c in cards] == [f.name for f in files] and all(c["unproven"] for c in cards)
+    assert all(c["text_changes"][0]["added"] == ["WATER"] for c in cards)
+    made = {str(t.source): hashlib.md5(Path(t.output).read_bytes()).hexdigest() for t in g.trials}
+    assert preview.generated_key(g)["results"] == sorted([k, v] for k, v in made.items())
+    calls = len(fake.requests)
+    view = task.perform("primary", token=view["token"])
+    assert view["stage"] == "done" and len(fake.requests) == calls
+    for f in files:
+        delivered = Path(task.results[str(f)])
+        assert hashlib.md5(delivered.read_bytes()).hexdigest() == made[str(f.resolve())]
+        assert task.unverified[str(f)] == [UNPROVEN_MARK]
+        assert f.read_bytes() == originals[f]
+    done = [m["text"] for m in task.messages if m["role"] == "app"][-1]
+    assert f"{len(files)} are UNPROVEN" in done and "UNVERIFIED" not in done
+    # each delivered copy's record is the Obliterate record, with what changed in it
+    records = sorted((task.session.last_run_dir / "records").glob("*.record.json"))
+    assert len(records) == len(files)
+    kept = json.loads(records[0].read_text(encoding="utf-8"))
+    assert kept["mode"] == "shown" and any(c["id"] == "D1" for c in kept["checks"])
+
+
+def test_a_copy_changed_after_it_was_shown_is_never_delivered(tmp_path):
+    folder = tmp_path / "specs"
+    folder.mkdir()
+    files = [folder / f"21 0{i} 00 – SPEC {i}.docx" for i in range(2)]
+    for i, f in enumerate(files):
+        f.write_bytes(build(f"21 0{i} 00", f"SPEC {i}"))
+    g = codegen.generate_op("x", "y", files, tmp_path / "cg", client=writer(FREE_WORDS, CONFIRM), unguarded=True)
+    assert g.passed and len(g.trials) == 2
+    tampered = Path(g.trials[0].output)
+    tampered.write_bytes(tampered.read_bytes() + b"\0")
+    results = codegen.run_generated(g, [str(f) for f in files], tmp_path / "run")
+    assert [r.passed for r in results] == [False, True]
+    assert "changed since it was checked" in results[0].problems[0] and results[0].output is None
+    assert results[1].unproven and results[1].output.is_file()
+    # a method with no copy of a document delivers none of it: it is never run afresh at Create
+    bare = codegen.GeneratedOp(source=FREE_WORDS, passed=True, unguarded=True)
+    [none] = codegen.run_generated(bare, [str(files[0])], tmp_path / "run2")
+    assert not none.passed and "no copy of it was made and shown before approval" in none.problems[0]
+    # the approval names each copy's bytes: another copy is another approval
+    key = preview.generated_key(g)
+    g.trials[1].output_md5 = "0" * 32
+    assert preview.generated_key(g) != key
+
+
+def test_a_file_changed_since_its_copy_was_made_has_every_copy_made_again_before_anything_runs(tmp_path):
+    """The approval is of the copies. An original edited after they were made voids it: Create refuses, and Preview
+    makes the method's copy of every document again — no model call, the method as it was — and that is what is
+    approved and delivered."""
+    quiet = lambda m: None
+    folder = tmp_path / "specs"
+    folder.mkdir()
+    files = [folder / f"21 0{i} 00 – SPEC {i}.docx" for i in range(2)]
+    for i, f in enumerate(files):
+        f.write_bytes(build(f"21 0{i} 00", f"SPEC {i}"))
+    fake = FakeClient(resp(tool("submit_editspec", {"spec": UNSUPPORTED, "custom_transform": "outside_limits",
+                                                     "custom_transform_reason": "beyond formatting"})),
+                      resp(tool("submit_op", {"source": FREE_WORDS}, "w0")), resp(tool("confirm_op", {}, "w1")))
+    s = Session(documents=files, out_root=tmp_path / "out", client=fake, unguarded=True, visual_check=False)
+    s.compile(UNSUPPORTED["request"], quiet)
+    s.reply(choice_id=s.turn.choices[0].id, log=quiet, render=False)
+    token, first = s.generated_token, [t.output_md5 for t in s.generated.trials]
+    assert token and len(first) == 2
+    files[0].write_bytes(build("21 00 00", "SPEC 0 REVISED"))
+    with pytest.raises(ValueError, match="press Preview again"):
+        s.run(False, False, quiet)
+    said = s.make_preview(render=False, log=quiet)
+    assert "nothing proves its change is the one asked for" in said and "verified" not in said.split("\n")[-1]
+    assert len(fake.requests) == 3                                    # the method as it was: no call to the model
+    again = [t.output_md5 for t in s.generated.trials]
+    assert again[0] != first[0] and again[1] == first[1] and s.generated_token not in ("", token)
+    assert all(t.unproven for t in s.generated.trials)
+    s.run(False, False, quiet)
+    delivered = {Path(t.source).name: t for t in s.last_trials}
+    assert all(t.passed and t.unproven for t in delivered.values())
+    xml = zipfile.ZipFile(delivered[files[0].name].output).read("word/document.xml").decode("utf-8")
+    assert "WATER 0 REVISED" in xml
+
+
+def test_a_shown_copy_that_changed_voids_the_approval_and_preview_makes_every_copy_again(tmp_path):
+    """The approval names each copy by the md5 recorded when it was checked, which a changed file does not move. So
+    before it runs, and when it decides whether its preview is current, the session reads the copies themselves: one
+    that changed or is gone refuses Create for every document, and Preview makes each copy again."""
+    quiet = lambda m: None
+    folder = tmp_path / "specs"
+    folder.mkdir()
+    files = [folder / f"21 0{i} 00 – SPEC {i}.docx" for i in range(2)]
+    for i, f in enumerate(files):
+        f.write_bytes(build(f"21 0{i} 00", f"SPEC {i}"))
+    fake = FakeClient(resp(tool("submit_editspec", {"spec": UNSUPPORTED, "custom_transform": "outside_limits",
+                                                     "custom_transform_reason": "beyond formatting"})),
+                      resp(tool("submit_op", {"source": FREE_WORDS}, "w0")), resp(tool("confirm_op", {}, "w1")))
+    s = Session(documents=files, out_root=tmp_path / "out", client=fake, unguarded=True, visual_check=False)
+    s.compile(UNSUPPORTED["request"], quiet)
+    s.reply(choice_id=s.turn.choices[0].id, log=quiet, render=False)
+    shown = [(Path(t.output), t.output_md5) for t in s.generated.trials]
+    assert s.generated_token and codegen.kept_copies_changed(s.generated) == []
+    for damage in ("changed", "gone"):
+        kept = Path(s.generated.trials[0].output)
+        if damage == "changed":
+            kept.write_bytes(kept.read_bytes() + b"\0")
+        else:
+            kept.unlink()
+        assert codegen.kept_copies_changed(s.generated) == [files[0].name]
+        # the approval's fingerprint alone does not see it: it is of the md5 recorded when the copy was checked
+        assert preview.approval_token(s._generated_key(s.generated), files) == s.generated_token
+        with pytest.raises(ValueError, match="a copy you were shown changed or is gone.*press Preview again"):
+            s.run(False, False, quiet)
+        assert not (s.out_dir / "run" / "outputs").exists()           # nothing was delivered, of either document
+        s.make_preview(render=False, log=quiet)
+        assert codegen.kept_copies_changed(s.generated) == [] and len(fake.requests) == 3
+        assert all(Path(t.output).is_file() and t.passed and t.unproven for t in s.generated.trials)
+        assert Path(s.generated.trials[0].output) != kept             # made again, in a new folder
+    assert [t.output_md5 for t in s.generated.trials] == [md5 for _path, md5 in shown]   # the same method, the same bytes
+    s.run(False, False, quiet)
+    assert all(t.passed and t.unproven and t.output.is_file() for t in s.last_trials)
+    # a method written in Default mode keeps no copy to change: its copies are made at the run
+    assert codegen.kept_copies_changed(codegen.GeneratedOp(source=GOOD_OP, passed=True)) == []
+
+
+def test_a_document_the_method_cannot_take_gets_no_copy_and_the_others_go_on(tmp_path):
+    """The writer tries its method on samples; a document outside them that it cannot do the work on has no copy to
+    approve. Its card says why, Create makes the others, and it waits on the to-do list."""
+    folder = tmp_path / "specs"
+    folder.mkdir()
+    files = []
+    for i in range(4):
+        files.append(folder / f"21 0{i} 00 – SPEC {i}.docx")
+        files[-1].write_bytes(build(f"21 0{i} 00", f"SPEC {i}"))
+    odd = folder / "21 09 00 – FIRE PUMPS.docx"
+    odd.write_bytes(build("21 09 00", "FIRE PUMPS"))
+    g = codegen.GeneratedOp(source=FREE_WORDS, passed=True, unguarded=True, name="rename_title")
+    g.trials = [trial(FREE_WORDS, f, {}, {}, tmp_path / "t" / str(i), unguarded=True) for i, f in enumerate(files)]
+    Session._every_copy(g, [*files, odd], tmp_path / "rest", lambda m: None)
+    assert [t.passed for t in g.trials] == [True] * 4 + [False]
+    gp = preview.preview_generated(g, tmp_path / "pv", renderer="none", do_render=False)
+    last = gp.samples[-1]
+    assert last.passed is False and "the body does not say SPEC" in last.problem and last.output is None
+    from spec_surgeon.ui_feedback import failed_preview_checks
+    [why] = failed_preview_checks(last)
+    assert why["check"] == "Preview" and "the body does not say SPEC" in why["reason"]
+    results = codegen.run_generated(g, [str(f) for f in [*files, odd]], tmp_path / "run")
+    assert [r.passed for r in results] == [True] * 4 + [False]
+    assert "the body does not say SPEC" in results[-1].problems[0]
+
+
+def test_the_window_says_which_document_gets_no_copy_before_the_button_and_puts_it_on_the_to_do_list(tmp_path):
+    from spec_surgeon.preview import NO_COPY_HEAD
+    from spec_surgeon.resources import DEFAULT_SAMPLE_FILES
+    from spec_surgeon.ui_feedback import UNPROVEN_MARK
+    folder = tmp_path / "specs"
+    folder.mkdir()
+    files = []
+    for i in range(DEFAULT_SAMPLE_FILES + 1):
+        files.append(folder / f"21 {i:02d} 00 – SPEC {i}.docx")
+        files[-1].write_bytes(build(f"21 {i:02d} 00", f"SPEC {i}"))
+    odd = folder / "21 99 00 – FIRE PUMPS.docx"                       # sorts last: no sample of the writer's
+    odd.write_bytes(build("21 99 00", "FIRE PUMPS"))
+    fake = FakeClient(resp(tool("submit_editspec", {"spec": UNSUPPORTED, "custom_transform": "outside_limits",
+                                                     "custom_transform_reason": "beyond formatting"})),
+                      resp(tool("submit_op", {"source": FREE_WORDS}, "w0")), resp(tool("confirm_op", {}, "w1")))
+    task = task_for(tmp_path, fake, obliterate_allowed=True)
+    task.set_mode("obliterate", acknowledged=True)
+    task.attach([*files, odd])
+    view = task.perform("send", text=UNSUPPORTED["request"])
+    assert view["stage"] == "preview" and len(fake.requests) == 3
+    # the button counts the copies that exist; the card and the chat say which document has none, and why, in plain
+    # words (no traceback, no exception name)
+    assert view["copies_to_create"] == len(files)
+    card = task._samples_view()["samples"][-1]
+    assert card["name"] == odd.name and card["no_copy"] is True and card["passed"] is False and card["unproven"]
+    assert card["failures"] == [{"check": "Preview",
+                                 "reason": "No copy of it could be made: the body does not say SPEC."}]
+    assert all(not c["no_copy"] for c in task._samples_view()["samples"][:-1])
+    said = view["messages"][-1]["text"]
+    assert said == f"{NO_COPY_HEAD}\n\n• {odd.name}: the body does not say SPEC."
+    assert any(n.startswith(NO_COPY_HEAD) and odd.name in n for n in task.session.conversation.notes)
+    view = task.perform("primary", token=view["token"])
+    assert view["stage"] == "done" and len(fake.requests) == 3 and len(task.results) == len(files)
+    assert str(odd) not in task.results and all(task.unverified[str(f)] == [UNPROVEN_MARK] for f in files)
+    entry = task.todo[str(odd)]
+    assert entry["why"] == "failed" and entry["reason"] == "Its copy could not be made: the body does not say SPEC."
+    assert "Traceback" in entry["case"]["reason"]                     # the engine's record keeps the whole of it
 
 
 def test_an_obliterate_methods_approval_is_never_a_guarded_ones():
@@ -689,6 +1104,51 @@ def test_an_unverified_copy_keeps_its_mark_through_later_runs_and_the_model_hear
     assert task.unverified == {}
 
 
+def test_an_unproven_copy_keeps_its_mark_through_later_runs_and_the_model_hears_it(tmp_path):
+    """A copy a custom method made in Obliterate mode is UNPROVEN, and so is every later copy built on it, in any
+    mode: a later verified change was checked against the unproven copy, not against the original. The next request
+    tells the model so, the done message and Export's note count it, and only Start over clears it."""
+    from spec_surgeon.document_task import EARLIER_COPY
+    from spec_surgeon.ui_feedback import UNPROVEN_MARK, failed_marks, unproven_only
+    path = document(tmp_path / "Spec.docx")
+    italic = {**SPEC, "summary": "Make the title italic",
+              "ops": [{"op": "set_properties", "select": {"paragraphs": {"text_regex": "^WATER SUPPRESSION$"}},
+                       "params": {"run": {"i": True}, "tracked": False}}]}
+    fake = FakeClient(resp(tool("submit_editspec", {"spec": UNSUPPORTED, "custom_transform": "outside_limits",
+                                                     "custom_transform_reason": "beyond formatting"})),
+                      resp(tool("submit_op", {"source": FREE_TITLE}, "w0")), resp(tool("confirm_op", {}, "w1")),
+                      resp(tool("submit_editspec", {"spec": italic})))
+    task = task_for(tmp_path, fake, obliterate_allowed=True)
+    task.set_mode("obliterate", acknowledged=True)
+    task.attach([path])
+    view = task.perform("send", text=UNSUPPORTED["request"])
+    view = task.perform("primary", token=view["token"])
+    first = task.results[str(path)]
+    assert task.unverified[str(path)] == [UNPROVEN_MARK]
+    assert unproven_only(task.unverified[str(path)]) and failed_marks(task.unverified[str(path)]) == []
+    assert "1 is UNPROVEN" in view["messages"][-1]["text"] and "UNVERIFIED" not in view["messages"][-1]["text"]
+    # Default mode builds on the copy: the model hears what it builds on, the new copy passes, the mark stays
+    task.set_mode("default")
+    view = task.perform("send", text="Also make it italic")
+    told = fake.requests[3]["messages"][0]["content"]
+    assert "Spec.docx is UNPROVEN (Obliterate mode): a custom method made its copy" in told
+    assert "delivered UNVERIFIED" not in told
+    assert view["stage"] == "preview"
+    view = task.perform("primary", token=view["token"])
+    assert view["stage"] == "done" and task.results[str(path)] != first
+    assert task.session.last_batch.files[0].status == "PASS"
+    assert task.unverified[str(path)] == [EARLIER_COPY + UNPROVEN_MARK]
+    assert unproven_only(task.unverified[str(path)])
+    assert "a custom method made an earlier copy of it" in "; ".join(task._history_in_scope())
+    # Export's note counts it apart from a copy that failed a check
+    said = task._export_said("accepted", tmp_path / "saved", 1, 0, {}, "", 0, 1)
+    assert "1 was made from an edited copy marked UNPROVEN" in said and "UNVERIFIED" not in said
+    assert "UNPROVEN" not in task._export_said("accepted", tmp_path / "saved", 1, 0, {}, "", 0)
+    task.save()
+    task.start_over()
+    assert task.unverified == {}
+
+
 def test_default_mode_is_untouched_by_all_of_it(tmp_path, planted_v2):
     path = document(tmp_path / "Spec.docx")
     fake = FakeClient(resp(tool("submit_editspec", {"spec": SPEC})))
@@ -762,74 +1222,75 @@ def test_a_failed_check_in_the_preview_does_not_void_an_obliterate_plan(tmp_path
     assert len(fake2.requests) > 1
 
 
-def test_a_custom_methods_preview_shows_the_checks_it_failed(folder, tmp_path):
+def test_a_custom_methods_preview_never_shows_an_obliterate_copy_as_checked(folder, tmp_path):
     from types import SimpleNamespace
-    from spec_surgeon.preview import preview_generated
+    from spec_surgeon.preview import GEOMETRY_SHOWN, OTHER_CHANGES_HEAD, preview_generated
     f = sorted(folder.glob("*.docx"))[0]
-    loose = trial(TEXT_OP, f, {}, {"twips": 900}, tmp_path / "u", unguarded=True)
-    assert loose.passed and loose.unverified                          # it may be delivered…
-    gp = preview_generated(SimpleNamespace(name="op", trials=[loose]), tmp_path / "pv", renderer="none",
+    broken = trial(FREE_BROKEN, f, {}, {}, tmp_path / "u", unguarded=True)
+    assert broken.passed and broken.unverified                        # it may be delivered…
+    gp = preview_generated(SimpleNamespace(name="op", trials=[broken], unguarded=True), tmp_path / "pv",
+                           renderer="none", do_render=False)
+    [sample] = gp.samples                                             # …but it never shows as checked
+    assert sample.passed is False and sample.unproven and "UNVERIFIED (made; checks of its file FAILED: ['V1'])" in gp.to_text()
+    clean = trial(FREE_HEADER, f, {}, {}, tmp_path / "c", unguarded=True)
+    gp = preview_generated(SimpleNamespace(name="op", trials=[clean], unguarded=True), tmp_path / "pv2",
+                           renderer="none", do_render=False)
+    [sample] = gp.samples
+    assert sample.passed is True and sample.unproven and sample.to_dict()["unproven"] is True
+    text = gp.to_text()
+    assert "UNPROVEN (made; no fault found in its file" in text and "verification PASS" not in text
+    assert "WHAT ELSE CHANGED" in text and OTHER_CHANGES_HEAD in text
+    assert any(line.startswith("Page setup:") for line in sample.changes) and sample.text_changes == []
+    # no layout was predicted, so none is promised for the run: the pages are shown, never compared
+    assert sample.geometry == GEOMETRY_SHOWN and "checked at the run" not in text
+    # a method written in Default mode: checked against its own plan, and shown as such
+    plain = trial(GOOD_OP, f, {}, {"twips": 900}, tmp_path / "p")
+    gp = preview_generated(SimpleNamespace(name="op", trials=[plain]), tmp_path / "pv3", renderer="none",
                            do_render=False)
-    assert gp.samples[0].passed is False and "verification FAIL" in gp.to_text()   # …but it never shows as checked
-    clean = trial(GOOD_OP, f, {}, {"twips": 900}, tmp_path / "c", unguarded=True)
-    gp = preview_generated(SimpleNamespace(name="op", trials=[clean]), tmp_path / "pv2", renderer="none",
-                           do_render=False)
-    assert gp.samples[0].passed is True
+    assert gp.samples[0].passed is True and not gp.samples[0].unproven and gp.samples[0].changes == []
+    assert "verification PASS" in gp.to_text() and "checked at the run" in gp.to_text()
 
 
 # ---- the words a custom method changes, said before approval (stress-test finding F1, P1) ---------------------------
 
-FOOTER_OP = '''from spec_surgeon.ops.base import Op, JobException
-from spec_surgeon.ooxml import paragraphs, max_revision_id
-from spec_surgeon.ops.textedit import Edit, RunText, plan_paragraph, edits_to_data, apply_part_edits
+FREE_FOOTER = '''from spec_surgeon.ops.base import Op, JobException
+from spec_surgeon.package import W
+
 
 class AddFooterNote(Op):
     name = "add_footer_note"
-    mode = "content"
     description = "Append a sentence to every footer line"
-    params_schema = {}
-    select_schema = {}
-    def plan(self, pkg, select, params):
-        frag = self.fragment(select, params)
-        frag.mode = "untracked"
-        data = {}
+
+    def apply(self, pkg):
+        done = 0
         for part in pkg.text_parts():
             if "footer" not in part:
                 continue
-            by_block = {}
-            for i, p in enumerate(paragraphs(pkg.xml(part))):
-                rt = RunText(p)
-                if not rt.text.strip() or any(ps.offset < 0 for ps in rt.positions):
-                    continue
-                edits = [Edit(0, len(rt.text), rt.text + " " + params["sentence"])]
-                edits = plan_paragraph(frag, part, i, p, edits, False, set(), "footer")
-                by_block[str(i)] = edits_to_data(edits)
-            if by_block:
-                data[part] = by_block
-        if not data:
-            raise JobException("no footer line to add to", "not-found")
-        frag.geometry_reference = "none"
-        frag.geometry_reason = "words are added by design"
-        frag.transform_data = {"edits": data, "next_id": max_revision_id(pkg) + 1}
-        return frag
-    def apply(self, pkg, frag):
-        td = frag.transform_data
-        for part, by_block in td["edits"].items():
             root = pkg.xml(part)
-            apply_part_edits(root, by_block, False, None, [td["next_id"]])
+            for p in root.iter(W + "p"):
+                texts = list(p.iter(W + "t"))
+                if not texts:
+                    continue
+                texts[-1].text = (texts[-1].text or "") + " Coordination draft."
+                done += 1
             pkg.write_xml(part, root)
+        if not done:
+            raise JobException("no footer line to add to", "not-found")
 '''
 WIDEN = {"request": "widen the footer text boxes and add a coordination note", "summary": "Widen the footers.",
          "unsupported": "Text boxes are not formatting.", "proposal": "widen each footer text box and add the note"}
 
 
-def custom_method_task(tmp_path, request, source, writer, *, mode="obliterate", submission=WIDEN):
-    """A window whose request Claude calls unsupported and answers with a custom method, written by ``writer``."""
+def custom_method_task(tmp_path, request, source, *method, mode="obliterate", submission=WIDEN):
+    """A window whose request Claude calls unsupported and answers with a custom method. ``method`` is the writer's
+    script: each turn the input of a ``submit_op``, or ``CONFIRM`` (Obliterate: the writer reads the report of what
+    its method changed, then confirms it)."""
+    turns = [resp(tool("confirm_op", {}, f"w{i}") if turn is CONFIRM else tool("submit_op", turn, f"w{i}"))
+             for i, turn in enumerate(method)]
     fake = FakeClient(resp(tool("submit_editspec", {"spec": dict(submission, request=request),
                                                      "custom_transform": "outside_limits",
                                                      "custom_transform_reason": "beyond formatting"})),
-                      resp(tool("submit_op", writer)),
-                      resp(tool("ask_user", {"message": "Anything else?"}, "t3")))
+                      *turns, resp(tool("ask_user", {"message": "Anything else?"}, "t3")))
     task = task_for(tmp_path, fake, obliterate_allowed=mode == "obliterate")
     if mode == "obliterate":
         task.set_mode("obliterate", acknowledged=True)
@@ -839,24 +1300,24 @@ def custom_method_task(tmp_path, request, source, writer, *, mode="obliterate", 
 
 def test_a_custom_methods_added_words_are_said_in_the_chat_and_under_the_sample_before_approval(tmp_path):
     """The finding: a method added "Coordination draft." to the footers and nothing before approval said so. Now the
-    chat says it, as the app, from the independent checker's own reading of the sample copy — the exact words quoted,
-    the part named — and the sample carries the same words for the preview card; the transcript keeps them."""
+    chat says it, as the app, from the independent checker's own reading of the copy — the exact words quoted, the
+    part named — and the sample carries the same words for the preview card; the transcript keeps them."""
     from spec_surgeon.preview import WORDS_CHANGE_HEAD, text_changes_of
+    from spec_surgeon.ui_feedback import UNPROVEN_MARK
     source = tmp_path / "21 01 00 – SPEC 1.docx"
     source.write_bytes(build("21 01 00", "SPEC 1", with_cover_page_field=False, single_section=True))
     before = source.read_bytes()
     request = ("Widen the footer text boxes and add “Coordination draft.” to each footer; show me the wording before "
                "I approve.")
-    task, fake = custom_method_task(tmp_path, request, source,
-                                    {"source": FOOTER_OP, "params": {"sentence": "Coordination draft."}})
+    task, fake = custom_method_task(tmp_path, request, source, {"source": FREE_FOOTER}, CONFIRM)
     view = task.perform("send", text=request)
     assert view["stage"] == "preview" and task.session.generated.passed and not task.results
-    # the sample passed every check (the method predicted its own words), and the view — the ``samples`` event's and
-    # the state's shape — says which words changed
+    # the copy was made and no fault found in its file; the view — the ``samples`` event's and the state's shape —
+    # says which words changed, and that nothing proved them
     assert view["samples"][0].text_changes == [{"part": "word/footer1.xml", "where": "footer", "paragraph": 0,
                                                 "removed": [], "added": ["Coordination draft."]}]
     sample = task._samples_view()["samples"][0]
-    assert sample["passed"] is True and sample["name"] == source.name
+    assert sample["passed"] is True and sample["unproven"] is True and sample["name"] == source.name
     assert sample["text_changes"] == [{"part": "word/footer1.xml", "where": "footer", "paragraph": 0, "removed": [],
                                        "added": ["Coordination draft."]}]
     # before the method is written, the chat says Claude's reason and, as the app, what the method is to do in
@@ -867,23 +1328,25 @@ def test_a_custom_methods_added_words_are_said_in_the_chat_and_under_the_sample_
     assert order[told + 1] == ("app", f"{CUSTOM_METHOD_WRITTEN} What it is to do, in Claude’s words: "
                                       f"“{WIDEN['proposal']}”")
     assert order[told - 1] == ("user", request)
-    # the chat, as the app and before the button: the heading, then the line quoting exactly those words
+    # then, as the app and before the button: that nothing proves the change, and the line quoting exactly the words
+    assert order[told + 2] == ("app", codegen.SAMPLES_UNPROVEN)
     said = [m for m in task.messages if m["role"] == "app" and m["text"].startswith(WORDS_CHANGE_HEAD)]
     assert len(said) == 1, [m["text"] for m in task.messages]
     paragraphs = said[0]["text"].split("\n\n")
     assert paragraphs[1:] == [f"• {source.name}, footer: words added “Coordination draft.”"]
     assert view["messages"][-1]["text"] == said[0]["text"]                  # the last thing said before the button
     assert not any(m["role"] == "assistant" and "Coordination draft." in m["text"] for m in task.messages)
-    # the transcript keeps the same words in place of the bare "prepared" line, and the model hears them next
+    # the transcript keeps the same words beside the verdict, and the model hears them next
     kept = [e for e in task.session.conversation.entries if e.role == "app" and "words added" in e.text]
     assert len(kept) == 1 and "footer: words added “Coordination draft.”" in kept[0].text
     assert any("words added “Coordination draft.”" in n for n in task.session.conversation.notes)
     # a method whose words change is never said twice for one preview
     assert sum(1 for m in task.messages if m["text"].startswith(WORDS_CHANGE_HEAD)) == 1
     view = task.perform("primary", token=view["token"])
-    assert view["stage"] == "done" and task.results[str(source)] and not task.unverified
-    # the copy the user got carries exactly the words that were disclosed: its own record, written by the verifier at
-    # the run, derives to the same entries as the preview's sample
+    assert view["stage"] == "done" and task.results[str(source)]
+    assert task.unverified == {str(source): [UNPROVEN_MARK]}
+    # the copy the user got carries exactly the words that were disclosed: its record, kept at the run, is the one
+    # its preview read
     records = list((task.session.last_run_dir / "records").glob("*.record.json"))
     assert len(records) == 1
     delivered = text_changes_of(json.loads(records[0].read_text(encoding="utf-8")))
@@ -892,34 +1355,36 @@ def test_a_custom_methods_added_words_are_said_in_the_chat_and_under_the_sample_
     assert "Coordination draft." in xml and source.read_bytes() == before
 
 
-def test_a_method_changed_since_its_words_were_shown_is_refused_with_the_approval_token(tmp_path):
-    """The disclosure is derived from the trials the approval already pins (``generated_key``: the method's code and
-    parameters, ``approval_inputs``: the files), so a method that changed since — other words — is refused at Create
-    exactly as any changed input is; nothing new is hashed."""
+def test_a_method_or_a_copy_changed_since_it_was_shown_is_refused_with_the_approval_token(tmp_path):
+    """What was said before approval is derived from the copies the approval pins (``generated_key``: the method's
+    code and each copy's bytes; ``approval_inputs``: the files), so a method that changed since, or a copy that is no
+    longer the one shown, is refused at Create exactly as any changed input is."""
     source = tmp_path / "21 01 00 – SPEC 1.docx"
     source.write_bytes(build("21 01 00", "SPEC 1", with_cover_page_field=False, single_section=True))
     before = source.read_bytes()
-    task, fake = custom_method_task(tmp_path, "add “Coordination draft.” to each footer", source,
-                                    {"source": FOOTER_OP, "params": {"sentence": "Coordination draft."}})
-    view = task.perform("send", text="add “Coordination draft.” to each footer")
-    assert view["stage"] == "preview"
-    assert task._samples_view()["samples"][0]["text_changes"][0]["added"] == ["Coordination draft."]
-    task.session.generated.params["sentence"] = "Something else."
-    with pytest.raises(ValueError, match="press Preview again"):
-        task.perform("primary", token=view["token"])
-    assert not task.results and source.read_bytes() == before
+    for what in ("method", "copy"):
+        task, fake = custom_method_task(tmp_path / what, "add “Coordination draft.” to each footer", source,
+                                        {"source": FREE_FOOTER}, CONFIRM)
+        view = task.perform("send", text="add “Coordination draft.” to each footer")
+        assert view["stage"] == "preview"
+        assert task._samples_view()["samples"][0]["text_changes"][0]["added"] == ["Coordination draft."]
+        g = task.session.generated
+        if what == "method":
+            g.source = g.source.replace("Coordination draft.", "Something else.")
+        else:
+            g.trials[0].output_md5 = "0" * 32
+        with pytest.raises(ValueError, match="press Preview again"):
+            task.perform("primary", token=view["token"])
+        assert not task.results and source.read_bytes() == before
 
 
 def test_a_title_changed_despite_the_request_is_disclosed_as_removed_and_added_words(tmp_path):
     """The second scripted case: "Keep the words as they are", and the method changed the title. Before approval the
     chat lists the words removed and the words added, from the checker's record, under the body paragraph's ordinal."""
-    from test_governed_codegen import CONTENT_OP
     from spec_surgeon.preview import WORDS_CHANGE_HEAD
     source = document(tmp_path / "Spec.docx")
-    op = CONTENT_OP.replace('author="Tester"', "author=pkg.author").replace('RevisionStamp.now("Tester"',
-                                                                            "RevisionStamp.now(pkg.author")
     task, fake = custom_method_task(tmp_path, "Make the title a text box. Keep the words as they are.", source,
-                                    {"source": op, "params": {"replacement": "WATER"}})
+                                    {"source": FREE_TITLE}, CONFIRM)
     view = task.perform("send", text="Make the title a text box. Keep the words as they are.")
     assert view["stage"] == "preview"
     assert task._samples_view()["samples"][0]["text_changes"] == [
@@ -928,14 +1393,19 @@ def test_a_title_changed_despite_the_request_is_disclosed_as_removed_and_added_w
     assert said.split("\n\n")[1:] == [
         f"• Spec.docx, body paragraph 2: words removed “FIRE”; words added “WATER”"]
     assert view["messages"][-1]["text"] == said
+    # the writer read the same finding before it confirmed the method
+    report = fake.requests[2]["messages"][-1]["content"][0]["content"]
+    assert "body paragraph 2: words removed “FIRE”; words added “WATER”" in report
 
 
 def test_a_formatting_only_method_says_that_no_words_change_in_every_mode(tmp_path):
-    from spec_surgeon.preview import NO_WORDS_CHANGE
+    from spec_surgeon.preview import NO_WORDS_CHANGE, OTHER_CHANGES_HEAD
     for mode in ("default", "obliterate"):
         source = document(tmp_path / mode / "Spec.docx")
+        method = ([{"source": FREE_HEADER}, CONFIRM] if mode == "obliterate" else
+                  [{"source": GOOD_OP, "params": {"twips": 900}}])
         task, fake = custom_method_task(tmp_path / mode, "Set the header distance to 900 twips.", source,
-                                        {"source": GOOD_OP, "params": {"twips": 900}}, mode=mode,
+                                        *method, mode=mode,
                                         submission={"request": "r", "summary": "Move header",
                                                     "unsupported": "Use a custom method", "proposal": "move it"})
         if mode == "default":
@@ -947,8 +1417,15 @@ def test_a_formatting_only_method_says_that_no_words_change_in_every_mode(tmp_pa
         assert view["stage"] == "preview", mode
         assert task._samples_view()["samples"][0]["text_changes"] == []
         said = [m["text"] for m in task.messages if m["role"] == "app"]
-        assert NO_WORDS_CHANGE in said and view["messages"][-1]["text"] == NO_WORDS_CHANGE, (mode, said)
-        assert "Before you approve" not in "".join(said)
+        assert NO_WORDS_CHANGE in said and "the words the custom method changes" not in "".join(said), (mode, said)
+        if mode == "default":
+            assert view["messages"][-1]["text"] == NO_WORDS_CHANGE
+            assert not any(OTHER_CHANGES_HEAD in t or "UNPROVEN" in t for t in said)
+        else:
+            # Obliterate: after the words, what else each copy changes — the report of a method that predicted nothing
+            last = view["messages"][-1]["text"]
+            assert last.startswith(OTHER_CHANGES_HEAD) and "• Spec.docx: Page setup: the settings of" in last
+            assert said.index(NO_WORDS_CHANGE) == len(said) - 2 and said[-3] == codegen.SAMPLES_UNPROVEN
 
 
 def test_an_ordinary_plans_samples_carry_no_word_comparison(tmp_path):
@@ -962,7 +1439,7 @@ def test_an_ordinary_plans_samples_carry_no_word_comparison(tmp_path):
     assert not any("words change" in m["text"] for m in task.messages)
 
 
-# ---- a part no check reads (the deep-dive stress test's D2) ----------------------------------------------------------
+# ---- a part the report does not read (the deep-dive stress test's D2) -------------------------------------------------
 
 THEME_OP = '''from spec_surgeon.ops.base import Op, JobException
 
@@ -995,49 +1472,59 @@ class SetAccentOne(Op):
         root.find(".//" + A + "accent1/" + A + "srgbClr").set("val", td["rgb"])
         pkg.write_xml(td["part"], root)
 '''
+FREE_THEME = '''from spec_surgeon.ops.base import Op, JobException
+
+THEME = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/theme"
+A = "{http://schemas.openxmlformats.org/drawingml/2006/main}"
+
+
+class SetAccentOne(Op):
+    name = "set_accent_one"
+    description = "Set the theme's first accent colour to dark teal."
+
+    def apply(self, pkg):
+        parts = pkg.parts_of_type(THEME, pkg.main_part())
+        if len(parts) != 1:
+            raise JobException("no single theme part", "structure")
+        root = pkg.xml(parts[0])
+        root.find(".//" + A + "accent1/" + A + "srgbClr").set("val", "207060")
+        pkg.write_xml(parts[0], root)
+'''
 THEME_PART = "word/theme/theme1.xml"
-UNREAD_LINE = "UNREAD (Changed parts no check reads)"
+UNREAD_SAID = ("Changed, and not read by this report (it compares their bytes, not what they hold): "
+               f"{THEME_PART} — the theme.")
 
 
-def test_a_copy_that_changes_a_part_no_check_reads_is_never_called_verified(folder, tmp_path):
+def test_a_copy_that_changes_a_part_the_report_does_not_read_says_so(folder, tmp_path):
     """The finding: a bound control's store set to WRONG OWNER and a chart's workbook left stale passed every check,
     since V10 reads the text parts, the styles and the settings and properties members, and nothing else. A method
-    that changes the theme passed the same way. In Obliterate the copy now fails UNREAD, naming the part, and is
-    delivered marked UNVERIFIED; V10 itself is unchanged. In Default the same method is refused outright."""
+    that changes the theme passed the same way. In Obliterate nothing a copy changes goes unsaid: the report names
+    the part and says it compared its bytes only, and the copy is UNPROVEN like every copy of such a method. In
+    Default the same change is refused outright."""
+    from spec_surgeon.verify import difference_lines
     f = sorted(folder.glob("*.docx"))[0]
-    t = trial(THEME_OP, f, {}, {"rgb": "207060"}, tmp_path / "u", unguarded=True)
-    assert t.passed and t.unverified == [UNREAD_LINE], t.problems
-    unread = t.record.get("UNREAD")
-    assert unread.status == "FAIL" and unread.data == {"members": [THEME_PART]} and THEME_PART in unread.summary
-    assert t.record.get("V10").status == "PASS" and t.record.get("V10").data["unread_members"] == [THEME_PART]
+    t = trial(FREE_THEME, f, {}, {}, tmp_path / "u", unguarded=True)
+    assert t.passed and t.unproven and t.unverified == [], t.problems
+    assert t.record.get("D1").data["unread"] == [THEME_PART] and difference_lines(t.record) == [UNREAD_SAID]
     assert b'val="207060"' in zipfile.ZipFile(t.output).read(THEME_PART)
-    results = codegen.run_generated(codegen.GeneratedOp(source=THEME_OP, passed=True, params={"rgb": "207060"},
-                                                        unguarded=True), [str(f)], tmp_path / "run")
-    assert results[0].passed and results[0].unverified == [UNREAD_LINE] and results[0].output.is_file()
     plain = trial(THEME_OP, f, {}, {"rgb": "207060"}, tmp_path / "plain")
     assert not plain.passed and f"no verified assertion kind covers ['{THEME_PART}']" in plain.problems[0]
+    # a copy that changes only what the report reads names nothing as unread
+    t = trial(FREE_HEADER, f, {}, {}, tmp_path / "h", unguarded=True)
+    assert t.record.get("D1").data["unread"] == []
 
 
-def test_a_copy_that_changes_only_what_the_checks_read_has_no_unread_failure(folder, tmp_path):
-    f = sorted(folder.glob("*.docx"))[0]
-    t = trial(GOOD_OP, f, {}, {"twips": 900}, tmp_path / "u", unguarded=True)
-    assert t.passed and t.unverified == [] and t.record.get("UNREAD") is None
-    assert t.record.get("V10").data["unread_members"] == []
-
-
-def test_the_writer_hears_unread_and_may_keep_it_with_a_reason(folder, tmp_path):
-    f = sorted(folder.glob("*.docx"))[:1]
-    why = "the request changes the theme's first accent colour"
-    fake = write_op((THEME_OP, {"rgb": "207060"}, None),
-                    (THEME_OP, {"rgb": "207060"}, [{"check": "unread", "reason": why}]))
+def test_the_writer_and_the_user_read_of_the_part_the_report_does_not_read(folder, tmp_path):
+    from spec_surgeon.preview import OTHER_CHANGES_HEAD, preview_generated, shown_changes_lines
+    f = sorted(folder.glob("*.docx"))
+    fake = writer(FREE_THEME, CONFIRM)
     g = codegen.generate_op("make accent 1 dark teal", "set the theme accent", f, tmp_path / "cg", client=fake,
                             unguarded=True)
-    back = fake.requests[1]["messages"][-1]["content"][0]
-    assert back["is_error"] and "UNREAD FAIL: the copy changes 1 part(s)" in back["content"]
-    assert g.passed and g.accepted_failures == {"UNREAD": why}
-    assert g.trials[0].unverified == [f"{UNREAD_LINE} — Claude says this is part of the change: {why}"]
-    assert codegen.samples_verdict(g)[0] == codegen.SAMPLES_UNVERIFIED
-    assert "fails UNREAD" in codegen.system_prompt(unguarded=True)
+    assert g.passed and UNREAD_SAID in answer(fake, 1)["content"]
+    gp = preview_generated(g, tmp_path / "pv", renderer="none", do_render=False)
+    assert all(s.changes == [UNREAD_SAID] for s in gp.samples)
+    # the same finding in several documents is one line naming them all
+    assert shown_changes_lines(gp.samples) == [OTHER_CHANGES_HEAD, f"• {f[0].name} and {f[1].name}: {UNREAD_SAID}"]
 
 
 def test_the_verifier_names_a_changed_member_it_did_not_read_and_fails_nothing_for_it(tmp_path):

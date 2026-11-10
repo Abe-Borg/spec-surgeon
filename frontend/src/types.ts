@@ -168,6 +168,15 @@ export interface Sample {
    *  record), one entry per changed paragraph; [] when the method changes no words; null for an ordinary plan's
    *  sample (the chat's sentences say what changes) and for a sample without a record; absent from older servers. */
   text_changes?: TextChange[] | null;
+  /** A custom method made this copy in Obliterate mode: nothing was predicted for it, so it is never shown as
+   *  checked. With no failed check it is "not proven"; with one it did not pass. Absent from older servers. */
+  unproven?: boolean;
+  /** Such a copy's other changes beside its words, in the independent reader's own sentences (counts of
+   *  paragraphs, tables and pictures, formatting, styles, numbering, settings, parts); [] when it found none. */
+  changes?: string[];
+  /** The custom method could make no copy of this document (`failures` says why): Create makes none, and the
+   *  document goes on the to-do list. */
+  no_copy?: boolean;
 }
 
 /** One paragraph a custom method's copy changes, from the checker's own comparison (docs/WEB_API.md,
@@ -234,7 +243,9 @@ export interface Result {
   source: string;
   output: string;
   name: string;
-  /** Obliterate mode: the checks this copy failed; it was delivered anyway. Empty for a verified copy. */
+  /** Obliterate mode: this copy's marks. A check it failed and was delivered with reads "V2 (Text preservation)":
+   *  the copy is UNVERIFIED. A copy a custom method made carries a mark that begins "UNPROVEN": what it changed was
+   *  shown, not proven. Either may follow "in an earlier copy: ". Empty for a verified copy (lib/modes.ts). */
   unverified?: string[];
   /** Where Export → Word (Tracked Changes ON) saved this copy, while that file is still there; "" while the copy
    *  lives only in the window's scratch folder. Absent from an older server. */
