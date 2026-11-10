@@ -78,7 +78,7 @@ On the owner's machine (Windows, Word): the W3 judge over every case, each failu
 behaviour recorded here with its evidence; the W4 recipe run once, its files and Word's resolutions checked in. The
 judge cannot see a repair prompt or how the Reviewing Pane draws the changes; those stay a manual look.
 
-### Obliterate: the cost ladder (O7–O8)
+### Obliterate: the cost ladder (O8)
 
 The owner's decisions of 2026-11-10 (CLAUDE.md, "Standing decisions"). Obliterate is the emergency lever, reached
 last: Safe handles most of a batch, Default what Safe could not take, and Obliterate the one or two documents neither
@@ -98,7 +98,10 @@ O5 — the named Word actions: a fixed menu Word itself runs on a private copy (
 (`ops/word_action.py`), every copy made before approval, read by O2's record as a file Word saved
 (`run_difference(rewritten=True)`) and delivered as shown, marked UNPROVEN — and O6 — the rescue at attach
 (`rescue.py`): a refused document's **Try to rescue**, the app's own mending or Word converting or repairing a
-private copy, the result attached as a new document marked SALVAGED for good.
+private copy, the result attached as a new document marked SALVAGED for good — and O7 — Export anyway
+(`exports.make_anyway`): where a clean export left a marked copy without a file, the Export menu offers that kind
+made by Word with commands fixed in code, named UNCHECKED in the chat with Word's own count and what the
+independent reader found in the file Word saved (invariant 7's exception, amended for Obliterate alone).
 
 Rules for every item:
 
@@ -115,11 +118,11 @@ Rules for every item:
 
 | Item | What to build | What was decided |
 | --- | --- | --- |
-| O7 — Export anyway | When a marked copy's clean version or PDF cannot be made the checked way, Export offers a Word-made one, named as unchecked in the summary | Amends invariant 7's exception ("never widen them"): the new choice is still fixed in code and named by the menu, never a model's |
 | O3a — what O3 left out, each on the owner's word | A raw edit of the package's relationship and content-type parts (today `edit_xml` refuses them, `xml-part`; the hands-on tools' Replace this part places any part as bytes, and a custom method changes those), and of a part with a comment or processing instruction outside its root element (refused too: `serialize_xml` writes a part from its root; Replace this part takes such a part as it is). Text an edit sets in an ATTRIBUTE that Word shows as words — a list label (`w:lvlText`), a field instruction, alternative text — traced by the wording gate and listed with the words (today attribute values are markup: the plan's own sentence quotes them, and D1 says that numbering or a field changed). The plan following the clearing step in ONE request when its template operation carries bindings (today invariant 5 refuses a source-bound template op that is not first, so it is two requests: clear, then ask for the plan on the copy). The clearing step proposed by the app with no model call, for the refusal codes the owner's runs show most (with O8's pick) | Not started until asked for |
 | O4a — what O4 left out, each on the owner's word | XML editing inside the window (decided against for now: edit a saved part in your own editor). Adding a part the document does not have, or removing one (`replace_part` replaces only; a custom method adds and removes). Replacing a part in several documents at once (one document per replacement today). The part browser on a file triage refused at attach (with O6's rescue). Comparing a part of the edited copy with the original's side by side (the dialog switches between the two files) | Not started until asked for |
 | O5a — what O5 left out, each on the owner's word | A Word action and other operations under ONE approval (today a plan of Word actions holds nothing else, `[word-alone]`: nothing can be predicted after a file Word saved again, so the rest is the next request, and in a pass over the to-do list the pass stays open for it; one approval would need the chain planner to plan its later steps on the copy Word made before approval). A password for **Remove protection** (asked for, never stored, logged or sent to the model; today Word's own refusal, with the hint that a raw XML edit can take the restriction out). **Unlink fields** in headers and footers, or by kind of field, as menu items of their own (today the body, notes and the body's text boxes). Text boxes in line with the text, inside a drawing canvas or linked to one another (today left as they are, and counted). Word's actions recorded as tracked changes (today tracking is off while they run). Several documents at once in Word instances side by side (today one document at a time, a private Word each). And, after the owner's first runs: what a real Word save changes beyond the marks the report sets aside (`verify/difference._plain`: drawing and shape ids, list ids, anything Word tidies), so that a save that changes nothing reads as nothing changed on real files too | Not started until asked for |
 | O6a — what O6 left out, each on the owner's word | Evidence for a rescue: the pages of the user's file beside the rescued document's, and the words they show compared (Word and LibreOffice both open a `.doc`; today the chat gives counts to hold against the file, and the mark says nothing is proven). Other kinds Word converts (`.rtf`, `.dotx`, `.dotm`, `.odt`; today `.doc` and `.docm`). A refused TEMPLATE rescued (today a refused template is an error at attach, never an attachment). The part browser on a refused file (O4a). The rescued document itself saved where the user chooses without a change made to it (today Export saves edited copies; a Word action or a hands-on save gets it out). A password for a file Word only half opens (a password to modify). The size limits lifted for one document rather than for the window. Removing the SALVAGED mark once the user has compared the two files (today it is permanent, as decided) | Not started until asked for |
+| O7a — what O7 left out, each on the owner's word | Export anyway for a copy with NO mark (today a verified copy the checked way cannot clean — a tracked change in an equation, an inserted or merged table cell, a comment a tracked deletion would take away, a tracked change in a style — is told to accept it in Word; in Obliterate the Word action *Accept all tracked changes* does it and marks the copy UNPROVEN, after which the offer applies). A mark the exported file itself carries (today it is named UNCHECKED in the chat alone, and the chat goes with the window: a suffix on the file's name, or a line in its properties). The offer kept across a restart (today a window started again runs the export again). The words the reader found different, listed in the chat (today counted: "2 blocks of text differ"; the record under the run's `records\` holds them). The pages of the edited copy beside the pages of the file Word made, and the words they show compared. A PDF Word exports in the same opening as its accept (today two openings: Word saves the clean file, then the renderer opens that). The whole of Export anyway in ONE click with the checked export (today the checked way runs first and the offer follows its failure, so that no file is made by Word that the checked way could have made) | Not started until asked for |
 | O8 — optional, each on the owner's word | Rebuild from a clean template (the document's words, tables and pictures poured into a pristine template; the text-preservation check proves no word was lost). The outcome verifier (`goals.verify_goal`) on a rescued straggler where its request fits one of the effects it models. A pick, in the window, where a built-in op refused because it would not guess — for the refusal codes the owner's runs show most (log which codes reach Obliterate first) | Not started until asked for |
 
 Not in the plan: Claude-composed Word scripts, XML editing inside the window, replacing the import whitelist with an
@@ -185,6 +188,37 @@ write-back over the originals unless asked for (T1 is the claim most of the trus
 Everything else is built and tested on fixtures; nothing is done on fixtures alone. These runs need real
 specifications, Windows and Word, and only the owner can do them. Record what a run finds as a new item above.
 
+- **Obliterate's Export anyway (O7, built 2026-11-10):** with Word and Obliterate shown in Settings; no API key is
+  needed. No file has been made by a real Word here, so read each one against your copy by eye. You need a document
+  whose clean version the checked way cannot make: one with a tracked change inside an equation, a tracked
+  inserted or merged table cell, or a comment sitting in text a tracked deletion removes (that one fails Word
+  (Tracked Changes OFF) only).
+  1. *No mark, no offer.* In Default mode, make a copy of it with any small change and choose **Export → PDF
+     (Clean)**: the chat names the document with the reason and saves no file for it, and the Export menu shows its
+     three choices and nothing else. Choose Obliterate and export again: the same, because the copy carries no
+     mark.
+  2. *A marked copy.* Still in Obliterate, run a Word action on that document (**Word actions → Open and repair,
+     then save**), approve the preview and create the copy: it is marked UNPROVEN. **Export → PDF (Clean)** again.
+     Expect: the chat names it with the same reason, then says it is a marked copy and that Export can have Word
+     make it anyway; the Export menu now has a second group, *Made by Word, unchecked*, with **PDF (Clean), made by
+     Word** naming the document.
+  3. *Made by Word.* Choose it, then a folder. Expect a PDF named after the copy, with no comment balloon and no
+     redline on any page; the chat says it was made by Word and is UNCHECKED, gives Word's own count (comments
+     deleted, tracked changes accepted) and what the app read in the file Word saved. Open the PDF beside your
+     copy in Word with **All Markup** off: the text, the equation, the tables, the numbering, the headers and
+     footers. **Most to look at:** whether the reading says the words are your copy's when they are (a real Word
+     save may differ from the stand-in's in ways the reader counts as text), and whether Word's count of tracked
+     changes matches what the Reviewing Pane showed.
+  4. *The Word kind.* **Export → Word (Tracked Changes OFF)**, then **Word (Tracked Changes OFF), made by Word**:
+     a `.docx` with no tracked change left and its comments kept. Open it: no Reviewing Pane entries but comments.
+  5. *What did not change.* Your edited copy in the window still has its tracked changes and comments (open it from
+     the copies list); the list under the copies has no new line; **Undo** names the same change as before; the
+     copy is not marked SAVED by either export. The offer for a kind is gone once its file is made, and comes back
+     only after that kind's checked export fails again.
+  6. *Outside Obliterate.* Switch to Default: the second group is gone from the menu. Close the window without
+     saving and start again: the menu offers nothing until the export is run again.
+  7. *Stop.* With two such marked copies, choose a *made by Word* kind and press **Stop** while Word has the first:
+     the chat says nothing was saved, the folder is empty of new files, and the offer is still there.
 - **Obliterate's rescue at attach (O6, built 2026-11-10):** with Word and Obliterate shown in Settings; no API key
   is needed. No rescue has been run by a real Word, so try each kind once, with a file you can afford to compare by
   eye. In Default mode first: an old `.doc` cannot be attached, and a refused file shows no button. Then choose

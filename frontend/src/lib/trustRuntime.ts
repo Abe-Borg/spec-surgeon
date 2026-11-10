@@ -437,6 +437,39 @@ export const RUNTIME_CARDS: RuntimeCard[] = [
       `app started. It waits ${WHILE_CHECKED}.`,
   },
   {
+    covers: ["A51"],
+    title: "Obliterate: Export anyway, a clean file made by Word",
+    you:
+      "In Obliterate mode, after Export → Word (Tracked Changes OFF) or PDF (Clean) left a marked copy without a " +
+      "file: Export → the same kind under Made by Word, unchecked, then the folder.",
+    runs:
+      "For each marked copy (UNVERIFIED, UNPROVEN or Salvaged) that kind's checked export left without a file, " +
+      "and for no other copy, the app writes a private copy of the edited copy's bytes into the scratch folder " +
+      "and starts Microsoft Word on this computer, in an instance of its own with macros disabled and links not " +
+      "updated. Word runs commands fixed in the app — accept every tracked change; for the PDF, delete every " +
+      "comment first — and saves the result under a new name. Nothing is planned, predicted or put through the " +
+      "checks a clean export's file passes. The independent reader then reads the file Word saved against your " +
+      "edited copy, and the chat says what it found: whether its words are your copy's read with every tracked " +
+      "change accepted, whether a tracked change is left (for the PDF, a comment too: the app counts them itself), " +
+      "whether it opens as a file. For the PDF, that file is " +
+      "rendered and the PDF looked at as any clean PDF is: it opens, has pages and carries no note. Each file is " +
+      "written into the folder you chose and named UNCHECKED in the chat, with Word's own count beside the " +
+      "reading. A document Word cannot finish, or whose PDF cannot be made, gets no file, with the reason, and " +
+      "stays offered.",
+    sent: "Nothing. No file and no result goes to Anthropic or anywhere else: Export anyway makes no call.",
+    ai: NONE,
+    bounds:
+      "Offered only in Obliterate mode, only for a copy that carries a mark, and only after the checked export of " +
+      "that kind left that copy, as it is now, without a file: a copy changed since is not offered until the " +
+      "export is run again. Never for Word (Tracked Changes ON), which is the copy as it is. Claude is never told " +
+      "of it and cannot choose it. A file whose words differ, or that keeps a tracked change, is saved all the " +
+      "same and the chat says so; the file carries no mark of its own. Your edited copies are read, never " +
+      "changed, and the history, Undo and what counts as saved stay as they were. Never over a file the " +
+      "conversation works on and never into the scratch folder. What is offered is kept nowhere: a window " +
+      `started again runs the export again. Word gets ${F.wordActionMinutes} minutes a document; Stop ends it ` +
+      "and the Word the app started, with nothing saved.",
+  },
+  {
     covers: ["A48", "A49"],
     title: "Obliterate's Word actions: Word itself changes a copy, from a fixed menu",
     you:
@@ -767,7 +800,9 @@ export const RUNTIME_CARDS: RuntimeCard[] = [
       "not pass its own, gets no file and is named with why; a PDF that failed is kept apart in pdf-failed in the " +
       "scratch folder. PDF (Clean) needs Word or LibreOffice on this computer and says so before it asks for a " +
       "folder. Each file is written whole, then renamed into place. The copies in the scratch folder are unchanged, " +
-      "and nothing is written until you choose in the menu.",
+      "and nothing is written until you choose in the menu. Every file these three choices write is made this way " +
+      "or not at all; in Obliterate mode alone a marked copy left without a file can be exported anyway, made by " +
+      "Word and unchecked, from a choice of its own (its card is with Obliterate's).",
   },
   {
     covers: ["B19"],

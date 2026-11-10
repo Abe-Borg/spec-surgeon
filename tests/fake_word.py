@@ -7,7 +7,9 @@ honest way, and then SAVES THE WHOLE FILE AGAIN the way Word does:
   spelling mark, the ``_GoBack`` bookmark, a run split in two, an ``rsid`` on every style and the ``rsids`` list in
   the settings;
 * the header and footer parts are named again in another order, and the main part's relationship ids are given
-  again (so a comparison by part name or by relationship id would say everything changed).
+  again (so a comparison by part name or by relationship id would say everything changed);
+* a document whose comments were all deleted (``delete_comments``, Export anyway's) is saved without its comments
+  part, its relationship and its content type.
 
 What it proves is the app around Word: the copies kept from before the approval, the report that reads a file Word
 saved, the marks, the gate. What Word itself does with a real document is proven on the owner's machine.
@@ -27,7 +29,8 @@ W_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
 R_NS = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
 W14_NS = "http://schemas.microsoft.com/office/word/2010/wordml"
 REL_NS = "http://schemas.openxmlformats.org/package/2006/relationships"
-W, R, W14, REL = (f"{{{ns}}}" for ns in (W_NS, R_NS, W14_NS, REL_NS))
+CT_NS = "http://schemas.openxmlformats.org/package/2006/content-types"
+W, R, W14, REL, CT = (f"{{{ns}}}" for ns in (W_NS, R_NS, W14_NS, REL_NS, CT_NS))
 MAIN, MAIN_RELS = "word/document.xml", "word/_rels/document.xml.rels"
 XML_SPACE = "{http://www.w3.org/XML/1998/namespace}space"
 
@@ -58,9 +61,13 @@ def _unlink(root) -> int:
 def _accept(root) -> int:
     n = 0
     for ins in list(root.iter(W + "ins")):
-        if ins.getparent() is not None and ins.getparent().tag != W + "rPr":
+        if ins.getparent() is None:
+            continue
+        if ins.getparent().tag == W + "rPr":
+            ins.getparent().remove(ins)        # an inserted mark (a paragraph's, a run's inside an equation): kept
+        else:
             _unwrap(ins)
-            n += 1
+        n += 1
     for gone in list(root.iter(W + "del")):
         if gone.getparent() is not None and gone.getparent().tag != W + "rPr":
             gone.getparent().remove(gone)
@@ -122,6 +129,15 @@ def _boxes_to_text(root) -> int:
     return n
 
 
+def _comment_marks(root) -> None:
+    """A text part without its comment anchors: the range marks, and the run that holds each reference."""
+    for mark in list(root.iter(W + "commentRangeStart", W + "commentRangeEnd")):
+        mark.getparent().remove(mark)
+    for ref in list(root.iter(W + "commentReference")):
+        run = ref.getparent()
+        run.getparent().remove(run)
+
+
 def _numbers_to_text(root) -> int:
     n = 0
     for paragraph in root.iter(W + "p"):
@@ -181,8 +197,9 @@ def save_again(data: bytes, actions: List[str], *, rename: bool = True) -> Tuple
     related: Dict[str, List[str]] = {}
     for rel in rels.findall(REL + "Relationship"):
         related.setdefault(rel.get("Type").rsplit("/", 1)[-1], []).append("word/" + rel.get("Target"))
-    text_parts = [MAIN] + [p for kind in ("header", "footer", "footnotes", "endnotes") for p in related.get(kind, [])
-                           if p in members]
+    # every story Word's own commands reach: the comments among them (Accept All settles a change inside a comment)
+    text_parts = [MAIN] + [p for kind in ("header", "footer", "footnotes", "endnotes", "comments")
+                           for p in related.get(kind, []) if p in members]
     body_parts = [MAIN] + [p for kind in ("footnotes", "endnotes") for p in related.get(kind, []) if p in members]
     roots = {name: etree.fromstring(members[name]) for name in text_parts}
     settings_name = (related.get("settings") or [None])[0]
@@ -216,6 +233,23 @@ def save_again(data: bytes, actions: List[str], *, rename: bool = True) -> Tuple
                     count = 1
         elif action in ("repair", "convert"):
             count = 1
+        elif action == "delete_comments":
+            # Word deletes every comment, and a document left with none is saved without its comments part
+            for name in [p for p in related.get("comments", []) if p in roots]:
+                count += sum(1 for _ in roots.pop(name).iter(W + "comment"))
+                del members[name]
+                members.pop("word/_rels/" + name[len("word/"):] + ".rels", None)
+                for rel in rels.findall(REL + "Relationship"):
+                    if "word/" + rel.get("Target") == name:
+                        rels.remove(rel)
+                types = etree.fromstring(members["[Content_Types].xml"])
+                for override in types.findall(CT + "Override"):
+                    if override.get("PartName") == "/" + name:
+                        types.remove(override)
+                members["[Content_Types].xml"] = etree.tostring(types, xml_declaration=True, encoding="UTF-8",
+                                                                standalone=True)
+            for root in roots.values():
+                _comment_marks(root)
         report.append({"action": action, "count": count, "note": note})
 
     # ---- and Word saves the whole file again

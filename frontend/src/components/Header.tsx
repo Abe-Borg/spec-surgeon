@@ -17,7 +17,7 @@ interface Props {
   updatePill: string;
   onDownloadUpdate: () => void;
   /** Export, the menu's choice: the edited copies written to a folder the native dialog asks for, in that kind. */
-  onExport: (kind: ExportKind) => void;
+  onExport: (kind: ExportKind, anyway?: boolean) => void;
   onNewConversation: () => void;
   onOpenSettings: () => void;
   onOpenHelp: (topic: HelpTopic) => void;

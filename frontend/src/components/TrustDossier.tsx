@@ -616,8 +616,16 @@ function Dossier() {
           ]}
         />
         <Term
+          word="UNCHECKED"
+          claim="Obliterate mode only: a clean file Export had Microsoft Word make (Export anyway), because the checked way could not make it for a marked copy. Word accepted every tracked change on a private copy, and for a PDF deleted every comment first. Nothing was planned or predicted. The chat names the file and gives Word’s own count beside what the independent reader found in the file Word saved: whether its words are your copy’s with every tracked change accepted, and whether a tracked change (for a PDF, a comment too) is left."
+          not={[
+            "Checked: no check says Word changed only what the menu names. The reading covers the words, not the formatting, the numbering, the fields or the layout.",
+            "A mark on the file: it is named in the chat, and nothing in the file says how it was made.",
+          ]}
+        />
+        <Term
           word="Approved"
-          claim="You pressed Create edited copies (or Save ready copies) on a plan whose fingerprint covers the plan and the exact content of each file. A changed file or plan voids the approval. For a custom method in Obliterate mode the fingerprint covers each copy it made, so the click approves those copies and no others. In Safe and Default modes, a document whose preview failed a check is not part of it (it waits under Left untouched), and Create refuses a preview none of whose samples passed. Save ready copies exports only the recovery's ready files. Export’s Word (Tracked Changes OFF) and PDF (Clean) are approved by your choice in the menu: each runs one plan fixed in the app over your edited copies and changes none of them."
+          claim="You pressed Create edited copies (or Save ready copies) on a plan whose fingerprint covers the plan and the exact content of each file. A changed file or plan voids the approval. For a custom method in Obliterate mode the fingerprint covers each copy it made, so the click approves those copies and no others. In Safe and Default modes, a document whose preview failed a check is not part of it (it waits under Left untouched), and Create refuses a preview none of whose samples passed. Save ready copies exports only the recovery's ready files. Export’s Word (Tracked Changes OFF) and PDF (Clean) are approved by your choice in the menu: each runs one plan fixed in the app over your edited copies and changes none of them. In Obliterate mode, Export anyway is approved by its own menu choice: Word’s commands, fixed in the app, on a private copy of a marked copy, with no plan and no check."
           not={[
             "That you read every sentence of the plan.",
             "That Claude understood you — only that the engine will do exactly what is on screen.",

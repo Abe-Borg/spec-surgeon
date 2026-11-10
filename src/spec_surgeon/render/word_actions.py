@@ -206,6 +206,14 @@ def delete_shapes(doc) -> Tuple[int, str]:
     return done, note
 
 
+def delete_comments(doc) -> Tuple[int, str]:
+    """Every comment with its replies (Export anyway's clean PDF alone: never on the menu)."""
+    n = int(doc.Comments.Count)
+    if n:
+        doc.DeleteAllComments()
+    return n, ""
+
+
 def _saved_again(doc) -> Tuple[int, str]:
     return 1, ""                         # Open and Repair, and Save as .docx: the opening and the saving are the action
 
@@ -222,4 +230,5 @@ COMMANDS: Dict[str, Callable[[Any], Tuple[int, str]]] = {
     "textboxes_to_text": textboxes_to_text,
     "delete_shapes": delete_shapes,
     "convert": _saved_again,
+    "delete_comments": delete_comments,
 }

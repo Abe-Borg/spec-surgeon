@@ -20,6 +20,8 @@ export const END_USER_CAPABILITIES = [
   "header.connection",
   "header.export",
   "header.export-kinds",
+  // Obliterate's Export anyway: a clean kind made by Word, unchecked, for a marked copy the checked way left out
+  "header.export-anyway",
   "header.new-conversation",
   "header.settings",
   // Settings

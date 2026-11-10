@@ -83,6 +83,11 @@ SALVAGED_MEANS = ("the app rescued it from {name}, a file it could not read as i
 WORD_ONLY_THERE = "Word ran its actions on {name} only; this document was not asked about."
 WORD_LABEL = "Word actions"
 WORD_OBLITERATE_ONLY = "The Word actions are Obliterate mode's: turn Obliterate on first."
+# Export anyway (the owner's decision of 2026-11-10; docs/BACKLOG.md O7): a marked copy's clean version, made by Word
+ANYWAY_OBLITERATE_ONLY = "Export anyway is Obliterate mode's: turn Obliterate on first."
+ANYWAY_KINDS = "Export anyway makes Word (Tracked Changes OFF) or PDF (Clean)."
+ANYWAY_NOTHING = ("There is nothing to export anyway. It is offered for a marked copy (UNVERIFIED, UNPROVEN or "
+                  "SALVAGED) that this kind of export left without a file: run that export first.")
 # What a pass over the to-do list is told once Word has run on its document, and what the user is told with it
 WORD_THEN_SAME = ("A WORD ACTION WAS RUN ON THIS COPY SINCE IT WENT ON THE LIST (the changes already made list it), and "
                   "the pass goes on. If that cleared what stopped the document, submit the plan it was set aside from "
@@ -292,6 +297,7 @@ STATUS_FOR_LOG = {"Preparing and checking the preview…": ("previewing", "Prepa
                   "Creating and checking your edited copies…": ("creating", "Creating and checking your edited copies…"),
                   "Creating and checking the clean copies…": ("creating", "Creating and checking the clean copies…"),
                   "Saving the clean PDFs…": ("rendering", "Saving the clean PDFs…"),
+                  "Word is making the clean copies…": ("creating", "Word is making the clean copies…"),
                   "Checking the files that still need work…": ("recovering", "Checking the files that still need work…"),
                   "Continuing where the conversation stopped…": ("resuming", "Continuing where the conversation stopped…")}
 
@@ -572,6 +578,10 @@ class DocumentTask:
         # scratch folder. The clean kinds (Tracked Changes OFF, PDF) are made from it and save it as nothing.
         self.exported: Dict[str, Dict[str, str]] = {}
         self.export_folder = ""
+        # the copies a clean export left without a file, by kind and by the copy's path, each with the md5 of the
+        # bytes it was then and why: what Export anyway is offered for (``export_anyway_set``). Never journalled: a
+        # window that starts again runs the export again to be offered it.
+        self.export_missed: Dict[str, Dict[str, Dict[str, str]]] = {}
         self._digests: Dict[str, tuple] = {}   # copy path → (size, mtime_ns, md5): the last fingerprint taken
         self.attachments: List[Attachment] = []
         self.stage = "empty"
@@ -1632,8 +1642,10 @@ class DocumentTask:
         (the ``saved_recipe`` action) a saved recipe and, per step, whether it is skipped and the form a button step
         runs with this time (``saved_recipes.choose_steps``; ``rev``, the recipe as its run form opened). ``skip`` (the
         ``occurrences`` action) names, by key, the find-and-replace occurrences the user unticked in the preview.
-        ``kind`` and ``folder`` (the ``export`` action) are a clean export's kind and the folder it writes into: it is
-        no request, so the request open, its spending and the stage are left as they are (``_export_job``). ``path``,
+        ``kind`` and ``folder`` (the ``export`` action, and ``export_anyway``: the same kind made by Word for the
+        marked copies the checked way left without a file, Obliterate mode alone) are a clean export's kind and the
+        folder it writes into: it is no request, so the request open, its spending and the stage are left as they
+        are (``_export_job``). ``path``,
         ``part`` and ``file`` (the ``replace_part`` action) are a document, one of its parts and the file that takes
         the part's place: Obliterate's hands-on tools, a plan the app builds with no AI call (``_replace_part``).
         ``path``, ``actions`` and ``every`` (the ``word_actions`` action) are a document, the named Word actions to
@@ -1651,9 +1663,9 @@ class DocumentTask:
             if status:
                 self._emit({"type": "status", "kind": status[0], "text": status[1]})
             log(message)
-        if action == "export":
+        if action in ("export", "export_anyway"):
             try:
-                return self._export_job(kind, folder, checkpointed_log)
+                return self._export_job(kind, folder, checkpointed_log, anyway=action == "export_anyway")
             except stopping.Stopped:
                 self._stopped(action, {})
                 raise
@@ -1713,7 +1725,7 @@ class DocumentTask:
         made — a button, a saved recipe, an untick — is withdrawn as Discard withdraws one: the copies and Left
         untouched list from before the button are shown again (``_before_button``). No file is written or deleted;
         what the job left in its scratch folder is never read as a result."""
-        if action == "export":
+        if action in ("export", "export_anyway"):
             self.say(STOPPED["export"])
         elif action == "rescue":
             # Obliterate's Try to rescue: nothing was attached, so nothing that was planned or shown is touched
@@ -1732,12 +1744,14 @@ class DocumentTask:
             self.say(STOPPED["preview"])
         diag.event("task.stopped", action=action, stage=self.stage)
 
-    def _export_job(self, kind: str, folder: str, log) -> Dict[str, Any]:
+    def _export_job(self, kind: str, folder: str, log, anyway: bool = False) -> Dict[str, Any]:
         """Export → Word (Tracked Changes OFF) or PDF (Clean) as a job (``export``): the clean copies are made and
         checked, and the PDFs rendered, which takes a while. No model call, nothing planned for the conversation: the
-        request open, the preview waiting and their tokens stand as they were."""
+        request open, the preview waiting and their tokens stand as they were. ``anyway`` (the ``export_anyway``
+        job, Obliterate mode alone): the kind made by Word for the marked copies the checked way left without a
+        file."""
         try:
-            self.export(folder, kind, log=log)
+            self.export(folder, kind, log=log, anyway=anyway)
         finally:
             self._events = None
             self.save()
@@ -4012,6 +4026,9 @@ class DocumentTask:
                                                     if (line := self.salvaged_line(k))}) else {}),
                 "exported": {k: dict(v) for k, v in self.exported.items()}, "export_folder": self.export_folder,
                 "export_state": states,
+                # Export anyway (Obliterate mode alone): the clean kinds Word can make for the marked copies the
+                # checked way left without a file (none: the key is absent)
+                **({"export_anyway": offered} if (offered := self.export_anyway_view()) else {}),
                 "unsaved": [path for path, state in states.items() if state != "saved"],
                 "copies": len(states),
                 "action": labels.get(self.stage, ""), "token": self.action_token(),
@@ -4082,11 +4099,61 @@ class DocumentTask:
         (``export_states``)."""
         return [path for path, state in self.export_states(fresh=fresh).items() if state != "saved"]
 
-    def export_ready(self, kind: str = "word") -> Dict[str, str]:
+    def _marked(self, origin: str) -> bool:
+        """The copy of ``origin`` is one no check proves as it is: delivered UNVERIFIED or UNPROVEN, or built on such
+        a copy (``unverified``), or made from a document the app rescued (SALVAGED)."""
+        return bool(self.unverified.get(origin)) or bool(self._salvaged_of(origin))
+
+    def export_anyway_set(self, kind: str) -> Dict[str, str]:
+        """Export anyway's documents for a clean ``kind``, by attached original with its edited copy: in Obliterate
+        mode alone, each a MARKED copy (``_marked``) that the kind's checked export left without a file
+        (``export_missed``) and that is still the bytes it was then. Empty in every other mode, and for a copy no
+        export was tried for."""
+        if self.mode != "obliterate":
+            return {}
+        missed = self.export_missed.get(kind) or {}
+        offered: Dict[str, str] = {}
+        for origin, current in self.export_set().items():
+            entry = missed.get(current)          # read once: the view may be asked for while an export runs
+            if entry and self._marked(origin) and self._digest(current) == entry["md5"]:
+                offered[origin] = current
+        return offered
+
+    def export_anyway_view(self) -> List[Dict[str, Any]]:
+        """What the Export menu offers under its three kinds (Obliterate mode alone): each clean kind Word can make
+        for the marked copies the checked way left without a file — the menu's words for it, what Word does, the
+        copies by name, and why it cannot run here when Word cannot be reached. [] when there is nothing to offer."""
+        from . import word_actions
+        from .exports import ANYWAY_DOES, ANYWAY_LABELS
+        offered: List[Dict[str, Any]] = []
+        for kind in ANYWAY_LABELS:
+            copies = self.export_anyway_set(kind)
+            if copies:
+                offered.append({"kind": kind, "label": ANYWAY_LABELS[kind], "does": ANYWAY_DOES[kind],
+                                "copies": [Path(current).name for current in copies.values()],
+                                "blocked": "" if word_actions.available() else word_actions.NO_WORD})
+        return offered
+
+    def export_ready(self, kind: str = "word", anyway: bool = False) -> Dict[str, str]:
         """The copies an export of ``kind`` would save (``export_set``), or ``ValueError`` with the sentence the window
         shows: an unknown kind, nothing to save, or a PDF with no program on this computer to make it. Asked before
-        the folder dialog opens, so it never asks for a folder in vain."""
+        the folder dialog opens, so it never asks for a folder in vain. ``anyway``: Export anyway's copies instead
+        (``export_anyway_set``), refused outside Obliterate mode, for a kind Word does not make, with nothing to
+        make, or where Word cannot be reached."""
         from .exports import KINDS
+        if anyway:
+            from . import word_actions
+            from .exports import ANYWAY_ACTIONS
+            if self.mode != "obliterate":
+                raise ValueError(ANYWAY_OBLITERATE_ONLY)
+            if kind not in ANYWAY_ACTIONS:
+                raise ValueError(ANYWAY_KINDS)
+            marked = self.export_anyway_set(kind)
+            if not marked:
+                raise ValueError(ANYWAY_NOTHING)
+            if not word_actions.available(fresh=True):
+                raise ValueError(word_actions.NO_WORD)
+            return marked
         if kind not in KINDS:
             raise ValueError("Export saves Word with tracked changes on or off, or a clean PDF.")
         copies = self.export_set()
@@ -4099,14 +4166,14 @@ class DocumentTask:
                 raise ValueError(info["reason"])
         return copies
 
-    def check_export(self, folder, kind: str = "word") -> Path:
+    def check_export(self, folder, kind: str = "word", anyway: bool = False) -> Path:
         """The folder an export of ``kind`` would write into, resolved, or ``ValueError`` with the sentence the window
         shows: what ``export_ready`` refuses, a folder that is not one, a folder inside the app's scratch tree (the
         window's own scratch folder or any other: a file saved there would go with it), or one where a file would land
         on an input (an attached file, an original, an edited copy). Asked before a clean export's run starts, so a
         refusal costs nothing, and again by ``export``."""
         from .settings import scratch_root
-        copies = self.export_ready(kind)
+        copies = self.export_ready(kind, anyway)
         folder = Path(folder)
         if not folder.is_dir():
             raise ValueError(f"{folder} is not a folder.")
@@ -4150,7 +4217,7 @@ class DocumentTask:
             out, n = root / f"{stamp}-{kind}-{n}", n + 1
         return out
 
-    def export(self, folder, kind: str = "word", *, log=lambda _: None) -> Dict[str, Any]:
+    def export(self, folder, kind: str = "word", *, log=lambda _: None, anyway: bool = False) -> Dict[str, Any]:
         """Export (the top bar's menu; ``exports``): every edited copy the window lists (``export_set``) written into
         ``folder`` in the chosen kind, each file through ``guard.write_new``, never over an input and never into the
         app's scratch tree (``check_export``).
@@ -4166,11 +4233,17 @@ class DocumentTask:
         alone and the new file is numbered beside it (so a copy changed since it was saved lands beside the file saved
         before, which is the user's and never written over). Only ``word`` records what it saved (``exported``): the
         copy stays saved while its bytes are those. Returns ``{"folder", "kind", "saved", "already", "missing"}``,
-        ``missing`` naming each document without a file and why."""
+        ``missing`` naming each document without a file and why.
+
+        ``anyway`` — Export anyway, Obliterate mode alone (``exports.make_anyway``; the owner's decision of
+        2026-11-10): the clean ``kind`` MADE BY WORD, for the marked copies the kind's checked export left without a
+        file (``export_anyway_set``) and for no other. Nothing is planned, predicted or checked the checked way: each
+        file is written as Word made it and the chat names it UNCHECKED, with Word's own count and what the app's
+        reading of the file Word saved found. The result carries ``"anyway": True``."""
         from . import guard
-        from .exports import make_clean
-        folder = self.check_export(folder, kind)
-        copies = self.export_set()
+        from .exports import make_anyway, make_clean
+        folder = self.check_export(folder, kind, anyway)
+        copies = self.export_anyway_set(kind) if anyway else self.export_set()
         sources: Dict[str, bytes] = {}
         for origin, current in copies.items():
             try:
@@ -4180,11 +4253,16 @@ class DocumentTask:
                                  "copies again before saving them.") from exc
         missing: Dict[str, str] = {}
         renderer = ""
+        clean = None
         if kind == "word":
             made = {origin: (self._export_name(copies[origin], kind), data) for origin, data in sources.items()}
         else:
-            clean = make_clean({origin: Path(current) for origin, current in copies.items()}, kind,
-                               self._export_run_dir(kind), render=self.render, log=log)
+            if anyway:
+                clean = make_anyway({origin: Path(current) for origin, current in copies.items()}, kind,
+                                    self._export_run_dir(kind + "-anyway"), log=log)
+            else:
+                clean = make_clean({origin: Path(current) for origin, current in copies.items()}, kind,
+                                   self._export_run_dir(kind), render=self.render, log=log)
             renderer = clean.renderer_name
             made = {}
             for origin, path in clean.made.items():
@@ -4193,6 +4271,10 @@ class DocumentTask:
                 except OSError as exc:
                     clean.failed[origin] = f"its file could not be read ({exc})"
             missing = {Path(copies[origin]).name: why for origin, why in clean.failed.items() if origin not in made}
+            if not anyway:
+                # what Export anyway may be offered for: each copy this kind left without a file, as it is now
+                self.export_missed[kind] = {copies[origin]: {"md5": _md5(sources[origin]), "why": str(why)}
+                                            for origin, why in clean.failed.items() if origin not in made}
         inputs = self._export_inputs(copies)
         plan: List[tuple] = []                       # (original, destination, bytes, already there)
         taken: set = set()
@@ -4231,13 +4313,75 @@ class DocumentTask:
                 self.exported[current] = {"to": str(dest), "md5": _md5(data)}
                 self._digest(current, fresh=True)  # the fingerprint of what was just read, for the next view
         self.export_folder = str(folder)
-        self.say(self._export_said(kind, folder, len(plan), already, missing, renderer,
-                                   sum(1 for origin, *_ in plan if failed_marks(self.unverified.get(origin))),
-                                   sum(1 for origin, *_ in plan if unproven_only(self.unverified.get(origin))),
-                                   sum(1 for origin, *_ in plan if self._salvaged_of(origin))))
-        result = {"folder": str(folder), "kind": kind, "saved": saved, "already": already, "missing": missing}
+        if anyway:
+            for origin, *_ in plan:              # made: no longer offered (one Word could not finish still is)
+                self.export_missed.get(kind, {}).pop(copies[origin], None)
+            # each file by the name it was saved under: two copies with one name are told apart by it
+            self.say(self._export_anyway_said(
+                kind, folder, [(dest.name, clean.said.get(origin, []), clean.read.get(origin, []))
+                               for origin, dest, *_ in plan], already, missing, renderer))
+        else:
+            self.say(self._export_said(kind, folder, len(plan), already, missing, renderer,
+                                       sum(1 for origin, *_ in plan if failed_marks(self.unverified.get(origin))),
+                                       sum(1 for origin, *_ in plan if unproven_only(self.unverified.get(origin))),
+                                       sum(1 for origin, *_ in plan if self._salvaged_of(origin)))
+                     + self._anyway_offer(kind))
+        result = {"folder": str(folder), "kind": kind, "saved": saved, "already": already, "missing": missing,
+                  **({"anyway": True} if anyway else {})}
         self.save()
         return result
+
+    def _anyway_offer(self, kind: str) -> str:
+        """What the chat adds after a clean export that left marked copies without a file, in Obliterate mode: Export
+        can have Word make them anyway, and where. '' in every other mode and when no such copy was left."""
+        from . import word_actions
+        from .exports import ANYWAY_LABELS
+        names = [Path(current).name for current in self.export_anyway_set(kind).values()]
+        if not names:
+            return ""
+        one = len(names) == 1
+        listed = names[0] if one else ", ".join(names[:-1]) + " and " + names[-1]
+        return (f" {listed} {'is a marked copy' if one else 'are marked copies'}, so in Obliterate mode Export can "
+                f"have Word make {'it' if one else 'them'} anyway, unchecked: Export → “{ANYWAY_LABELS[kind]}”."
+                + ("" if word_actions.available() else " That needs Microsoft Word, which the app cannot reach on "
+                                                       "this computer."))
+
+    @staticmethod
+    def _export_anyway_said(kind: str, folder: Path, files: List[tuple], already: int, missing: Dict[str, str],
+                            renderer: str) -> str:
+        """What the chat says after Export anyway: what Word made and where, named UNCHECKED, and for each file
+        (``(the name it was saved under, Word's own account, what the app's reading found)``) Word's count in Word's
+        words and the reading of the file Word saved; then each document without a file with why."""
+        from .exports import UNCHECKED
+        count = len(files)
+        one = count == 1
+        there = f" ({already} already there, unchanged)" if already else ""
+        if not count:
+            said = f"Word made no {'PDF' if kind == 'pdf' else 'file'}, so nothing was saved."
+        else:
+            private = f"a private copy of {'it' if one else 'each'}"
+            if kind == "accepted":
+                what = f"{count} Word cop{'y' if one else 'ies'} with every tracked change accepted"
+                how = f"Word accepted every tracked change on {private} and saved that"
+            else:
+                what = f"{count} clean PDF{'' if one else 's'}"
+                how = (f"Word deleted every comment and accepted every tracked change on {private}, and the "
+                       f"PDF{' was' if one else 's were'} made from that" + (f" by {renderer}" if renderer else ""))
+            said = (f"Saved {what} to {folder}{there}, made by Word and {UNCHECKED}: the checked way could not make "
+                    f"{'it' if one else 'them'}, so {how}. No check proves {'the file is' if one else 'the files are'} "
+                    f"your edited cop{'y' if one else 'ies'} with nothing else changed.")
+            for name, account, found in files:
+                counted = f"Word's own count: {'; '.join(account)}. " if account else ""
+                if found:
+                    read = "The app read the file Word saved and found: " + "; ".join(found) + "."
+                else:
+                    read = ("The app read the file Word saved: its words are your edited copy's with every tracked "
+                            f"change accepted, and no tracked change {'or comment ' if kind == 'pdf' else ''}is left.")
+                said += f" {name} — {counted}{read}"
+            said += " Your edited copies are as they were."
+        if missing:
+            said += " Not saved: " + "; ".join(f"{name} — {str(why).rstrip('.')}" for name, why in missing.items()) + "."
+        return said
 
     @staticmethod
     def _export_said(kind: str, folder: Path, count: int, already: int, missing: Dict[str, str], renderer: str,
