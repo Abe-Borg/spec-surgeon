@@ -78,7 +78,7 @@ On the owner's machine (Windows, Word): the W3 judge over every case, each failu
 behaviour recorded here with its evidence; the W4 recipe run once, its files and Word's resolutions checked in. The
 judge cannot see a repair prompt or how the Reviewing Pane draws the changes; those stay a manual look.
 
-### Obliterate: the cost ladder (O3–O8)
+### Obliterate: the cost ladder (O4–O8)
 
 The owner's decisions of 2026-11-10 (CLAUDE.md, "Standing decisions"). Obliterate is the emergency lever, reached
 last: Safe handles most of a batch, Default what Safe could not take, and Obliterate the one or two documents neither
@@ -87,8 +87,10 @@ unusual; the original and the machine stay protected; everything done is reporte
 owner's machine": O1 — the hand-off from the to-do list with the case file, and taking the copy that failed — and O2
 — the Obliterate record (`verify/difference.py`: the independent report of what differs between an original and a
 copy, with the integrity checks that need no prediction) and custom methods that just do the work (one `apply`, every
-document's copy made before approval and delivered as shown, marked UNPROVEN or UNVERIFIED). O3, O5 and O6 judge
-their results by O2's record.
+document's copy made before approval and delivered as shown, marked UNPROVEN or UNVERIFIED) — and O3 — the raw XML
+edit (`ops/edit_xml.py`; the verifier's twin `verify/xmledit.py` proves the edit, and the words it changes are listed
+from the copies, O2's "what changed" in a verified record) with "clear the obstacle, then the same plan" (the case
+file keeps the plan; Claude submits it as the step after the edit). O5 and O6 judge their results by O2's record.
 
 Rules for every item:
 
@@ -105,11 +107,11 @@ Rules for every item:
 
 | Item | What to build | What was decided |
 | --- | --- | --- |
-| O3 — the raw-XML operation, and "clear the obstacle, then the same plan" | `edit_xml`: a part, an XPath selection, an exact expected count, one action (set or remove an attribute; remove, replace or insert an element; set text). A V10 kind proves exactly those elements changed as stated and nothing else in the part did; the effect on words and pages comes from O2's report. Text it places passes the same read-it-first gate as any Obliterate wording. Claude may chain an obstacle-clearing step with the plan the other documents got; the second step is verified as today | Reverses "no raw-XML operation" for Obliterate only. A catch-all deletion is this op's remove; `force` stays out |
 | O4 — hands-on tools | A toggle in the Obliterate warning, off by default. A read-only part browser per document (the part list, the XML, search); save a part out through Export's write path; replace a part with an attached file, with a V10 kind proving the part equals that file byte for byte and nothing else moved | The cheaper version first: no XML editing inside the window (edit a part in your own editor, attach it back) |
 | O5 — named Word actions | A fixed menu, each action code in the existing Word worker (`render/word_worker.py`): repair; convert to `.docx`; accept all or reject all changes; unlink or update fields; numbers to typed text; remove protection; upgrade compatibility mode; text boxes to plain text; delete shapes. The user or Claude picks and chains them as plan steps. Results judged by O2's report (Word rewrites the whole file, so the comparison is by content and pages). Tests use a fake Word; real behaviour is proven on the owner's machine | Word may edit copies. No Claude-composed Word scripts: a case the menu cannot express is first a new menu item, logged with the document's refusal code. Reverses "text boxes as objects" and "numbers stay automatic" for Obliterate only |
 | O6 — rescue at attach | A file triage refuses offers **Try to rescue** in Obliterate: Word converts (`.doc`, `.docm`, Strict Open XML) or repairs it; a password is asked for and never stored, logged or sent to the model; the app strips a `<!DOCTYPE`, adds a missing body paragraph, or lifts the size limit. The rescued file becomes a new document with a permanent **salvaged** mark and then runs in any mode, verified against the salvaged baseline. A lock file, a folder or a missing file is still refused | When the original cannot be read, nothing can prove the rescue lost no content: the mark says so |
 | O7 — Export anyway | When a marked copy's clean version or PDF cannot be made the checked way, Export offers a Word-made one, named as unchecked in the summary | Amends invariant 7's exception ("never widen them"): the new choice is still fixed in code and named by the menu, never a model's |
+| O3a — what O3 left out, each on the owner's word | A raw edit of the package's relationship and content-type parts (today `edit_xml` refuses them, `xml-part`: a custom method changes those, and O4's swap-a-part will), and of a part with a comment or processing instruction outside its root element (refused too: `serialize_xml` writes a part from its root). Text an edit sets in an ATTRIBUTE that Word shows as words — a list label (`w:lvlText`), a field instruction, alternative text — traced by the wording gate and listed with the words (today attribute values are markup: the plan's own sentence quotes them, and D1 says that numbering or a field changed). The plan following the clearing step in ONE request when its template operation carries bindings (today invariant 5 refuses a source-bound template op that is not first, so it is two requests: clear, then ask for the plan on the copy). The clearing step proposed by the app with no model call, for the refusal codes the owner's runs show most (with O8's pick) | Not started until asked for |
 | O8 — optional, each on the owner's word | Rebuild from a clean template (the document's words, tables and pictures poured into a pristine template; the text-preservation check proves no word was lost). The outcome verifier (`goals.verify_goal`) on a rescued straggler where its request fits one of the effects it models. A pick, in the window, where a built-in op refused because it would not guess — for the refusal codes the owner's runs show most (log which codes reach Obliterate first) | Not started until asked for |
 
 Not in the plan: Claude-composed Word scripts, XML editing inside the window, replacing the import whitelist with an
@@ -175,6 +177,21 @@ write-back over the originals unless asked for (T1 is the claim most of the trus
 Everything else is built and tested on fixtures; nothing is done on fixtures alone. These runs need real
 specifications, Windows and Word, and only the owner can do them. Record what a run finds as a new item above.
 
+- **Obliterate's raw XML edit (O3, built 2026-11-10):** with Word, Obliterate shown in Settings and an API key, over
+  a real batch where Default set a document aside for one thing a built-in operation would not guess about (a text
+  box in a paragraph to delete, a content control bound to data, a field that will not resolve). **Obliterate this
+  one**, then ask it to finish the document. Expect: Claude reads the document's XML, then plans two steps — the raw
+  edit that clears that one thing, then the plan the other documents got, unchanged. Before the button the chat lists
+  the words the raw edit changes (or says it changes none) and what else its step changes; the document's card shows
+  the same two lists under its page and is badged **Checked**. Read the lists against the copy opened in Word.
+  **Create edited copies**: the copy carries no mark and opens without a repair prompt; the session's `run\records`
+  holds a record per step, the first with V10 `xml_edit` PASS, V2 naming its `raw_parts` and D1 "What changed", the
+  second the plan's own record as in any mode. Then, in Obliterate, ask for a raw edit on purpose wrong in one way at
+  a time: a count that is right for one document and wrong for another (that document is set aside with what the
+  XPath found, the other gets its copy); an edit that breaks the file (remove an attribute Word requires: the sample
+  shows **Did not pass** with the schema check, and the copy is delivered marked **UNVERIFIED**); wording the edit
+  places that you never typed (refused until Claude's reply shows you the words). Last, ask Default mode for a raw
+  XML edit: it is not offered there, and Default plans, previews and refuses exactly as before.
 - **Obliterate's custom methods that just do the work (O2, built 2026-11-10):** with Word, Obliterate shown in
   Settings and an API key, on one or two real specifications no built-in operation can change the way you want (a
   header built as text boxes, a cover page of shapes). Ask for the change in Obliterate mode. Before the button: the

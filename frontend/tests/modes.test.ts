@@ -18,6 +18,7 @@ import {
   modeChoice,
   modeHeld,
   OTHER_CHANGES_TITLE,
+  RAW_OTHER_CHANGES_TITLE,
   UNPROVEN_MEANS,
   copyMark,
   failedMarks,
@@ -52,7 +53,8 @@ test("Obliterate opens its warning from any mode; the others switch at once", ()
 });
 
 test("the warning names what it grants, what it costs and what still holds", () => {
-  assert.equal(OBLITERATE_GRANTS.length, 3);
+  // the three guardrails it lifts, and the raw XML edit it adds
+  assert.equal(OBLITERATE_GRANTS.length, 4);
   assert.ok(OBLITERATE_GRANTS.some((g) => g.includes("wording")));
   assert.ok(OBLITERATE_GRANTS.some((g) => g.includes("custom method")));
   assert.ok(OBLITERATE_GRANTS.some((g) => g.includes("UNVERIFIED")));
@@ -132,6 +134,18 @@ test("a preview card's badge never calls a custom method's Obliterate copy check
   // the warning says a custom method's copies are approved as copies, and what their mark is
   assert.ok(OBLITERATE_GRANTS.some((g) => g.includes("UNPROVEN") && g.includes("predicts nothing")));
   assert.ok(OBLITERATE_KEPT.some((k) => k.includes("Create delivers those same copies")));
+});
+
+test("the warning says what a raw XML edit is, what is proven of it and what is only listed", () => {
+  const raw = OBLITERATE_GRANTS.find((g) => g.includes("raw XML edit"));
+  assert.ok(raw);
+  assert.match(raw, /exactly those elements changed as stated and nothing else in that part did/);
+  assert.match(raw, /not predicted: it is listed for you from the copies before you approve/);
+  assert.ok(OBLITERATE_COSTS.some((c) => c.includes("raw XML edit") && c.includes("the checks say so on the copy")));
+  // a raw edit's sample is a checked one: its badge is the plan's, and its report has its own heading
+  assert.equal(sampleBadge({ passed: true }).label, "Checked");
+  assert.match(RAW_OTHER_CHANGES_TITLE, /raw XML edit's step/);
+  assert.ok(RAW_OTHER_CHANGES_TITLE.endsWith(":"));
 });
 
 test("while a run's saved copies wait on its recovery, the switches that would end the check wait with its reason", () => {

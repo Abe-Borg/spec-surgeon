@@ -91,8 +91,29 @@ def test_an_unknown_name_is_a_readable_answer_not_an_exception(name):
     if name == " numbering_labels ":
         assert out["kind"] == "numbering_labels"                       # whitespace forgiven
         return
-    assert "error" in out and "unknown assertion kind" in out["error"] and out["kinds"] == sorted(KINDS)
+    assert "error" in out and "unknown assertion kind" in out["error"] and out["kinds"] == codegen.writer_kinds()
     json.dumps(out)
+
+
+def test_a_built_in_operations_own_kind_is_never_a_custom_methods():
+    """``xml_edit`` is the raw-XML operation's kind (Obliterate mode only). A plan that names it takes a part out of
+    the block-by-block text checks, on the strength of a whole-part comparison only that operation's plan earns: a
+    custom method's writer is never told of it, cannot read its contract, and a method's plan that asserts it is
+    refused before anything is verified, on the formatting path and under an outcome contract alike."""
+    from spec_surgeon.verify.props import OP_ONLY_KINDS
+    assert OP_ONLY_KINDS == {"xml_edit"} and "xml_edit" in KINDS and KIND_CONTRACTS["xml_edit"]
+    assert codegen.writer_kinds() == sorted(set(KINDS) - {"xml_edit"})
+    out = describe_assertion_kind("xml_edit")
+    assert "unknown assertion kind" in out["error"] and "xml_edit" not in out["kinds"]
+    plan = {"intended_parts": ["word/document.xml"], "property_assertions": [
+        {"kind": "xml_edit", "part": "word/document.xml", "xpath": "//w:p", "count": 1, "action": "remove"}]}
+    for contract in (None, {"kind": "format_section_title", "target": {"title": "FIRE SUPPRESSION"}, "run": {"b": True}}):
+        [problem] = codegen.hard_limits(plan, ["word/document.xml"], goal_contract=contract)
+        assert "may not assert ['xml_edit']" in problem
+    for prompt in (system_prompt(), system_prompt(unguarded=True),
+                   system_prompt(goal_contract={"kind": "format_section_title",
+                                                "target": {"title": "FIRE SUPPRESSION"}, "run": {"b": True}})):
+        assert "xml_edit" not in prompt
 
 
 def test_the_tool_is_a_read_tool_in_both_tool_lists_and_every_prompt_names_it():
@@ -115,7 +136,7 @@ def test_the_tool_is_a_read_tool_in_both_tool_lists_and_every_prompt_names_it():
     for prompt, lead in ((governed, "Available kind names: "),):
         start = prompt.index(lead) + len(lead)
         listed = json.loads(prompt[start:prompt.index("]", start) + 1])
-        assert listed == sorted(KINDS) and all(KIND_CONTRACTS[k] for k in listed)
+        assert listed == codegen.writer_kinds() and all(KIND_CONTRACTS[k] for k in listed)
         end = prompt.index("]", start)
         assert prompt.index("describe_assertion_kind", end) - end < 300           # named right beside the list
 

@@ -336,7 +336,9 @@ class WindowState:
                     "unproven": bool(getattr(sv, "unproven", False)),
                     "changes": list(getattr(sv, "changes", None) or []),
                     # a custom method's document no copy could be made of: its card says why, and none is created
-                    "no_copy": bool(getattr(sv, "problem", ""))}
+                    "no_copy": bool(getattr(sv, "problem", "")),
+                    # a plan with a raw XML edit (Obliterate): its words and other changes are listed from the copy
+                    "raw_xml": bool(getattr(sv, "raw_xml", False))}
                    for sv in raw["samples"]]
         unverified = raw.get("unverified") or {}
         exported = raw.get("exported") or {}

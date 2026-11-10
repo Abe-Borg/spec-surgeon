@@ -46,7 +46,7 @@ that ends a job is authoritative.
   "samples": [{"source": "…", "name": "21 13 13.docx", "images": ["/api/image?path=…"],
                "pages_before": 12, "pages_after": 12, "passed": true, "failures": [],
                "geometry": {"status": "PASS", "note": "Page layout checked on the rendered pages: …"},
-               "text_changes": null, "unproven": false, "changes": [], "no_copy": false}],
+               "text_changes": null, "unproven": false, "changes": [], "no_copy": false, "raw_xml": false}],
   "occurrences": [{"source": "…", "name": "21 13 13.docx", "status": "planned | refused", "reason": "",
                    "items": [{"key": "…", "part": "word/document.xml", "paragraph": 11, "start": 30, "end": 38, "where": "the body",
                               "heading": "2.01", "before": "H. See the", "match": "2022 CBC", "after": "portal.",
@@ -168,6 +168,18 @@ Rules the page relies on:
   `[]` when the method changes no words; `null` for an ordinary plan's sample (the chat's sentences say what the plan changes) and for a
   sample the checker left no record of; absent from an older server. The chat says the same words as an app message
   before the approval button, once per preview.
+- `samples[].raw_xml` is true for a sample of a plan that holds a raw XML edit (`edit_xml`, Obliterate mode only).
+  The edit itself is proven like any plan's change (`passed`, the badge **Checked**; never `unproven`); what it does
+  to the words is not predicted, so the sample carries the listing: `text_changes` is the words that edit's step
+  changes in the parts it edits (the checker's V2 entries for the record's `raw_parts`), followed by one entry per
+  part for any other text between tags that is not a paragraph's words — a chart's title, a drawing's text, a
+  document property — marked `other: true`, with `paragraph` null, `where` naming the part and saying so, `more`
+  when the lists leave stretches out and `unread` when the part's text could not be read in the copy (V2's
+  `raw_text`); `[]` only when every text node of those parts compared the same,
+  and `changes` what else that step changes (its D1 sentences). The page shows both under the sample, under the
+  headings "Words the raw XML edit changes…" and "What else the raw XML edit's step changes…", and the chat says the
+  same before the approval button, once per preview (`DocumentTask._say_raw_changes`). False for every other
+  sample; absent from an older server.
 - `samples[].unproven` is true for a copy a custom method made in Obliterate mode: nothing was predicted for it, so
   the page never shows it as Checked — **Not proven** when `passed` is true (the independent reader found no fault
   in its file), **Did not pass** with `failures` when a check of its file failed (it is still created, marked

@@ -588,6 +588,7 @@ function Dossier() {
           claim="A checker that shares no code with the editing read the original and the copy and found exactly the predicted change: the predicted text and no other text changed, no other part of the package changed, the structure and tracked changes are as predicted, the XML is no less valid than the original, accepting and rejecting the tracked changes give the predicted results, and every predicted property holds (checks V1–V10, each recorded)."
           not={[
             "That the plan was what you meant: a PASS proves the planned change, not the request.",
+            "For a raw XML edit (Obliterate mode only), a prediction of its words: the plan states the edit — which elements, how many, what is done to each — and the checker proves exactly that and nothing else in the part. The words it changes are listed for you from the copies before you approve.",
             "That the result meets a standard, a code or your office’s practice.",
             "That Word will show it as you expect: look at the pages.",
           ]}

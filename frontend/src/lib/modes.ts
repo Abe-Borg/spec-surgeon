@@ -17,17 +17,18 @@ export const MODE_TIPS: Record<Mode, string> = {
     "Obliterate mode: the conversation without the guardrails that protect your documents' content. Its warning shows each time you choose it.",
 };
 
-/** What Obliterate grants: the three guardrails it lifts. */
+/** What Obliterate grants: the guardrails it lifts, and the raw XML edit it adds. */
 export const OBLITERATE_GRANTS: readonly string[] = [
   "Claude may write wording itself — drafts, rewrites, new paragraphs — and place it. It no longer has to be yours, but every word it will place must be in the reply you read before you approve: the app refuses a plan whose words are not there.",
   "Claude may write a custom method that changes anything Word stores: text in any part, text boxes, shapes, structure — not only formatting. The method predicts nothing and just does the work, so you approve the copies it made, not a plan; each is delivered marked UNPROVEN.",
   "A copy whose checks fail is delivered anyway, marked UNVERIFIED with the checks it failed, instead of being held back; the mark stays on every later copy built on it.",
+  "Claude may plan a raw XML edit: one stated change to the XML of one part of a file — which elements, exactly how many, and what is done to each. The app proves that exactly those elements changed as stated and nothing else in that part did. What the edit does to the words is not predicted: it is listed for you from the copies before you approve.",
 ];
 
 /** What Obliterate costs. */
 export const OBLITERATE_COSTS: readonly string[] = [
   "No proof that the rest of the file is untouched: a failed check is a warning, not a stop, and a custom method's copy is checked only for being a file Word opens.",
-  "Content can be lost or invented without a refusal, and a copy may need Word's repair to open.",
+  "Content can be lost or invented without a refusal, and a copy may need Word's repair to open: a raw XML edit is made as stated even when the result is not a file Word accepts, and the checks say so on the copy.",
   "The same request can give different results from one run to the next.",
   "More AI spending: custom methods are written and tested on your files.",
 ];
@@ -160,3 +161,5 @@ export function sampleBadge(sample: { passed: boolean; unproven?: boolean; set_a
 
 /** The heading over a custom method's other changes on its preview card. */
 export const OTHER_CHANGES_TITLE = "What else this copy changes, as the independent reader found it:";
+/** The same heading for a plan with a raw XML edit: the report is of that edit's step. */
+export const RAW_OTHER_CHANGES_TITLE = "What else the raw XML edit's step changes, as the independent reader found it:";

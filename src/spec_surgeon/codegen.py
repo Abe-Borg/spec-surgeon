@@ -447,6 +447,13 @@ def hard_limits(plan: Dict[str, Any], allowed_parts: Optional[Sequence[str]] = N
     ``numbering_labels`` assertion names (V10 proves that member whole); any other part (docProps, a chart…) could
     carry a change no verified assertion checks, so it is refused outright."""
     probs = []
+    from .verify.props import OP_ONLY_KINDS
+    own = sorted({str(a.get("kind")) for a in plan.get("property_assertions") or []
+                  if isinstance(a, dict) and a.get("kind") in OP_ONLY_KINDS})
+    if own:
+        # a built-in operation's kind (the raw-XML edit's): a method that named it would take a part out of the
+        # text checks by its own word — refused on every path, the governed one included
+        return [f"generated ops may not assert {own}: that kind belongs to a built-in operation"]
     if goal_contract is not None:
         from .goals import validate_contract
         validate_contract(goal_contract)
@@ -899,15 +906,23 @@ CODEGEN_TOOLS = INSPECTION_TOOLS + [
 ]
 
 
+def writer_kinds() -> List[str]:
+    """The V10 kinds a custom method's plan may assert: every kind but a built-in operation's own
+    (``verify.props.OP_ONLY_KINDS``: ``xml_edit``, the raw-XML operation's — a plan that could name it could take a
+    part out of the text checks by saying so; ``hard_limits`` refuses it)."""
+    from .verify.props import KINDS, OP_ONLY_KINDS
+    return sorted(k for k in KINDS if k not in OP_ONLY_KINDS)
+
+
 def describe_assertion_kind(name: Any) -> Dict[str, Any]:
     """The writer's ``describe_assertion_kind``: the verifier's own contract of one V10 kind (``verify.props.KIND_CONTRACTS``)
     and its worked assertion where one is kept (``KIND_EXAMPLES``). An unknown name is answered with a readable error
     and the names that exist, never raised: the writer reads it and asks again."""
-    from .verify.props import KIND_CONTRACTS, KIND_EXAMPLES, KINDS
+    from .verify.props import KIND_CONTRACTS, KIND_EXAMPLES
     key = str(name or "").strip()
-    if key not in KINDS:
+    if key not in writer_kinds():
         return {"error": f"unknown assertion kind {key!r}: the verifier evaluates none of that name (an assertion "
-                         "with it fails V10)", "kinds": sorted(KINDS)}
+                         "with it fails V10)", "kinds": writer_kinds()}
     out: Dict[str, Any] = {"kind": key, "contract": KIND_CONTRACTS.get(key) or ""}
     example = KIND_EXAMPLES.get(key)
     if example is not None:
@@ -1066,10 +1081,9 @@ def system_prompt(goal_contract=None, unguarded: bool = False) -> str:
         # to refuse header/footer graphs even on the governed path.
         start = prompt.index("- Only these property families")
         end = prompt.index("- If the request cannot", start)
-        from .verify.props import KINDS
         prompt = prompt[:start] + (
             "- Use existing independent V10 assertion kinds for every change. Available kind names: "
-            + json.dumps(sorted(KINDS)) + ". Read a kind's contract with describe_assertion_kind before you "
+            + json.dumps(writer_kinds()) + ". Read a kind's contract with describe_assertion_kind before you "
             "write its assertion. Header/footer templates use template_parts, styles_added and "
             "hf_template_refs; their source/template/output checks cover copied text, fields, styles and the "
             "package graph. Those changes are permitted when the approved contract includes them. If an "

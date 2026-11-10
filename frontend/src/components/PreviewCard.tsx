@@ -2,8 +2,8 @@ import type { Sample } from "../types";
 import { imageSrc } from "../lib/api";
 import type { Mark } from "../lib/review";
 import { pageCount } from "../lib/workbench";
-import { NO_WORDS_CHANGE, WORDS_CHANGE_TITLE, wordChangeLines } from "../lib/wordChanges";
-import { OTHER_CHANGES_TITLE, sampleBadge } from "../lib/modes";
+import { NO_WORDS_CHANGE, RAW_NO_WORDS_CHANGE, RAW_WORDS_CHANGE_TITLE, WORDS_CHANGE_TITLE, wordChangeLines } from "../lib/wordChanges";
+import { OTHER_CHANGES_TITLE, RAW_OTHER_CHANGES_TITLE, sampleBadge } from "../lib/modes";
 import PaperCard from "./PaperCard";
 
 interface Props {
@@ -68,6 +68,7 @@ function ReviewMarks({ name, mark, onMark }: { name: string; mark: Mark; onMark:
  * The words a custom method's copy adds and removes, under the sample: the independent checker's reading of the
  * copy against its original (`samples[].text_changes`), "Words removed … · Words added …" per paragraph, or that
  * no words change. An ordinary plan's sample carries none (the chat's sentences say what changes) and shows nothing.
+ * A plan with a raw XML edit carries that edit's words (`raw_xml`): listed from the copy, under its own heading.
  */
 function WordChanges({ sample, name }: { sample: Sample; name: string }) {
   const lines = wordChangeLines(sample);
@@ -75,13 +76,13 @@ function WordChanges({ sample, name }: { sample: Sample; name: string }) {
   if (lines.length === 0) {
     return (
       <p className="mb-1 text-xs leading-relaxed text-paper-dim" data-words="none">
-        {NO_WORDS_CHANGE}
+        {sample.raw_xml ? RAW_NO_WORDS_CHANGE : NO_WORDS_CHANGE}
       </p>
     );
   }
   return (
     <div className="mb-2 text-xs leading-relaxed" data-words="changed">
-      <p className="font-medium text-paper-ink">{WORDS_CHANGE_TITLE}</p>
+      <p className="font-medium text-paper-ink">{sample.raw_xml ? RAW_WORDS_CHANGE_TITLE : WORDS_CHANGE_TITLE}</p>
       <ul className="mt-1 space-y-1" aria-label={`Words changed in ${name}`}>
         {lines.map((line, index) => (
           <li key={`${index}-${line.where}`}>
@@ -108,15 +109,15 @@ function WordChanges({ sample, name }: { sample: Sample; name: string }) {
 
 /**
  * What else a custom method's copy changes beside its words (`samples[].changes`): the independent reader's own
- * sentences about the copy an Obliterate method made — counts, formatting, styles, numbering, settings, parts.
- * Nothing for any other sample.
+ * sentences about the copy an Obliterate method made — counts, formatting, styles, numbering, settings, parts —
+ * or about the step of a raw XML edit (`raw_xml`). Nothing for any other sample.
  */
 function OtherChanges({ sample, name }: { sample: Sample; name: string }) {
-  const changes = sample.unproven ? (sample.changes ?? []) : [];
+  const changes = sample.unproven || sample.raw_xml ? (sample.changes ?? []) : [];
   if (changes.length === 0) return null;
   return (
     <div className="mb-2 text-xs leading-relaxed" data-changes="listed">
-      <p className="font-medium text-paper-ink">{OTHER_CHANGES_TITLE}</p>
+      <p className="font-medium text-paper-ink">{sample.raw_xml && !sample.unproven ? RAW_OTHER_CHANGES_TITLE : OTHER_CHANGES_TITLE}</p>
       <ul className="mt-1 list-disc space-y-1 pl-4 text-paper-ink" aria-label={`Other changes in ${name}`}>
         {changes.map((line, index) => (
           <li key={`${index}-${line}`}>{line}</li>

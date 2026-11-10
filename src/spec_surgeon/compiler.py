@@ -692,8 +692,23 @@ apply. Your own wording may be placed, but the user must read it first: the app 
 user's own words or to the reply shown in the chat (your plain text and submit_editspec's message), and refuses a
 plan whose placed words appear in neither. A custom method still runs in the sandbox, on copies, and the independent
 checks still run on every copy; their failures are shown to the user beside the copy instead of stopping it. Built-in
-operations still refuse what they cannot predict: a custom method is the way past such a refusal. Change only what
-the user asked for.
+operations still refuse what they cannot predict: edit_xml (below) or a custom method is the way past such a refusal.
+Change only what the user asked for.
+
+RAW XML (edit_xml, this mode only). When one thing in a document's XML is what stops it (a content control bound to
+data, a text box Word keeps twice, a field, an attribute) clear exactly that thing with edit_xml: one part, an XPath
+that selects the elements, their exact count, one action. It is proven exactly (the checker makes the same edit
+itself and compares the part whole) and it costs no custom method, so prefer it whenever one stated edit does the
+job; write a custom method only when none does. Before you submit it, read the XML (list_parts, read_xml_page,
+run_analysis) so the XPath selects exactly the elements you mean and count is their number in that document; a wrong
+count comes back with what was found. Its mode is untracked. To finish a document a plan refused, submit stages:
+{"summary", "stages": [{"name", "spec"}, ...]} with a first stage whose spec holds only the edit_xml that clears what
+stopped it, then the plan's own spec as the next stage, unchanged (a plan that is itself stages: its stages, in
+order). Each stage is planned on the copy the stage before it made, so the plan meets the document with the obstacle
+gone, and it is checked as always. A flat list of ops will not do that: every op of one spec is planned on the
+document as it is. What the edit does to the words is not predicted: the app lists the words it adds and removes from
+the sample copies before the user approves. So say in your reply, in plain words, what the edit takes out or changes
+and why that clears the way, and never use it to make a change a built-in operation makes.
 """
 
 # Obliterate mode rewrites the base rules it lifts instead of contradicting them at the end of the prompt: each pair
@@ -736,7 +751,7 @@ def system_prompt(chat: bool = False, unguarded: bool = False) -> str:
             + "\nOPERATIONS (every operation with its mode, description, selectors and parameters; the selector "
             "grammar, fill rules, expect syntax and assertions follow; describe_op returns an operation's verification "
             "rules, common assumptions and worked examples):\n"
-            + json.dumps(op_sheet(), ensure_ascii=False, separators=(",", ":"))
+            + json.dumps(op_sheet(unguarded), ensure_ascii=False, separators=(",", ":"))
             + "\nEditSpec fields: request, summary, mode (formatting/content/untracked), assumptions, questions, "
             "ops [{op, select, params, expect}], review {sample_files, geometry_reference}, assertions. "
             "Use only documented operation parameters. No second outcome plan is required. "
@@ -875,7 +890,49 @@ def placed_words(spec: Dict[str, Any]) -> List[str]:
         # built-in batch 6: an inserted picture's alt text is the user's words
         if op == "insert_image" and isinstance(params.get("description"), str) and params["description"]:
             out.append(params["description"])
+        # Obliterate's raw XML edit: the text it sets, and the text inside the XML it places (each element's own)
+        if op == "edit_xml":
+            from .ops.edit_xml import NAMESPACES, fragment_text
+            if params.get("action") == "set_text" and isinstance(params.get("text"), str) and params["text"].strip():
+                out.append(params["text"])
+            if params.get("action") in ("replace", "insert"):
+                extra = params.get("namespaces")
+                known = dict(NAMESPACES)
+                if isinstance(extra, dict):
+                    known.update({k: v for k, v in extra.items() if isinstance(k, str) and isinstance(v, str)})
+                out += fragment_text(params.get("xml"), known)
     return out
+
+
+OBLITERATE_ONLY = ("this conversation cannot use {ops}: {it} an operation of Obliterate mode alone, which the user "
+                   "turns on in the window after its warning. Plan with the other operations, or say what is out of "
+                   "reach and that Obliterate mode can do it.")
+
+
+def _mode_errors(spec: Any, unguarded: bool) -> List[str]:
+    """The operations of Obliterate mode alone (``Op.obliterate_only``) a submission names outside it — in its ops,
+    its own steps or its layouts — as one refusal; [] in Obliterate mode, and for any other submission."""
+    if unguarded or not isinstance(spec, dict):
+        return []
+    from .ops import OPS
+    found: List[str] = []
+
+    def walk(own: Any) -> None:
+        if not isinstance(own, dict):
+            return
+        for o in own.get("ops") if isinstance(own.get("ops"), list) else []:
+            name = o.get("op") if isinstance(o, dict) else None
+            if isinstance(name, str) and name in OPS and OPS[name].obliterate_only and name not in found:
+                found.append(name)
+        for key in ("stages", "layouts"):
+            for inner in own.get(key) if isinstance(own.get(key), list) else []:
+                if isinstance(inner, dict):
+                    walk(inner.get("spec"))
+    walk(spec)
+    if not found:
+        return []
+    return ["[obliterate-only] " + OBLITERATE_ONLY.format(ops=", ".join(found),
+                                                          it="it is" if len(found) == 1 else "they are")]
 
 
 def _word_char(c: str) -> bool:
@@ -943,9 +1000,11 @@ class _Batch:
     """The batch as the tools see it: files by label (``file_labels`` — the name, or the name with the folders that
     tell two same-named files apart), profiles by pattern (the pattern's ``files`` are those labels)."""
 
-    @staticmethod
-    def describe_op(name: str):
-        return describe_op(name)
+    # an Obliterate conversation's batch (``Conversation`` sets it): its tools may read Obliterate's own operations
+    unguarded = False
+
+    def describe_op(self, name: str):
+        return describe_op(name, unguarded=self.unguarded)
 
     def __init__(self, files: Sequence[Path], template: Optional[Path], *, input_files=None):
         paths = [Path(f) for f in files]
@@ -1707,13 +1766,17 @@ def compose_submission(spec: Any, batch: _Batch, sources: Sequence[str],
     patterns (a layout's own); ``leave_out`` names the documents the user left out of the request, which nothing
     plans. A layout plan comes back with each layout's spec composed the same way. ``unguarded`` (Obliterate mode
     only) loosens the content checks (``_content_checks``): every placed word must trace to ``sources`` or to
-    ``shown``, the reply the user reads in the chat; everything else — validation, attached files, the dry plan, the
-    composition — is the same. ``skips`` are the keys of the occurrences the user unticked in the preview
+    ``shown``, the reply the user reads in the chat, and admits Obliterate's own operations (``_mode_errors``:
+    ``edit_xml`` is refused in every other mode, whoever built the spec); everything else — validation, attached
+    files, the dry plan, the composition — is the same. ``skips`` are the keys of the occurrences the user unticked in the preview
     (``skip_record_key``): a ``replace_table.skip`` entry that is not among them is refused in every mode."""
     from .chain import validate_chain
     from .editspec import is_chain
     if not isinstance(spec, dict):
         return spec, ["the spec must be a JSON object"]
+    refused = _mode_errors(spec, unguarded)           # Obliterate's own operations, outside Obliterate: before all else
+    if refused:
+        return spec, refused
     if spec.get("questions") or spec.get("unsupported"):
         if is_chain(spec) or isinstance(spec.get("layouts"), list):
             # two outcomes in one submission: a chain or a layout plan the preview would run, and a question or an
