@@ -54,6 +54,8 @@ interface Props {
   onSaveRecipe?: () => void;
   /** The guided tour runs: Save as a recipe is held still (the practice runs are not yours to keep). */
   tourActive?: boolean;
+  /** Obliterate's hands-on tools are on: a document's **Parts** opens its read-only part browser. */
+  onParts?: (attachment: Attachment) => void;
 }
 
 /** Save as a recipe on the paper: the accent's outline and words, white inside. */
@@ -136,6 +138,7 @@ function Workbench({
   onHandOff,
   onSaveRecipe,
   tourActive = false,
+  onParts,
 }: Props) {
   const occurrences = view.occurrences ?? [];
   const safe = view.mode === "safe";
@@ -183,6 +186,7 @@ function Workbench({
           onRemoveAll={onRemoveAll}
           hasCopies={(view.working?.generation ?? 0) > 0}
           blocked={view.recovery_blocked ?? ""}
+          onParts={view.hands_on ? onParts : undefined}
         />
 
         {view.samples.length === 0 && view.results.length === 0 && (busy || !hasPlan) && (

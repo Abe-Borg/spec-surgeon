@@ -192,6 +192,28 @@ FAILURE_EXPLANATIONS: Dict[str, Tuple[str, str]] = {
         "was set aside before anything was changed. Select by the element's own name, attributes and children "
         "rather than by a search of the whole part.",
     ),
+    "part-missing": (
+        "No Such Part to Replace",
+        "Replace this part (Obliterate mode's hands-on tools) names a part this document does not have. A part is "
+        "replaced, never added: choose the part in the document's own list of parts.",
+    ),
+    "part-file": (
+        "The Replacing File Cannot Be Used",
+        "The file chosen to replace a part (Obliterate mode's hands-on tools) cannot be read, is larger than the app "
+        "takes for one part, or is not the file that was chosen any more: its content changed after you chose it. "
+        "Nothing was changed. Choose the file again.",
+    ),
+    "part-same": (
+        "The File Is the Part As It Is",
+        "The file chosen to replace a part (Obliterate mode's hands-on tools) holds exactly the bytes the part "
+        "already has, so nothing would change. Save your changes to the file in your editor, then choose it again.",
+    ),
+    "hands-on-only": (
+        "A Hands-On Tool, Not a Plan's Operation",
+        "The plan names the operation behind Replace this part, one of Obliterate mode's hands-on tools. Only the "
+        "window builds that plan, from the part and the file you choose while the hands-on tools are on; it was "
+        "refused before anything was planned.",
+    ),
     "obliterate-only": (
         "Operation of Obliterate Mode Only",
         "The plan names an operation that only Obliterate mode has (the raw XML edit). It was refused before anything "

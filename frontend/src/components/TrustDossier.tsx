@@ -15,6 +15,7 @@ import { useDialogFocus } from "../lib/dialogFocus";
 import { MODEL_NAME, TRUST_FACTS as F, grouped } from "../lib/trustFacts";
 import { NONE, RUNTIME_CARDS, type RuntimeCard } from "../lib/trustRuntime";
 import { OBLITERATE_GRANTS, OBLITERATE_KEPT } from "../lib/modes";
+import { HANDS_ON_SAYS } from "../lib/handsOn";
 import TrustDiagram from "./TrustDiagram";
 
 interface Props {
@@ -577,6 +578,8 @@ function Dossier() {
             time; the app never opens in it. Everything above holds in Safe and Default modes. In Obliterate mode:
           </P>
           <Bullets items={[...OBLITERATE_GRANTS]} />
+          <P>The hands-on tools, off unless you tick their box in the warning, and gone with the mode:</P>
+          <Bullets items={[...HANDS_ON_SAYS]} />
           <P>What still holds, in every mode:</P>
           <Bullets items={[...OBLITERATE_KEPT]} />
         </Note>

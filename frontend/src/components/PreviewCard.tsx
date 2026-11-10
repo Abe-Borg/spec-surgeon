@@ -2,8 +2,8 @@ import type { Sample } from "../types";
 import { imageSrc } from "../lib/api";
 import type { Mark } from "../lib/review";
 import { pageCount } from "../lib/workbench";
-import { NO_WORDS_CHANGE, RAW_NO_WORDS_CHANGE, RAW_WORDS_CHANGE_TITLE, WORDS_CHANGE_TITLE, wordChangeLines } from "../lib/wordChanges";
-import { OTHER_CHANGES_TITLE, RAW_OTHER_CHANGES_TITLE, sampleBadge } from "../lib/modes";
+import { wordChangeLines, wordsHeadings } from "../lib/wordChanges";
+import { otherChangesTitle, sampleBadge } from "../lib/modes";
 import PaperCard from "./PaperCard";
 
 interface Props {
@@ -76,13 +76,13 @@ function WordChanges({ sample, name }: { sample: Sample; name: string }) {
   if (lines.length === 0) {
     return (
       <p className="mb-1 text-xs leading-relaxed text-paper-dim" data-words="none">
-        {sample.raw_xml ? RAW_NO_WORDS_CHANGE : NO_WORDS_CHANGE}
+        {wordsHeadings(sample).none}
       </p>
     );
   }
   return (
     <div className="mb-2 text-xs leading-relaxed" data-words="changed">
-      <p className="font-medium text-paper-ink">{sample.raw_xml ? RAW_WORDS_CHANGE_TITLE : WORDS_CHANGE_TITLE}</p>
+      <p className="font-medium text-paper-ink">{wordsHeadings(sample).title}</p>
       <ul className="mt-1 space-y-1" aria-label={`Words changed in ${name}`}>
         {lines.map((line, index) => (
           <li key={`${index}-${line.where}`}>
@@ -117,7 +117,7 @@ function OtherChanges({ sample, name }: { sample: Sample; name: string }) {
   if (changes.length === 0) return null;
   return (
     <div className="mb-2 text-xs leading-relaxed" data-changes="listed">
-      <p className="font-medium text-paper-ink">{sample.raw_xml && !sample.unproven ? RAW_OTHER_CHANGES_TITLE : OTHER_CHANGES_TITLE}</p>
+      <p className="font-medium text-paper-ink">{otherChangesTitle(sample)}</p>
       <ul className="mt-1 list-disc space-y-1 pl-4 text-paper-ink" aria-label={`Other changes in ${name}`}>
         {changes.map((line, index) => (
           <li key={`${index}-${line}`}>{line}</li>

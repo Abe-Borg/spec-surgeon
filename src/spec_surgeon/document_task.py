@@ -62,6 +62,17 @@ OBLITERATE_OFF = ("Obliterate mode is off: every placed word is yours again, cus
                   "XML edits are refused, and a copy whose checks fail is held back. What was planned in Obliterate "
                   "mode is void.")
 REPLAN = " Continue plans your request again under these rules, or say what you want."
+# Obliterate's hands-on tools (the owner's decision of 2026-11-10; docs/BACKLOG.md O4): off unless the user turns
+# them on with the mode, and gone with it
+HANDS_ON_ON = ("Hands-on tools are on. Parts, beside each document, shows the parts of its file read-only, with a "
+               "search; Save this part writes one out as it is, to a folder you choose; Replace this part puts a file "
+               "of yours in a part's place, byte for byte, after a preview that lists the words it changes. None of "
+               "them uses AI, and nothing in the window edits XML.")
+HANDS_ON_OFF = "Hands-on tools are off."
+HANDS_ON_NEEDED = "The hands-on tools are off. Obliterate mode's warning turns them on, or its strip above the message box."
+PART_ONLY_THERE = "The part was replaced in {name} only; this document was not asked about."
+# the plans the app builds itself in a conversation mode: pressed again, never handed to Claude as a request to plan
+OWN_PLANS = ("saved", "hands-on")
 START_OVER = "Start over from the originals"   # the reply (a chip, a button) that drops the working copies
 LEFT_OUT_REASON = "You asked to leave it out of this request; it stays as it is."
 WORK_TODO = "Work on the documents I set aside"  # the reply (a chip, typed) that begins the pass over the to-do list
@@ -584,6 +595,8 @@ class DocumentTask:
         self._resume_layouts = []           # layout batch folders still to recover, from the journal
         self._words_said_for = None         # the custom method's preview whose word changes the chat has said
         self._raw_said_for = None           # the plan's preview whose raw XML edit the chat has said the words of
+        self.hands_on = False               # Obliterate's hands-on tools: on only while the mode is, never kept
+        self._parts_reader = None           # (the file's identity, ``hands_on.Reader``): the file the browser is on
         self._failed_said_for = None        # the preview whose samples set aside as failed the chat has said
         self._budget = self._new_budget()
         self._request_budget = self._new_request()
@@ -744,7 +757,7 @@ class DocumentTask:
                 self._emit({"type": "message", "message": {"id": f"m{len(self.messages) - 1}", **message}})
 
     def _invalidate(self):
-        recipe_run = self.session.outcome_source == "saved"
+        recipe_run = self.session.outcome_source in OWN_PLANS
         self.session._set_outcome()
         self.session.end_conversation()
         self._resume_recovery = None
@@ -782,7 +795,8 @@ class DocumentTask:
             raise ValueError(blocked)
         before = (self.documents(), self.template(), self.references())
         had_button = self.session.model_free and self.stage == "preview"
-        had_recipe = self.session.outcome_source == "saved"
+        had_recipe = self.session.outcome_source in OWN_PLANS
+        had_part = self.session.outcome_source == "hands-on"
         fresh: List[str] = []
         if template:
             found = triage(checked[0], template=True)
@@ -813,7 +827,8 @@ class DocumentTask:
                 self.say("The attachments changed. I’ll check the updated documents against your request.")
             elif had_button:
                 self.say("The attachments changed, so that preview no longer applies. " +
-                         ("Run the recipe again" if had_recipe else "Press the button again") +
+                         ("Replace the part again" if had_part else "Run the recipe again" if had_recipe
+                          else "Press the button again") +
                          " to preview it on these documents.")
             if fresh:
                 self.say(f"{', '.join(fresh)}: attached as an original. The changes already made to the other copies "
@@ -1529,7 +1544,8 @@ class DocumentTask:
         return None
 
     def perform(self, action, *, text="", token="", choice_id="", chip=False, hold=(), wording=None, recipe="",
-                inputs=None, skip=(), kind="", folder="", steps=None, rev=None, log=lambda _: None, events=None):
+                inputs=None, skip=(), kind="", folder="", steps=None, rev=None, path="", part="", file="",
+                log=lambda _: None, events=None):
         """Worker entry point. One ledger covers every nested model call and every turn. ``events`` is the window's
         live channel (docs/WEB_API.md: status, activity, text_delta, thinking_delta, message, plan, samples, results,
         question, cost); without one the job runs silently and the view says everything at the end. ``hold`` (the
@@ -1539,7 +1555,9 @@ class DocumentTask:
         runs with this time (``saved_recipes.choose_steps``; ``rev``, the recipe as its run form opened). ``skip`` (the
         ``occurrences`` action) names, by key, the find-and-replace occurrences the user unticked in the preview.
         ``kind`` and ``folder`` (the ``export`` action) are a clean export's kind and the folder it writes into: it is
-        no request, so the request open, its spending and the stage are left as they are (``_export_job``)."""
+        no request, so the request open, its spending and the stage are left as they are (``_export_job``). ``path``,
+        ``part`` and ``file`` (the ``replace_part`` action) are a document, one of its parts and the file that takes
+        the part's place: Obliterate's hands-on tools, a plan the app builds with no AI call (``_replace_part``)."""
         self.problem = ""
         self._events = events
         self.save(in_progress=True)
@@ -1576,6 +1594,8 @@ class DocumentTask:
                     self._saved_recipe(recipe, steps, checkpointed_log, rev=rev)
                 elif action == "occurrences":
                     self._occurrences(skip, checkpointed_log)
+                elif action == "replace_part":
+                    self._replace_part(path, part, file, checkpointed_log)
                 else:
                     raise ValueError("Unknown task action")
         except stopping.Stopped:
@@ -1804,12 +1824,13 @@ class DocumentTask:
         self._compile(log)
 
     # ---- Safe mode ----
-    def set_mode(self, mode: str, acknowledged: bool = False) -> None:
+    def set_mode(self, mode: str, acknowledged: bool = False, hands_on: bool = False) -> None:
         """Safe (the buttons, no AI call), Default (the conversation) or Obliterate (the conversation without the
         content guardrails: ``Session.unguarded``). The documents, copies and to-do list stay; between Safe and Default
         any preview stays too. Obliterate needs the setting that shows it (``obliterate_allowed``) and the user's
         acknowledgement of its warning each time; entering or leaving it voids what was planned under the other rules
-        (a new conversation follows the new ones)."""
+        (a new conversation follows the new ones). ``hands_on``: the warning's own toggle, off unless ticked — the
+        hands-on tools turn on with the mode, and always go with it."""
         if mode not in MODES:
             raise ValueError("There is no such mode.")
         if mode == "obliterate" and not self.obliterate_allowed:
@@ -1826,11 +1847,15 @@ class DocumentTask:
         self.mode = mode
         self.session.unguarded = mode == "obliterate"
         if crossing:
+            self.hands_on = mode == "obliterate" and hands_on is True
+            self._parts_reader = None
             if was_safe:
                 self.decisions = []                  # a button's sentence is not a request for a conversation
             self._invalidate()
             self.say((OBLITERATE_ON if mode == "obliterate" else OBLITERATE_OFF)
                      + (REPLAN if self.stage == "resume" else ""))
+            if self.hands_on:
+                self.say(HANDS_ON_ON)
             self.save()
 
     def available_modes(self) -> List[str]:
@@ -1909,6 +1934,217 @@ class DocumentTask:
         if nothing:
             self.say("None of the documents can take this change as they are; each one's reason is under Left "
                      "untouched.")
+
+    # ---- Obliterate's hands-on tools (the owner's decision of 2026-11-10; docs/BACKLOG.md O4) ----
+    def set_hands_on(self, on: bool) -> None:
+        """The hands-on tools' own switch, in Obliterate mode only (the warning's toggle sets it when the mode turns
+        on): a read-only browser of each document's parts, saving one out, and replacing one with a file. Turning it
+        off withdraws a part replacement that waits for approval: the gate takes that plan only while the tools are
+        on."""
+        if self.mode != "obliterate":
+            raise ValueError("The hands-on tools are Obliterate mode's: turn Obliterate on first.")
+        on = on is True
+        if on == self.hands_on:
+            return
+        if not on and self.session.outcome_source == "hands-on":
+            blocked = self._recovery_blocked()
+            if blocked:
+                raise ValueError(blocked)
+            self._invalidate()
+        self.hands_on = on
+        self._parts_reader = None
+        self._revision += 1
+        self.say(HANDS_ON_ON if on else HANDS_ON_OFF)
+        self.save()
+
+    def _hands_on_document(self, path, which: str = "current"):
+        """``(attachment, file)`` for a hands-on tool: one of the attached documents, and the file the tool reads —
+        the copy the next change is made on (``current``), or the attached original (``original``)."""
+        if self.mode != "obliterate" or not self.hands_on:
+            raise ValueError(HANDS_ON_NEEDED)
+        key = str(Path(str(path)))
+        attachment = next((a for a in self.attachments if str(a.path) == key and not a.template and not a.reference
+                           and not a.refused), None)
+        if attachment is None:
+            raise ValueError("That is not one of the documents attached here.")
+        if which not in ("current", "original"):
+            raise ValueError("Choose the edited copy or the original.")
+        return attachment, (Path(attachment.path) if which == "original" else self.current_of(attachment.path))
+
+    def _parts_of(self, file: Path):
+        """The reader of ``file``'s parts, kept while the browser stays on that file as it is now."""
+        from . import hands_on
+        try:
+            stat = file.stat()
+            key = (str(file), stat.st_size, stat.st_mtime_ns)
+            if self._parts_reader is None or self._parts_reader[0] != key:
+                self._parts_reader = (key, hands_on.Reader(file.read_bytes()))
+        except (OSError, ValueError) as exc:
+            raise ValueError(f"{file.name} cannot be read ({exc}).") from exc
+        return self._parts_reader[1]
+
+    def parts(self, path, which: str = "current") -> Dict[str, Any]:
+        """The parts of one document's file, for the read-only browser: ``document`` (its name), ``which`` (the file
+        read), ``has_copy`` (an edited copy exists, so there are two files to look at) and ``parts``
+        (``hands_on.list_parts``). Nothing is written and no model is called."""
+        attachment, file = self._hands_on_document(path, which)
+        reader = self._parts_of(file)
+        return {"path": str(attachment.path), "document": attachment.path.name, "which": which,
+                "has_copy": str(self.current_of(attachment.path)) != str(Path(attachment.path)),
+                "parts": [dict(p) for p in reader.parts]}
+
+    def part(self, path, part, page: int = 1, which: str = "current") -> Dict[str, Any]:
+        """One page of one part as text (``hands_on.Reader.page``); read-only."""
+        _attachment, file = self._hands_on_document(path, which)
+        try:
+            return self._parts_of(file).page(str(part), int(page) if isinstance(page, int) else 1)
+        except KeyError:
+            raise ValueError(f"{file.name} has no part named {part}.") from None
+
+    def search_parts(self, path, query, which: str = "current") -> Dict[str, Any]:
+        """Every line of the document's parts that holds ``query`` (``hands_on.Reader.search``); read-only."""
+        _attachment, file = self._hands_on_document(path, which)
+        return self._parts_of(file).search(str(query or ""))
+
+    def _own_folder(self, folder) -> Path:
+        """``folder``, resolved, as a place the window may write a file the user asked for: a folder that exists and
+        is not inside the app's scratch tree (a file saved there would go with it)."""
+        from .settings import scratch_root
+        folder = Path(folder)
+        if not folder.is_dir():
+            raise ValueError(f"{folder} is not a folder.")
+        folder = folder.resolve()
+        for disposable in (self.session.out_root, scratch_root()):
+            root = _same_file_key(disposable)
+            if _same_file_key(folder) == root or _same_file_key(folder).startswith(root.rstrip("\\/") + os.sep):
+                raise ValueError(f"{folder} is inside the app's scratch folder, which is deleted when the window "
+                                 "closes; nothing was saved. Choose a folder of your own.")
+        return folder
+
+    def save_part(self, path, part, folder, which: str = "current") -> Dict[str, Any]:
+        """Save this part (Obliterate's hands-on tools): one part's own bytes, as they are in the file the browser
+        shows, written into ``folder`` under the document's and the part's names (``hands_on.saved_name``) through
+        ``guard.write_new`` — never over a file this conversation works on and never into the scratch tree, as an
+        export. A file already there with the same bytes is that file; one with other bytes is left alone and this
+        one is numbered beside it. No document, copy or history changes. Returns ``{"saved", "already"}``."""
+        from . import guard, hands_on
+        attachment, file = self._hands_on_document(path, which)
+        reader = self._parts_of(file)
+        try:
+            data = hands_on.part_bytes(reader.data, str(part))
+        except KeyError:
+            raise ValueError(f"{file.name} has no part named {part}.") from None
+        folder = self._own_folder(folder)
+        inputs = {_same_file_key(a.path) for a in self.attachments}
+        inputs |= {_same_file_key(p) for p in self.working.values()} | {_same_file_key(p) for p in self.results.values()}
+        name = hands_on.saved_name(attachment.path.name, str(part))
+        dest, n = folder / name, 2
+        while True:
+            if _same_file_key(dest) in inputs:
+                raise ValueError(f"{dest} is one of the files this conversation works on; nothing was saved. "
+                                 "Choose another folder.")
+            if not dest.exists() or (dest.is_file() and dest.read_bytes() == data):
+                break
+            dest, n = folder / f"{Path(name).stem} ({n}){Path(name).suffix}", n + 1
+        already = dest.exists()
+        if not already:
+            try:
+                guard.write_new(dest, data)
+            except OSError as exc:
+                raise ValueError(f"{dest.name} could not be written to {folder} ({exc}).") from exc
+        of = "its edited copy" if str(file) != str(Path(attachment.path)) else "the original"
+        self._revision += 1
+        self.say(f"Saved the part {part} of {attachment.path.name} ({of}), as it is, to {dest}"
+                 + (" (it was already there, unchanged)." if already else ".")
+                 + " Change it in an editor of your own; Replace this part then puts it back, after a preview.")
+        diag.event("task.part_saved", document=attachment.path.name, part=str(part), bytes=len(data), already=already)
+        self.save()
+        return {"saved": str(dest), "already": already}
+
+    def _hands_on_blocked(self) -> str:
+        """Why a part cannot be replaced now; '' when it can. It is a plan of its own: a preview that waits, or a
+        question that is open, is finished or dropped first. A pass over the to-do list is no obstacle — a document
+        the engine stopped on is what the tool is for."""
+        if self._recovery_blocked():
+            return self._recovery_blocked()
+        if self.session.recovery is not None:
+            return "The documents are being checked again: save the ready copies, or set the rest aside for later."
+        if self.stage == "preview":
+            return "Discard the preview first, or create its copies."
+        if self.stage in ("question", "budget") or self.session.pending_custom_transform is not None:
+            return "Drop the request that is open first, or finish it."
+        return ""
+
+    def _replace_part(self, path, part, file, log):
+        """Replace this part (Obliterate's hands-on tools): the one-op plan ``replace_part`` built from the document,
+        the part and the file the user chose — the file pinned by its SHA-256 as it is now — through the one gate
+        (``compose_submission(hands_on=True)``, which takes that operation from nowhere else), then the ordinary
+        preview: the copy is checked byte for byte against the plan, and the words the new part changes are listed
+        before the approval button (``_say_raw_changes``). No AI call (``Session.model_free``). It changes the one
+        document; every other is left out of the plan. A choice that cannot be used is said in one message and
+        nothing is previewed."""
+        from . import compiler
+        from .ops import get_op
+        from .ops.base import JobException
+        from .ops.replace_part import digest, read_replacement
+        from .package import DocxPackage
+        attachment, current = self._hands_on_document(path)
+        s = self.session
+        label = "Replace this part"
+        blocked = self._hands_on_blocked()
+        if blocked:
+            self._revision += 1
+            self.say(f"{label}: {blocked}")
+            return
+        files = s.files(outcome=False)
+        target = next((p for p in files if _same_file_key(p) == _same_file_key(current)), None)
+        if target is None:
+            self._revision += 1
+            self.say(f"{label}: {attachment.path.name} waits on your to-do list, out of every plan. Put it back, or use "
+                     f"Obliterate this one, first.")
+            return
+        part, chosen = str(part or "").strip(), Path(str(file))
+        params: Dict[str, Any] = {"part": part, "file": str(chosen)}
+        try:
+            params["sha256"] = digest(read_replacement(str(chosen)))
+            pkg = DocxPackage.from_path(target)
+            try:
+                get_op("replace_part").plan(pkg, {}, params)       # the op's own refusals, in its own words
+            finally:
+                pkg.close()
+        except JobException as e:
+            self._revision += 1
+            self.say(f"{label}: " + refusal_message({"code": e.code, "reason": e.reason, "details": e.details,
+                                                     "kind": "plan"}))
+            return
+        except (OSError, ValueError) as e:
+            self._revision += 1
+            self.say(f"{label}: {attachment.path.name} cannot be read ({e}).")
+            return
+        request = f"Replace the part {part} of {attachment.path.name} with my file {chosen.name}."
+        spec = {"request": request, "summary": f"Replace {part} with {chosen.name}, byte for byte.",
+                "mode": "untracked", "ops": [{"op": "replace_part", "params": params}]}
+        left_out = {str(p): PART_ONLY_THERE.format(name=attachment.path.name) for p in files if p is not target}
+        self._emit({"type": "status", "kind": "checking", "text": "Checking the document…"})
+        batch = compiler._Batch(files, self.template(), input_files=[*self.references(), chosen])
+        outcome, errors = compiler.compose_submission(spec, batch, [request], leave_out=list(left_out),
+                                                      unguarded=True, hands_on=True)
+        if errors:
+            self._revision += 1
+            self.say(f"{label} cannot be used here: " + "; ".join(errors[:3]))
+            return
+        s.end_conversation()
+        self.results = {}
+        self.say(request, "user")
+        self.say(f"Planned without AI: {get_op('replace_part').describe({}, params)} The copy is checked byte for "
+                 f"byte against your file. What the new part changes in the words is not predicted: it is read from "
+                 f"the copy and listed below, before the button.")
+        self.decisions = [request]
+        self._button, self._button_inputs = "", {}
+        self._running_recipe = None
+        s._set_outcome(spec=outcome, source="hands-on", left_out=list(left_out), left_out_reasons=left_out)
+        diag.event("task.replace_part", document=attachment.path.name, part=part, bytes=chosen.stat().st_size)
+        self._settle(log)
 
     # ---- saved recipes ----
     def _recipe_blocked(self) -> str:
@@ -2605,7 +2841,7 @@ class DocumentTask:
                   f"for the next pass." if rest else ""))
         self.save()
 
-    def obliterate_todo(self, path, acknowledged: bool = False) -> None:
+    def obliterate_todo(self, path, acknowledged: bool = False, hands_on: bool = False) -> None:
         """**Obliterate this one**, a to-do entry's button (the owner's decision of 2026-11-10): Obliterate mode for
         one document that waits on the list. The mode turns on as the switch turns it on — only while Settings shows
         it, and only with its warning acknowledged this time (``set_mode``); already on, it stays — and the pass
@@ -2624,7 +2860,7 @@ class DocumentTask:
         if blocked:
             raise ValueError(blocked)
         if self.mode != "obliterate":
-            self.set_mode("obliterate", acknowledged=acknowledged)     # refuses without the warning's tick
+            self.set_mode("obliterate", acknowledged=acknowledged, hands_on=hands_on)   # refuses without the tick
         name = self.todo[key]["name"]
         self.start_todo(only=key)
         copy = (((self.focus or {}).get("case") or {}).get(key) or {}).get("copy")
@@ -3118,14 +3354,14 @@ class DocumentTask:
         copies by the independent checker, never predicted. So before the approval button the chat says those words,
         or that none change, and then what else the step changes (``preview.raw_words_lines``,
         ``shown_changes_lines(raw=True)``); once per preview, and the model hears the same lines next turn."""
-        from .preview import raw_words_lines, shown_changes_lines
+        from .preview import raw_unread_lines, raw_words_lines, shown_changes_lines
         s = self.session
         preview = s.preview if s.spec is not None else None
         samples = getattr(preview, "samples", None) or []
         if preview is None or preview is self._raw_said_for or not any(getattr(sv, "raw_xml", False) for sv in samples):
             return
         self._raw_said_for = preview
-        for lines in (raw_words_lines(samples), shown_changes_lines(samples, raw=True)):
+        for lines in (raw_words_lines(samples), shown_changes_lines(samples, raw=True), raw_unread_lines(samples)):
             if lines:
                 self.say("\n\n".join(lines))
                 if s.conversation is not None:
@@ -3243,7 +3479,8 @@ class DocumentTask:
                              "unproven": bool(getattr(sv, "unproven", False)),
                              "changes": list(getattr(sv, "changes", None) or []),
                              "no_copy": bool(getattr(sv, "problem", "")),
-                             "raw_xml": bool(getattr(sv, "raw_xml", False))}
+                             "raw_xml": bool(getattr(sv, "raw_xml", False)),
+                             "raw_what": str(getattr(sv, "raw_what", "") or "")}
                             for sv in samples],
                 "occurrences": self._occurrences_view(preview),
                 "warnings": list(dict.fromkeys(getattr(preview, "warnings", []) or [])),
@@ -3376,7 +3613,8 @@ class DocumentTask:
             chips.append(START_OVER)
         states = self.export_states()
         waits = self._recovery_blocked() if self.obliterate_allowed and self.todo else ""   # asked once, for the rows
-        return {"stage": self.stage, "mode": self.mode, "messages": list(self.messages),
+        return {"stage": self.stage, "mode": self.mode, "hands_on": self.mode == "obliterate" and self.hands_on,
+                "messages": list(self.messages),
                 "left_untouched": [{k: e[k] for k in ("path", "name", "reason")} for e in self.left_untouched]
                 if self.stage != "preview" else [],
                 "stages": stages if groups else 0,
@@ -3680,7 +3918,7 @@ class DocumentTask:
             "applied": self.applied, "fresh": self.fresh, "todo": self.todo, "focus": self.focus,
             "undo": self.undo_points, "runs": self.runs, "run_steps": self._kept_run_steps(),
             "pending_undo": self._pending_undo, "pending_steps": self._pending_steps,
-            "recipe_run": self.session.outcome_source == "saved",
+            "recipe_run": self.session.outcome_source in OWN_PLANS,
             "exported": self.exported, "export_folder": self.export_folder,
             "budget": self._budget.to_dict(), "request": self._request_budget.to_dict(), "in_progress": in_progress})
 

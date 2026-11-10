@@ -72,6 +72,8 @@ WHY_CAPITALS = ("Its capitals were approved occurrence by occurrence in particul
 WHY_NOT_KEPT = "What it ran was not kept, so it cannot be saved."
 WHY_CHOSEN = ("It changes paragraphs chosen in particular documents by their outline, so it cannot be repeated on "
               "others.")
+WHY_PART = ("It replaced a part of one document with a file you chose that time (a hands-on tool), so it cannot be "
+            "repeated on others.")
 
 
 class RecipeRunError(ValueError):
@@ -147,6 +149,8 @@ def portable_plan(plan: Any) -> Tuple[Optional[Dict[str, Any]], str]:
                 continue
             if o.get("op") == "capitalize_defined_terms":
                 return None, WHY_CAPITALS
+            if o.get("op") == "replace_part":
+                return None, WHY_PART            # a hands-on tool: one document's part, a file chosen that time
             pred = (o.get("select") or {}).get("paragraphs") if isinstance(o.get("select"), dict) else None
             if isinstance(pred, dict) and "indices_by_document" in pred:
                 return None, WHY_CHOSEN          # read_outline's paragraphs, pinned to each document's bytes (N2)

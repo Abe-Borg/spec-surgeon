@@ -11,6 +11,7 @@ import { getAbout } from "../lib/api";
 import { useDialogFocus } from "../lib/dialogFocus";
 import { HELP_TITLES, HELP_TOPICS, modelLabel, releaseNotesBody, updateStatus, type HelpTopic } from "../lib/help";
 import { OBLITERATE_COSTS, OBLITERATE_GRANTS, OBLITERATE_KEPT } from "../lib/modes";
+import { HANDS_ON_SAYS } from "../lib/handsOn";
 import { TOUR } from "../lib/tour";
 import {
   DEFAULT_LIMITS,
@@ -93,7 +94,8 @@ function HowToUse({ onStartTourAt }: { onStartTourAt: (chapter: string) => void 
                   neither could. <Tag>Obliterate this one</Tag>, beside a document on your to-do list, turns it on for
                   that document alone after the same warning; when a copy of it was made and held back because it
                   failed a check, the chat offers <Tag>Use the copy that failed, marked UNVERIFIED</Tag>, which takes
-                  that copy as it is with no AI call.
+                  that copy as it is with no AI call. The warning also carries one box, empty every time:{" "}
+                  <Tag>Also turn on the hands-on tools</Tag>. {HANDS_ON_SAYS.join(" ")}
                 </>
               ),
             },

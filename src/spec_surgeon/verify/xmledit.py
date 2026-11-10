@@ -96,10 +96,15 @@ _V_PREFIXES = (
 )
 
 
+# The kinds that compare one part WHOLE and predict nothing of its text: a raw XML edit's, and a replaced part's
+# (``verify/partswap.py``).
+WHOLE_PART_KINDS = ("xml_edit", "part_bytes")
+
+
 def raw_parts(plan: Dict[str, Any]) -> List[str]:
-    """The parts a plan's ``xml_edit`` assertions name: the ones this kind compares whole."""
+    """The parts a plan's ``xml_edit`` and ``part_bytes`` assertions name: the ones a kind compares whole."""
     return sorted({a["part"] for a in plan.get("property_assertions") or []
-                   if isinstance(a, dict) and a.get("kind") == "xml_edit" and isinstance(a.get("part"), str)})
+                   if isinstance(a, dict) and a.get("kind") in WHOLE_PART_KINDS and isinstance(a.get("part"), str)})
 
 
 def _v_prefixes(extra: Any) -> Dict[str, str]:
@@ -551,7 +556,7 @@ XML_EDIT_KINDS = {"xml_edit": xml_edit}
 # The kinds only a built-in operation may assert: never offered to a custom method's writer, and refused in a custom
 # method's plan (``codegen.hard_limits``) — a plan that could name ``xml_edit`` could take a part out of the text
 # checks by saying so.
-OP_ONLY_KINDS = frozenset(XML_EDIT_KINDS)
+OP_ONLY_KINDS = frozenset(WHOLE_PART_KINDS)
 
 XML_EDIT_CONTRACT = (
     "xml_edit — one stated change to the XML of one part (the edit_xml operation, Obliterate mode only; never a "

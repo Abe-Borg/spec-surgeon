@@ -66,6 +66,11 @@ export const TRUST_FACTS = {
   // A raw XML edit's XPath, Obliterate mode only (ops/edit_xml.py; the checker's twin verify/xmledit.py)
   xpathTimeoutSeconds: 2,
   maxXPathChars: 1000,
+  // Obliterate's hands-on tools (hands_on.py, ops/replace_part.py)
+  maxPartMB: 64,
+  partPageLines: 400,
+  partSearchHits: 200,
+  maxShownPartMB: 32,
   // Attachments (inputs.py, package_limits.py)
   maxTableOrPictureMB: 20,
   maxDocxMB: 256,

@@ -101,8 +101,13 @@ def test_a_built_in_operations_own_kind_is_never_a_custom_methods():
     custom method's writer is never told of it, cannot read its contract, and a method's plan that asserts it is
     refused before anything is verified, on the formatting path and under an outcome contract alike."""
     from spec_surgeon.verify.props import OP_ONLY_KINDS
-    assert OP_ONLY_KINDS == {"xml_edit"} and "xml_edit" in KINDS and KIND_CONTRACTS["xml_edit"]
-    assert codegen.writer_kinds() == sorted(set(KINDS) - {"xml_edit"})
+    # (and ``part_bytes``, the kind of a part replaced with the user's file: Obliterate's hands-on tools)
+    assert OP_ONLY_KINDS == {"xml_edit", "part_bytes"} and "xml_edit" in KINDS and KIND_CONTRACTS["xml_edit"]
+    assert codegen.writer_kinds() == sorted(set(KINDS) - {"xml_edit", "part_bytes"})
+    assert "unknown assertion kind" in describe_assertion_kind("part_bytes")["error"]
+    [swapped] = codegen.hard_limits({"intended_parts": ["word/document.xml"], "property_assertions": [
+        {"kind": "part_bytes", "part": "word/document.xml", "sha256": "0" * 64, "size": 1}]}, ["word/document.xml"])
+    assert "may not assert ['part_bytes']" in swapped
     out = describe_assertion_kind("xml_edit")
     assert "unknown assertion kind" in out["error"] and "xml_edit" not in out["kinds"]
     plan = {"intended_parts": ["word/document.xml"], "property_assertions": [

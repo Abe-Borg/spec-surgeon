@@ -129,16 +129,17 @@ def test_catalog_and_schema_cover_every_op():
     # Obliterate's alone (``Op.obliterate_only``), from the entries and from the schema alike
     for unguarded in (False, True):
         cat = op_catalog(unguarded=unguarded)
-        offered = {name for name, cls in OPS.items() if unguarded or not cls.obliterate_only}
+        offered = {name for name, cls in OPS.items()
+                   if not cls.hands_on and (unguarded or not cls.obliterate_only)}
         assert set(cat["ops"]) == offered
         for name, entry in cat["ops"].items():
             assert entry["description"] and entry["common_assumptions"], name
         consts = [item["properties"]["op"]["const"]
                   for item in cat["editspec_schema"]["properties"]["ops"]["items"]["oneOf"]]
         assert sorted(consts) == sorted(offered)
-    assert set(op_catalog(unguarded=True)["ops"]) == set(OPS) and set(OPS) - set(cat["ops"]) == set()
-    cat = op_catalog()
-    assert set(OPS) - set(cat["ops"]) == {"edit_xml"}
+    # a hands-on tool (replace_part) is no conversation's in any mode: the window builds its plan
+    assert set(OPS) - set(op_catalog(unguarded=True)["ops"]) == {"replace_part"}
+    assert set(OPS) - set(op_catalog()["ops"]) == {"edit_xml", "replace_part"}
     assert {e["request"] for e in cat["worked_examples"]} >= {"change all font to Arial", "remove all headers and footers"}
     json.dumps(cat)
 

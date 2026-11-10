@@ -349,7 +349,20 @@ mode you last used (Safe the first time; never Obliterate).
   Word opens), content can be lost or invented without a refusal, a copy
   may need Word's repair, results can differ from run to run, and more AI spending. What still holds: copies only
   (your originals are never written), a source that changed is never delivered over, the custom method's sandbox, and
-  the independent checks on every copy, their results kept beside it. Obliterate is the last rung of a ladder —
+  the independent checks on every copy, their results kept beside it. The warning also carries one box, empty
+  every time: **Also turn on the hands-on tools** (the mode's strip above the message box switches them too). With
+  it ticked, each document carries **Parts**: a read-only browser of the parts its file is made of — every part
+  with its size, the XML shown as text a page at a time, and a search across all of them. Nothing in the window
+  edits XML. **Save this part…** writes one part out exactly as it is, to a folder you choose; you change it in an
+  editor of your own; **Replace this part…** then puts your file in that part's place in a copy, after a preview.
+  The replacement is a plan the app builds itself, with no AI: the independent checker hashes the part in the copy
+  and proves it holds exactly your file's bytes and that no other part changed, and the words the new part changes
+  are listed from the copy, in the chat and under the preview, before you approve. Any part can be replaced — the
+  body, a header, the styles, a picture, the package's own relationship parts. What Word would not open is said by
+  the checks: a part that is no longer well-formed XML, or a reference left pointing at nothing, shows **Did not
+  pass**, and in this mode the copy is still created, marked **UNVERIFIED**. None of these tools uses AI or needs
+  an API key, nothing they read is sent anywhere, and Claude is never told of them and cannot use them. They are
+  never remembered: the next time you choose Obliterate the box is empty again. Obliterate is the last rung of a ladder —
   Safe first, Default for what Safe could not take, Obliterate for the one or two documents neither could — so it
   also starts from the to-do list: **Obliterate this one**, beside a document there, opens the same warning and then
   turns the mode on for that one document, the request it was set aside from standing and every other document,
@@ -613,6 +626,10 @@ recorded for the requests that follow.
   mode lifts the plain-formatting limit and the prediction, and nothing about the sandbox: there the checker reports
   what a method changed and no check says the change is the one asked for (above, and
   [docs/CONVERSATIONAL_DESKTOP.md](docs/CONVERSATIONAL_DESKTOP.md)).
+- Obliterate's hands-on tools replace one part of one document at a time, with a file of at most 64 MB; a part is
+  replaced, never added or removed. The part browser shows XML indented for reading (the file's own bytes are what
+  Save writes), 400 lines to a page, lists a part over 32 MB without showing it, and lists up to 200 lines for a
+  search. A replacement cannot be saved as a step of a recipe.
 - The raw XML edit exists in Obliterate mode only. Its XPath is XPath 1.0 over a fixed table of prefixes (others can
   be declared with the edit), at most 1,000 characters, with 2 seconds to run on a part; inside `[ ]` it may not
   start a path at the root of the part, and it may not use the `following` or `preceding` axis. It changes one XML

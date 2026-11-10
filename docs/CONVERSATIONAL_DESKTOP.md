@@ -379,6 +379,44 @@ What it lifts (`Session.unguarded`; CLAUDE.md, "Modes"):
     Text it places (`set_text`'s text, and every stretch of text inside `xml`, whatever comment or element stands
     beside it: `fragment_text`) is traced like any Obliterate wording (`compiler.placed_words`); attribute values
     are not.
+- **The hands-on tools** (the owner's decision of 2026-11-10, backlog O4: the cheaper editor — nothing in the window
+  edits XML). Off unless the user turns them on: a box in the warning, empty every time (`set_mode(hands_on=)`,
+  `obliterate_todo(hands_on=)`), or the switch in the mode's strip (`set_hands_on`). `DocumentTask.hands_on` is
+  never kept — not in settings.json, not in the journal — and leaving the mode clears it. With only this box
+  ticked the warning can be confirmed without an API key (`lib/modes.canTurnOnObliterate`): none of the tools
+  calls a model.
+  - **Parts** (`hands_on.py`, `components/PartsModal.tsx`). Beside each document; a dialog over one file — the
+    copy the next change is made on, or the attached original (`which`). `Reader` lists the members with size and
+    content type, shows one parsed and indented for display (`PAGE_LINES` to a page; a part that does not parse as
+    its own text; a binary part, or one over `MAX_SHOWN_BYTES`, as a note), and searches the shown lines of every
+    text part (`SEARCH_HITS` at most; a hit opens its part at that line). Read-only: no file is written and nothing
+    in the conversation changes.
+  - **Save this part…** (`DocumentTask.save_part`). The part's own bytes — never the indented view — through
+    `guard.write_new` into a folder the user chooses, named `<document> - <part, folders flattened>`; refused for
+    the scratch tree (`_own_folder`) and for a destination that is a file the conversation works on; a file there
+    with other bytes is left alone and this one numbered beside it. One line in the chat; nothing else changes.
+  - **Replace this part…** (`ops/replace_part.py`, `DocumentTask._replace_part`, the job `replace_part`). The page
+    uploads the chosen file (`/api/part/replace`; kept under the scratch folder's `parts/`). The app runs the op's
+    own plan on the document first, so its refusals are said in one message (`part-missing`, `part-same`,
+    `part-file`), then builds the one-op spec with the file's SHA-256 and passes it through the gate with
+    `hands_on=True` — the only way that operation is ever admitted (`compiler._mode_errors`, `[hands-on-only]`
+    anywhere else, in any mode; `catalog.offered_ops` lists it for no conversation). Every other document is left
+    out (`PART_ONLY_THERE`). The outcome's source is `"hands-on"`: `Session.model_free`, so no visual check and no
+    recovery, and — like a saved recipe's run — never handed to Claude as a request (`OWN_PLANS`). It is a plan of
+    its own: a preview or a question that is open is finished first (`_hands_on_blocked`); a pass over the to-do
+    list is no obstacle, since a document the engine stopped on is what the tool is for.
+  - **Proven, and listed.** The op predicts exactly: the member holds the file's bytes (the assertion `part_bytes`:
+    SHA-256 and size) and no other member changes. `verify/partswap.py` hashes the output member itself; V1 holds
+    the rest. The part is a whole-part kind's (`verify.xmledit.raw_parts`), so, as for a raw XML edit, V2, V3, V4's
+    counts and V5b leave it to that comparison and the record lists the words, the other text and D1; the sample
+    carries `raw_xml` with `raw_what` `"part"`, and the chat and the card say "the replaced part"
+    (`preview.PART_WORDS_CHANGE_HEAD`). A part that is not XML has no words to list and is named by D1 as changed
+    and not read.
+  - **What Word would not open.** The bytes are placed as given, so any member can be replaced, `.rels` and
+    `[Content_Types].xml` included. A changed part that was XML and no longer parses is one failed check — V1 says
+    which part and why, the part-by-part checks are "not evaluated" (`verify/suite._unreadable_record`) — never an
+    exception out of the suite; the sample shows Did not pass in the file's own words
+    (`ui_feedback.SHOWN_CHECK_MESSAGES`, as for any raw sample) and the copy is delivered UNVERIFIED.
 - **Holding back.** A copy that fails a check is delivered to the run's `outputs/` instead of `failed/`, its record
   kept with every failure and V9 saying *delivered UNVERIFIED*; a chain's step hands its copy on and the chain's copy
   carries everything that failed. The preview already says so: a sample whose copy fails a check shows **Did not

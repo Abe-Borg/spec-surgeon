@@ -17,7 +17,7 @@ import { TRUST_FACTS as F } from "./trustFacts.ts";
  * Bump whenever chapter or step ORDER changes: the resume record (lib/tourStorage.ts) keeps numeric indexes, and a
  * stale one would land a reload on another chapter than the one it was left at. A bump discards it.
  */
-export const TOUR_VERSION = 7;
+export const TOUR_VERSION = 8;
 
 /** The version a finished tour is recorded as (settings.json `tutorial_version`); bump it when the tour changes
  *  enough that someone who finished the old one should be invited again. */
@@ -643,6 +643,16 @@ export const TOUR: readonly TourChapter[] = [
         title: "Obliterate mode, behind a warning",
         body:
           "Settings → Advanced → Show Obliterate mode adds a third choice to the switch. Choosing it opens its warning every time: what it grants (Claude may write wording itself; a custom method may change anything Word stores, its copies shown to you and delivered marked UNPROVEN; a raw XML edit, proven element by element, its words listed before you approve; a copy that fails a check is delivered marked UNVERIFIED), what it costs, and what still holds (copies only, the sandbox, the independent checks on every copy). Turn on Obliterate works only once the box under it is ticked, and the app never opens in it.",
+      },
+      {
+        id: "hands-on",
+        capabilities: ["handson.toggle", "handson.parts", "handson.save-part", "handson.replace-part"],
+        mode: "explanatory",
+        anchor: "settings",
+        placement: "bottom",
+        title: "Obliterate's hands-on tools",
+        body:
+          "Obliterate's warning has one more box, off unless you tick it: the hands-on tools (the mode's strip above the message box switches them too). Parts, beside each document, then shows the parts its file is made of — the XML as text, with a search. It is read-only: nothing in the window edits XML. Save this part writes one out as it is; you change it in an editor of your own, and Replace this part puts your file in its place in a copy, after a preview. The app proves the copy holds exactly your file's bytes and lists the words that changes before you approve. No AI is used, and Claude cannot use these tools.",
       },
     ],
   },

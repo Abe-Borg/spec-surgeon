@@ -52,8 +52,10 @@ def failed_preview_checks(sample):
         if problem:                             # a custom method's sample no copy could be made of
             return [{"check": "Preview", "reason": f"No copy of it could be made: {problem.rstrip('.')}."}]
         return [{"check": "Preview", "reason": "The preview could not complete its checks. The diagnostic record has the details."}]
-    # an Obliterate custom method's copy fails the checks of its file, in their own words
-    messages = {**CHECK_MESSAGES, **SHOWN_CHECK_MESSAGES} if getattr(sample, "unproven", False) else CHECK_MESSAGES
+    # an Obliterate custom method's copy fails the checks of its file, in their own words; so does the copy of a raw
+    # XML edit or of a replaced part, whose stated change can leave a file Word repairs or refuses
+    of_the_file = getattr(sample, "unproven", False) or getattr(sample, "raw_xml", False)
+    messages = {**CHECK_MESSAGES, **SHOWN_CHECK_MESSAGES} if of_the_file else CHECK_MESSAGES
     return [{"check": key, "reason": messages.get(key, "A verification check did not pass. The diagnostic record has the details.")}
             for key in sorted(failed)]
 
@@ -350,6 +352,17 @@ def refusal_message(exception, step: bool = True):
     if code == "xpath-timeout":
         return head + ("The raw XML edit's XPath took too long on this document, so nothing was changed. Select by "
                        "the element's own name and attributes.")
+    if code == "part-missing" and details.get("part"):
+        return head + f"This document has no part named {details['part']}; a part is replaced, never added."
+    if code == "part-file" and details.get("file"):
+        name = Path(str(details["file"])).name
+        why = {"too-big": f"{name} is larger than the app takes for one part.",
+               "changed": f"{name} is not the file you chose any more: its content changed. Choose it again.",
+               "unreadable": f"{name} cannot be read."}.get(details.get("why"), f"{name} cannot be used.")
+        return head + why + " Nothing was changed."
+    if code == "part-same" and details.get("part"):
+        return head + (f"The file holds exactly what {details['part']} already holds, so nothing would change. Save "
+                       f"your changes to the file, then choose it again.")
     if exception.get("kind") in {"internal-error", "environment"}:
         return head + "The change could not be completed for this file. The diagnostic record has the technical details."
     plain = _plain_reason(reason, operation)

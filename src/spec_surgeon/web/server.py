@@ -43,7 +43,7 @@ TOKEN_HEADER = "X-Spec-Surgeon-Token"
 # request leaves a ``web.request`` event: the page's actions, in order).
 QUIET_ROUTES = frozenset({"/api/state", "/api/update", "/api/image", "/api/health", "/api/diagnostics"})
 SLOW_REQUEST_MS = 2000
-WAITS_ON_USER = frozenset({"/api/pick"})        # a native dialog: slow because the user takes their time
+WAITS_ON_USER = frozenset({"/api/pick", "/api/part/save"})    # a native dialog: slow because the user takes their time
 KNOWN_FAILURES = {"ValueError", "TrialsFailed", "TransformFailed", "SpecError", "FileNotFoundError", "PermissionError"}
 NOT_BUILT = """<!doctype html><meta charset="utf-8"><title>Spec Surgeon</title>
 <body style="font-family:system-ui;margin:3rem;max-width:40rem"><h1>Spec Surgeon</h1>
@@ -338,7 +338,8 @@ class WindowState:
                     # a custom method's document no copy could be made of: its card says why, and none is created
                     "no_copy": bool(getattr(sv, "problem", "")),
                     # a plan with a raw XML edit (Obliterate): its words and other changes are listed from the copy
-                    "raw_xml": bool(getattr(sv, "raw_xml", False))}
+                    "raw_xml": bool(getattr(sv, "raw_xml", False)),
+                    "raw_what": str(getattr(sv, "raw_what", "") or "")}
                    for sv in raw["samples"]]
         unverified = raw.get("unverified") or {}
         exported = raw.get("exported") or {}
@@ -356,6 +357,7 @@ class WindowState:
                     "unverified": list(unverified.get(source, [])), **saved(output)}
                    for source, output in raw["results"].items()]
         return {"version": self.version, "busy": busy, "stage": stage, "mode": raw.get("mode", "default"),
+                "hands_on": raw.get("hands_on") is True,
                 "modes": task.available_modes(), "template": task.template_info(),
                 "left_untouched": [dict(e) for e in raw.get("left_untouched", [])],
                 "connection": {"ready": task.session.claude_ready(), "origin": self.key_origin},
@@ -870,11 +872,116 @@ def create_app(state: WindowState, *, dev: bool = False) -> FastAPI:
         except ValueError as e:
             return error(str(e))
         try:
-            state.task.set_mode(str(body.get("mode") or ""), acknowledged=body.get("acknowledged") is True)
+            state.task.set_mode(str(body.get("mode") or ""), acknowledged=body.get("acknowledged") is True,
+                                hands_on=body.get("hands_on") is True)
         except ValueError as e:
             return error(str(e))
         state.save_settings()
         return state.view()
+
+    # ---- Obliterate's hands-on tools (docs/WEB_API.md, "The hands-on tools"; ``hands_on.py``) ----
+    @app.post("/api/hands-on")
+    async def set_hands_on(request: Request):
+        """The hands-on tools' switch, in Obliterate mode: ``{"on": bool}``. Never kept: they go with the mode."""
+        if state.busy:
+            return busy_error()
+        try:
+            body = await json_object(request)
+            state.task.set_hands_on(body.get("on") is True)
+        except ValueError as e:
+            return error(str(e))
+        return state.view()
+
+    def which_of(body: Dict[str, Any]) -> str:
+        return "original" if body.get("which") == "original" else "current"
+
+    @app.post("/api/parts")
+    async def parts(request: Request):
+        """The parts of one attached document's file, read-only: ``{"path", "which"?}`` (``which``: ``current``, the
+        copy the next change is made on, or ``original``). Refused unless the hands-on tools are on."""
+        try:
+            body = await json_object(request)
+            return state.task.parts(str(body.get("path") or ""), which_of(body))
+        except ValueError as e:
+            return error(str(e))
+
+    @app.post("/api/part")
+    async def part(request: Request):
+        """One page of one part as text, read-only: ``{"path", "part", "page"?, "which"?}``."""
+        try:
+            body = await json_object(request)
+            page = body.get("page")
+            return state.task.part(str(body.get("path") or ""), str(body.get("part") or ""),
+                                   page if type(page) is int else 1, which_of(body))
+        except ValueError as e:
+            return error(str(e))
+
+    @app.post("/api/parts/search")
+    async def search_parts(request: Request):
+        """Every line of the document's parts that holds the words, read-only: ``{"path", "query", "which"?}``."""
+        try:
+            body = await json_object(request)
+            return state.task.search_parts(str(body.get("path") or ""), str(body.get("query") or ""), which_of(body))
+        except ValueError as e:
+            return error(str(e))
+
+    @app.post("/api/part/save")
+    async def save_part(request: Request):
+        """**Save this part**: the part's own bytes into a folder — the one in the body, else the one the native
+        folder dialog returns — never over a file the conversation works on and never into the scratch tree. 501
+        without a dialog and a folder; ``{"cancelled": true}`` when the dialog was dismissed; else the view."""
+        if state.busy:
+            return busy_error()
+        if state.tutorial.active:
+            return error("End the tour first; this saves a part of your own documents.", 409)
+        try:
+            body = await json_object(request)
+            path, name = str(body.get("path") or ""), str(body.get("part") or "")
+            state.task.part(path, name, 1, which_of(body))            # refused before any dialog opens
+        except ValueError as e:
+            return error(str(e))
+        folder = str(body.get("folder") or "")
+        if not folder:
+            chosen = state.shell.pick_folder(state.settings.export_folder or str(Path.home()))
+            if chosen is None:
+                return error("This window has no native folder dialog; name the folder to save the part into.", 501)
+            if not chosen:
+                return {"cancelled": True}
+            folder = chosen
+        try:
+            made = state.task.save_part(path, name, folder, which_of(body))
+        except (OSError, ValueError) as e:
+            return error(str(e))
+        diag.app_log().info(f"Hands-on tools: saved the part {name} to {made['saved']}")
+        return state.view()
+
+    @app.post("/api/part/replace")
+    async def replace_part(path: str = Form(""), part: str = Form(""), file: UploadFile = File(...)):
+        """**Replace this part**: the chosen file's bytes go under the scratch folder's ``parts/<stamp>/`` (kept only
+        while the window is open) and the plan that puts them in the part's place is built and previewed — a job, as
+        a button's ``/api/recipe``, with no AI call. Nothing changes until the preview is approved."""
+        if state.busy:
+            return busy_error()
+        if state.tutorial.active:
+            return error("End the tour first; this changes a copy of your own documents.", 409)
+        try:
+            state.task.part(path, part, 1)                            # the tools are on, and the part is there
+        except ValueError as e:
+            return error(str(e))
+        from ..ops.replace_part import MAX_PART_BYTES
+        name = Path(file.filename or "part").name
+        folder = Path(state.task.session.out_root) / "parts" / time.strftime("%Y%m%d-%H%M%S")
+        try:
+            data = await file.read()
+            if len(data) > MAX_PART_BYTES:
+                return error(f"{name} is {len(data):,} bytes; a part is replaced with a file of at most "
+                             f"{MAX_PART_BYTES:,}.")
+            folder.mkdir(parents=True, exist_ok=True)
+            target = folder / name
+            target.write_bytes(data)
+        except OSError as e:
+            return error(upload_failure(name, e))
+        return stream("replace_part", path=path, part=part, file=str(target))
 
     @app.post("/api/handoff")
     async def hand_off(request: Request):
@@ -950,7 +1057,8 @@ def create_app(state: WindowState, *, dev: bool = False) -> FastAPI:
         except ValueError as e:
             return error(str(e))
         try:
-            state.task.obliterate_todo(str(body.get("path") or ""), acknowledged=body.get("acknowledged") is True)
+            state.task.obliterate_todo(str(body.get("path") or ""), acknowledged=body.get("acknowledged") is True,
+                                       hands_on=body.get("hands_on") is True)
         except ValueError as exc:
             return error(str(exc))
         state.save_settings()          # the mode it turned on is never kept: the next launch opens as before

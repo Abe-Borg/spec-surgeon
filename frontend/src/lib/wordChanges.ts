@@ -23,6 +23,18 @@ export const WORDS_CHANGE_TITLE = "Words the method changes, as the independent 
 export const RAW_NO_WORDS_CHANGE =
   "The raw XML edit changes no words: in the parts it edits, the checker read the same text in this copy as in the original — the words of every paragraph and any other text between tags. Values it sets in attributes are in the edit's own sentence.";
 export const RAW_WORDS_CHANGE_TITLE = "Words the raw XML edit changes, as the independent checker read them:";
+/** And for a part replaced with a file of the user's (`samples[].raw_what` "part", Obliterate's hands-on tools). */
+export const PART_NO_WORDS_CHANGE =
+  "The replaced part changes no words: the checker read the same text in this copy as in the original — the words of every paragraph and any other text between tags.";
+export const PART_WORDS_CHANGE_TITLE = "Words the replaced part changes, as the independent checker read them:";
+
+/** The two sentences a sample's word list is shown under: a custom method's, a raw XML edit's, or a replaced part's. */
+export function wordsHeadings(sample: Pick<Sample, "raw_xml" | "raw_what">): { title: string; none: string } {
+  if (!sample.raw_xml) return { title: WORDS_CHANGE_TITLE, none: NO_WORDS_CHANGE };
+  return sample.raw_what === "part"
+    ? { title: PART_WORDS_CHANGE_TITLE, none: PART_NO_WORDS_CHANGE }
+    : { title: RAW_WORDS_CHANGE_TITLE, none: RAW_NO_WORDS_CHANGE };
+}
 
 const quote = (words: string[]): string => words.map((w) => `\u201c${w}\u201d`).join(", ");
 

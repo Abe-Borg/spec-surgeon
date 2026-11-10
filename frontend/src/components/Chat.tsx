@@ -4,6 +4,7 @@ import type { Choice, Mode } from "../types";
 import type { ActionButton, DiscardButton } from "../lib/action";
 import { STARTERS, endedLive, withLeaving, type ChatItem } from "../lib/chat";
 import { TOUR_HOLD } from "../lib/tour";
+import { HANDS_ON_LABEL, handsOnTip } from "../lib/handsOn";
 import type { LiveReply } from "../lib/view";
 import { usePrefersReducedMotion } from "../lib/useReveal";
 import ChatMessage, { ErrorBubble } from "./MessageBubble";
@@ -13,6 +14,7 @@ import Prompts from "./Prompts";
 import PauseCard from "./PauseCard";
 import FailedCopyCard from "./FailedCopyCard";
 import TodoCard from "./TodoCard";
+import Tip from "./Tip";
 
 interface Props {
   items: ChatItem[];
@@ -42,6 +44,9 @@ interface Props {
   /** Default and Obliterate: the saved recipes, above the message box (RecipesStrip; nothing when there are none). */
   recipes?: ReactNode;
   onMode: (mode: Mode) => void;
+  /** Obliterate's hands-on tools are on, and their switch in the mode's strip (lib/handsOn.ts). */
+  handsOn?: boolean;
+  onHandsOn?: (on: boolean) => void;
   /** Discard, beside the one button: a waiting preview, or a conversation's open request (``lib/action.discardButton``). */
   discard?: DiscardButton | null;
   onDiscard?: () => void;
@@ -74,6 +79,8 @@ export default function Chat({
   panel,
   recipes,
   onMode,
+  handsOn = false,
+  onHandsOn,
   discard,
   onDiscard,
   tourActive,
@@ -351,6 +358,22 @@ export default function Chat({
               anything Word stores; a copy whose checks fail is delivered marked UNVERIFIED, and a custom
               method&rsquo;s copy UNPROVEN. Copies only — your originals are never written.
             </span>
+            {onHandsOn && (
+              <Tip tip={handsOnTip(handsOn, busy || !!tourActive)}>
+                <button
+                  type="button"
+                  disabled={busy || !!tourActive}
+                  aria-pressed={handsOn}
+                  onClick={() => onHandsOn(!handsOn)}
+                  data-capability="handson.toggle"
+                  className={`flex-none rounded-md border px-2 py-0.5 transition-colors disabled:pointer-events-none disabled:opacity-60 ${
+                    handsOn ? "border-err bg-err/20 text-err" : "border-err/50 text-err hover:bg-err/15"
+                  }`}
+                >
+                  {HANDS_ON_LABEL}: {handsOn ? "on" : "off"}
+                </button>
+              </Tip>
+            )}
             <button
               type="button"
               disabled={busy}

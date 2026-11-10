@@ -27,6 +27,10 @@ REQUEST_ONLY_OPS = ("resolve_tracked_changes", "set_document_properties", "set_d
                     "reply_to_comments", "resolve_comments")
 
 COMMON_ASSUMPTIONS: Dict[str, List[str]] = {
+    "replace_part": ["Obliterate mode's hands-on tools only; built by the window, never planned by a model",
+                     "the part must exist; the file is placed byte for byte and pinned by its SHA-256",
+                     "the words it adds and removes are listed from the copy before approval, not predicted",
+                     "no other part changes; never tracked"],
     "edit_xml": ["Obliterate mode only; never tracked",
                  "exactly the stated number of elements, or the file is left as it is",
                  "the words it adds and removes are listed from the copy before approval, not predicted",
@@ -932,8 +936,11 @@ def worked_examples() -> List[Dict[str, Any]]:
 
 def offered_ops(unguarded: bool = False) -> Dict[str, Any]:
     """The operations a conversation is told of: every registered op, less Obliterate's own (``Op.obliterate_only``:
-    ``edit_xml``) unless the conversation is in Obliterate mode. Safe and Default are told what they always were."""
-    return {name: cls for name, cls in sorted(OPS.items()) if unguarded or not cls.obliterate_only}
+    ``edit_xml``) unless the conversation is in Obliterate mode, and never a hands-on tool (``Op.hands_on``:
+    ``replace_part``, which the window builds from the user's own choice). Safe and Default are told what they always
+    were."""
+    return {name: cls for name, cls in sorted(OPS.items())
+            if not cls.hands_on and (unguarded or not cls.obliterate_only)}
 
 
 def op_catalog(examples: bool = True, unguarded: bool = False) -> Dict[str, Any]:

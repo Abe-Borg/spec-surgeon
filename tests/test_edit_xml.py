@@ -770,7 +770,8 @@ def test_the_gate_refuses_it_in_every_mode_but_obliterate_whatever_shape_the_pla
     assert compiler._mode_errors(plain, False) == [] and compiler._mode_errors(RAW_SPEC, True) == []
     assert compiler._mode_errors({"questions": ["?"]}, False) == [] and compiler._mode_errors("x", False) == []
     # the engine below the gate knows the op in every mode (a spec is a spec): the gate is what a mode is
-    assert [name for name, cls in OPS.items() if cls.obliterate_only] == ["edit_xml"]
+    # (replace_part, Obliterate's hands-on tool, is no conversation's: tests/test_hands_on.py)
+    assert [name for name, cls in OPS.items() if cls.obliterate_only and not cls.hands_on] == ["edit_xml"]
 
 
 def test_text_a_raw_edit_places_passes_the_gate_only_when_the_user_has_read_it(batch):

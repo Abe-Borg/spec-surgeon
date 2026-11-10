@@ -186,6 +186,7 @@ INPUT_FILE_PARAMS: Dict[str, List[Tuple[str, ...]]] = {
     "insert_image": [("image",)],                                     # built-in batch 6 (F4, pictures)
     "remove_images": [("match", "image")],
     "resize_images": [("match", "image")],
+    "replace_part": [("file",)],                          # Obliterate's hands-on tools (O4): the file the user chose
 }
 
 
