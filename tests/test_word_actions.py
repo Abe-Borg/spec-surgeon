@@ -825,3 +825,56 @@ def test_a_change_outside_the_style_and_list_definitions_is_said_not_set_aside(p
     rec = run_difference(plain, bullets, "a.docx", "copy.docx", rewritten=True)
     assert any(line.startswith("List numbering: ") and "picture bullets" in line for line in difference_lines(rec)), \
         difference_lines(rec)
+
+
+def test_a_reference_is_compared_by_what_it_leads_to_never_dropped(plain):
+    """Word gives every relationship id again, so the id says nothing — but what it leads to does. Two links that
+    exchange their destinations keep the same set of relationships and the same words: the paragraphs that hold
+    them are the difference, and it is said."""
+    link = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink"
+
+    def edit(data: bytes, changes) -> bytes:
+        made = io.BytesIO()
+        with zipfile.ZipFile(io.BytesIO(data)) as z, zipfile.ZipFile(made, "w") as target:
+            for n in z.namelist():
+                target.writestr(n, changes.get(n, lambda b: b)(z.read(n)))
+        return made.getvalue()
+
+    def add_links(body: bytes) -> bytes:
+        at = body.rindex(b"<w:sectPr")
+        two = b"".join(b'<w:p><w:hyperlink r:id="%s"><w:r><w:t>%s</w:t></w:r></w:hyperlink></w:p>' % pair
+                       for pair in ((b"rIdAlpha", b"Alpha link"), (b"rIdBeta", b"Beta link")))
+        return body[:at] + two + body[at:]
+
+    def add_rels(rels: bytes) -> bytes:
+        two = "".join(f'<Relationship Id="{rid}" Type="{link}" Target="{to}" TargetMode="External"/>'
+                      for rid, to in (("rIdAlpha", "https://alpha.example/"), ("rIdBeta", "https://beta.example/")))
+        return rels.replace(b"</Relationships>", two.encode() + b"</Relationships>")
+
+    source = edit(plain, {"word/document.xml": add_links, "word/_rels/document.xml.rels": add_rels})
+    out, _ = save_again(source, ["repair"])
+    body = member(out, "word/document.xml")
+    assert b"rIdAlpha" not in body and b"rIdBeta" not in body          # every id was given again
+    rec = run_difference(source, out, "a.docx", "copy.docx", rewritten=True)
+    assert difference_lines(rec)[1].startswith("Nothing this report counts differs")
+    # the two links exchange their destinations: the same relationships, the same words, another document
+    import re
+    first, second = re.findall(rb'<w:hyperlink [^>]*r:id="([^"]+)"', body)
+    swapped = edit(out, {"word/document.xml": lambda b: b.replace(b'r:id="%s"' % first, b'r:id="@@"').replace(
+        b'r:id="%s"' % second, b'r:id="%s"' % first).replace(b'r:id="@@"', b'r:id="%s"' % second)})
+    rec = run_difference(source, swapped, "a.docx", "copy.docx", rewritten=True)
+    lines = difference_lines(rec)
+    assert "In the body, the formatting or markup of 2 paragraphs changed without changing their words." in lines
+    assert not any(line.startswith(("Nothing this report counts differs", "Relationships")) for line in lines)
+    assert rec.get("V2").data["actual"] == []
+    # a link that now leads somewhere else: its paragraph, and the relationship that went and the one that came
+    moved = edit(out, {"word/_rels/document.xml.rels": lambda b: b.replace(b"https://beta.example/",
+                                                                           b"https://elsewhere.example/")})
+    lines = difference_lines(run_difference(source, moved, "a.docx", "copy.docx", rewritten=True))
+    assert "In the body, the formatting or markup of 1 paragraph changed without changing its words." in lines
+    assert any(line.startswith("Relationships: ") and "https://elsewhere.example/" in line
+               and "https://beta.example/" in line for line in lines)
+    # a reference that leads to nothing is one too
+    dangling = edit(out, {"word/document.xml": lambda b: b.replace(b'r:id="%s"' % first, b'r:id="rIdNone"')})
+    rec = run_difference(source, dangling, "a.docx", "copy.docx", rewritten=True)
+    assert any("1 paragraph changed" in line for line in difference_lines(rec))

@@ -188,11 +188,15 @@ def _same_run_format(a, b) -> bool:
                                                                                               exclusive=True)
 
 
-def _plain(el) -> bytes:
+def _plain(el, leads: Any = None) -> bytes:
     """``el`` in canonical form without what Word's own save writes into it: the revision-save ids (``w:rsid…``)
-    and paragraph ids, the spelling and page-break marks, the ``_GoBack`` bookmark, the relationship ids (Word gives
-    them again), and the boundaries between neighbouring runs of the same formatting. Only the namespaces the element itself uses are written, so a root
-    that declares more of them changes nothing. What a copy Word saved is compared by (module docstring)."""
+    and paragraph ids, the spelling and page-break marks, the ``_GoBack`` bookmark, and the boundaries between
+    neighbouring runs of the same formatting. A relationship id, which Word gives again, is written as what it
+    leads to (``leads``: ``_references`` of the element's own part) — never dropped, so a link or a picture that now
+    leads somewhere else is a difference although the id's renumbering is not. Only the namespaces the element
+    itself uses are written, so a root that declares more of them changes nothing. What a copy Word saved is compared
+    by (module docstring)."""
+    leads = leads or {}
     el = copy.deepcopy(el)
     goback = {b.get(W + "id") for b in el.iter(W + "bookmarkStart") if b.get(W + "name") == "_GoBack"}
     for node in list(el.iter()):
@@ -205,9 +209,11 @@ def _plain(el) -> bytes:
             continue
         for name in list(node.attrib):
             local = etree.QName(name).localname
-            # (a relationship id is Word's to give again: where a reference leads is the relationships' to say, D1)
-            if local.startswith("rsid") or local in _SAVE_ATTRIBUTES or name.startswith(R):
+            if local.startswith("rsid") or local in _SAVE_ATTRIBUTES:
                 del node.attrib[name]
+            elif name.startswith(R):
+                # the id is Word's to give again; what it leads to is the document's
+                node.set(name, leads.get(node.get(name), "(leads to nothing)"))
         if node.tag == W + "t":
             node.set(_XML_SPACE, "preserve")
     for parent in list(el.iter()):
@@ -229,6 +235,34 @@ def _plain(el) -> bytes:
                 continue
             previous = child
     return etree.tostring(el, method="c14n", exclusive=True)
+
+
+def _references(pkg: VPackage, part: str, known: Any = None) -> Dict[str, str]:
+    """What each relationship id of ``part`` leads to, in words that do not depend on the id: the kind and the member
+    (by the name the original gave it, ``known``: ``_renamed``) or the outside address. {} for a part with no
+    relationships, or whose relationships part does not parse (V1 names it)."""
+    known = known or {}
+    folder, name = posixpath.split(part)
+    member = posixpath.join(folder, "_rels", name + ".rels")
+    if member not in pkg.names:
+        return {}
+    try:
+        root = pkg.xml(member)
+    except (etree.XMLSyntaxError, ValueError):
+        return {}
+    leads: Dict[str, str] = {}
+    for rel in root.findall(REL + "Relationship"):
+        rid = rel.get("Id")
+        if not rid:
+            continue
+        kind = (rel.get("Type") or "").rsplit("/", 1)[-1]
+        target = rel.get("Target") or ""
+        if rel.get("TargetMode", "Internal") == "Internal":
+            target = target.lstrip("/") if target.startswith("/") else posixpath.normpath(posixpath.join(folder, target))
+            leads[rid] = f"{kind} → {known.get(target, target)}"
+        else:
+            leads[rid] = f"{kind} → {target} (outside the file)"
+    return leads
 
 
 def _roles(pkg: VPackage, parsed: Dict[str, Any]) -> Dict[str, Tuple[str, ...]]:
@@ -379,15 +413,17 @@ def _part_words(pkg: VPackage, part: str) -> str:
     return part
 
 
-def _formatting_only(before, after, form=None) -> int:
+def _formatting_only(before, after, form=None, form_after=None) -> int:
     """The paragraphs of one text part whose markup differs while their words do not: the paragraphs the two sides
     share, paired in order by their text (a paragraph that came or went, or whose words changed, is V2's to list),
-    counted when their canonical XML differs (``form``: ``_plain`` for a copy Word saved)."""
+    counted when their canonical XML differs (``form``, and ``form_after`` for the copy's side: ``_plain`` with each
+    side's own references, for a copy Word saved)."""
     form = form or _canonical
+    form_after = form_after or form
     a, b = list(before.iter(W + "p")), list(after.iter(W + "p"))
     texts_a, texts_b = [x.text for x in blocks(before)], [x.text for x in blocks(after)]
     pairs = difflib.SequenceMatcher(None, texts_a, texts_b, autojunk=False).get_matching_blocks()
-    return sum(1 for i, j, n in pairs for k in range(n) if form(a[i + k]) != form(b[j + k]))
+    return sum(1 for i, j, n in pairs for k in range(n) if form(a[i + k]) != form_after(b[j + k]))
 
 
 _TABLE_SHAPE = tuple(W + tag for tag in ("tblPr", "tblGrid", "tblPrEx", "trPr", "tcPr"))
@@ -403,22 +439,23 @@ _OUTSIDE_WORDS = {"docDefaults": "the document's default formatting (the font, s
                   "numPicBullet": "the picture bullets"}
 
 
-def _outside(root, own: Tuple[str, ...], skip: Tuple[str, ...]) -> Dict[str, bytes]:
+def _outside(root, own: Tuple[str, ...], skip: Tuple[str, ...], form) -> Dict[str, bytes]:
     """What a styles or numbering part holds beside its ``own`` definitions, by element name, in plain form
-    (``_plain``), without what Word's save writes of its own accord (``skip``)."""
+    (``form``: ``_plain`` with the part's own references), without what Word's save writes of its own accord
+    (``skip``)."""
     found: Dict[str, bytes] = {}
     for el in root:
         if not isinstance(el.tag, str):
             continue
         name = etree.QName(el).localname
         if name not in own and name not in skip:
-            found[name] = found.get(name, b"") + _plain(el)
+            found[name] = found.get(name, b"") + form(el)
     return found
 
 
-def _outside_changed(before, after, own: Tuple[str, ...], skip: Tuple[str, ...]) -> List[str]:
+def _outside_changed(before, after, own: Tuple[str, ...], skip: Tuple[str, ...], form, form_after) -> List[str]:
     """The names of what changed, came or went in a part outside its own definitions (``_outside``)."""
-    found = _keyed_difference(_outside(before, own, skip), _outside(after, own, skip))
+    found = _keyed_difference(_outside(before, own, skip, form), _outside(after, own, skip, form_after))
     return sorted(set(found["added"]) | set(found["removed"]) | set(found["changed"]))
 
 
@@ -428,12 +465,14 @@ def _table_shape(table, form=None) -> bytes:
     return b"".join((form or _canonical)(el) for el in table.iter(*_TABLE_SHAPE))
 
 
-def _paired_changes(before: List[Any], after: List[Any], form) -> int:
+def _paired_changes(before: List[Any], after: List[Any], form, form_after=None) -> int:
     """How many of two equally long lists' members differ, pair by pair in order; 0 when the lists are not the same
-    length (the count that moved is said instead, and no pairing is honest)."""
+    length (the count that moved is said instead, and no pairing is honest). ``form_after``: the copy's side, when
+    it is written with references of its own."""
     if len(before) != len(after):
         return 0
-    return sum(1 for a, b in zip(before, after) if form(a) != form(b))
+    form_after = form_after or form
+    return sum(1 for a, b in zip(before, after) if form(a) != form_after(b))
 
 
 def run_difference(source: bytes, output: bytes, source_name: str, output_name: str, *,
@@ -638,7 +677,17 @@ def _what_changed(src: VPackage, out: VPackage, src_xml, out_xml, changed, added
     Word saved, each beside the one in its place (``_paired``); the report then compares by content, without Word's
     own save marks (``_plain``), and says so first."""
     rewritten = pairs is not None
-    form = _plain if rewritten else _canonical
+    # a copy Word saved: its parts by the names the original gave them, and each side's elements written with what
+    # their own part's relationship ids lead to
+    known = _renamed(src, out, pairs) if rewritten else {}
+
+    def forms(a: Any, b: Any) -> Tuple[Any, Any]:
+        """How an element of the original's part ``a`` and of the copy's part ``b`` is written to be compared."""
+        if not rewritten:
+            return _canonical, _canonical
+        before = _references(src, a) if a else {}
+        after = _references(out, b, known) if b else {}
+        return (lambda el: _plain(el, before)), (lambda el: _plain(el, after))
     lines: List[str] = [SAVED_AGAIN] if rewritten else []
     # the text parts to compare pair by pair: a copy Word saved has every one, whatever its bytes or its name
     both = ([(a, b) for a, b in pairs if a and b] if rewritten else
@@ -664,7 +713,7 @@ def _what_changed(src: VPackage, out: VPackage, src_xml, out_xml, changed, added
     # paragraphs whose formatting or markup changed while their words did not
     formatting: Dict[str, int] = {}
     for a, b in both:
-        n = _formatting_only(src_xml[a], out_xml[b], form)
+        n = _formatting_only(src_xml[a], out_xml[b], *forms(a, b))
         if n:
             formatting[a] = n
             lines.append(f"In {_part_words(src, a)}, the formatting or markup of {_count(n, 'paragraph', 'paragraphs')} "
@@ -674,8 +723,9 @@ def _what_changed(src: VPackage, out: VPackage, src_xml, out_xml, changed, added
     tables: Dict[str, int] = {}
     page_setup = 0
     for a, b in both:
+        fa, fb = forms(a, b)
         n = _paired_changes(list(src_xml[a].iter(W + "tbl")), list(out_xml[b].iter(W + "tbl")),
-                            lambda table: _table_shape(table, form))
+                            lambda table: _table_shape(table, fa), lambda table: _table_shape(table, fb))
         if n:
             tables[a] = n
             lines.append(f"In {_part_words(src, a)}, the layout or formatting of {_count(n, 'table', 'tables')} "
@@ -684,7 +734,7 @@ def _what_changed(src: VPackage, out: VPackage, src_xml, out_xml, changed, added
             # (a copy Word saved: which header a section uses is said by the pairing, not by a relationship id
             # Word gave again)
             page_setup = _paired_changes(list(src_xml[a].iter(W + "sectPr")), list(out_xml[b].iter(W + "sectPr")),
-                                         form)
+                                         fa, fb)
             if page_setup:
                 lines.append(f"Page setup: the settings of {_count(page_setup, 'section', 'sections')} changed (page "
                              f"size, margins, columns, or which headers and footers it uses).")
@@ -695,13 +745,14 @@ def _what_changed(src: VPackage, out: VPackage, src_xml, out_xml, changed, added
     o_name, s_after = _related_xml(out, STYLES_REL)
     described |= {n for n in (s_name, o_name) if n}
     if s_before is not None and s_after is not None and (s_name in changed or s_name != o_name):
-        styles = _keyed_difference(_children_by(s_before, "style", "styleId", form),
-                                   _children_by(s_after, "style", "styleId", form))
+        fa, fb = forms(s_name, o_name)
+        styles = _keyed_difference(_children_by(s_before, "style", "styleId", fa),
+                                   _children_by(s_after, "style", "styleId", fb))
         said = [f"{len(styles[k])} {k} ({_named(styles[k])})" for k in ("added", "removed", "changed") if styles[k]]
         if rewritten:
             # Word writes the part again, so its bytes alone say nothing: what it holds beside the style definitions
             # is read too — the document's default formatting — and only Word's own latent-styles list is set aside
-            styles["outside"] = _outside_changed(s_before, s_after, ("style",), _SAVE_STYLES)
+            styles["outside"] = _outside_changed(s_before, s_after, ("style",), _SAVE_STYLES, fa, fb)
             if styles["outside"]:
                 said.append("changed outside the style definitions: "
                             + _named([_OUTSIDE_WORDS.get(n, n) for n in styles["outside"]]))
@@ -714,18 +765,20 @@ def _what_changed(src: VPackage, out: VPackage, src_xml, out_xml, changed, added
     on_name, n_after = _related_xml(out, NUMBERING_REL)
     described |= {n for n in (n_name, on_name) if n}
     if (n_name or on_name) and (n_name in changed or n_name != on_name or on_name in added or n_name in removed):
-        b_defs = {**{"list " + k: v for k, v in _children_by(n_before, "num", "numId", form).items()},
+        fa, fb = forms(n_name, on_name)
+        b_defs = {**{"list " + k: v for k, v in _children_by(n_before, "num", "numId", fa).items()},
                   **{"definition " + k: v
-                     for k, v in _children_by(n_before, "abstractNum", "abstractNumId", form).items()}} \
+                     for k, v in _children_by(n_before, "abstractNum", "abstractNumId", fa).items()}} \
             if n_before is not None else {}
-        a_defs = {**{"list " + k: v for k, v in _children_by(n_after, "num", "numId", form).items()},
+        a_defs = {**{"list " + k: v for k, v in _children_by(n_after, "num", "numId", fb).items()},
                   **{"definition " + k: v
-                     for k, v in _children_by(n_after, "abstractNum", "abstractNumId", form).items()}} \
+                     for k, v in _children_by(n_after, "abstractNum", "abstractNumId", fb).items()}} \
             if n_after is not None else {}
         numbering = _keyed_difference(b_defs, a_defs)
         said = [f"{len(numbering[k])} {k}" for k in ("added", "removed", "changed") if numbering[k]]
         if rewritten and n_before is not None and n_after is not None:
-            numbering["outside"] = _outside_changed(n_before, n_after, ("num", "abstractNum"), _SAVE_NUMBERING)
+            numbering["outside"] = _outside_changed(n_before, n_after, ("num", "abstractNum"), _SAVE_NUMBERING,
+                                                    fa, fb)
             if numbering["outside"]:
                 said.append("changed outside the lists and their definitions: "
                             + _named([_OUTSIDE_WORDS.get(n, n) for n in numbering["outside"]]))
@@ -736,7 +789,9 @@ def _what_changed(src: VPackage, out: VPackage, src_xml, out_xml, changed, added
     ot_name, t_after = _related_xml(out, SETTINGS_REL)
     described |= {n for n in (t_name, ot_name) if n}
     if t_before is not None and t_after is not None and (t_name in changed or t_name != ot_name):
-        def top(root) -> Dict[str, bytes]:
+        fa, fb = forms(t_name, ot_name)
+
+        def top(root, form) -> Dict[str, bytes]:
             found: Dict[str, bytes] = {}
             for el in root:
                 if isinstance(el.tag, str):
@@ -745,14 +800,13 @@ def _what_changed(src: VPackage, out: VPackage, src_xml, out_xml, changed, added
                         continue                 # Word's own bookkeeping of a save, never a setting of the document
                     found[name] = found.get(name, b"") + form(el)
             return found
-        settings = _keyed_difference(top(t_before), top(t_after))
+        settings = _keyed_difference(top(t_before, fa), top(t_after, fb))
         said = [f"{k} {_named(settings[k])}" for k in ("added", "removed", "changed") if settings[k]]
         if said or not rewritten:
             lines.append("Document settings: " + ("; ".join(said) + "." if said else "the settings part changed."))
 
     # relationships and the parts themselves; an outside address is read as it is written, so a hyperlink that now
     # leads somewhere else is said with both addresses
-    known = _renamed(src, out, pairs) if rewritten else {}
     r_before, r_after = _relationships(src), _relationships(out, known)
     r_added, r_removed = sorted((r_after - r_before).elements()), sorted((r_before - r_after).elements())
     if r_added or r_removed:
