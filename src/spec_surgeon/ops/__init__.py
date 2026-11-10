@@ -52,3 +52,4 @@ from . import insert_image, remove_images, resize_images  # noqa: E402,F401 — 
 from . import comment_threads, insert_field  # noqa: E402,F401 — built-in batch 6 (fields and comment threads, §9)
 from . import remove_footnotes  # noqa: E402,F401 — built-in batch 6 (F2; delete_paragraphs grew over ops/deletion.py)
 from . import edit_xml  # noqa: E402,F401 — Obliterate mode only (docs/BACKLOG.md O3: the raw-XML operation)
+from . import replace_part  # noqa: E402,F401 — Obliterate's hands-on tools only (docs/BACKLOG.md O4: swap a part)

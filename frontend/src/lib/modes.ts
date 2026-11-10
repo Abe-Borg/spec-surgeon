@@ -80,11 +80,20 @@ export function obliterateSubject(name: string): string {
 
 /** The warning's line about the API key when it opens from a to-do row: without a key, the copy the app kept can
  *  still be taken (no AI is used for that); anything else in the mode needs the key. "" with a key. */
-export function obliterateKeyNote(keyReady: boolean, failedCopy: boolean): string {
+export function obliterateKeyNote(keyReady: boolean, failedCopy: boolean, handsOn = false): string {
   if (keyReady) return "";
+  if (handsOn) {
+    return "No API key is connected: the hands-on tools work without one (no AI is used for them), but the conversation in Obliterate mode needs the key.";
+  }
   return failedCopy
     ? "No API key is connected: you can take the copy that failed as it is (no AI is used for that), but anything else in Obliterate mode needs the key."
     : "Obliterate mode uses the AI: connect your API key in Settings first.";
+}
+
+/** Whether the warning can be confirmed: with a key; or without one for what uses no AI — the hands-on tools once
+ *  their toggle is ticked, or a to-do row's kept copy. */
+export function canTurnOnObliterate(keyReady: boolean, failedCopy: boolean, handsOn: boolean): boolean {
+  return keyReady || failedCopy || handsOn;
 }
 
 /** A copy's mark that says a custom method made it in Obliterate mode (the server's `UNPROVEN_MARK`, or that mark
@@ -163,3 +172,11 @@ export function sampleBadge(sample: { passed: boolean; unproven?: boolean; set_a
 export const OTHER_CHANGES_TITLE = "What else this copy changes, as the independent reader found it:";
 /** The same heading for a plan with a raw XML edit: the report is of that edit's step. */
 export const RAW_OTHER_CHANGES_TITLE = "What else the raw XML edit's step changes, as the independent reader found it:";
+/** And for a part replaced with a file of the user's (Obliterate's hands-on tools). */
+export const PART_OTHER_CHANGES_TITLE = "What else the replaced part changes, as the independent reader found it:";
+
+/** The heading over a sample's other changes: a custom method's copy, a raw XML edit's step, or a replaced part. */
+export function otherChangesTitle(sample: { unproven?: boolean; raw_xml?: boolean; raw_what?: string }): string {
+  if (sample.unproven || !sample.raw_xml) return OTHER_CHANGES_TITLE;
+  return sample.raw_what === "part" ? PART_OTHER_CHANGES_TITLE : RAW_OTHER_CHANGES_TITLE;
+}

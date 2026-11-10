@@ -3194,6 +3194,11 @@ from .xmledit import OP_ONLY_KINDS, XML_EDIT_CONTRACT, XML_EDIT_EXAMPLE, XML_EDI
 KINDS.update(XML_EDIT_KINDS)
 KIND_CONTRACTS["xml_edit"] = XML_EDIT_CONTRACT
 KIND_EXAMPLES["xml_edit"] = XML_EDIT_EXAMPLE
+# Obliterate's hands-on tools only (docs/BACKLOG.md O4): one member replaced with a file, byte for byte
+from .partswap import PART_BYTES_CONTRACT, PART_BYTES_EXAMPLE, PART_BYTES_KINDS  # noqa: E402
+KINDS.update(PART_BYTES_KINDS)
+KIND_CONTRACTS["part_bytes"] = PART_BYTES_CONTRACT
+KIND_EXAMPLES["part_bytes"] = PART_BYTES_EXAMPLE
 
 # every kind has a contract: a kind whose module wrote none gets that module's docstring, which states its reading
 for _kind_name, _kind_fn in KINDS.items():         # (not _name / _fn: those are this module's helpers)

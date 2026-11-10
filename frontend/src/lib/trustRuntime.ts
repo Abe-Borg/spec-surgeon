@@ -368,6 +368,42 @@ export const RUNTIME_CARDS: RuntimeCard[] = [
       "checked as in any mode.",
   },
   {
+    covers: ["A44", "A45", "A46", "A47"],
+    title: "Obliterate's hands-on tools: a document's parts, read, saved and replaced",
+    you:
+      "In Obliterate's warning, tick Also turn on the hands-on tools before Turn on Obliterate (the box is empty " +
+      "every time), or press Hands-on tools in the mode's strip above the message box. Then Parts beside a " +
+      "document; in its dialog, a part in the list, Search, Save this part… and a folder, Replace this part… and " +
+      "a file, and after the preview Create edited copies.",
+    runs:
+      "Parts reads the document's file on this computer — its edited copy, or the original — and lists what it " +
+      "is made of: each part's name, size and type. A part is shown as text, indented for reading, " +
+      `${F.partPageLines} lines to a page (a part over ${F.maxShownPartMB} MB is listed and not shown); Search ` +
+      `finds a word in every part and lists up to ${F.partSearchHits} lines. All of that is reading: nothing is ` +
+      "written, and nothing in the window edits XML. Save this part writes that part's own bytes — not the " +
+      "indented view — into the folder you choose, under the document's and the part's names; a file already " +
+      "there with other bytes is left alone and this one is numbered beside it. Replace this part keeps a copy " +
+      "of the file you chose in the scratch folder, then builds one plan in the app, with no AI: that part of " +
+      "that one document becomes exactly your file's bytes, pinned by their SHA-256. The plan passes the same " +
+      "gate and preview as any other. The independent checker hashes the part in the copy itself and holds " +
+      "every other part to the original, byte for byte; what the new part does to the words is not predicted, so " +
+      "it is listed from the copy, in the chat and under the preview, before the button. A part that is no " +
+      "longer well-formed XML, or a reference left pointing at nothing, is placed as you gave it and fails its " +
+      "check: the preview says Did not pass, and in this mode the copy is still created, marked UNVERIFIED. It is " +
+      "one change: listed under What you've done so far, undone by Undo the last change, never a step of a " +
+      "saved recipe.",
+    sent: "Nothing. No part, no file and no search goes to Anthropic or anywhere else: none of these tools makes a call.",
+    ai: NONE,
+    bounds:
+      "Offered only in Obliterate mode, and only while the tools are on: they are off each time the mode is " +
+      "chosen, never kept in settings, and gone when the mode is left. Claude is never told of the operation " +
+      "behind Replace this part, and a plan from the conversation that names it is refused; the app takes it " +
+      `only from this dialog. A part is replaced, never added; the file is at most ${F.maxPartMB} MB; a file ` +
+      "that changed after you chose it, or after the preview, is refused. Save never writes over a file the " +
+      "conversation works on and never into the scratch folder. Copies only: your originals are never written. " +
+      `Replace this part waits ${WHILE_CHECKED}, and while a preview or a question is open.`,
+  },
+  {
     covers: ["A42", "A43", "B21"],
     title: "Obliterate from the to-do list: one document, and the copy that failed",
     you:

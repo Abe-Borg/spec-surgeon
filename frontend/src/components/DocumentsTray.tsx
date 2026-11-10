@@ -9,6 +9,7 @@ import {
   trayTitle,
   type TraySection,
 } from "../lib/workbench";
+import { PARTS_BUTTON, partsTip } from "../lib/handsOn";
 import { primaryBtn, quietBtn } from "./ModalShell";
 import Tip from "./Tip";
 
@@ -34,6 +35,9 @@ interface Props {
   /** Why the attachments cannot change now ("" when they can): a run's saved copies wait on its recovery (the
    *  view's `recovery_blocked`); attaching or removing would end that check first. */
   blocked: string;
+  /** Obliterate's hands-on tools are on: each document carries **Parts**, its read-only part browser. Absent
+   *  otherwise. */
+  onParts?: (attachment: Attachment) => void;
 }
 
 const BUSY_TIP = "Finish or stop the current work first";
@@ -69,6 +73,7 @@ function AttachmentCard({
   busyTip,
   showKind,
   onRemove,
+  onParts,
 }: {
   attachment: Attachment;
   scope: "" | "To do" | "Working on";
@@ -78,6 +83,7 @@ function AttachmentCard({
   /** The kind tag (Picture, Table); the template's own section needs none. */
   showKind: boolean;
   onRemove: (attachment: Attachment) => void;
+  onParts?: (attachment: Attachment) => void;
 }) {
   const refused = attachment.state === "refused";
   const tag = showKind ? kindTag(attachment) : "";
@@ -103,6 +109,18 @@ function AttachmentCard({
           <p className="mt-0.5 text-[12px] leading-snug text-err">{attachment.reason || "This file was left out."}</p>
         )}
       </div>
+      {onParts && attachment.kind === "document" && !refused && (
+        <Tip tip={partsTip(attachment.name, false)}>
+          <button
+            type="button"
+            onClick={() => onParts(attachment)}
+            data-capability="handson.parts"
+            className="rounded-md border border-err/40 px-1.5 py-0.5 text-[11px] text-err transition-colors hover:bg-err/10"
+          >
+            {PARTS_BUTTON}
+          </button>
+        </Tip>
+      )}
       <Tip tip={busy ? busyTip : `Remove ${attachment.name} from this conversation`}>
         <button
           type="button"
@@ -206,6 +224,7 @@ export default function DocumentsTray({
   onRemoveAll,
   hasCopies,
   blocked,
+  onParts,
 }: Props) {
   const held = busy || uploading || !!blocked;
   const holdTip = uploading ? "Reading the files you added…" : busy ? BUSY_TIP : blocked;
@@ -232,6 +251,7 @@ export default function DocumentsTray({
             busyTip={holdTip}
             showKind={section !== "template"}
             onRemove={onRemove}
+            onParts={section === "documents" ? onParts : undefined}
           />
         ))}
       </ul>

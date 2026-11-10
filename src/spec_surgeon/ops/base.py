@@ -242,6 +242,9 @@ class Op:
     # An op of Obliterate mode alone (``edit_xml``): out of the catalog and the prompts of Safe and Default, refused
     # at the gate there (``compiler.compose_submission``), and never built by a Safe-mode button.
     obliterate_only: bool = False
+    # One of Obliterate's hands-on tools (docs/BACKLOG.md O4): the window builds its plan from the user's own choice.
+    # No model is ever told of it, and the gate takes it only while the hands-on tools are on.
+    hands_on: bool = False
 
     def plan(self, pkg, select: Dict[str, Any], params: Dict[str, Any]) -> PlanFragment:  # pragma: no cover
         raise NotImplementedError

@@ -12,9 +12,11 @@ import re
 import pytest
 
 from spec_surgeon.catalog import op_catalog
+from spec_surgeon.ops import OPS
 from spec_surgeon.ops import get_op, prose
 
-ALL_OPS = sorted(op_catalog(examples=False, unguarded=True)["ops"])   # Obliterate's own operation included
+# every registered operation: Obliterate's own (edit_xml) and its hands-on tool (replace_part, which no catalog lists)
+ALL_OPS = sorted({*op_catalog(examples=False, unguarded=True)["ops"], *OPS})
 
 # op name -> list of (select, params, [expected substrings]); one module per family in tests/describe_cases/
 from describe_cases import all_cases

@@ -111,6 +111,27 @@ values are markup, neither traced nor listed as words (the plan's sentence quote
 processing instruction outside its root is refused (`serialize_xml` would not keep it). Pinned by `tests/test_edit_xml.py` and
 `tests/test_edit_xml_window.py`.
 
+Obliterate also has **hands-on tools** (the owner's decision, 2026-11-10; the cheaper editor: nothing in the window
+edits XML), off unless the user turns them on — a box in the warning, empty every time (`set_mode(hands_on=)`,
+`obliterate_todo(hands_on=)`), or the strip's switch (`set_hands_on`, `/api/hands-on`) — never kept, and gone with
+the mode (`DocumentTask.hands_on`, the view's `hands_on`). **Parts**, beside a document, is a read-only browser of
+its file's parts (`hands_on.py`: `Reader` over the current file or the original — the list, one part indented for
+display a page at a time, a search; `/api/parts`, `/api/part`, `/api/parts/search`; nothing written, no model).
+**Save this part** writes the part's own bytes where the user chooses (`DocumentTask.save_part` →
+`guard.write_new`, never over a working file, never into the scratch tree). **Replace this part** puts a file of the
+user's in a part's place: the op `replace_part` (`ops/replace_part.py`, `Op.hands_on`), which no model is ever told
+of (`catalog.offered_ops` lists it in no mode) and which the gate takes only from the plan the window builds while
+the tools are on (`compose_submission(hands_on=True)`, else `[hands-on-only]`; `DocumentTask._replace_part`: one op,
+one document, every other left out, `outcome_source` `"hands-on"`, `Session.model_free`). It predicts first and
+exactly — the member holds the file's bytes, pinned by SHA-256 when chosen, and no other member changes — and the
+verifier's `part_bytes` (`verify/partswap.py`) hashes the output member itself; the part is a whole-part kind's
+(`verify.xmledit.raw_parts`), so its words are listed, not predicted (`SampleView.raw_what` `"part"`), exactly as
+for `edit_xml`. Any member can be replaced, `.rels` and `[Content_Types].xml` included: the bytes are placed as given
+and the checks say what Word would not open — a changed part that is no longer well-formed XML is one failed check
+(V1; `verify/suite._unreadable_v1`), never an exception out of the suite; V1 also fails a changed part whose root
+element is not its role's (`verify.reader.root_problems`) and names a relationship that lacks its id, type or target. A hands-on run is no recipe step
+(`saved_recipes.WHY_PART`). Pinned by `tests/test_hands_on.py`.
+
 Obliterate is the top rung of a ladder (the owner's decision, 2026-11-10): Safe, then Default for what Safe could not
 take, then Obliterate for the one or two documents neither could, so it also starts from the to-do list. A document
 that goes on the list because the engine stopped on it or its copy failed a check keeps a **case file** with its entry
@@ -204,7 +225,8 @@ jobs). Details: `docs/CONVERSATIONAL_DESKTOP.md`.
     (`textedit.py`, `slots.py`, `effective.py`, `lists.py`, `style_import.py`, `images.py`, `hf_common.py`),
     `elsewhere.py` (flags naming where a change kept to one place leaves the same words, and a fill in another case than the template; `plan_spec` runs it),
     `edit_xml.py` (the raw XML edit, Obliterate only — Modes, above; an op only Obliterate may plan sets
-    `obliterate_only`),
+    `obliterate_only`), `replace_part.py` (a part replaced with the user's file, Obliterate's hands-on tools only:
+    `hands_on`, never offered to a model),
     `patterns.py` (`compile_pattern`: the one way a user- or model-written pattern is compiled under `ops/` — and
     outside it, for the model's read tools' `regex` and an outcome contract's locators — the `regex` module in its
     `V0` (`re`) behaviour, `REGEX_TIMEOUT_S` = 2 s on each text searched, `MAX_PATTERN_CHARS` = 1000 except for an
@@ -220,7 +242,8 @@ jobs). Details: `docs/CONVERSATIONAL_DESKTOP.md`.
     `textcheck.py`, `edits.py`, `xsd.py`, `geometry.py` (V6/V7's page evidence, and `shown_words`: the words the
     original's pages show that the copy's do not, less what the plan removes — V6's warning, never a FAIL;
     `report.words_missing_sentence` is its one wording), `xmledit.py` (V10 `xml_edit`, the raw XML edit's twin, and `raw_parts`: the parts whose text the suite leaves to
-    its whole-part comparison — Modes, above), `difference.py` (the Obliterate record, `run_difference`:
+    its whole-part comparison — Modes, above), `partswap.py` (V10 `part_bytes`: a replaced part's own hash),
+    `difference.py` (the Obliterate record, `run_difference`:
     what differs between an original and a copy with nothing predicted, in a `VerificationRecord` every reader of a
     record reads — Modes, above), `template_layout.py` (V7's template reference: the template
     as each document's plan makes it show, its fills in the slots and each section at the document's own text
@@ -312,6 +335,8 @@ jobs). Details: `docs/CONVERSATIONAL_DESKTOP.md`.
     `template_roles.py` (a template's style per role, page and font, read without a model) and `body_match.py` (match
     body formatting: one plan per document from its own structure, one layout per agreeing pattern, each through the
     gate; what it cannot match is left out with the reason, `Session.left_out_reasons`).
+  - `hands_on.py` — Obliterate's hands-on tools, the reading half: a document's parts listed, one shown as text, a
+    search across them (`Reader`; read-only, no model — Modes, above).
   - `saved_recipes.py` — saved recipes: the runs of What you've done so far kept under a name (`Store`,
     `config_dir()\recipes.json`, each change read, made and written atomically under `recipes.json.lock`, which every
     window takes). A step is a Safe-mode button and
@@ -438,7 +463,8 @@ Standing decisions from the earlier rounds (their plans are in the git history):
   just does the work and the verifier reports the difference, the user approving the actual result (built: invariant 1
   is lifted for that one path; built-in ops predict first in every mode); a raw-XML operation Claude plans (built:
   `edit_xml`, Modes; a catch-all deletion is its `remove`),
-  with a read-only part browser and swap-a-part behind a toggle (in-app XML editing is not built); Word may edit
+  with a read-only part browser and swap-a-part behind a toggle (built: the hands-on tools, Modes; in-app XML
+  editing is not built); Word may edit
   copies through a fixed menu of named actions the user or Claude chains (Claude-composed Word scripts are not
   built: a miss is first a new menu item); a file refused at attach may be rescued; Export may make a marked copy's
   clean version anyway. Until an item is built, the invariants and the Modes section describe the code as it is.

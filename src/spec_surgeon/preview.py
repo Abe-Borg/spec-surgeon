@@ -246,6 +246,9 @@ class SampleView:
     # proven whole (V10 ``xml_edit``), and what it did to the words is listed, not predicted — ``text_changes`` holds
     # the words of the raw parts, ``changes`` what else differs in that step's copy (``raw_listing``)
     raw_xml: bool = False
+    # which change it is, for the words that say so: "xml" (a raw XML edit) or "part" (a part replaced with a file of
+    # the user's, Obliterate's hands-on tools); "" for any other sample
+    raw_what: str = ""
 
     def failed_marks(self) -> List[str]:
         """The failed checks as a delivered copy lists them (``FileResult.unverified``): ``V2 (Text preservation)``."""
@@ -258,7 +261,8 @@ class SampleView:
                 "look_pages": self.look_pages, "pages_before": self.pages_before, "pages_after": self.pages_after,
                 "geometry": self.geometry, "text_changes": self.text_changes,
                 **({"unproven": True, "changes": list(self.changes)} if self.unproven else {}),
-                **({"raw_xml": True, "changes": list(self.changes)} if self.raw_xml else {}),
+                **({"raw_xml": True, "raw_what": self.raw_what or "xml", "changes": list(self.changes)}
+                   if self.raw_xml else {}),
                 **({"problem": self.problem} if self.problem else {}),
                 **({"render_warnings": self.render_warnings} if self.render_warnings else {}),
                 **({"stages": self.stages} if self.stages else {}),
@@ -707,6 +711,52 @@ OTHER_CHANGES_HEAD = ("Before you approve — what else the custom method change
 
 RAW_OTHER_CHANGES_HEAD = ("Before you approve — what else the raw XML edit's step changes beside the words, as the "
                           "independent reader found it in each sample copy:")
+# The same three sentences for a part replaced with a file of the user's (Obliterate's hands-on tools,
+# ``replace_part``): the copy is proven to hold the file's bytes, and what they change is listed, not predicted
+PART_NO_WORDS_CHANGE = ("The replaced part changes no words: the independent checker read the same text in the copy "
+                        "as in the original — the words of every paragraph and any other text between tags.")
+PART_WORDS_CHANGE_HEAD = ("Before you approve — the words the replaced part changes, as the independent checker read "
+                          "them in the copy:")
+PART_OTHER_CHANGES_HEAD = ("Before you approve — what else the replaced part changes beside the words, as the "
+                           "independent reader found it in the copy:")
+_RAW_SAID = {"xml": (RAW_NO_WORDS_CHANGE, RAW_WORDS_CHANGE_HEAD, RAW_OTHER_CHANGES_HEAD, "RAW XML EDIT"),
+             "part": (PART_NO_WORDS_CHANGE, PART_WORDS_CHANGE_HEAD, PART_OTHER_CHANGES_HEAD, "REPLACED PART")}
+
+
+def raw_kind(record: Any) -> str:
+    """``part`` for the record of a step that replaced a part with a file (it asserts ``part_bytes``), else ``xml``
+    (a raw XML edit's): which words say what the listing is of."""
+    record = record if isinstance(record, dict) else getattr(record, "to_dict", lambda: {})()
+    kinds = {a.get("kind") for a in record.get("property_assertions") or [] if isinstance(a, dict)}
+    return "part" if "part_bytes" in kinds else "xml"
+
+
+def is_raw(record: Any) -> bool:
+    """Whether the record is of a step that states a change to a whole part and predicts nothing of its text: a raw
+    XML edit, or a part replaced with a file."""
+    record = record if isinstance(record, dict) else getattr(record, "to_dict", lambda: {})()
+    return any(isinstance(a, dict) and a.get("kind") in ("xml_edit", "part_bytes")
+               for a in record.get("property_assertions") or [])
+
+
+RAW_UNREAD = ("The words this changes could not be listed for {names}: the copy could not be read part by part. Its "
+              "preview says which check failed.")
+
+
+def raw_unread_lines(samples: Sequence[Any]) -> List[str]:
+    """The app's sentence for the samples of a raw XML edit or a replaced part whose copy could not be read (a part
+    that is no longer well-formed XML): nothing is listed for them, and that is said. [] when every such sample was
+    read."""
+    names = [Path(s.source).name for s in samples
+             if getattr(s, "raw_xml", False) and getattr(s, "text_changes", None) is None]
+    if not names:
+        return []
+    return [RAW_UNREAD.format(names=names[0] if len(names) == 1 else ", ".join(names[:-1]) + " and " + names[-1])]
+
+
+def _raw_said(samples: Sequence[Any]) -> Tuple[str, str, str, str]:
+    what = next((getattr(s, "raw_what", "") for s in samples if getattr(s, "raw_xml", False)), "") or "xml"
+    return _RAW_SAID.get(what, _RAW_SAID["xml"])
 
 
 def raw_listing(record: Any) -> Optional[Tuple[List[Dict[str, Any]], List[str]]]:
@@ -742,21 +792,22 @@ def raw_listing(record: Any) -> Optional[Tuple[List[Dict[str, Any]], List[str]]]
 def raw_text(samples: Sequence[Any]) -> List[str]:
     """The lines a preview's text gives a raw XML edit's samples: the words listed, then what else changed."""
     out: List[str] = []
+    _none, words_head, other_head, title = _raw_said(samples)
     words = raw_words_lines(samples)
     if words:
-        out += ["RAW XML EDIT — WORDS (listed from the sample copies by the independent checker, not predicted):"]
-        out += [f"   {w}" for w in words if w != RAW_WORDS_CHANGE_HEAD]       # the chat's own heading is not repeated
+        out += [f"{title} — WORDS (listed from the sample copies by the independent checker, not predicted):"]
+        out += [f"   {w}" for w in words if w != words_head]                # the chat's own heading is not repeated
     other = shown_changes_lines(samples, raw=True)
     if other:
-        out += ["RAW XML EDIT — WHAT ELSE CHANGED (the independent reader's report of each sample copy, D1):"]
-        out += [f"   {x}" for x in other if x != RAW_OTHER_CHANGES_HEAD]
+        out += [f"{title} — WHAT ELSE CHANGED (the independent reader's report of each sample copy, D1):"]
+        out += [f"   {x}" for x in other if x != other_head]
     return out
 
 
 def raw_words_lines(samples: Sequence[Any]) -> List[str]:
     """``text_changes_lines`` for the samples of a plan with a raw XML edit, in its own words; [] for any other."""
-    return text_changes_lines([s for s in samples if getattr(s, "raw_xml", False)], RAW_WORDS_CHANGE_HEAD,
-                              RAW_NO_WORDS_CHANGE)
+    none, head, _other, _title = _raw_said(samples)
+    return text_changes_lines([s for s in samples if getattr(s, "raw_xml", False)], head, none)
 
 
 def shown_changes_lines(samples: Sequence[Any], raw: bool = False) -> List[str]:
@@ -775,7 +826,7 @@ def shown_changes_lines(samples: Sequence[Any], raw: bool = False) -> List[str]:
             names = lines.setdefault(str(line), [])
             if name not in names:
                 names.append(name)
-    out = [RAW_OTHER_CHANGES_HEAD if raw else OTHER_CHANGES_HEAD]
+    out = [_raw_said(samples)[2] if raw else OTHER_CHANGES_HEAD]
     for line, names in lines.items():
         who = names[0] if len(names) == 1 else ", ".join(names[:-1]) + " and " + names[-1]
         out.append(f"\u2022 {who}: {line}")
@@ -1269,6 +1320,9 @@ def _make_preview(spec: Dict[str, Any], inputs: Sequence[str], out_dir: Path, re
                 listed = raw_listing(r["record"])
                 if listed is not None:           # a raw XML edit: its words and what else changed, from the copy
                     sv.raw_xml, sv.text_changes, sv.changes = True, listed[0], listed[1]
+                    sv.raw_what = raw_kind(r["record"])
+                elif is_raw(r["record"]):        # ...whose copy could not be read part by part: nothing to list,
+                    sv.raw_xml, sv.raw_what = True, raw_kind(r["record"])      # and its failed check says why
                 _log_verification(log, f.name, VerificationRecord.from_dict(r["record"]))
             if sv.exception is not None:
                 log.detail(f"sample {f.name}: EXCEPTION [{sv.exception['code']}] at {sv.exception.get('stage')}: "
@@ -1454,8 +1508,12 @@ def _make_chain_preview(chain: Dict[str, Any], inputs: Sequence[str], out_dir: P
                             checks = {c.id: c.status for c in rec.checks}
                             sv.stages.append({"stage": i, "name": label, "passed": rec.passed, "checks": checks})
                             listed = raw_listing(rec.to_dict())
+                            if listed is None and is_raw(rec.to_dict()):
+                                sv.raw_xml = True        # (its copy could not be read part by part: nothing listed)
+                                sv.raw_what = sv.raw_what or raw_kind(rec.to_dict())
                             if listed is not None:       # this step is a raw XML edit: listed from its own copy
                                 sv.raw_xml = True
+                                sv.raw_what = sv.raw_what or raw_kind(rec.to_dict())
                                 sv.text_changes = (sv.text_changes or []) + listed[0]
                                 sv.changes = sv.changes + [x for x in listed[1] if x not in sv.changes]
                             _log_verification(log, f"{f.name} · stage {i} ({label})", rec)

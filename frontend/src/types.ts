@@ -19,6 +19,48 @@ export interface Attachment {
   current: string;
 }
 
+/** One member of a document's package, as Obliterate's hands-on browser lists it (docs/WEB_API.md, `/api/parts`). */
+export interface PartInfo {
+  name: string;
+  size: number;
+  /** Its content type; "" when the package declares none. */
+  type: string;
+  /** Whether the browser shows it as text. */
+  xml: boolean;
+}
+
+/** The parts of one document's file. */
+export interface PartsListing {
+  path: string;
+  document: string;
+  which: "current" | "original";
+  /** An edited copy exists, so there are two files to look at. */
+  has_copy: boolean;
+  parts: PartInfo[];
+}
+
+/** One page of one part as text (`/api/part`). */
+export interface PartPage {
+  part: string;
+  size: number;
+  type: string;
+  xml: boolean;
+  lines: string[];
+  /** The number of the first line shown, from 1. */
+  first: number;
+  page: number;
+  pages: number;
+  total: number;
+  note: string;
+}
+
+/** A search across a document's parts (`/api/parts/search`). */
+export interface PartSearch {
+  query: string;
+  matches: { part: string; line: number; page: number; text: string }[];
+  more: boolean;
+}
+
 export type Role = "user" | "assistant" | "app";
 
 export interface Message {
@@ -180,6 +222,9 @@ export interface Sample {
    *  it does to the words is listed from this copy (`text_changes`, `changes`), not predicted. The sample is checked
    *  like any plan's (`passed`), never `unproven`. Absent from older servers. */
   raw_xml?: boolean;
+  /** Which change the listing is of: `xml` (a raw XML edit) or `part` (a part replaced with a file of the user's,
+   *  Obliterate's hands-on tools); "" or absent for any other sample. */
+  raw_what?: "xml" | "part" | "";
   /** The custom method could make no copy of this document (`failures` says why): Create makes none, and the
    *  document goes on the to-do list. */
   no_copy?: boolean;
@@ -541,6 +586,9 @@ export interface View {
   /** The window's mode and the modes it offers. */
   mode: Mode;
   modes: Mode[];
+  /** Obliterate's hands-on tools are on (the read-only part browser, Save this part, Replace this part): only in
+   *  Obliterate mode, off unless the user turned them on, never kept. False from an older server. */
+  hands_on: boolean;
   /** The attached template, as a header/footer template. */
   template: TemplateInfo;
   /** What the last Safe-mode button left untouched (after its copies were created). */

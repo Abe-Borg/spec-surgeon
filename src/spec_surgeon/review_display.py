@@ -41,7 +41,7 @@ EDIT_NAMES = {
     "delete_paragraphs": "Remove paragraphs", "apply_header_footer_template": "Match headers and footers to the template",
     "remove_header_footer": "Remove headers or footers", "set_page_setup": "Change page layout",
     "apply_style": "Apply paragraph styles", "map_styles": "Match document styles",
-    "set_output_name": "Name the edited copies", "edit_xml": "Raw XML edit",
+    "set_output_name": "Name the edited copies", "edit_xml": "Raw XML edit", "replace_part": "Replace a part",
     # built-in batch 6 (docs/BUILTIN_OPS_BATCH6_DESIGN.md): the window says "picture", never "image"
     "insert_image": "Insert a picture", "remove_images": "Remove pictures", "resize_images": "Resize pictures",
     "delete_tables": "Delete tables", "delete_table_rows": "Delete table rows", "insert_table_rows": "Add table rows",

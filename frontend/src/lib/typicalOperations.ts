@@ -388,6 +388,17 @@ export const OBLITERATE_OPERATIONS: readonly TypicalOperation[] = [
       "content-type parts are not edited this way; a custom method can change those.",
   },
   {
+    task:
+      "Look inside a document and fix a part by hand: read its XML, save a part out, edit it in your own editor, " +
+      "put it back",
+    can: "Yes, with the hands-on tools",
+    note:
+      "Off unless you tick their box in Obliterate's warning. Parts, beside a document, shows its parts read-only " +
+      "with a search; nothing in the window edits XML. Replace this part puts your file in a part's place in a " +
+      "copy, proven byte for byte, with the words it changes listed before you approve. No AI is used, and Claude " +
+      "cannot use these tools.",
+  },
+  {
     task: "Deliver a copy that fails a check anyway",
     can: "Yes, marked UNVERIFIED",
     note:

@@ -909,26 +909,42 @@ OBLITERATE_ONLY = ("this conversation cannot use {ops}: {it} an operation of Obl
                    "reach and that Obliterate mode can do it.")
 
 
-def _mode_errors(spec: Any, unguarded: bool) -> List[str]:
-    """The operations of Obliterate mode alone (``Op.obliterate_only``) a submission names outside it — in its ops,
-    its own steps or its layouts — as one refusal; [] in Obliterate mode, and for any other submission."""
-    if unguarded or not isinstance(spec, dict):
+HANDS_ON_ONLY = ("{ops} {it} one of Obliterate mode's hands-on tools, which the user turns on with the mode and uses "
+                 "from the window: the app builds that plan from the part and the file the user chose, and no "
+                 "submission may name it. Plan with the other operations.")
+
+
+def _mode_errors(spec: Any, unguarded: bool, hands_on: bool = False) -> List[str]:
+    """The operations a submission may not name here — in its ops, its own steps or its layouts — as one refusal:
+    a hands-on tool (``Op.hands_on``) anywhere but in the plan the window builds while the hands-on tools are on
+    (``hands_on``, Obliterate mode only), and the operations of Obliterate mode alone (``Op.obliterate_only``) outside
+    it. [] for any other submission."""
+    if not isinstance(spec, dict):
         return []
     from .ops import OPS
     found: List[str] = []
+    tools: List[str] = []
 
     def walk(own: Any) -> None:
         if not isinstance(own, dict):
             return
         for o in own.get("ops") if isinstance(own.get("ops"), list) else []:
             name = o.get("op") if isinstance(o, dict) else None
-            if isinstance(name, str) and name in OPS and OPS[name].obliterate_only and name not in found:
+            if not isinstance(name, str) or name not in OPS:
+                continue
+            if OPS[name].hands_on:
+                if not (unguarded and hands_on) and name not in tools:
+                    tools.append(name)
+            elif OPS[name].obliterate_only and not unguarded and name not in found:
                 found.append(name)
         for key in ("stages", "layouts"):
             for inner in own.get(key) if isinstance(own.get(key), list) else []:
                 if isinstance(inner, dict):
                     walk(inner.get("spec"))
     walk(spec)
+    if tools:
+        return ["[hands-on-only] " + HANDS_ON_ONLY.format(ops=", ".join(tools),
+                                                         it="is" if len(tools) == 1 else "are")]
     if not found:
         return []
     return ["[obliterate-only] " + OBLITERATE_ONLY.format(ops=", ".join(found),
@@ -1758,7 +1774,8 @@ def _compose_conflicts(spec: Dict[str, Any], batch: _Batch, patterns: Optional[S
 def compose_submission(spec: Any, batch: _Batch, sources: Sequence[str],
                        patterns: Optional[Sequence[str]] = None,
                        leave_out: Sequence[Path] = (), unguarded: bool = False,
-                       shown: Sequence[str] = (), skips: Optional[Sequence[str]] = None) -> Tuple[Any, List[str]]:
+                       shown: Sequence[str] = (), skips: Optional[Sequence[str]] = None,
+                       hands_on: bool = False) -> Tuple[Any, List[str]]:
     """``(outcome, errors)``: the submission as the engine will run it, and ``[]`` when it is acceptable (or is a
     clean question/unsupported outcome). The outcome is the spec itself, the model's own stages as a chain, or — when
     the spec's ops overlap (rule 5: never ordered by guess inside one plan) — the chain the app composes from them,
@@ -1767,14 +1784,16 @@ def compose_submission(spec: Any, batch: _Batch, sources: Sequence[str],
     plans. A layout plan comes back with each layout's spec composed the same way. ``unguarded`` (Obliterate mode
     only) loosens the content checks (``_content_checks``): every placed word must trace to ``sources`` or to
     ``shown``, the reply the user reads in the chat, and admits Obliterate's own operations (``_mode_errors``:
-    ``edit_xml`` is refused in every other mode, whoever built the spec); everything else — validation, attached
+    ``edit_xml`` is refused in every other mode, whoever built the spec); ``hands_on`` (the plan the window builds
+    while Obliterate's hands-on tools are on, never a model's submission) admits the hands-on tools' own operation,
+    ``replace_part``, which is refused everywhere else; everything else — validation, attached
     files, the dry plan, the composition — is the same. ``skips`` are the keys of the occurrences the user unticked in the preview
     (``skip_record_key``): a ``replace_table.skip`` entry that is not among them is refused in every mode."""
     from .chain import validate_chain
     from .editspec import is_chain
     if not isinstance(spec, dict):
         return spec, ["the spec must be a JSON object"]
-    refused = _mode_errors(spec, unguarded)           # Obliterate's own operations, outside Obliterate: before all else
+    refused = _mode_errors(spec, unguarded, hands_on)   # Obliterate's own operations and tools: before all else
     if refused:
         return spec, refused
     if spec.get("questions") or spec.get("unsupported"):

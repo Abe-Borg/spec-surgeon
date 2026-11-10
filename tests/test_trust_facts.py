@@ -160,6 +160,10 @@ def expected() -> dict:
         "maxPatternChars": const("ops/patterns.py", "MAX_PATTERN_CHARS"),
         "xpathTimeoutSeconds": const("ops/edit_xml.py", "XPATH_TIMEOUT_S"),
         "maxXPathChars": const("ops/edit_xml.py", "MAX_XPATH_CHARS"),
+        "maxPartMB": const("ops/replace_part.py", "MAX_PART_BYTES") // MIB,
+        "partPageLines": const("hands_on.py", "PAGE_LINES"),
+        "partSearchHits": const("hands_on.py", "SEARCH_HITS"),
+        "maxShownPartMB": const("hands_on.py", "MAX_SHOWN_BYTES") // MIB,
         "maxTableOrPictureMB": const("inputs.py", "MAX_BYTES") // MIB,
         "maxDocxMB": class_const("package_limits.py", "ArchiveLimits", "max_archive_bytes") // MIB,
         "wordTimeoutSeconds": int(const("render/word_worker.py", "DEFAULT_TIMEOUT")),
@@ -285,7 +289,8 @@ def test_the_ledger_covers_the_facts_and_the_rule():
     for key in ("DEFAULT_SPENDING_LIMIT_USD", "AUTO_STEPS", "CHECK_INTERVAL", "SANDBOX_TIMEOUT", "DEFAULT_MEMORY_MB",
                 "MAX_CASES", "STOPPED_OUTPUT_RATE", "RETRY_DELAYS", "CONVERSATION_EFFORT", "RECOVERY_EFFORT",
                 "CODEGEN_EFFORT", "UNGUARDED_CHECK_ROUNDS", "SHOWN_ROUNDS", "STREAMED_TOOLS", "REGEX_TIMEOUT_S",
-                "MAX_PATTERN_CHARS", "XPATH_TIMEOUT_S", "MAX_XPATH_CHARS",
+                "MAX_PATTERN_CHARS", "XPATH_TIMEOUT_S", "MAX_XPATH_CHARS", "MAX_PART_BYTES", "PAGE_LINES",
+                "SEARCH_HITS", "MAX_SHOWN_BYTES",
                 "CONTEXT_WINDOWS", "DEFAULT_CONTEXT_TOKENS"):
         assert key in ledger, f"the ledger names no source for {key}"
 

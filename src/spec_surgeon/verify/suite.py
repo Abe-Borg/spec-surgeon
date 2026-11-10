@@ -14,7 +14,7 @@ from typing import Any, Dict, Iterator, List, Optional, Sequence, Tuple
 from lxml import etree
 
 from .. import telemetry as diag
-from .reader import VPackage, W
+from .reader import VPackage, W, root_problems
 from .textcheck import blocks, diff_blocks, accept_view, reject_view, view_texts
 from .props import check_properties
 from .explain import explain_record
@@ -386,6 +386,90 @@ def _check(rec: VerificationRecord, check_id: str, name: str, **fields: Any) -> 
         outcome["outcome"] = result.status if result is not None else "UNRECORDED"
 
 
+# The checks that compare the two packages part by part: not evaluated when a changed part of the copy does not read
+_PART_CHECKS = (("V2", "Text preservation"), ("V3", "Structural children"), ("V4", "Revision accounting"),
+                ("V5a", "XSD vs source baseline"), ("V5b", "Untracked-edit check"), ("V5c", "Revision grammar"),
+                ("V8", "Accept / reject simulation"), ("V10", "Property assertions"))
+
+
+def _unreadable(src: VPackage, out: VPackage, before: Dict[str, str], after: Dict[str, str]) -> List[Tuple[str, str]]:
+    """``(member, why)`` for each changed member that is XML in the source and does not parse in the copy (``before``
+    and ``after``: the two packages' member hashes). Only a member placed as bytes can be one (a replaced part,
+    Obliterate's hands-on tools): a transform that writes a tree cannot make it."""
+    found: List[Tuple[str, str]] = []
+    for name in out.names:
+        if name not in before or before[name] == after[name]:
+            continue
+        try:
+            src.xml(name)
+        except Exception:  # noqa: BLE001 — not XML in the source either (a picture, an embedded file)
+            continue
+        try:
+            out.xml(name)
+        except Exception as e:  # noqa: BLE001 — whatever the parser says, it is the reason
+            found.append((name, " ".join(f"{type(e).__name__}: {e}".split())[:300]))
+    return found
+
+
+def _structure_fault(src: VPackage, out: VPackage, before: Dict[str, str], after: Dict[str, str]) -> List[Tuple[str, str]]:
+    """``(member, why)`` for the changed relationship and content-type members of a copy whose package bookkeeping
+    cannot be read as every later check reads it — a reader raises on it — while the source's can. [] when none of
+    those members changed, or when the copy's reads. The readers take incomplete relationships in their stride
+    (``VPackage.integrity_problems`` names them); this is the net under what they do not foresee, so that a
+    replaced bookkeeping part is a failed check and never an exception out of the suite."""
+    books = [n for n in out.names if n in before and before[n] != after[n]
+             and (n.endswith(".rels") or n == "[Content_Types].xml")]
+    if not books:
+        return []
+
+    def read(pkg: VPackage) -> None:
+        pkg.integrity_problems()
+        pkg.referenced_members()
+        pkg.text_parts()
+        for name in pkg.names:
+            if name.endswith(".xml"):
+                pkg.rid_problems(name)
+    try:
+        read(out)
+    except Exception as e:  # noqa: BLE001 — whatever the reader says of the copy, it is the reason
+        why = " ".join(f"{type(e).__name__}: {e}".split())[:300]
+        read(src)                       # the source's own reads, or the fault is no copy's: that exception goes on
+        return [(name, why) for name in books]
+    return []
+
+
+def _unreadable_v1(rec: VerificationRecord, before: Dict[str, str], after: Dict[str, str],
+                   unread: List[Tuple[str, str]], intended: set, structure: bool = False) -> None:
+    """V1 of a copy with a changed part that is not well-formed XML — or (``structure``) whose relationships or
+    content types do not read: the one failed check, which says so, with what else the package comparison can still
+    tell."""
+    changed = sorted(n for n in before if n in after and before[n] != after[n])
+    unexpected = sorted(set(changed) - intended)
+    what = "RELATIONSHIPS OR CONTENT TYPES THAT DO NOT READ" if structure else "NOT WELL-FORMED XML"
+    rec.set(CheckResult("V1", "Package hash whitelist", "FAIL",
+                        f"{what} in the copy: " + "; ".join(f"{n} ({why})" for n, why in unread)
+                        + f". Word does not open such a file. changed {changed} ⊆ intended {sorted(intended)}: "
+                        + ("yes" if not unexpected else "NO " + str(unexpected)),
+                        {"changed": changed, "added": sorted(set(after) - set(before)),
+                         "removed": sorted(set(before) - set(after)), "unexpected": unexpected,
+                         "integrity": [f"{n}: {'does not read' if structure else 'not well-formed XML'}"
+                                       for n, _why in unread], "orphaned": [],
+                         "order": None, "metadata_changes": [], "unreadable": [n for n, _why in unread]}))
+
+
+def _unreadable_rest(rec: VerificationRecord, unread: List[Tuple[str, str]], structure: bool = False) -> VerificationRecord:
+    """The rest of that record: every part-by-part check not evaluated, with the reason — never an exception out of
+    the suite, and never a pass."""
+    names = ", ".join(name for name, _why in unread)
+    why = "does not read as the package's relationships or content types" if structure else "is not well-formed XML"
+    for check_id, name in _PART_CHECKS:
+        rec.set(CheckResult(check_id, name, "NA", f"not evaluated: the copy's {names} {why} (V1)"))
+    rec.set(CheckResult("V6", "Automated render comparison", "NA", "no renderer run yet"))
+    rec.set(CheckResult("V7", "Geometry assertion", "NA", "no renderer run yet"))
+    rec.set(CheckResult("V9", "Overwrite guard", "NA", "not delivered yet"))
+    return rec
+
+
 def run_suite(source: bytes, output: bytes, plan: Dict[str, Any], source_name: str, output_name: str) -> VerificationRecord:
     with diag.span("verification.suite", source_bytes=len(source), output_bytes=len(output)) as outcome:
         rec = _run_suite(source, output, plan, source_name, output_name)
@@ -422,49 +506,67 @@ def _run_suite(source: bytes, output: bytes, plan: Dict[str, Any], source_name: 
     raw = set(raw_parts(plan))
 
     # V1 — package hash whitelist, predicted member removals/additions, member order, package integrity
+    unread: List[Tuple[str, str]] = []
+    structure = False
     with _check(rec, "V1", "Package hash whitelist") as check:
         hb, ha = src.hashes(), out.hashes()
-        added = sorted(set(ha) - set(hb))
-        removed = sorted(set(hb) - set(ha))
-        changed = sorted(n for n in hb if n in ha and hb[n] != ha[n])
-        expected_order = [n for n in src.names if n not in set(pred_removed)] + pred_added
-        order_ok = out.names == expected_order
-        order_detail = None
-        if not order_ok:
-            k = next((i for i, (x, y) in enumerate(zip(out.names, expected_order)) if x != y),
-                     min(len(out.names), len(expected_order)))
-            order_detail = {"position": k, "expected": expected_order[k] if k < len(expected_order) else None,
-                            "found": out.names[k] if k < len(out.names) else None}
-        unexpected = sorted(set(changed) - intended)
-        members_ok = added == sorted(pred_added) and removed == sorted(set(pred_removed))
-        new_problems = out.integrity_problems() - src.integrity_problems()
-        def _rels_of(n):
-            d, b = n.rsplit("/", 1) if "/" in n else ("", n)
-            return (d + "/" if d else "") + "_rels/" + b + ".rels"
-        touched = [n for n in out.names if n.endswith(".xml") and (n not in hb or hb[n] != ha.get(n)
-                   or hb.get(_rels_of(n)) != ha.get(_rels_of(n)))]
-        for n in touched:
-            new_problems |= out.rid_problems(n) - src.rid_problems(n)
-        new_problems = sorted(new_problems)
-        src_refd, out_refd = src.referenced_members(), out.referenced_members()
-        orphaned = sorted(n for n in out.names if n in src_refd and n not in out_refd)
-        metadata_changes = src.metadata_changes(out, pred_removed)
-        v1_ok = (members_ok and not unexpected and order_ok and not new_problems and not orphaned
-                 and not metadata_changes)
-        rec.set(CheckResult("V1", "Package hash whitelist", "PASS" if v1_ok else "FAIL",
-                            f"changed {changed} ⊆ intended {sorted(intended)}: {'yes' if not unexpected else 'NO ' + str(unexpected)}; "
-                            f"added {added or 'none'} (predicted {pred_added or 'none'}); "
-                            f"removed {removed or 'none'} (predicted {sorted(pred_removed) or 'none'})"
-                            + ("" if members_ok else " — MEMBER SET MISMATCH")
-                            + f"; member order {'kept' if order_ok else 'CHANGED'}"
-                            + (f"; ZIP metadata CHANGED {metadata_changes[:3]}" if metadata_changes else "; ZIP metadata kept")
-                            + (f"; NEW integrity problems {new_problems[:3]}" if new_problems else "; no new dangling rels/overrides/untyped members")
-                            + (f"; ORPHANED (still present, no longer referenced) {orphaned[:5]}" if orphaned else ""),
-                            {"changed": changed, "added": added, "removed": removed, "unexpected": unexpected,
-                             "integrity": new_problems, "orphaned": orphaned, "order": order_detail,
-                             "metadata_changes": metadata_changes}))
-        check.update(changed_parts=len(changed), added_parts=len(added), removed_parts=len(removed),
-                     unexpected_parts=len(unexpected), integrity_problems=len(new_problems), orphaned_members=len(orphaned))
+        # a changed part of the copy that does not read: this one check fails, and nothing is compared part by part
+        unread = _unreadable(src, out, hb, ha)
+        structure = False
+        if not unread:
+            unread = _structure_fault(src, out, hb, ha)
+            structure = bool(unread)
+        if unread:
+            _unreadable_v1(rec, hb, ha, unread, intended, structure)
+            check.update(unreadable_parts=len(unread))
+        else:
+            added = sorted(set(ha) - set(hb))
+            removed = sorted(set(hb) - set(ha))
+            changed = sorted(n for n in hb if n in ha and hb[n] != ha[n])
+            expected_order = [n for n in src.names if n not in set(pred_removed)] + pred_added
+            order_ok = out.names == expected_order
+            order_detail = None
+            if not order_ok:
+                k = next((i for i, (x, y) in enumerate(zip(out.names, expected_order)) if x != y),
+                         min(len(out.names), len(expected_order)))
+                order_detail = {"position": k, "expected": expected_order[k] if k < len(expected_order) else None,
+                                "found": out.names[k] if k < len(out.names) else None}
+            unexpected = sorted(set(changed) - intended)
+            members_ok = added == sorted(pred_added) and removed == sorted(set(pred_removed))
+            new_problems = out.integrity_problems() - src.integrity_problems()
+            def _rels_of(n):
+                d, b = n.rsplit("/", 1) if "/" in n else ("", n)
+                return (d + "/" if d else "") + "_rels/" + b + ".rels"
+            touched = [n for n in out.names if n.endswith(".xml") and (n not in hb or hb[n] != ha.get(n)
+                       or hb.get(_rels_of(n)) != ha.get(_rels_of(n)))]
+            for n in touched:
+                new_problems |= out.rid_problems(n) - src.rid_problems(n)
+            # a changed part whose root element is no longer its role's (the body part a w:styles): the schema knows
+            # both elements and says nothing, and Word does not open the file
+            new_problems |= root_problems(src, out, changed)
+            new_problems = sorted(new_problems)
+            src_refd, out_refd = src.referenced_members(), out.referenced_members()
+            orphaned = sorted(n for n in out.names if n in src_refd and n not in out_refd)
+            metadata_changes = src.metadata_changes(out, pred_removed)
+            v1_ok = (members_ok and not unexpected and order_ok and not new_problems and not orphaned
+                     and not metadata_changes)
+            rec.set(CheckResult("V1", "Package hash whitelist", "PASS" if v1_ok else "FAIL",
+                                f"changed {changed} ⊆ intended {sorted(intended)}: {'yes' if not unexpected else 'NO ' + str(unexpected)}; "
+                                f"added {added or 'none'} (predicted {pred_added or 'none'}); "
+                                f"removed {removed or 'none'} (predicted {sorted(pred_removed) or 'none'})"
+                                + ("" if members_ok else " — MEMBER SET MISMATCH")
+                                + f"; member order {'kept' if order_ok else 'CHANGED'}"
+                                + (f"; ZIP metadata CHANGED {metadata_changes[:3]}" if metadata_changes else "; ZIP metadata kept")
+                                + (f"; NEW integrity problems {new_problems[:3]}" if new_problems else "; no new dangling rels/overrides/untyped members")
+                                + (f"; ORPHANED (still present, no longer referenced) {orphaned[:5]}" if orphaned else ""),
+                                {"changed": changed, "added": added, "removed": removed, "unexpected": unexpected,
+                                 "integrity": new_problems, "orphaned": orphaned, "order": order_detail,
+                                 "metadata_changes": metadata_changes}))
+            check.update(changed_parts=len(changed), added_parts=len(added), removed_parts=len(removed),
+                         unexpected_parts=len(unexpected), integrity_problems=len(new_problems), orphaned_members=len(orphaned))
+
+    if unread:
+        return _unreadable_rest(rec, unread, structure)
 
     # V2/V3 — text preservation and structural children over the UNION of source and output text parts
     with _check(rec, "V2", "Text preservation", shared_computation="V2/V3") as text_check, \
@@ -528,6 +630,9 @@ def _run_suite(source: bytes, output: bytes, plan: Dict[str, Any], source_name: 
         for part in sorted(raw):
             try:
                 before_root = src_xml[part] if part in src_xml else src.xml(part)
+            except Exception:  # noqa: BLE001 — not XML in the source (a picture, an embedded file): it holds no text
+                continue       # to list; a replaced part of that kind is compared by its bytes (V10) and named by D1
+            try:
                 after_root = out_xml[part] if part in out_xml else out.xml(part)
                 found = unread_text_changes(before_root, after_root)
             except Exception as e:  # noqa: BLE001 — a part that does not read is V1's and V10's failure; said here
@@ -563,7 +668,8 @@ def _run_suite(source: bytes, output: bytes, plan: Dict[str, Any], source_name: 
                             + f"; diffs found: {len(actual)}; "
                             f"matches predicted list exactly: {'yes' if v2_ok else 'NO'}"
                             + ("" if v2_ok else f" — missing {len(missing)}, unpredicted {len(extra)}")
-                            + (f"; raw XML edit of {sorted(raw)}: {listed} more text block(s) differ there, and "
+                            + (f"; {sorted(raw)} compared whole by V10 (a raw XML edit, or a replaced part): "
+                               f"{listed} more text block(s) differ there, and "
                                f"other text (not a paragraph's words) in {len(raw_text)} part(s); listed, and "
                                f"proven by V10's whole-part comparison, not predicted" if raw else ""),
                             {"parts": scope, "actual": actual_text_changes, "missing": missing, "unpredicted": extra,
@@ -644,7 +750,7 @@ def _run_suite(source: bytes, output: bytes, plan: Dict[str, Any], source_name: 
                             f"w:ins {ins_b}→{ins_a} (Δ{d_ins:+d}, predicted {pred.get('ins', 0):+d}); "
                             f"w:del {del_b}→{del_a} (Δ{d_del:+d}, predicted {pred.get('del', 0):+d})"
                             + (f"; {'; '.join(others)}" if others else "")
-                            + (f"; not counted here, the raw XML edit of {sorted(raw)}: tracked changes "
+                            + (f"; not counted here, {sorted(raw)} (compared whole by V10): tracked changes "
                                f"{sum(all_b.values()) - sum(cnt_b.values())}→{sum(all_a.values()) - sum(cnt_a.values())} "
                                f"there (listed, D1)" if raw else "")
                             + (f"; UNPREDICTED deltas {wrong}" if wrong else "")

@@ -43,7 +43,7 @@ from lxml import etree
 
 from .. import telemetry as diag
 from . import xsd as _xsd
-from .reader import REL, SETTINGS_REL, STYLES_REL, THEME_REL, VPackage, W
+from .reader import REL, SETTINGS_REL, STYLES_REL, THEME_REL, VPackage, W, root_problems
 from .suite import (WORD_ID_LIMIT, CheckResult, VerificationRecord, _annotation_ids, _grammar_errors, _id_number,
                     _property_change_grammar, _rev_elements, _total_key, has_content_revisions)
 from .textcheck import accept_view, blocks, diff_blocks, reject_view
@@ -282,6 +282,7 @@ def _run_difference(source: bytes, output: bytes, source_name: str, output_name:
         for name in sorted(referring):
             if name in out.names and name.endswith(".xml") and not any(b.startswith(name + ":") for b in broken):
                 problems |= out.rid_problems(name) - (src.rid_problems(name) if name in src.names else set())
+        problems |= root_problems(src, out, changed)     # a part that is no longer the kind its place calls for
         src_refd, out_refd = src.referenced_members(), out.referenced_members()
         orphaned = sorted(n for n in out.names if n in src_refd and n not in out_refd)
     except (etree.XMLSyntaxError, ValueError, KeyError) as error:

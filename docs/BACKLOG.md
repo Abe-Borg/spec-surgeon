@@ -78,7 +78,7 @@ On the owner's machine (Windows, Word): the W3 judge over every case, each failu
 behaviour recorded here with its evidence; the W4 recipe run once, its files and Word's resolutions checked in. The
 judge cannot see a repair prompt or how the Reviewing Pane draws the changes; those stay a manual look.
 
-### Obliterate: the cost ladder (O4–O8)
+### Obliterate: the cost ladder (O5–O8)
 
 The owner's decisions of 2026-11-10 (CLAUDE.md, "Standing decisions"). Obliterate is the emergency lever, reached
 last: Safe handles most of a batch, Default what Safe could not take, and Obliterate the one or two documents neither
@@ -90,7 +90,10 @@ copy, with the integrity checks that need no prediction) and custom methods that
 document's copy made before approval and delivered as shown, marked UNPROVEN or UNVERIFIED) — and O3 — the raw XML
 edit (`ops/edit_xml.py`; the verifier's twin `verify/xmledit.py` proves the edit, and the words it changes are listed
 from the copies, O2's "what changed" in a verified record) with "clear the obstacle, then the same plan" (the case
-file keeps the plan; Claude submits it as the step after the edit). O5 and O6 judge their results by O2's record.
+file keeps the plan; Claude submits it as the step after the edit) — and O4 — the hands-on tools, behind a toggle in
+the warning: a read-only browser of a document's parts (`hands_on.py`), **Save this part** and **Replace this part**
+(`ops/replace_part.py`, proven byte for byte by `verify/partswap.py`; a plan the app builds, never a model's). O5 and
+O6 judge their results by O2's record.
 
 Rules for every item:
 
@@ -107,11 +110,11 @@ Rules for every item:
 
 | Item | What to build | What was decided |
 | --- | --- | --- |
-| O4 — hands-on tools | A toggle in the Obliterate warning, off by default. A read-only part browser per document (the part list, the XML, search); save a part out through Export's write path; replace a part with an attached file, with a V10 kind proving the part equals that file byte for byte and nothing else moved | The cheaper version first: no XML editing inside the window (edit a part in your own editor, attach it back) |
 | O5 — named Word actions | A fixed menu, each action code in the existing Word worker (`render/word_worker.py`): repair; convert to `.docx`; accept all or reject all changes; unlink or update fields; numbers to typed text; remove protection; upgrade compatibility mode; text boxes to plain text; delete shapes. The user or Claude picks and chains them as plan steps. Results judged by O2's report (Word rewrites the whole file, so the comparison is by content and pages). Tests use a fake Word; real behaviour is proven on the owner's machine | Word may edit copies. No Claude-composed Word scripts: a case the menu cannot express is first a new menu item, logged with the document's refusal code. Reverses "text boxes as objects" and "numbers stay automatic" for Obliterate only |
 | O6 — rescue at attach | A file triage refuses offers **Try to rescue** in Obliterate: Word converts (`.doc`, `.docm`, Strict Open XML) or repairs it; a password is asked for and never stored, logged or sent to the model; the app strips a `<!DOCTYPE`, adds a missing body paragraph, or lifts the size limit. The rescued file becomes a new document with a permanent **salvaged** mark and then runs in any mode, verified against the salvaged baseline. A lock file, a folder or a missing file is still refused | When the original cannot be read, nothing can prove the rescue lost no content: the mark says so |
 | O7 — Export anyway | When a marked copy's clean version or PDF cannot be made the checked way, Export offers a Word-made one, named as unchecked in the summary | Amends invariant 7's exception ("never widen them"): the new choice is still fixed in code and named by the menu, never a model's |
-| O3a — what O3 left out, each on the owner's word | A raw edit of the package's relationship and content-type parts (today `edit_xml` refuses them, `xml-part`: a custom method changes those, and O4's swap-a-part will), and of a part with a comment or processing instruction outside its root element (refused too: `serialize_xml` writes a part from its root). Text an edit sets in an ATTRIBUTE that Word shows as words — a list label (`w:lvlText`), a field instruction, alternative text — traced by the wording gate and listed with the words (today attribute values are markup: the plan's own sentence quotes them, and D1 says that numbering or a field changed). The plan following the clearing step in ONE request when its template operation carries bindings (today invariant 5 refuses a source-bound template op that is not first, so it is two requests: clear, then ask for the plan on the copy). The clearing step proposed by the app with no model call, for the refusal codes the owner's runs show most (with O8's pick) | Not started until asked for |
+| O3a — what O3 left out, each on the owner's word | A raw edit of the package's relationship and content-type parts (today `edit_xml` refuses them, `xml-part`; the hands-on tools' Replace this part places any part as bytes, and a custom method changes those), and of a part with a comment or processing instruction outside its root element (refused too: `serialize_xml` writes a part from its root; Replace this part takes such a part as it is). Text an edit sets in an ATTRIBUTE that Word shows as words — a list label (`w:lvlText`), a field instruction, alternative text — traced by the wording gate and listed with the words (today attribute values are markup: the plan's own sentence quotes them, and D1 says that numbering or a field changed). The plan following the clearing step in ONE request when its template operation carries bindings (today invariant 5 refuses a source-bound template op that is not first, so it is two requests: clear, then ask for the plan on the copy). The clearing step proposed by the app with no model call, for the refusal codes the owner's runs show most (with O8's pick) | Not started until asked for |
+| O4a — what O4 left out, each on the owner's word | XML editing inside the window (decided against for now: edit a saved part in your own editor). Adding a part the document does not have, or removing one (`replace_part` replaces only; a custom method adds and removes). Replacing a part in several documents at once (one document per replacement today). The part browser on a file triage refused at attach (with O6's rescue). Comparing a part of the edited copy with the original's side by side (the dialog switches between the two files) | Not started until asked for |
 | O8 — optional, each on the owner's word | Rebuild from a clean template (the document's words, tables and pictures poured into a pristine template; the text-preservation check proves no word was lost). The outcome verifier (`goals.verify_goal`) on a rescued straggler where its request fits one of the effects it models. A pick, in the window, where a built-in op refused because it would not guess — for the refusal codes the owner's runs show most (log which codes reach Obliterate first) | Not started until asked for |
 
 Not in the plan: Claude-composed Word scripts, XML editing inside the window, replacing the import whitelist with an
@@ -177,6 +180,25 @@ write-back over the originals unless asked for (T1 is the claim most of the trus
 Everything else is built and tested on fixtures; nothing is done on fixtures alone. These runs need real
 specifications, Windows and Word, and only the owner can do them. Record what a run finds as a new item above.
 
+- **Obliterate's hands-on tools (O4, built 2026-11-10):** with Word and Obliterate shown in Settings; no API key is
+  needed for any of this. Choose Obliterate, tick **Also turn on the hands-on tools** in its warning (the box is
+  empty every time) and turn the mode on: with no key connected the warning still confirms once the box is ticked.
+  Each document now carries **Parts**. Open one on a real specification: the list shows every part with its size;
+  `word/document.xml` opens as indented text, a page at a time; **Search** for a phrase you know is in a header and
+  click the hit — it opens the header's part at that line. **Save this part…** on `word/document.xml`, into a folder
+  of yours: the file is the part's own bytes (compare its size with the list's). Change one sentence in it in your
+  own editor, save, then **Replace this part…** and choose it. Before the button the chat says the plan was made
+  without AI and lists the words the new part changes; the card is badged **Checked** and lists the same words;
+  read them against your edit. **Create edited copies**: the copy has no mark, opens in Word without a repair
+  prompt and shows your sentence; your original is unchanged; **What you've done so far** lists the replacement and
+  says it cannot be saved as a recipe; **Undo the last change** takes it off. Then on purpose: choose the file
+  again unchanged (refused: nothing would change); break the XML in your editor (delete a closing tag) and replace
+  — the card says **Did not pass**, and the copy is created marked **UNVERIFIED** (Word will refuse or repair it);
+  replace a picture part (`word/media/…`) with another picture — checked by its bytes, named as changed and not
+  read. Change the chosen file after the preview and press Create: refused, nothing created. Turn **Hands-on tools**
+  off in the strip while a replacement's preview waits: the preview is withdrawn and **Parts** leaves the documents.
+  Last: in Default mode, and in Obliterate with the box unticked, there is no **Parts** anywhere, and asking Claude
+  to replace a part gets no such operation.
 - **Obliterate's raw XML edit (O3, built 2026-11-10):** with Word, Obliterate shown in Settings and an API key, over
   a real batch where Default set a document aside for one thing a built-in operation would not guess about (a text
   box in a paragraph to delete, a content control bound to data, a field that will not resolve). **Obliterate this

@@ -12,7 +12,7 @@ import os
 import io
 import posixpath
 import zipfile
-from typing import Dict, List, Optional, Set, Tuple
+from typing import Dict, Iterable, List, Optional, Set, Tuple
 
 from lxml import etree
 
@@ -77,6 +77,34 @@ def default_author() -> str:
     (``ops/replace_text.default_author``; tests/test_independence.py)."""
     return os.environ.get("SPEC_SURGEON_AUTHOR") or getpass.getuser()
 
+
+
+# The vocabularies Office itself defines. Word reads a part of one of these by its place in the package — the main
+# part as a w:document, the styles part as w:styles, a relationships part as Relationships — so its root element is
+# part of what the file is. A part of the user's own data (custom XML in a namespace of theirs) may have any root.
+OFFICE_VOCABULARIES = ("http://schemas.openxmlformats.org/", "http://schemas.microsoft.com/office/",
+                       "http://purl.oclc.org/ooxml/", "urn:schemas-microsoft-com:")
+
+
+def root_problems(src: "VPackage", out: "VPackage", members: Iterable[str]) -> Set[str]:
+    """For each of ``members`` that is XML in both packages and whose source root is of an Office vocabulary: the
+    problem that its root element is no longer that one (a body part that is a w:styles is no document, and the
+    schema, which knows both elements, does not say so). A member that does not parse on either side is not this
+    function's to name."""
+    problems: Set[str] = set()
+    for name in members:
+        if name not in src.names or name not in out.names:
+            continue
+        try:
+            before, after = src.xml(name), out.xml(name)
+        except Exception:  # noqa: BLE001 — not XML, or not well-formed: said by the checks that read it
+            continue
+        space = etree.QName(before).namespace or ""
+        if before.tag != after.tag and space.startswith(OFFICE_VOCABULARIES):
+            problems.add(f"{name}: its root element is <{etree.QName(after).localname}> where the source's is "
+                         f"<{etree.QName(before).localname}>; Word reads this part as a "
+                         f"{etree.QName(before).localname}")
+    return problems
 
 
 class VPackage:
@@ -155,7 +183,7 @@ class VPackage:
     def _main_part(self) -> str:
         root = self.xml("_rels/.rels")
         for rel in root.findall(REL + "Relationship"):
-            if rel.get("Type", "").endswith("/officeDocument"):
+            if rel.get("Type", "").endswith("/officeDocument") and rel.get("Target"):
                 return rel.get("Target").lstrip("/")
         return "word/document.xml"
 
@@ -173,8 +201,11 @@ class VPackage:
             if rel.get("TargetMode", "Internal") != "Internal":
                 continue
             t = rel.get("Target")
+            if not t or not rel.get("Id"):
+                continue                # a relationship without its target or id relates nothing: it is a
+                                        # problem of the package's (``integrity_problems``), never a reader's crash
             resolved = t.lstrip("/") if t.startswith("/") else posixpath.normpath(posixpath.join(d, t))
-            out[rel.get("Id")] = {"type": rel.get("Type"), "target": resolved}
+            out[rel.get("Id")] = {"type": rel.get("Type") or "", "target": resolved}
         return out
 
     def text_parts(self) -> List[str]:
@@ -285,13 +316,21 @@ class VPackage:
         return defaults, overrides
 
     def integrity_problems(self) -> Set[str]:
-        """Package-level repair triggers: dangling internal relationships, overrides naming missing members,
-        members with no content type."""
+        """Package-level repair triggers: dangling internal relationships, relationships that lack their id, type
+        or target, overrides naming missing members, members with no content type."""
         problems = set()
         names = set(self.names)
+        for rp in self.names:
+            folder, leaf = posixpath.split(rp)
+            if not leaf.endswith(".rels") or posixpath.basename(folder) != "_rels":
+                continue
+            for rel in self.xml(rp).findall(REL + "Relationship"):
+                lacking = [a for a in ("Id", "Type", "Target") if not rel.get(a)]
+                if lacking:
+                    problems.add(f"relationship in {rp} without its {', '.join(lacking)}")
         for rp, owner, typ, target in self.all_relationships():
             if target is not None and target not in names:
-                problems.add(f"dangling relationship in {rp} → {target} ({typ.rsplit('/', 1)[-1]})")
+                problems.add(f"dangling relationship in {rp} → {target} ({(typ or '?').rsplit('/', 1)[-1]})")
         defaults, overrides = self.content_types()
         for name in overrides:
             if name not in names:
@@ -310,8 +349,8 @@ class VPackage:
             got = overrides.get(target) or defaults.get(posixpath.splitext(target)[1].lstrip(".").lower())
             ok = (got or "").startswith("image/") if want == "image/*" else got == want
             if not ok:
-                problems.add(f"content type of {target} is {got!r} but its relationship ({typ.rsplit('/', 1)[-1]}) "
-                             f"needs {want!r}")
+                problems.add(f"content type of {target} is {got!r} but its relationship "
+                             f"({(typ or '?').rsplit('/', 1)[-1]}) needs {want!r}")
         return problems
 
     def referenced_members(self) -> Set[str]:

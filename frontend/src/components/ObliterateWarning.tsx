@@ -4,9 +4,11 @@ import {
   OBLITERATE_COSTS,
   OBLITERATE_GRANTS,
   OBLITERATE_KEPT,
+  canTurnOnObliterate,
   obliterateKeyNote,
   obliterateSubject,
 } from "../lib/modes";
+import { HANDS_ON_LABEL, HANDS_ON_SAYS, HANDS_ON_TOGGLE } from "../lib/handsOn";
 import { ModalShell, primaryBtn, quietBtn } from "./ModalShell";
 
 interface Props {
@@ -19,19 +21,22 @@ interface Props {
    *  a key (lib/modes.ts obliterateKeyNote says what then still needs one). */
   failedCopy?: boolean;
   onCancel: () => void;
-  onConfirm: () => void;
+  /** `handsOn`: the warning's own toggle, off unless ticked — the hands-on tools turn on with the mode. */
+  onConfirm: (handsOn: boolean) => void;
 }
 
 /**
  * Obliterate's warning, shown every time the mode is chosen (CLAUDE.md, Modes): what it grants, what
  * it costs and what still holds, then a box to tick before the button turns it on. Nothing is remembered: the next
  * time it asks again, and a launch never opens in Obliterate. A to-do row's **Obliterate this one** opens the same
- * warning, naming the one document the pass begins over.
+ * warning, naming the one document the pass begins over. Under the lists sits the toggle of the hands-on tools
+ * (lib/handsOn.ts), off every time the warning opens.
  */
 export default function ObliterateWarning({ keyReady, subject, failedCopy = false, onCancel, onConfirm }: Props) {
   const [understood, setUnderstood] = useState(false);
-  const keyNote = obliterateKeyNote(keyReady, !!subject && failedCopy);
-  const canConfirm = keyReady || (!!subject && failedCopy);
+  const [handsOn, setHandsOn] = useState(false);
+  const keyNote = obliterateKeyNote(keyReady, !!subject && failedCopy, handsOn);
+  const canConfirm = canTurnOnObliterate(keyReady, !!subject && failedCopy, handsOn);
   return (
     <ModalShell title="Obliterate mode" onClose={onCancel} wide>
       <div className="flex flex-col gap-3 text-sm">
@@ -47,6 +52,23 @@ export default function ObliterateWarning({ keyReady, subject, failedCopy = fals
         <WarnList title="What it grants" items={OBLITERATE_GRANTS} tone="warn" />
         <WarnList title="What it costs" items={OBLITERATE_COSTS} tone="err" />
         <WarnList title="What still holds" items={OBLITERATE_KEPT} tone="ok" />
+        <section className="rounded-lg border-l-2 border-edge bg-raised px-3 py-2" aria-label={HANDS_ON_LABEL}>
+          <label className="flex cursor-pointer items-start gap-2 text-xs font-semibold text-ink">
+            <input
+              type="checkbox"
+              className="mt-0.5 h-3.5 w-3.5 flex-none accent-[var(--color-err)]"
+              checked={handsOn}
+              onChange={(e) => setHandsOn(e.target.checked)}
+              data-capability="handson.toggle"
+            />
+            {HANDS_ON_TOGGLE}
+          </label>
+          <ul className="mt-1 list-disc space-y-0.5 pl-4 text-xs leading-relaxed text-ink-dim">
+            {HANDS_ON_SAYS.map((item) => (
+              <li key={item}>{item}</li>
+            ))}
+          </ul>
+        </section>
         {keyNote && (
           <p className="text-xs text-warn" role="status">
             {keyNote}
@@ -69,7 +91,7 @@ export default function ObliterateWarning({ keyReady, subject, failedCopy = fals
             type="button"
             className={primaryBtn}
             disabled={!understood || !canConfirm}
-            onClick={onConfirm}
+            onClick={() => onConfirm(handsOn)}
             data-capability="obliterate.warning"
           >
             Turn on Obliterate

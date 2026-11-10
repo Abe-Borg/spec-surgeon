@@ -25,6 +25,7 @@ import RecipesStrip from "./components/RecipesStrip";
 import { composerRecipes } from "./lib/savedRecipes";
 import { EMPTY_SAFE_FORM, openForm, type SafeFormState } from "./lib/recipes";
 import ObliterateWarning from "./components/ObliterateWarning";
+import PartsModal from "./components/PartsModal";
 import { modeChoice } from "./lib/modes";
 import TourOverlay from "./components/TourOverlay";
 import { TOUR_COMPLETION_VERSION, preparedInputs, preparedRecipe, type TourStep } from "./lib/tour";
@@ -384,10 +385,34 @@ export default function App() {
     if (choice === "warn") setWarning(true);
     else if (choice === "switch") applyView(api.setMode(mode));
   }, [applyView, view.mode]);
-  const onObliterate = useCallback(() => {
+  const onObliterate = useCallback((handsOn: boolean) => {
     setWarning(false);
-    if (!busyRef.current) applyView(api.setMode("obliterate", true));
+    if (!busyRef.current) applyView(api.setMode("obliterate", true, handsOn));
   }, [applyView]);
+  // Obliterate's hands-on tools (lib/handsOn.ts): their switch in the mode's strip, a document's read-only part
+  // browser, and its two buttons. None of them uses AI.
+  const onHandsOn = useCallback((on: boolean) => {
+    if (!busyRef.current) applyView(api.setHandsOn(on));
+  }, [applyView]);
+  const [partsOf, setPartsOf] = useState<Attachment | null>(null);
+  useEffect(() => {
+    if (!view.hands_on) setPartsOf(null);
+  }, [view.hands_on]);
+  const onSavePart = useCallback((part: string, which: api.PartsFile) => {
+    if (!partsOf || busyRef.current) return;
+    api
+      .savePart(partsOf.path, part, which)
+      .then((next) => {
+        if (next && !busyRef.current) dispatch({ type: "view", view: next });
+      })
+      .catch((failure: unknown) => setNotice(failureText(failure)));
+  }, [partsOf]);
+  const onReplacePart = useCallback((part: string, file: File) => {
+    const doc = partsOf;
+    if (!doc || busyRef.current) return;
+    setPartsOf(null);
+    void runJob(api.replacePart(doc.path, part, file), `Replace the part ${part} of ${doc.name} with my file ${file.name}.`, "replace_part");
+  }, [partsOf, runJob]);
   const onHandOff = useCallback((paths: string[]) => applyView(api.handOff(paths)), [applyView]);
   // A to-do row's Obliterate this one: the same warning, naming the document, unless the mode is already on (its
   // warning was confirmed when it was turned on); then the pass begins over that one document.
@@ -397,10 +422,10 @@ export default function App() {
     if (view.mode === "obliterate") applyView(api.obliterateTodo(item.path));
     else setTodoWarning(item);
   }, [applyView, view.mode]);
-  const onConfirmTodoWarning = useCallback(() => {
+  const onConfirmTodoWarning = useCallback((handsOn: boolean) => {
     const item = todoWarning;
     setTodoWarning(null);
-    if (item && !busyRef.current) applyView(api.obliterateTodo(item.path, true));
+    if (item && !busyRef.current) applyView(api.obliterateTodo(item.path, true, handsOn));
   }, [applyView, todoWarning]);
 
   // Safe mode's buttons: the same list for the whole session, fetched once.
@@ -752,6 +777,8 @@ export default function App() {
           panel={panel}
           recipes={composerRecipes(view).length > 0 ? recipesStrip : undefined}
           onMode={onMode}
+          handsOn={view.hands_on}
+          onHandsOn={view.mode === "obliterate" ? onHandsOn : undefined}
           discard={discardWhat}
           onDiscard={discard}
           tourActive={tourActive}
@@ -784,6 +811,7 @@ export default function App() {
           onHandOff={onHandOff}
           onSaveRecipe={onOpenSaveRecipe}
           tourActive={tourActive}
+          onParts={setPartsOf}
         />
       </main>
       <input
@@ -846,6 +874,15 @@ export default function App() {
           keyReady={!!view.connection?.ready}
           onCancel={() => setWarning(false)}
           onConfirm={onObliterate}
+        />
+      )}
+      {partsOf && view.hands_on && (
+        <PartsModal
+          document={partsOf}
+          busy={busy || tourActive}
+          onClose={() => setPartsOf(null)}
+          onSave={onSavePart}
+          onReplace={onReplacePart}
         />
       )}
       {todoWarning && (

@@ -1,7 +1,22 @@
 // Adapted from Build-a-Spec's frontend/src/lib/api.ts (copy-based reuse):
 // the fetch helpers and `streamChat`'s shape, against Spec Surgeon's own
 // contract (docs/WEB_API.md).
-import type { About, BundleSaved, ExportKind, JobEvent, Mode, Recipe, RecipeInputs, Settings, Tutorial, Update, View } from "../types.ts";
+import type {
+  About,
+  BundleSaved,
+  ExportKind,
+  JobEvent,
+  Mode,
+  PartPage,
+  PartSearch,
+  PartsListing,
+  Recipe,
+  RecipeInputs,
+  Settings,
+  Tutorial,
+  Update,
+  View,
+} from "../types.ts";
 import type { Report } from "./diagnostics.ts";
 import {
   apiHeaders,
@@ -120,8 +135,10 @@ export async function putBack(path: string): Promise<View> {
 /** A to-do entry's **Obliterate this one** (docs/WEB_API.md, `POST /api/todo/obliterate`): Obliterate mode for that
  *  one document and the pass over it alone. `acknowledged`: the user confirmed the warning this time (not asked
  *  again when the mode is already on). No AI call. */
-export async function obliterateTodo(path: string, acknowledged = false): Promise<View> {
-  return normalizeView(await post<unknown>("/api/todo/obliterate", acknowledged ? { path, acknowledged } : { path }));
+export async function obliterateTodo(path: string, acknowledged = false, handsOn = false): Promise<View> {
+  return normalizeView(
+    await post<unknown>("/api/todo/obliterate", acknowledged ? { path, acknowledged, ...(handsOn ? { hands_on: true } : {}) } : { path }),
+  );
 }
 
 export async function startOver(): Promise<View> {
@@ -145,8 +162,57 @@ export async function newConversation(): Promise<View> {
 
 /** Safe, Default or Obliterate (docs/WEB_API.md, `POST /api/mode`). Safe or Default is kept in settings.json for the
  *  next start; Obliterate never is, and needs `acknowledged`: the user confirmed its warning this time. */
-export async function setMode(mode: Mode, acknowledged = false): Promise<View> {
-  return normalizeView(await post<unknown>("/api/mode", acknowledged ? { mode, acknowledged } : { mode }));
+export async function setMode(mode: Mode, acknowledged = false, handsOn = false): Promise<View> {
+  return normalizeView(
+    await post<unknown>("/api/mode", acknowledged ? { mode, acknowledged, ...(handsOn ? { hands_on: true } : {}) } : { mode }),
+  );
+}
+
+// --- Obliterate's hands-on tools (docs/WEB_API.md, "The hands-on tools") ---------------------------------------
+
+/** Which of a document's files the browser reads: the copy the next change is made on, or the attached original. */
+export type PartsFile = "current" | "original";
+
+/** The hands-on tools' own switch, in Obliterate mode. Never kept: they go with the mode. */
+export async function setHandsOn(on: boolean): Promise<View> {
+  return normalizeView(await post<unknown>("/api/hands-on", { on }));
+}
+
+/** The parts of one document's file, read-only. */
+export function getParts(path: string, which: PartsFile = "current"): Promise<PartsListing> {
+  return post<PartsListing>("/api/parts", { path, which });
+}
+
+/** One page of one part as text, read-only. */
+export function getPart(path: string, part: string, page = 1, which: PartsFile = "current"): Promise<PartPage> {
+  return post<PartPage>("/api/part", { path, part, page, which });
+}
+
+/** Every line of the document's parts that holds the words, read-only. */
+export function searchParts(path: string, query: string, which: PartsFile = "current"): Promise<PartSearch> {
+  return post<PartSearch>("/api/parts/search", { path, query, which });
+}
+
+/** Save this part: its own bytes into the folder the native dialog asks for. null when the dialog was dismissed. */
+export async function savePart(path: string, part: string, which: PartsFile = "current"): Promise<View | null> {
+  const answer = await post<unknown>("/api/part/save", { path, part, which });
+  if (answer && typeof answer === "object" && (answer as { cancelled?: unknown }).cancelled === true) return null;
+  return normalizeView(answer);
+}
+
+/** Replace this part: the chosen file's bytes take the part's place in a copy, after a preview — a job with no AI
+ *  call (docs/WEB_API.md, `POST /api/part/replace`). */
+export async function* replacePart(path: string, part: string, file: File): AsyncGenerator<JobEvent> {
+  const form = new FormData();
+  form.append("path", path);
+  form.append("part", part);
+  form.append("file", file, file.name);
+  const resp = await fetch(apiUrl(setup, "/api/part/replace"), { method: "POST", headers: apiHeaders(setup), body: form });
+  if (!resp.ok || !resp.body) {
+    const data: unknown = await resp.json().catch(() => null);
+    throw new ApiError(resp.status, messageFrom(data, resp.status));
+  }
+  yield* readSse<JobEvent>(resp);
 }
 
 /** Safe mode's "Try these in Default mode": the documents the last button left untouched go on the to-do list. */
