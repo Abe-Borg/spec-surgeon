@@ -368,6 +368,24 @@ export interface ExportState {
   folder: string;
   unsaved: number;
   copies: number;
+  /** Export anyway (Obliterate mode alone): the clean kinds Word can make for the marked copies the checked way left
+   *  without a file. Absent when there is nothing to offer, and in Safe and Default always. */
+  anyway?: ExportAnyway[];
+}
+
+/** One choice of Export anyway (docs/WEB_API.md, `POST /api/export` with `anyway`): a clean kind MADE BY WORD, with
+ *  no check of the app's, for the marked copies (UNVERIFIED, UNPROVEN or SALVAGED) that kind's checked export left
+ *  without a file. */
+export interface ExportAnyway {
+  kind: "accepted" | "pdf";
+  /** The menu's words for it, the server's ("PDF (Clean), made by Word"). */
+  label: string;
+  /** What Word does, in one sentence. */
+  does: string;
+  /** The copies it would be made for, by file name. */
+  copies: string[];
+  /** Why it cannot run on this computer (Word cannot be reached); "" when it can. */
+  blocked: string;
 }
 
 /** Export's three kinds (docs/WEB_API.md, `POST /api/export`): `word` — Word (Tracked Changes ON), the copies as they

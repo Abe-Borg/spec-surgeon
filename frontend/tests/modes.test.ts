@@ -54,7 +54,7 @@ test("Obliterate opens its warning from any mode; the others switch at once", ()
 
 test("the warning names what it grants, what it costs and what still holds", () => {
   // the three guardrails it lifts, and what it adds: the raw XML edit and Word's named actions
-  assert.equal(OBLITERATE_GRANTS.length, 6);
+  assert.equal(OBLITERATE_GRANTS.length, 7);
   assert.ok(OBLITERATE_GRANTS.some((g) => g.includes("wording")));
   assert.ok(OBLITERATE_GRANTS.some((g) => g.includes("custom method")));
   assert.ok(OBLITERATE_GRANTS.some((g) => g.includes("UNVERIFIED")));

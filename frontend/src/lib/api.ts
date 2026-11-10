@@ -257,11 +257,13 @@ export type ExportAnswer = { view: View } | { stream: AsyncGenerator<JobEvent> }
 /** Export, one of its three kinds (docs/WEB_API.md, `POST /api/export`): every edited copy written into the folder the
  *  native dialog asks for (it opens where the last export went). An ApiError from a window without a dialog (501),
  *  with nothing to save, no program to make a PDF or a folder that refuses (400), or while work runs (409). */
-export async function exportCopies(kind: ExportKind = "word"): Promise<ExportAnswer> {
+export async function exportCopies(kind: ExportKind = "word", anyway = false): Promise<ExportAnswer> {
   const resp = await fetch(apiUrl(setup, "/api/export"), {
     method: "POST",
     headers: apiHeaders(setup, { "Content-Type": "application/json" }),
-    body: JSON.stringify({ kind }),
+    // `anyway` (Obliterate mode alone): the clean kind made by Word for the marked copies the checked way left
+    // without a file; the answer is the job stream
+    body: JSON.stringify(anyway ? { kind, anyway: true } : { kind }),
     cache: "no-store",
   });
   if (!resp.ok) {

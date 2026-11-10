@@ -400,6 +400,18 @@ export const OBLITERATE_OPERATIONS: readonly TypicalOperation[] = [
   },
   {
     task:
+      "Get a clean Word file or PDF of a marked copy (UNVERIFIED, UNPROVEN or Salvaged) when Export says its " +
+      "clean version could not be made",
+    can: "Yes, made by Word and unchecked",
+    note:
+      "In Obliterate mode the Export menu then offers that kind under Made by Word, unchecked: Word accepts every " +
+      "tracked change on a private copy, and for the PDF deletes every comment first. No check proves the file; " +
+      "the chat names it UNCHECKED, with Word's own count and what the app read in the file Word saved. A copy " +
+      "with no mark is not offered this: accept its changes in Word, or run the Word action that does, and " +
+      "export again. Needs Microsoft Word on this computer.",
+  },
+  {
+    task:
       "Have Word itself do it: unlink every field, accept every tracked change, turn automatic numbers into typed " +
       "text, turn text boxes into plain text, delete drawn shapes, repair a file",
     can: "Yes, with Word actions",

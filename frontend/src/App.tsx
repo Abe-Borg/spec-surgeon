@@ -353,12 +353,12 @@ export default function App() {
 
   // Export, one of its three kinds: Word (Tracked Changes ON) answers with the view; the clean kinds answer with the
   // job stream, followed like any job. A dismissed dialog changes nothing (the view is fetched again, which is
-  // harmless).
+  // harmless). `anyway` is Obliterate's Export anyway: the clean kind made by Word, unchecked, as a job too.
   const onExport = useCallback(
-    (kind: ExportKind) => {
+    (kind: ExportKind, anyway = false) => {
       if (busyRef.current) return;
       api
-        .exportCopies(kind)
+        .exportCopies(kind, anyway)
         .then((answer) => {
           if (answer === null) void refresh();
           else if ("stream" in answer) void runJob(answer.stream, null, "export");

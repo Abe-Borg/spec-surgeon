@@ -44,7 +44,10 @@ files go to clients, so the one failure that matters is content lost or invented
    owner's (2026-10-29): Export's clean choices (`exports.clean_spec`: every tracked change accepted; or every comment
    removed, then every tracked change accepted) are fixed specs built in code that the menu choice names and approves,
    without a preview. They run over the edited copies through the gate and the checked run, into the scratch folder,
-   and change no copy, history line or undo point; never widen them, and never let a model choose one.
+   and change no copy, history line or undo point; never widen them, and never let a model choose one. Amended for
+   Obliterate alone (the owner's, 2026-11-10; Modes, "Export anyway"): where a clean choice left a marked copy
+   without a file, the menu offers that kind made by Word — commands fixed in code (`exports.ANYWAY_ACTIONS`), no
+   spec, no gate, no checked run, the file named UNCHECKED. Still the menu's choice and never a model's.
 
 Out of reach by decision (refused with a code, "change this one in Word"): shapes, SmartArt, charts, equations,
 embedded objects, data-bound content controls and the theme, and text boxes as objects (adding, moving, sizing or
@@ -189,6 +192,30 @@ salvaged file. The user's file is read and never written (invariant 4 untouched)
 password has NONE afterwards, and the chat and the mark say so. A file past the size limits is attached as it is,
 unmarked: nothing in it changed. A lock file, a folder, a missing file and any other kind of file are still
 refused. Safe and Default refuse as before and are told nothing new. Pinned by `tests/test_rescue.py`.
+
+Obliterate also has **Export anyway** (the owner's decision, 2026-11-10; `exports.make_anyway`), which amends
+invariant 7's exception for this mode alone. When a clean export — Word (Tracked Changes OFF) or PDF (Clean) — leaves
+a MARKED copy without a file (`DocumentTask._marked`: UNVERIFIED or UNPROVEN in `unverified`, or SALVAGED: a copy no
+check proves as it is), the Export menu offers that kind **made by Word** under *Made by Word, unchecked*
+(`DocumentTask.export_anyway_set` / `export_anyway_view`, the view's `export.anyway`; `POST /api/export` with
+`anyway`, the job `export_anyway`, no AI: `web.server.MODEL_FREE_JOBS`). The offer follows a failure and nothing
+else: `export()` records each copy a clean kind left out with the md5 it had (`export_missed`, never journalled), and
+a copy changed since, a copy with no mark, any other mode and Word (Tracked Changes ON) are offered nothing. Word
+runs **commands fixed in code** on a private copy of the edited copy, through the same seam as the Word actions
+(`word_actions.run_word_actions`): `exports.ANYWAY_ACTIONS` — `accept_changes`; for the PDF `delete_comments` first, a
+command that is on no menu (`Action.offered=False`, as `convert` is) and that no plan can name. Nothing is planned,
+predicted or passed through the gate, so nothing proves the file: the chat names it **UNCHECKED**
+(`DocumentTask._export_anyway_said`), with Word's own count in Word's words and what the independent reader found in
+the file Word saved (`verify.run_difference(rewritten=True)`, its record kept in the run's `records\`, read by
+`exports.reading`: whether its words, block for block, are the copy's read with every tracked change accepted — for
+the PDF outside the comments Word deleted — whether a tracked change is still pending, for the PDF whether a
+comment is still there (`_comments_left`, the app's own count), whether it opens as a package). **Report, do not refuse:** a file with such a finding is written and the finding said; a document Word
+cannot finish, whose saved file cannot be read at all, or whose PDF cannot be made or fails `check_pdf` gets no file
+and stays offered. The PDF is rendered from the file Word saved (`pdf_export.export_pdfs(basis=)`, so
+`PDF_REPORT.md` never says a check passed it). The edited copies are read and never written, nothing joins the
+history, no undo point is taken, and a copy made leaves the offer. **No model is told of it in any mode** — no
+prompt, tool, catalog or schema names it — and Safe and Default write every Export file the checked way or not at
+all. Pinned by `tests/test_export_anyway.py`.
 
 Obliterate is the top rung of a ladder (the owner's decision, 2026-11-10): Safe, then Default for what Safe could not
 take, then Obliterate for the one or two documents neither could, so it also starts from the to-do list. A document
@@ -390,7 +417,8 @@ jobs). Details: `docs/CONVERSATIONAL_DESKTOP.md`.
     (`verify/suite.occurrence_lines`). **Add a folder of documents** (`DocumentTask.attach_folder`, `/api/attach-folder`)
     attaches a folder's own `.docx` files, subfolders not entered; **Remove all documents**
     (`DocumentTask.remove_documents`, `/api/remove-documents`) takes every Word document out, each as its ✕ would.
-    `exports.py` (Export's three kinds: `clean_spec`, `make_clean`, `PROMPT_NOTE`) and `pdf_export.py` (Export → PDF
+    `exports.py` (Export's three kinds: `clean_spec`, `make_clean`, `PROMPT_NOTE`; and Obliterate's Export anyway,
+    `make_anyway`: a marked copy's clean kind made by Word, unchecked — Modes, above) and `pdf_export.py` (Export → PDF
     (Clean): a PDF of each clean copy that passed, rendered through `render` and its cache, then `check_pdf`).
     `template_roles.py` (a template's style per role, page and font, read without a model) and `body_match.py` (match
     body formatting: one plan per document from its own structure, one layout per agreeing pattern, each through the
@@ -536,7 +564,9 @@ Standing decisions from the earlier rounds (their plans are in the git history):
   their own, with nothing planned after them in the same approval; Claude-composed Word scripts are not
   built: a miss is first a new menu item); a file refused at attach may be rescued (built: Try to rescue, Modes;
   the rescued document is marked SALVAGED for good); Export may make a marked copy's
-  clean version anyway. Until an item is built, the invariants and the Modes section describe the code as it is.
+  clean version anyway (built: Export anyway, Modes — made by Word, named UNCHECKED, offered only after the checked
+  way left that copy without a file). Until an item is built, the invariants and the Modes section describe the code
+  as it is.
 - In Safe and Default, a custom method may do more kinds of formatting, never more kinds of change: a family is added
   only behind a V10 kind that proves the content it touches is the source's, and the sandbox's limits stay as they are.
 - Capitals are a display property (`w:caps`) unless the user gives capitalised wording; nothing retypes a file's letters

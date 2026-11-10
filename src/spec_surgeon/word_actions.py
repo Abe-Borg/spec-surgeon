@@ -37,7 +37,7 @@ class Action:
     does: str                    # exactly what it does: the menu's help and the plan's sentence
     one: str                     # Word's own account of what it did, for a count of one …
     many: str                    # … and of several ("{n}" is the count)
-    offered: bool = True         # on the menu (``convert`` is the worker's alone until a file can be rescued at attach)
+    offered: bool = True         # on the menu (``convert`` is the rescue's at attach, ``delete_comments`` Export's)
 
 
 MENU: Tuple[Action, ...] = (
@@ -80,6 +80,10 @@ MENU: Tuple[Action, ...] = (
     Action("convert", "Save as a Word document (.docx)",
            "Word opens the file and saves it as a Word document (.docx).",
            "saved as a Word document", "saved as a Word document", offered=False),
+    # Export anyway's alone (``exports.ANYWAY_ACTIONS``): a plan removes comments with the checked ``remove_comments``
+    Action("delete_comments", "Delete all comments",
+           "Word deletes every comment in the copy, with its replies.",
+           "{n} comment deleted", "{n} comments deleted", offered=False),
 )
 ACTIONS: Dict[str, Action] = {a.id: a for a in MENU}
 OFFERED: Tuple[str, ...] = tuple(a.id for a in MENU if a.offered)

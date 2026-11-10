@@ -379,6 +379,43 @@ What it lifts (`Session.unguarded`; CLAUDE.md, "Modes"):
     Text it places (`set_text`'s text, and every stretch of text inside `xml`, whatever comment or element stands
     beside it: `fragment_text`) is traced like any Obliterate wording (`compiler.placed_words`); attribute values
     are not.
+- **Export anyway** (the owner's decision of 2026-11-10, backlog O7; `exports.make_anyway`). It amends invariant
+  7's exception for this mode alone: Export's clean choices stay fixed plans through the gate and a checked run,
+  and where one leaves a MARKED copy without a file, the menu offers that kind made by Word.
+  - **When.** `DocumentTask.export` records each copy a clean kind left without a file, by the copy's path, with
+    the md5 it had and why (`export_missed`; kept in memory, never in the journal). `export_anyway_set(kind)` is
+    what the offer covers: Obliterate mode, a copy that carries a mark (`_marked`: UNVERIFIED or UNPROVEN in
+    `unverified`, or a SALVAGED document), listed in `export_missed[kind]`, and still those bytes. A copy with no
+    mark, a copy changed since, any other mode and Word (Tracked Changes ON) are offered nothing. The checked
+    export's own chat message ends with the offer (`_anyway_offer`: which copies, and where in the menu), and the
+    view carries it (`export_anyway_view`, the page's `export.anyway`): the Export menu shows the choices under
+    *Made by Word, unchecked* (`ExportMenu.tsx`, `lib/exportAnyway.ts`), greyed with the reason where Word cannot
+    be reached.
+  - **What Word does.** `exports.ANYWAY_ACTIONS`, fixed in code: `accept_changes` for Word (Tracked Changes OFF);
+    `delete_comments`, then `accept_changes`, for PDF (Clean). Both are entries of `word_actions.MENU` with their
+    code in `render/word_actions.py`; `delete_comments` is `offered=False`, as `convert` is — on no menu the user
+    picks from, outside the `word_action` operation's values, so no plan can name it. `make_anyway` writes a
+    private copy of the edited copy's bytes under the run's folder (`exports\<stamp>-<kind>-anyway\word\<n>\in\`),
+    has Word run the commands through the one seam (`word_actions.run_word_actions`: a private instance, macros
+    disabled, links not updated, tracking off while they run, one save), and for the PDF renders the file Word
+    saved with `pdf_export.export_pdfs` (`check_pdf` as for any clean PDF; `PDF_REPORT.md` says what the PDFs were
+    made from, `ANYWAY_PDF_BASIS`).
+  - **What is said.** Nothing was planned or predicted, so nothing proves the file: the chat names it UNCHECKED
+    (`_export_anyway_said`). Beside that, for each file: Word's own count, in Word's words
+    (`word_actions.account`), and what the independent reader found in the file Word saved —
+    `verify.run_difference(copy, saved, rewritten=True)`, the O5 record of a file Word saved, kept under the run's
+    `records\` and read by `exports.reading`: a failed check of the file (V1); how many text blocks differ from the
+    copy read with every tracked change accepted (`_blocks_differing`: the record's accept-all view for a part
+    with tracked changes, its text for any other; for the PDF the comments parts are left out, since Word deleted
+    them); where a tracked change is still pending (`_pending_where`); and, for the PDF, how many comments the file
+    still holds (`_comments_left`: the app's own count, never Word's). A reading with nothing found proves the
+    words and nothing else. **Report, do not refuse:** a file with a finding is written and the finding said; only
+    a document Word cannot finish, a saved file the reader cannot open at all, or a PDF that cannot be made or
+    fails its check gets no file, with the reason, and stays offered.
+  - **What does not change.** The edited copies (read, never written), the history, the undo points, the request
+    open and what counts as saved; a copy made leaves `export_missed`. A job with no AI (`MODEL_FREE_JOBS`): Stop
+    ends it between documents, and in Word's own wait, with nothing saved. No model is told of Export anyway in
+    any mode: no prompt, tool, catalog or schema names it, and the fingerprints of all of them are unchanged.
 - **The rescue at attach** (the owner's decision of 2026-11-10, backlog O6; `rescue.py`). In Safe and Default a
   file the attach-time check refuses is refused and nothing more. In Obliterate a refused document with something
   to try carries **Try to rescue**, and a `.doc` or `.docm` can be attached to be rescued.
@@ -1240,6 +1277,10 @@ a tracked deletion would take away), does not pass every check, still carries a 
 an Export has no preview to show that flag), or whose PDF cannot be made or fails its check, gets no file: the chat
 names it with the engine's reason in plain words. PDF (Clean) needs Word or LibreOffice: without
 either the choice is held back and says why (the view's `pdf`), and the server refuses it before any dialog.
+
+In Safe and Default that is the end of it: every file these choices write was made the checked way, or the document
+has none. In Obliterate mode, a copy that carries a mark and was left without a file can be exported **anyway**,
+made by Word and named UNCHECKED, from a choice of its own in the menu ("Obliterate mode", *Export anyway*).
 
 Every kind: a file already there with the same content is that file, saved, and nothing is written over it; a
 different file under the name is left alone and the new one is numbered beside it (`name (2).docx`); a folder where a

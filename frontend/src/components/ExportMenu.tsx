@@ -1,15 +1,18 @@
 // The top bar's Export: one button that opens its three choices (the owner's, 2026-10-29) — Word (Tracked Changes ON),
 // Word (Tracked Changes OFF) and PDF (Clean). A choice asks for a folder next (the native dialog, on the server); the
 // clean ones make and check their copies first, as a job (docs/WEB_API.md, `POST /api/export`).
+// In Obliterate mode, once a clean kind has left a marked copy without a file, the menu also offers that kind MADE BY
+// WORD, unchecked (Export anyway, the owner's decision of 2026-11-10; `lib/exportAnyway.ts`).
 import { useEffect, useRef, useState } from "react";
 import type { ExportKind, View } from "../types";
+import { ANYWAY_HEAD, ANYWAY_MEANS, anywayChoices, anywayDetail } from "../lib/exportAnyway";
 import { EXPORT_CHOICES, exportBlocked, exportChoiceBlocked, exportLabel, exportTip } from "../lib/workbench";
 import Tip from "./Tip";
 
 interface Props {
   view: View;
   busy: boolean;
-  onExport: (kind: ExportKind) => void;
+  onExport: (kind: ExportKind, anyway?: boolean) => void;
   /** The top bar has given way to fewer words: "Export · 3" for "Export · 3 unsaved" (Header.tsx, GIVE_WAY). */
   short?: boolean;
 }
@@ -19,6 +22,7 @@ export default function ExportMenu({ view, busy, onExport, short = false }: Prop
   const rootRef = useRef<HTMLDivElement>(null);
   const firstRef = useRef<HTMLButtonElement>(null);
   const blocked = exportBlocked(view, busy);
+  const anyway = anywayChoices(view);
 
   // The menu closes when work starts, a click lands elsewhere, or Escape is pressed (focus back on the button).
   useEffect(() => {
@@ -94,6 +98,31 @@ export default function ExportMenu({ view, busy, onExport, short = false }: Prop
               </Tip>
             );
           })}
+          {anyway.length > 0 && (
+            <div role="group" aria-label={ANYWAY_HEAD} className="mt-1.5 border-t border-edge pt-1.5">
+              <p className="px-2.5 pb-1 text-[11px] leading-snug text-warn">
+                <span className="font-semibold">{ANYWAY_HEAD}.</span> {ANYWAY_MEANS}
+              </p>
+              {anyway.map((choice) => (
+                <Tip key={choice.kind} tip={choice.blocked} className="w-full">
+                  <button
+                    type="button"
+                    role="menuitem"
+                    disabled={!!choice.blocked}
+                    onClick={() => {
+                      setOpen(false);
+                      onExport(choice.kind, true);
+                    }}
+                    data-capability="header.export-anyway"
+                    className="flex w-full flex-col items-start gap-0.5 rounded-lg px-2.5 py-2 text-left transition-colors hover:bg-raised focus:bg-raised focus:outline-none disabled:pointer-events-none disabled:opacity-40"
+                  >
+                    <span className="text-xs font-medium text-ink">{choice.label}</span>
+                    <span className="text-[11px] leading-snug text-ink-dim">{choice.blocked || anywayDetail(choice)}</span>
+                  </button>
+                </Tip>
+              ))}
+            </div>
+          )}
         </div>
       )}
     </div>

@@ -17,7 +17,7 @@ import { TRUST_FACTS as F } from "./trustFacts.ts";
  * Bump whenever chapter or step ORDER changes: the resume record (lib/tourStorage.ts) keeps numeric indexes, and a
  * stale one would land a reload on another chapter than the one it was left at. A bump discards it.
  */
-export const TOUR_VERSION = 10;
+export const TOUR_VERSION = 11;
 
 /** The version a finished tour is recorded as (settings.json `tutorial_version`); bump it when the tour changes
  *  enough that someone who finished the old one should be invited again. */
@@ -673,6 +673,16 @@ export const TOUR: readonly TourChapter[] = [
         title: "Obliterate: rescue a refused file",
         body:
           "A file the app refuses when you attach it stays refused in Safe and Default. In Obliterate mode it carries Try to rescue, and an old .doc or a .docm can be attached to be rescued. The app mends what it can itself, or Word converts or repairs a private copy; a document protected with a password asks for it first, gives it to Word for that one attempt and keeps it nowhere. Your file is read, never changed. What comes of it is attached in its place, marked Salvaged for good, and so is every copy made from it: the file could not be read as it was, so nothing proves the rescue kept everything. No AI is used.",
+      },
+      {
+        id: "export-anyway",
+        capabilities: ["header.export-anyway"],
+        mode: "explanatory",
+        anchor: "header-export",
+        placement: "bottom",
+        title: "Obliterate: Export anyway, made by Word",
+        body:
+          "Export's two clean kinds make each file the checked way, and a copy that cannot be made so gets none. In Obliterate mode, when that happens to a marked copy (UNVERIFIED, UNPROVEN or Salvaged), the Export menu offers the same kind made by Word instead: Word accepts every tracked change on a private copy, and for the PDF deletes every comment first. Nothing is planned or predicted, so the file is unchecked and the chat names it so, with Word's own count and what the app read in the file Word saved: whether its words are your copy's, and whether a tracked change is left. Your copies stay as they are. No AI is used, and Claude can never choose it.",
       },
     ],
   },

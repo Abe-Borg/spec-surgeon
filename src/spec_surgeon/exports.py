@@ -14,13 +14,23 @@ a run's copy is (``batch.run_batch``, ``chain.run_chain``), in a folder of the w
 names the change and the click is its approval (the owner's decision, 2026-10-29: Export replaced Safe mode's *Save
 clean PDFs* button). The edited copies themselves are never changed and nothing joins the history the model hears; a
 copy whose clean version cannot be made exactly, or does not pass every check, gets no file and the export says why.
+
+**Export anyway** (Obliterate mode alone; the owner's decision of 2026-11-10, docs/BACKLOG.md O7): when a clean kind
+left a MARKED copy without a file (UNVERIFIED, UNPROVEN or SALVAGED: a copy no check proves as it is), the menu
+offers that kind made by Word instead (``make_anyway``). Word runs a fixed list of its own named commands
+(``ANYWAY_ACTIONS``: accept every tracked change; for the PDF, delete every comment first) on a private copy of the
+edited copy and saves it; for the PDF that file is then rendered and the PDF looked at as any clean PDF is. Nothing is
+planned, predicted or passed through the gate, so the file is UNCHECKED and the summary names it so, with Word's own
+count and what the independent reader found in the file Word saved (``reading``): whether its words are the edited
+copy's read with every tracked change accepted, whether a tracked change is left, whether it opens as a package. The
+choice is fixed here in code and named by the menu, never a model's; the edited copies are read and never written.
 """
 from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 
 from . import diagnostics as diag
 
@@ -45,6 +55,24 @@ EXPORT_FOLDER = "exports"               # under the window's scratch folder: one
 # the progress lines the window turns into its status (``document_task.STATUS_FOR_LOG``)
 CLEANING = "Creating and checking the clean copies…"
 SAVING_PDFS = "Saving the clean PDFs…"
+
+# Export anyway (Obliterate mode alone, module docstring): the Word commands each clean kind is made with, in order —
+# ids of ``word_actions.MENU``, fixed here; and the menu's words for the choice
+ANYWAY_ACTIONS: Dict[str, Tuple[str, ...]] = {"accepted": ("accept_changes",),
+                                              "pdf": ("delete_comments", "accept_changes")}
+ANYWAY_LABELS: Dict[str, str] = {"accepted": "Word (Tracked Changes OFF), made by Word",
+                                 "pdf": "PDF (Clean), made by Word"}
+ANYWAY_DOES: Dict[str, str] = {
+    "accepted": "Word accepts every tracked change on a private copy and saves it; comments stay.",
+    "pdf": "Word deletes every comment and accepts every tracked change on a private copy, and the PDF is made from "
+           "that.",
+}
+UNCHECKED = "UNCHECKED"                 # the word the summary names such a file by
+WORD_MAKING = "Word is making the clean copies…"
+# what ``PDF_REPORT.md`` says its PDFs were made from, for these
+ANYWAY_PDF_BASIS = ("Each PDF was made from a file Microsoft Word saved after deleting every comment and accepting "
+                    "every tracked change in a private copy of the edited copy (Export anyway, Obliterate mode): no "
+                    "check of the app's proves that file. Each PDF opens, has pages and carries no note.")
 
 _ACCEPT = {"op": "resolve_tracked_changes", "params": {"action": "accept"}}
 _ACCEPT_ASSUMPTIONS = ["the body, headers, footers, footnotes and endnotes",
@@ -113,11 +141,8 @@ _PART_WORDS = {"styles": "the style definitions", "numbering": "the list definit
                "endnotes": "the endnotes"}
 
 
-def pending_changes(path: Path) -> str:
-    """'' when a clean copy carries no tracked change in any of its parts; otherwise where some stay, in words. The
-    accept step settles the tracked changes in the text, never one in a style or a list definition
-    (``resolve_tracked_changes`` flags those and leaves them for Word); a copy that kept any is not the file the menu
-    promises, and an Export has no preview to show that flag (Codex review on PR #150)."""
+def _pending_where(path: Path) -> List[str]:
+    """Where a file still carries tracked changes, in words, each with its count; [] when it carries none."""
     from .ooxml import count_revisions
     from .package import DocxPackage
     pkg = DocxPackage.from_path(path)
@@ -127,6 +152,15 @@ def pending_changes(path: Path) -> str:
         if n:
             stem = Path(part).stem
             where.append(f"{_PART_WORDS.get(stem.rstrip('0123456789'), stem)} ({n})")
+    return where
+
+
+def pending_changes(path: Path) -> str:
+    """'' when a clean copy carries no tracked change in any of its parts; otherwise where some stay, in words. The
+    accept step settles the tracked changes in the text, never one in a style or a list definition
+    (``resolve_tracked_changes`` flags those and leaves them for Word); a copy that kept any is not the file the menu
+    promises, and an Export has no preview to show that flag (Codex review on PR #150)."""
+    where = _pending_where(path)
     if not where:
         return ""
     return (f"tracked changes stay pending in {' and '.join(where)}, which the accept step leaves as they are — "
@@ -194,6 +228,152 @@ def make_clean(copies: Dict[str, Path], kind: str, run_dir: Path, *, render: boo
             log(SAVING_PDFS)
             pdfs = export_pdfs({Path(key): path for key, path in clean.items()}, run_dir / PDF_FOLDER,
                                cache=RenderCache.for_out_dir(run_dir), log=log)
+            result.renderer_name = pdfs.renderer_name
+            result.made = {str(source): Path(pdf) for source, pdf in pdfs.pdfs.items()}
+            result.failed.update({str(source): f"its PDF could not be made: {str(why).rstrip('.')}"
+                                  for source, why in pdfs.failed.items()})
+        outcome.update(made=len(result.made), failed=len(result.failed))
+    return result
+
+
+# ---- Export anyway: the clean kinds made by Word, unchecked (Obliterate mode alone) -----------------------------------
+
+@dataclass
+class Anyway(Clean):
+    """What ``make_anyway`` made: as ``Clean``, and for each document Word's own account of what it did (``said``,
+    Word's words) and what the app's reading of the file Word saved found that a clean version should not show
+    (``read``; an empty list: nothing)."""
+    said: Dict[str, List[str]] = field(default_factory=dict)
+    read: Dict[str, List[str]] = field(default_factory=dict)
+
+
+def _blocks_differing(record: Any, skip: Set[str]) -> int:
+    """How many text blocks of the file Word saved differ from the edited copy's read with every tracked change
+    accepted, by the independent reader's own comparison (the record's V2: a part with tracked changes by its
+    accept-all view, any other by its text), outside the parts in ``skip``."""
+    check = record.get("V2")
+    data = (check.data or {}) if check is not None else {}
+    views = data.get("views") if isinstance(data.get("views"), dict) else {}
+    revised = {str(p) for p in views.get("parts") or []}
+    entries = [e for e in data.get("actual") or [] if str(e.get("part") or "") not in revised]
+    entries += list(views.get("accepted") or [])
+    return sum(1 for e in entries if str(e.get("part") or "") not in skip)
+
+
+def _comments_left(path: Path) -> int:
+    """How many comments a file still holds (its comments parts, found by relationship)."""
+    from .package import DocxPackage, W
+    pkg = DocxPackage.from_path(path)
+    return sum(1 for part in pkg.parts_by_kind()["comments"] for _ in pkg.xml(part).iter(W + "comment"))
+
+
+def reading(record: Any, made: Path, kind: str, comment_parts: Set[str]) -> List[str]:
+    """What the app's own reading of the file Word saved found that the clean kind should not show, in words: a
+    check of the file that failed, text that is not the edited copy's read with every tracked change accepted (for the
+    PDF outside the comments, which Word deleted), a tracked change still pending, and for the PDF a comment still
+    there. [] when it found none — which proves the words and nothing else: not the formatting, the numbering, the
+    fields or the layout."""
+    found = [f"{c.id} ({c.name}) failed" for c in record.checks if c.status == "FAIL"]
+    n = _blocks_differing(record, comment_parts if kind == "pdf" else set())
+    if n:
+        found.append(f"{n} block{'' if n == 1 else 's'} of text {'differs' if n == 1 else 'differ'} from your edited "
+                     f"copy read with every tracked change accepted")
+    try:
+        where = _pending_where(made)
+    except Exception as error:  # noqa: BLE001 — a file this reader cannot open is a finding, never the job's failure
+        where = []
+        found.append(f"its tracked changes could not be counted ({type(error).__name__})")
+    if where:
+        found.append(f"tracked changes are still pending in {' and '.join(where)}")
+    if kind == "pdf":
+        try:
+            left = _comments_left(made)
+        except Exception as error:  # noqa: BLE001 — as above: said, never raised
+            left = 0
+            found.append(f"its comments could not be counted ({type(error).__name__})")
+        if left:
+            found.append(f"{left} comment{' is' if left == 1 else 's are'} still in it")
+    return found
+
+
+def _comment_parts(copy: Path) -> Set[str]:
+    from .package import DocxPackage
+    try:
+        return set(DocxPackage.from_path(copy).parts_by_kind()["comments"])
+    except Exception:  # noqa: BLE001 — a copy whose parts cannot be listed has no comments part to set aside
+        return set()
+
+
+def make_anyway(copies: Dict[str, Path], kind: str, run_dir: Path, *,
+                log: Optional[Callable[[str], None]] = None) -> Anyway:
+    """The clean version of each copy in ``copies`` ({key: copy}) for ``kind`` (``accepted`` or ``pdf``), MADE BY
+    WORD in ``run_dir`` (a new folder) — Export anyway, module docstring. Word opens a private copy of the copy's
+    bytes (``word_actions.run_word_actions``: its private instance, macros disabled, links not updated), runs the
+    kind's fixed commands (``ANYWAY_ACTIONS``) and saves; the independent reader then reads what Word saved against
+    the copy (``verify.run_difference(rewritten=True)``, its record kept under ``records/``) and ``reading`` puts what
+    it found into words. For ``pdf`` the file Word saved is rendered and the PDF looked at as any clean PDF is
+    (``pdf_export``). Nothing is planned or predicted: no file made here is checked the way ``make_clean``'s are, and
+    the caller names each as unchecked. A document Word cannot finish, or whose PDF cannot be made, has no file and
+    the reason. The copies are read, never written."""
+    import json
+
+    from . import stopping, word_actions
+    from .verify import run_difference
+    actions = ANYWAY_ACTIONS.get(kind)
+    if actions is None:
+        raise ValueError(f"{kind!r} is not a clean export")
+    log = log or (lambda message: None)
+    run_dir = Path(run_dir)
+    result = Anyway(kind, run_dir)
+    sources = {key: Path(copy) for key, copy in copies.items()}
+    if not sources:
+        return result
+    clean: Dict[str, Path] = {}
+    with diag.span("export.anyway", kind=kind, file_count=len(sources), run_dir=str(run_dir),
+                   actions=list(actions)) as outcome:
+        log(WORD_MAKING)
+        for number, (key, copy) in enumerate(sources.items(), 1):
+            stopping.check("export")              # Stop lands between the documents; Word's own wait looks at it too
+            work = run_dir / "word" / f"{number:03d}"
+            private, made = work / "in" / copy.name, work / copy.name
+            try:
+                data = copy.read_bytes()
+                private.parent.mkdir(parents=True, exist_ok=True)
+                private.write_bytes(data)
+                report = word_actions.run_word_actions(private, list(actions), made)
+            except stopping.Stopped:
+                raise
+            except Exception as error:  # noqa: BLE001 — Word's failure is this document's reason, never the job's
+                why = word_actions.failure(error, actions)
+                result.failed[key] = why
+                diag.event("export.file_failed", level="warning", kind=kind, anyway=True, source=str(copy), reason=why)
+                continue
+            if not made.is_file():
+                result.failed[key] = "Word reported no error and saved no copy"
+                continue
+            try:
+                record = run_difference(data, made.read_bytes(), str(copy), str(made), rewritten=True)
+            except Exception as error:  # noqa: BLE001 — a file the reader cannot open at all is no file to hand over
+                result.failed[key] = (f"the file Word saved could not be read at all ({type(error).__name__}: "
+                                      f"{diag.snip(error, 200)})")
+                continue
+            result.said[key] = word_actions.account(report)
+            result.read[key] = reading(record, made, kind, _comment_parts(copy))
+            try:
+                kept = run_dir / "records" / f"{copy.stem}.record.json"
+                kept.parent.mkdir(parents=True, exist_ok=True)
+                kept.write_text(json.dumps(record.to_dict(), indent=2, ensure_ascii=False), encoding="utf-8")
+            except OSError as error:
+                diag.event("export.record_failed", level="warning", source=str(copy), reason=str(error))
+            clean[key] = made
+            diag.event("export.anyway_made", kind=kind, source=str(copy), found=len(result.read[key]))
+        if kind == "accepted":
+            result.made = clean
+        elif clean:
+            from .pdf_export import PDF_FOLDER, export_pdfs
+            log(SAVING_PDFS)
+            pdfs = export_pdfs({Path(key): path for key, path in clean.items()}, run_dir / PDF_FOLDER, prefer="word",
+                               log=log, basis=ANYWAY_PDF_BASIS)
             result.renderer_name = pdfs.renderer_name
             result.made = {str(source): Path(pdf) for source, pdf in pdfs.pdfs.items()}
             result.failed.update({str(source): f"its PDF could not be made: {str(why).rstrip('.')}"

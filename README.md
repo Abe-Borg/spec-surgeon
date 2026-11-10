@@ -395,8 +395,16 @@ mode you last used (Safe the first time; never Obliterate).
   document with your file in Word before you rely on it. From then on it is a document like any other, and its
   copies are checked against the rescued file. A document rescued with its password has **no password**
   afterwards, and neither have its copies; it sits in the window's scratch folder until the window closes. No AI
-  is used. A lock file, a folder, a missing file and any other kind of file are still refused. Obliterate is the
-  last rung of a ladder —
+  is used. A lock file, a folder, a missing file and any other kind of file are still refused. And **Export may
+  make a marked copy's clean version anyway**: when Export → Word (Tracked Changes OFF) or PDF (Clean) cannot be
+  made the checked way for a copy that carries a mark (UNVERIFIED, UNPROVEN or Salvaged), the Export menu then
+  offers that kind under **Made by Word, unchecked**. Word accepts every tracked change on a private copy of your
+  edited copy (for the PDF it deletes every comment first) and saves it; nothing is planned or predicted, so no
+  check proves the file. The chat names it **UNCHECKED** and gives Word's own count beside what the app read in the
+  file Word saved: whether its words are your copy's with every tracked change accepted, and whether a tracked
+  change (or, for the PDF, a comment) is left. A file with such a finding is saved all the same, and the finding
+  said. Your edited copies stay as they are, no AI is used, and Claude can never choose it. Needs Microsoft Word on
+  this computer. Obliterate is the last rung of a ladder —
   Safe first, Default for what Safe could not take, Obliterate for the one or two documents neither could — so it
   also starts from the to-do list: **Obliterate this one**, beside a document there, opens the same warning and then
   turns the mode on for that one document, the request it was set aside from standing and every other document,
@@ -671,6 +679,14 @@ recorded for the requests that follow.
   for the window that asked, only as far as that file needs, and never for a file over 2 GB; a very large document
   can still run the computer out of memory. A refused template is not rescued. No test machine has Word, so each
   Word-based rescue is proven only by your own runs (docs/BACKLOG.md).
+- Obliterate's Export anyway writes a file no check proves: the chat is where it is named UNCHECKED, and the file
+  itself carries no mark. What the app reads in the file Word saved covers the words (against your copy with every
+  tracked change accepted) and whether a tracked change or, for the PDF, a comment is left; it does not cover
+  formatting, numbering, fields or layout. It is offered only for a copy that carries a mark, only after the checked export of that kind left
+  that copy without a file, and only while the window stays open (a window started again runs the export again).
+  A copy with no mark is not offered it: accept its changes in Word, or run the Word action that does, and export
+  again. It needs Microsoft Word on this computer, and no test machine has Word, so what Word's own Accept All and
+  Delete All Comments make of a real document is proven only by your own runs (docs/BACKLOG.md).
 - Obliterate's Word actions need Microsoft Word on this computer and are limited to the menu: nothing else can be
   asked of Word. A plan of Word actions holds nothing else (no other operation, step or layout), so a change that
   needs Word and then something more is two requests. Word may take up to 5 minutes a document. A restriction set

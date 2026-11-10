@@ -45,7 +45,8 @@ QUIET_ROUTES = frozenset({"/api/state", "/api/update", "/api/image", "/api/healt
 SLOW_REQUEST_MS = 2000
 WAITS_ON_USER = frozenset({"/api/pick", "/api/part/save"})    # a native dialog: slow because the user takes their time
 KNOWN_FAILURES = {"ValueError", "TrialsFailed", "TransformFailed", "SpecError", "FileNotFoundError", "PermissionError"}
-MODEL_FREE_JOBS = ("word_actions", "rescue")     # jobs that call no AI in a conversation mode: Stop ends the job itself
+# jobs that call no AI in a conversation mode: Stop ends the job itself
+MODEL_FREE_JOBS = ("word_actions", "rescue", "export_anyway")
 NOT_BUILT = """<!doctype html><meta charset="utf-8"><title>Spec Surgeon</title>
 <body style="font-family:system-ui;margin:3rem;max-width:40rem"><h1>Spec Surgeon</h1>
 <p>The window's page has not been built. From the project folder:</p>
@@ -127,8 +128,9 @@ def job_started_line(action: str, values: Dict[str, Any]) -> str:
         picks = values.get("steps") if isinstance(values.get("steps"), list) else []
         skipped = sum(1 for p in picks if isinstance(p, dict) and p.get("skip") is True)
         what = f"a saved recipe, {len(picks)} step(s)" + (f", {skipped} skipped" if skipped else "")
-    elif action == "export":
-        what = f"Export as {diag.snip(values.get('kind') or '?', 20)}"
+    elif action in ("export", "export_anyway"):
+        what = f"Export as {diag.snip(values.get('kind') or '?', 20)}" + \
+            (", made by Word (Export anyway)" if action == "export_anyway" else "")
     else:
         what = ""
     return f"Job {action} started" + (f" ({what})" if what else "")
@@ -386,7 +388,10 @@ class WindowState:
                 "blocking": bool(raw["blocking"]),
                 "results": results, "pdf": task.pdf_info(),
                 "export": {"folder": raw.get("export_folder", ""), "unsaved": len(raw.get("unsaved") or []),
-                           "copies": int(raw.get("copies") or 0)},
+                           "copies": int(raw.get("copies") or 0),
+                           # Export anyway (Obliterate mode alone): the clean kinds Word can make for the marked
+                           # copies the checked way left without a file; absent when there is nothing to offer
+                           **({"anyway": [dict(o) for o in raw["export_anyway"]]} if raw.get("export_anyway") else {})},
                 "action": {"label": label, "token": raw["token"], "kind": kind,
                            "disabled_reason": raw.get("blocked_reason", ""),
                            "can_hold": kind == "approve" and bool(raw.get("can_hold")),
@@ -1166,7 +1171,12 @@ def create_app(state: WindowState, *, dev: bool = False) -> FastAPI:
         there is nothing to save, the kind is unknown, no program can make a PDF or the folder refuses — each asked
         before the dialog opens where it can be; ``{"cancelled": true}`` when the dialog was dismissed. ``word`` answers
         with the view; ``accepted`` and ``pdf`` make and check the clean copies first, so they answer with the job
-        stream (``text/event-stream``, as ``/api/send``) ending in ``done`` with the view."""
+        stream (``text/event-stream``, as ``/api/send``) ending in ``done`` with the view.
+
+        ``anyway: true`` — Export anyway, Obliterate mode alone (``exports.make_anyway``): the clean ``kind`` made by
+        Word for the marked copies the kind's checked export left without a file, unchecked. 400 outside Obliterate
+        mode, for ``word``, with nothing to make or where Word cannot be reached; otherwise the job stream. No AI
+        call: Stop ends the job itself."""
         if state.busy:
             return busy_error()
         if state.tutorial.active:
@@ -1178,8 +1188,9 @@ def create_app(state: WindowState, *, dev: bool = False) -> FastAPI:
         body = body if isinstance(body, dict) else {}
         kind = str(body.get("kind") or "word")
         folder = str(body.get("folder") or "")
+        anyway = body.get("anyway") is True
         try:
-            state.task.export_ready(kind)
+            state.task.export_ready(kind, anyway)
         except ValueError as e:
             return error(str(e))
         if not folder:
@@ -1190,11 +1201,14 @@ def create_app(state: WindowState, *, dev: bool = False) -> FastAPI:
                 return {"cancelled": True}
             folder = chosen
         try:
-            checked = str(state.task.check_export(folder, kind))
+            checked = str(state.task.check_export(folder, kind, anyway))
         except (OSError, ValueError) as e:
             return error(str(e))
         state.settings.export_folder = checked
         state.save_settings()
+        if anyway:
+            diag.event("export.started", kind=kind, folder=checked, anyway=True)
+            return stream("export_anyway", kind=kind, folder=checked)
         if kind != "word":
             diag.event("export.started", kind=kind, folder=checked)
             return stream("export", kind=kind, folder=checked)

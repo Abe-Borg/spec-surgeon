@@ -103,7 +103,11 @@ function HowToUse({ onStartTourAt }: { onStartTourAt: (chapter: string) => void 
                   attached to be rescued): the app mends it or has Word convert or repair a private copy, your file
                   is never changed, and what comes of it is attached marked Salvaged, a mark it and its copies keep
                   because nothing can prove the rescue kept everything. A password you type for it goes to Word
-                  for that one attempt and is kept nowhere; the rescued document has none.
+                  for that one attempt and is kept nowhere; the rescued document has none. And when Export cannot
+                  make the clean version of a marked copy (UNVERIFIED, UNPROVEN or Salvaged) the checked way, its
+                  menu offers that kind under <Tag>Made by Word, unchecked</Tag>: Word accepts every tracked change
+                  on a private copy (for the PDF it deletes every comment first), no check proves the file, and the
+                  chat names it UNCHECKED with Word's own count and what the app read in it.
                 </>
               ),
             },
