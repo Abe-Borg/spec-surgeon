@@ -288,6 +288,55 @@ def test_the_chain_preview_runs_every_stage_on_the_samples_and_its_token_covers_
 
 # ---- no window for the engine ----------------------------------------------------------------------------------------
 
+def test_a_plan_composed_into_steps_says_its_request_summary_and_assumptions_once(folder, tmp_path):
+    """Backlog S4 (the owner's live run of 2026-10-22): a plan the engine composes into ordered steps carries the
+    spec's own request, summary and assumptions on every step, and the preview's text — what Claude reads back, cut
+    at a length — printed them once per step. They are said once; each step then says what IT does."""
+    from spec_surgeon.chain import said_once, stage_does
+    from spec_surgeon.editspec import compose_chain
+    font, strip = _font(), _remove()
+    spec = {"request": "Match the template's font and take the headers and footers out", "mode": font["mode"],
+            "summary": "Set the font, then remove every header and footer.",
+            "assumptions": ["Headers and footers go whole.", "Tracked changes are left as they are."],
+            "ops": font["ops"][:1] + strip["ops"][:1]}
+    chain = compose_chain(spec, [1, 1])
+    assert [st["spec"]["summary"] for st in chain["stages"]] == [
+        "Set the font, then remove every header and footer. (step 1 of 2)",
+        "Set the font, then remove every header and footer. (step 2 of 2)"]
+    assert said_once(chain) == {"request": spec["request"], "summary": spec["summary"],
+                                "assumptions": spec["assumptions"]}
+    does = [stage_does(st) for st in chain["stages"]]
+    assert len(does) == 2 and all(len(d) == 1 and d[0].endswith(".") for d in does) and does[0] != does[1]
+    preview = make_chain_preview(chain, [str(folder)], tmp_path / "preview", renderer="none", do_render=False).to_text()
+    # (the preview's own head: below it the plan of every file and the samples have their own say)
+    for text in (preview.split("EVERY STEP planned", 1)[0], chain_intent(chain)):
+        # once each: the request, the summary (a composed plan is named by it) and every assumption
+        assert text.count(spec["request"]) == 1 and text.count(spec["summary"]) == 1, text[:600]
+        assert all(text.count(a) == 1 for a in spec["assumptions"])
+        assert "(step 1 of 2)" not in text                       # the step's number is in its own line
+        assert does[0][0] in text and does[1][0] in text         # and each step says what it does
+        assert text.index(does[0][0]) < text.index(does[1][0])
+    head = preview.split("EVERY STEP planned", 1)[0].splitlines()
+    assert head[0].startswith(f"PREVIEW — chain «{spec['summary']}»: 2 stage(s)")
+    assert head[1:4] == [f"request: {spec['request']!r}", f"assumption: {spec['assumptions'][0]}",
+                         f"assumption: {spec['assumptions'][1]}"]
+    assert head[4] == "  stage 1 — step 1" and head[5] == f"     does: {does[0][0]}"
+    # a chain with a name of its own says the summary its stages share, once, on its own line
+    named = dict(chain, name="Font and headers")
+    assert f"WHAT THE SPEC DOES: {spec['summary']}" in chain_intent(named)
+    assert chain_intent(named).count(spec["summary"]) == 1
+    # stages written apart keep their own words; an assumption they share is still said once, one of a stage's own
+    # under that stage; and one stage alone shares nothing with anything
+    apart = chain_from_specs([("font", dict(_font(), assumptions=["Shared.", "The font's own."])),
+                              ("strip", dict(_remove(), assumptions=["Shared."]))], name="Apart")
+    once = said_once(apart)
+    assert once["request"] is None and once["summary"] is None and once["assumptions"] == ["Shared."]
+    intent = chain_intent(apart)
+    assert intent.count("ASSUMPTION: Shared.") == 1 and "  ASSUMPTION: The font's own." in intent
+    assert intent.count("  REQUEST: ") == 2 and intent.count("  WHAT THE SPEC DOES: ") == 2
+    assert said_once(chain_from_specs([("font", _font())])) == {"request": None, "summary": None, "assumptions": []}
+
+
 def test_the_engine_never_loads_the_window_for_a_chain():
     import subprocess
     import sys

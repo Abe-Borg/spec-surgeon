@@ -1063,9 +1063,16 @@ def test_no_passing_attempt_is_told_to_claude_once_and_saved(two_specs, tmp_path
     assert s.generated is None
     assert s.conversation.recovery_active and s.turn.status == "questions"
     assert expected in str(s.client.requests[-1]["messages"])
-    s.client.responses.append(resp(tool("need_user", {"question": "Which outcome?"}, "a9")))
+    # a worded reply to the planner's question is the assistant's to read (backlog S4): it hears the failure and
+    # what the planner asked, and answers with its own tools; the planner runs nothing more
+    s.client.responses.append(resp(tool("ask_user", {"message": "No: no method passed its checks, so nothing "
+                                                                "changed."}, "a9")))
     s.reply("so did it work?")
-    assert "so did it work?" in str(s.client.requests[-1]["messages"])
+    heard = str(s.client.requests[-1]["messages"])
+    assert "so did it work?" in heard and expected in heard
+    assert "It asked: «Which outcome should the replacement method preserve?»" in heard
+    assert {"ask_user", "submit_editspec"} <= {t["name"] for t in s.client.requests[-1]["tools"]}
+    assert not s.conversation.recovery_active and s.turn.message.startswith("No: no method passed")
 
 
 def test_an_api_error_while_writing_is_a_recorded_failure_told_to_claude(two_specs, tmp_path):

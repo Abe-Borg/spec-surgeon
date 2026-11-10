@@ -37,6 +37,7 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+import re
 import shutil
 import time
 import traceback
@@ -163,15 +164,53 @@ def chain_key(chain: Dict[str, Any]) -> Dict[str, Any]:
     return copy.deepcopy(key)
 
 
+_STEP_OF = re.compile(r" \(step \d+ of \d+\)$")      # what ``editspec._stage_spec`` writes after a composed step's summary
+
+
+def said_once(chain: Dict[str, Any]) -> Dict[str, Any]:
+    """What every stage of a chain says alike, to be said once: ``request`` and ``summary`` (None when the stages
+    differ, or there is one stage) and the ``assumptions`` each of them lists. A plan the engine composed into ordered
+    steps (``editspec.compose_chain``) carries the spec's own request, summary and assumptions on every step, so a
+    text that printed them per stage said the same thing once per step and pushed what differs out of the reader's
+    sight (the owner's live run of 2026-10-22, backlog S4). A chain whose stages were written apart keeps each
+    stage's own words: nothing of them is shared."""
+    specs = [st.get("spec") or {} for st in chain.get("stages") or []]
+    if len(specs) < 2:
+        return {"request": None, "summary": None, "assumptions": []}
+    requests = {str(s.get("request") or "") for s in specs}
+    summaries = {_STEP_OF.sub("", str(s.get("summary") or "")) for s in specs}
+    listed = [[str(a) for a in s.get("assumptions") or []] for s in specs]
+    shared = [a for a in dict.fromkeys(listed[0]) if all(a in other for other in listed[1:])]
+    return {"request": requests.pop() if len(requests) == 1 else None,
+            "summary": summaries.pop() if len(summaries) == 1 else None, "assumptions": shared}
+
+
+def stage_does(stage: Dict[str, Any]) -> List[str]:
+    """What one stage does, operation by operation, in the sentence each operation writes for itself
+    (``Op.describe``): what tells one step of a composed plan from the next."""
+    from .review_display import change_sentence
+    return [change_sentence(op) for op in (stage.get("spec") or {}).get("ops") or [] if isinstance(op, dict)]
+
+
 def chain_intent(chain: Dict[str, Any]) -> str:
-    """What the chain is meant to do, for Claude's visual check of the final pages (the stages, in order)."""
+    """What the chain is meant to do, for Claude's visual check of the final pages (the stages, in order). What every
+    stage says alike is said once (``said_once``); each stage then says what it does and what is its own."""
+    once = said_once(chain)
     lines = [f"A CHAIN «{chain_name(chain)}» of {len(chain['stages'])} stage(s), run one after another on each file:"]
+    if once["request"] is not None:
+        lines.append(f"REQUEST: {once['request']}")
+    if once["summary"] is not None and once["summary"] != chain_name(chain):     # a composed plan is named by it
+        lines.append(f"WHAT THE SPEC DOES: {once['summary']}")
+    lines += [f"ASSUMPTION: {a}" for a in once["assumptions"]]
     for i, st in enumerate(chain["stages"], 1):
         spec = st["spec"]
         lines.append(f"STAGE {i} — {stage_name(st, i)}")
-        lines.append(f"  REQUEST: {spec.get('request') or ''}")
-        lines.append(f"  WHAT THE SPEC DOES: {spec.get('summary') or ''}")
-        lines += [f"  ASSUMPTION: {a}" for a in spec.get("assumptions") or []]
+        if once["request"] is None:
+            lines.append(f"  REQUEST: {spec.get('request') or ''}")
+        if once["summary"] is None:
+            lines.append(f"  WHAT THE SPEC DOES: {spec.get('summary') or ''}")
+        lines += [f"  DOES: {sentence}" for sentence in stage_does(st)]
+        lines += [f"  ASSUMPTION: {a}" for a in spec.get("assumptions") or [] if str(a) not in once["assumptions"]]
     lines.append("The AFTER pages show the file once every stage has run.")
     if chain.get("assertions"):
         lines.append("FINAL REQUIREMENTS (must still hold after every stage): " + json.dumps(chain["assertions"]))

@@ -58,6 +58,16 @@ from .resources import (DEFAULT_CONTEXT_TOKENS, DEFAULT_EFFORT, DEFAULT_MAX_ATTE
                         DEFAULT_STALL_REPETITIONS, InvestigationProgress, positive_integer)
 
 CHOICE_KINDS_FROM_CLAUDE = ("clarify", "alternative", "rephrase")   # built from Claude's own label and wording
+# What Claude hears when the user answers the outcome planner in words (``Conversation._hand_back``): the planner's
+# own turn was never in Claude's history, so it is told once, clipped, with the reply that follows
+HANDBACK_CHARS = 1500
+OUTCOME_HANDBACK = ("The plan did not get through the built-in route, so the app's outcome planner took over: it works "
+                    "out the results the request asks for and tries methods on copies. You did not write what it said.")
+OUTCOME_HANDBACK_NEXT = ("The user answered it in words of their own, which follow. The outcome planner has stopped: "
+                         "the reply is yours to read and act on, as any message — answer it, ask, or submit a plan "
+                         "(with leave_out for documents the user keeps out of it). If the built-in operations still "
+                         "cannot do what is asked, say so as you would for any request: the app then plans the "
+                         "outcomes again, with this reply among the user's decisions.")
 APP_CHOICE_KINDS = ("custom_transform", "recovery_plan", "recovery_target", "scheme")   # carried out by the app, never sent to
 # Claude as a reply: a custom transform the app takes on its own, an outcome plan once the user picks it (its words
 # beneath the choice), a recovery target by the window's numbered question
@@ -443,6 +453,10 @@ class Conversation:
         self.continuous_recovery = continuous_recovery
         self.recovery_active = False
         self.recovery_planning = None
+        # the last thing said was the outcome planner's own question or offer (``_advance``): the user's worded reply
+        # to it is the assistant's to read (``_hand_back``); a choice the app carries out, or any reply, ends it
+        self.planner_asked = False
+        self._planner_turn: Optional[Turn] = None            # what it said, for the assistant to hear
         self.recovery_budgets = []
 
     # ---- public ----
@@ -500,6 +514,10 @@ class Conversation:
             self.sources += list(chosen.words)   # each its own source: never stitched together
         if text and approve:
             self.sources.append(text)
+        before["planner"] = (self.planner_asked, self.recovery_active)     # a reply taken back puts these back too
+        asked, self.planner_asked = self.planner_asked, False
+        if asked and self.recovery_active:
+            self._hand_back(self._planner_turn)
         self.turn = None          # the turn being answered is over: its choices can no longer be picked
         said = []
         if chosen is not None and edited is not None:
@@ -521,6 +539,33 @@ class Conversation:
         self._reply_mark = (self.messages[-1], before)
         return self._advance()
 
+    def _hand_back(self, turn: Optional[Turn]) -> None:
+        """The outcome planner said the last thing — a question, or outcomes to approve (``planner_asked``) — and the
+        user answered in words of their own. Those words are the assistant's to read, not the planner's (the owner's
+        live runs of 2026-10-22/23, backlog S4: a reply that left documents out, or asked for something else, went
+        back to a planner that can do neither and ran its trials over every file). The planner stops; Claude hears
+        what it said, which is in the transcript but never was in Claude's history, and answers the reply as any
+        message. If the built-in route still cannot do it, the same refusal or failed preview brings the planner
+        back, with this reply among the user's decisions (``continuous_recovery.propose`` reads ``sources``). Words
+        typed after a finished outcome, with no question of the planner's open, still revise that outcome through
+        the planner, as before."""
+        self.recovery_active = False
+        said = " ".join(str(getattr(turn, "message", "") or "").split())
+        asked = [" ".join(str(q).split()) for q in (getattr(turn, "questions", None) or [])]
+        offered = [c.label for c in (getattr(turn, "choices", None) or [])]
+        told = [OUTCOME_HANDBACK]
+        if said:
+            told.append("It said to the user: «" + (said if len(said) <= HANDBACK_CHARS
+                                                    else said[:HANDBACK_CHARS - 1] + "…") + "»")
+        if asked:
+            told.append("It asked: " + " ".join(f"«{q}»" for q in asked))
+        if offered:
+            told.append("It offered, for the user to pick: " + ", ".join(f"«{label}»" for label in offered)
+                        + ". The user did not pick it.")
+        told.append(OUTCOME_HANDBACK_NEXT)
+        self.notes.append(" ".join(told))
+        diag.event("conversation.outcome_handback", questions=len(asked), choices=len(offered))
+
     def _take_back(self) -> bool:
         """A reply Claude declined to answer (``stop_reason`` refusal on the first call after it) leaves the history:
         otherwise it would go out again with every later message and be answered as part of the next one (the 1.8.0
@@ -536,6 +581,8 @@ class Conversation:
         checkpoint_history(self.messages, **self._context_arguments(), withdrawn=message)
         self.pending, self.notes, self._ask_ids = before["pending"], before["notes"], before["ask_ids"]
         del self.sources[before["sources"]:]
+        if "planner" in before:               # the planner's question is open again: the next reply is handed back
+            self.planner_asked, self.recovery_active = before["planner"]
         self.exchange.append({"turn": self.calls, "role": "app",
                               "content": "the declined reply was taken back out of the history"})
         return True
@@ -562,6 +609,7 @@ class Conversation:
             raise ValueError("that choice is answered by Claude — send it as a reply")
         self.entries.append(Entry("user", f"Chose: {chosen.label}"))
         self.notes.append(f"The user chose: «{chosen.label}». The app carried it out; the outcome follows.")
+        self.planner_asked = False               # the planner's offer was taken (or another of the app's own was)
         return chosen
 
     def investigate_failure(self, evidence) -> Turn:
@@ -758,6 +806,7 @@ class Conversation:
                     if self.recovery_active:
                         from .continuous_recovery import propose
                         turn = self._finish(propose(self))
+                        self.planner_asked, self._planner_turn = True, turn
                     else:
                         turn = self._advance_calls()
                         if (self.continuous_recovery and turn.status == "unsupported"
@@ -765,6 +814,7 @@ class Conversation:
                             from .continuous_recovery import propose
                             self.log("The built-in route stopped; investigating the requested outcomes.")
                             turn = self._finish(propose(self))
+                            self.planner_asked, self._planner_turn = True, turn
                     record.update(status=turn.status, model_calls=self.calls)
                     return turn
         finally:
