@@ -71,6 +71,22 @@ whitelist, and the governed outcome path (never unguarded). Obliterate is hidden
 needs the warning acknowledged each time (`DocumentTask.set_mode(acknowledged=True)`), voids the plan when entered or
 left, and is never what a launch opens in (`settings.MODES`, `web.server.launch_mode`). Pinned by `tests/test_obliterate.py`.
 
+Obliterate is the top rung of a ladder (the owner's decision, 2026-11-10): Safe, then Default for what Safe could not
+take, then Obliterate for the one or two documents neither could, so it also starts from the to-do list. A document
+that goes on the list because the engine stopped on it or its copy failed a check keeps a **case file** with its entry
+(`document_task._case_of_exception`, `_case_of_result`, `_case_of_sample`; journalled, `_restored_case`): the engine's
+record, the failed checks, the copy that failed when it is the whole of the plan (a batch's result or a plan's own
+preview sample, never a chain's) and a document of the same run that got a verified copy. **Obliterate this one**
+(`DocumentTask.obliterate_todo`, `/api/todo/obliterate`) turns the mode on for one such document, behind the same
+setting and warning, and begins the pass over it alone (`start_todo(only=)`); its conversation hears the case file
+(`_case_note`) and may read the worked example, which no spec can name (`_focus_examples`,
+`compiler._Batch.add_examples`). **Use the copy that failed, marked UNVERIFIED** (`USE_FAILED_COPY`,
+`use_failed_copy`) takes the held-back copy as it is with no AI call, only after `_failed_copy_problem` (its md5, the
+document still the file it was made from, `guard.drifted` on that file): one change, with an undo point. Safe and
+Default never read a case file: their pass tells the model the entry's one sentence, and their to-do entries are
+shown as before. Pinned by `tests/test_obliterate_handoff.py`. The rest of the ladder is in `docs/BACKLOG.md`
+("Obliterate: the cost ladder"): decided, and not built until its item is.
+
 ## Repository layout
 
 The desktop is one window with two modes (`docs/CONVERSATIONAL_DESKTOP.md`) and a hidden third (Modes, above): **Safe**
@@ -106,7 +122,8 @@ and Safe mode's Create is unavailable, only when no file plans or no sample gets
 (`DocumentTask.todo`, each entry with `why` and `reason`) is where documents wait for later: the red X, the chat's
 `set_aside` tool at the user's word (`Conversation.set_aside` → `DocumentTask._take_set_aside`), a file the plan
 refused or whose sample failed once the others run, a run failure no recovery takes, and recovery's leftovers at `SET_ASIDE_REST`;
-`put_back` takes one off without a pass.
+`put_back` takes one off without a pass. An entry the engine put there keeps its case file, and with Obliterate
+shown each entry offers **Obliterate this one** (Modes, above).
 Delivered copies are the working set the next request builds on. The window
 works in a scratch folder (`scratch.py`: one per window under `data_dir()\scratch`, locked while it runs, holding
 every session folder, dropped file and the journal; deleted at a clean close after one question when a copy is not
@@ -362,7 +379,19 @@ real-file run, which the user performs.
 Standing decisions from the earlier rounds (their plans are in the git history):
 
 - Text boxes as objects are not pursued (the words inside one: "Out of reach by decision", above). No raw-XML
-  operation, catch-all deletion operation or `force` flag is added.
+  operation, catch-all deletion operation or `force` flag is added. In Safe and Default this stands. For Obliterate
+  alone the owner reversed parts of it on 2026-11-10 (next item); `force`, and any write to an original, stay out in
+  every mode.
+- Obliterate's cost ladder (the owner's decisions, 2026-11-10; `docs/BACKLOG.md`, "Obliterate: the cost ladder").
+  Obliterate is the emergency lever: inside the copy nothing is refused for being unusual, the original and the
+  machine stay protected (copies only, the source guard, the sandbox's containment), and everything done is reported
+  (the verifier on every copy, the marks, the words added and removed). Decided, for Obliterate only: a custom method
+  just does the work and the verifier reports the difference, the user approving the actual result (invariant 1 is
+  lifted for that one path once built; built-in ops predict first in every mode); a raw-XML operation Claude plans,
+  with a read-only part browser and swap-a-part behind a toggle (in-app XML editing is not built); Word may edit
+  copies through a fixed menu of named actions the user or Claude chains (Claude-composed Word scripts are not
+  built: a miss is first a new menu item); a file refused at attach may be rescued; Export may make a marked copy's
+  clean version anyway. Until an item is built, the invariants and the Modes section describe the code as it is.
 - In Safe and Default, a custom method may do more kinds of formatting, never more kinds of change: a family is added
   only behind a V10 kind that proves the content it touches is the source's, and the sandbox's limits stay as they are.
 - Capitals are a display property (`w:caps`) unless the user gives capitalised wording; nothing retypes a file's letters

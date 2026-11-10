@@ -14,15 +14,7 @@
  * Pure: a reducer over plain objects, so `node --test` can drive every event
  * type without React or a DOM.
  */
-import type {
-  Choice,
-  JobEvent,
-  Message,
-  PreviewNote,
-  SavedRecipe,
-  Status,
-  View,
-} from "../types.ts";
+import type { Choice, FailedCopy, JobEvent, Message, PreviewNote, SavedRecipe, Status, View } from "../types.ts";
 
 /** The Worth knowing notes from the wire: each with its text, its document's name or "". */
 export function notesOf(value: unknown): PreviewNote[] {
@@ -111,6 +103,7 @@ export const EMPTY_VIEW: View = {
   action: { label: "", token: "", kind: "none", can_hold: false },
   todo: [],
   focus: [],
+  failed_copies: [],
   working: { generation: 0, from_originals: true, can_start_over: false, undo: "", undo_blocked: "", done: [] },
   budget: { paused: false, reason: "" },
   discard: "",
@@ -185,6 +178,10 @@ export function normalizeView(raw: unknown): View {
     action: obj(v.action, EMPTY_VIEW.action),
     todo: list(v.todo),
     focus: list<string>(v.focus).filter((p) => typeof p === "string"),
+    // an older server sends none: nothing is offered
+    failed_copies: list<FailedCopy>(v.failed_copies).filter(
+      (c) => !!c && typeof c.path === "string" && typeof c.name === "string" && Array.isArray(c.failed),
+    ),
     working: obj(v.working, EMPTY_VIEW.working),
     budget: obj(v.budget, EMPTY_VIEW.budget),
     discard: v.discard === "preview" || v.discard === "request" ? v.discard : "",

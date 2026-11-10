@@ -11,6 +11,7 @@ import {
   COMPOSER_NO_KEY,
   SET_ASIDE_REST,
   STARTERS,
+  USE_FAILED_COPY,
   WORK_TODO,
   compactTokens,
   composerState,
@@ -27,11 +28,12 @@ import {
   spentText,
   statusLabel,
   stepsLabel,
+  failedCopyFor,
   todoFor,
   transcript,
   withLeaving,
 } from "../src/lib/chat.ts";
-import { EMPTY_VIEW, INITIAL_STATE, emptyLive, reduce, type UiState } from "../src/lib/view.ts";
+import { EMPTY_VIEW, INITIAL_STATE, emptyLive, normalizeView, reduce, type UiState } from "../src/lib/view.ts";
 
 const message = (id: string, role: Message["role"], text: string): Message => ({ id, role, text, at: 1 });
 
@@ -252,6 +254,27 @@ test("the to-do card closes the transcript once copies are saved and documents w
   assert.equal(free?.kind === "todo" && free.blocked, "");
   assert.equal(WORK_TODO, "Work on the documents I set aside");               // the server's exact words
   assert.equal(SET_ASIDE_REST, "Set the rest aside for later");
+});
+
+test("the failed-copy card shows during an Obliterate pass whose failed copy is kept, and only while nothing is open", () => {
+  const item = { path: "/b", name: "B.docx", failed: ["V2 (Text preservation)"] };
+  const pass = { stage: "resume" as const, mode: "obliterate" as const, focus: ["/b"], failed_copies: [item], chips: [USE_FAILED_COPY] };
+  const card = failedCopyFor(state(pass));
+  assert.deepEqual(card && card.kind === "failed-copy" && card.items, [item]);
+  assert.equal(transcript(state(pass)).at(-1)?.kind, "failed-copy");
+  assert.ok(failedCopyFor(state({ ...pass, stage: "empty" })));
+  assert.ok(failedCopyFor(state({ ...pass, stage: "done" })));
+  // a question's own chips carry the reply; a preview waits for Discard first; nothing while work runs
+  assert.equal(failedCopyFor(state({ ...pass, stage: "question" })), null);
+  assert.equal(failedCopyFor(state({ ...pass, stage: "preview" })), null);
+  assert.equal(failedCopyFor(state({ ...pass, busy: true })), null);
+  // the server decides: no copy named, or the reply not offered, shows nothing (an older server sends neither)
+  assert.equal(failedCopyFor(state({ ...pass, failed_copies: [] })), null);
+  assert.equal(failedCopyFor(state({ ...pass, chips: [] })), null);
+  assert.equal(failedCopyFor(state({ stage: "resume" })), null);
+  assert.deepEqual(normalizeView({ failed_copies: [item, { path: 1 }, null, "x"] }).failed_copies, [item]);
+  assert.deepEqual(normalizeView({}).failed_copies, []);
+  assert.equal(USE_FAILED_COPY, "Use the copy that failed, marked UNVERIFIED");   // the server's exact words
 });
 
 test("the live bubble takes the key of the message it becomes, and a sent message keeps its key", () => {

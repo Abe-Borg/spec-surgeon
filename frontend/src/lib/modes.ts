@@ -66,6 +66,26 @@ export function converses(mode: Mode): boolean {
   return mode !== "safe";
 }
 
+/** A to-do row's line about the copy the app kept for it (the view's `failed_copy`), or "" when none is kept. */
+export function failedCopyLine(failed: readonly string[] | undefined): string {
+  if (!failed || failed.length === 0) return "";
+  return `A copy was made and failed ${failed.join("; ")}. Obliterate mode can take it as it is, marked UNVERIFIED.`;
+}
+
+/** What the warning says above its lists when Obliterate is turned on from a to-do row, for that one document. */
+export function obliterateSubject(name: string): string {
+  return `For ${name}: Obliterate mode turns on and the pass begins over that one document. Every other document, copy and to-do entry stays as it is.`;
+}
+
+/** The warning's line about the API key when it opens from a to-do row: without a key, the copy the app kept can
+ *  still be taken (no AI is used for that); anything else in the mode needs the key. "" with a key. */
+export function obliterateKeyNote(keyReady: boolean, failedCopy: boolean): string {
+  if (keyReady) return "";
+  return failedCopy
+    ? "No API key is connected: you can take the copy that failed as it is (no AI is used for that), but anything else in Obliterate mode needs the key."
+    : "Obliterate mode uses the AI: connect your API key in Settings first.";
+}
+
 /** A copy's failed checks in one line, or "" for a verified copy. */
 export function unverifiedLine(failed: readonly string[] | undefined): string {
   if (!failed || failed.length === 0) return "";

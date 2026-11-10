@@ -117,6 +117,13 @@ export async function putBack(path: string): Promise<View> {
   return normalizeView(await post<unknown>("/api/put-back", { path }));
 }
 
+/** A to-do entry's **Obliterate this one** (docs/WEB_API.md, `POST /api/todo/obliterate`): Obliterate mode for that
+ *  one document and the pass over it alone. `acknowledged`: the user confirmed the warning this time (not asked
+ *  again when the mode is already on). No AI call. */
+export async function obliterateTodo(path: string, acknowledged = false): Promise<View> {
+  return normalizeView(await post<unknown>("/api/todo/obliterate", acknowledged ? { path, acknowledged } : { path }));
+}
+
 export async function startOver(): Promise<View> {
   return normalizeView(await post<unknown>("/api/start-over"));
 }

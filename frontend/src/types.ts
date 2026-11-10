@@ -282,6 +282,21 @@ export interface TodoItem {
   why?: TodoWhy;
   /** One sentence saying why, as the server words it. */
   reason?: string;
+  /** Present only while Settings shows Obliterate mode: the row offers **Obliterate this one** — "" when it can be
+   *  pressed now, else why it waits (a pass is under way, a run's copies wait on their check). */
+  obliterate?: string;
+  /** The checks a copy the app kept for this document failed (a run or a preview made it and held it back): Obliterate
+   *  can take it as it is, marked UNVERIFIED. Absent when no such copy is kept, or Obliterate is hidden. */
+  failed_copy?: string[];
+}
+
+/** A document of the Obliterate pass under way whose failed copy the app kept and can still take as it is (the
+ *  view's `failed_copies`): the chat offers **Use the copy that failed, marked UNVERIFIED** for these. */
+export interface FailedCopy {
+  path: string;
+  name: string;
+  /** The checks that copy failed, as a delivered copy lists them: "V2 (Text preservation)". */
+  failed: string[];
 }
 
 export type ActionKind = "approve" | "continue" | "save" | "none";
@@ -492,6 +507,8 @@ export interface View {
   todo: TodoItem[];
   /** The documents of the pass over the to-do list, while the user works on them (attached originals); else empty. */
   focus: string[];
+  /** Obliterate's free rung: the documents of that pass whose failed copy can be taken as it is; else empty. */
+  failed_copies: FailedCopy[];
   working: Working;
   budget: Budget;
   /** What Discard withdraws now: "preview" (a preview waiting for approval, in every mode), "request" (Default and

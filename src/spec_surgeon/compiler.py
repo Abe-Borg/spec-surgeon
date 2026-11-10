@@ -966,6 +966,9 @@ class _Batch:
         self.max_image_tokens: Optional[int] = None  # None uses vision's shared generous default
         self.renderer = "auto"
         self.inputs = list(input_files or [])    # tables and pictures a spec names explicitly; nothing is discovered
+        # Worked examples the tools may read and no spec may name (``add_examples``): label → path. Never in ``files``,
+        # so no plan, binding, template or leave_out reaches one (the gate reads ``files`` alone).
+        self.examples: Dict[str, Path] = {}
         self.source_pins = [{"path": str(path.resolve()), "sha256": hashlib.sha256(path.read_bytes()).hexdigest()}
                             for path in list(dict.fromkeys(paths + self.inputs + ([self.template] if self.template else [])))
                             if path.is_file()]
@@ -973,6 +976,20 @@ class _Batch:
     def label(self, path: Path) -> str:
         """The label a batch file is shown and addressed by (its name when it is not one of the batch's files)."""
         return self.labels.get(str(path), Path(path).name)
+
+    def add_examples(self, examples: Optional[Dict[str, Any]]) -> None:
+        """Documents the tools may read beside the batch, each under its own label (Obliterate's case file: a
+        document of the same request that took the change, as it was and as its copy). Read-only by construction:
+        they are pinned like every source, and they are not among ``files``, which is all a spec may plan, bind,
+        leave out or use as a template. A label a batch file already has, or a file that is not there, is skipped."""
+        for label, path in (examples or {}).items():
+            path = Path(path)
+            if label in self.files or label == "template" or not path.is_file():
+                continue
+            self.examples[str(label)] = path
+            if not any(pin["path"] == str(path.resolve()) for pin in self.source_pins):
+                self.source_pins.append({"path": str(path.resolve()),
+                                         "sha256": hashlib.sha256(path.read_bytes()).hexdigest()})
 
     def _relabel(self, paths: List[Path]) -> None:
         """The profiles name files by ``Path.name`` (profile.profile_batch); Claude must see the labels its tools take,
@@ -1012,8 +1029,11 @@ class _Batch:
             path = self.template
         elif name in self.files:
             path = self.files[name]
+        elif name in self.examples:
+            path = self.examples[name]
         else:
-            raise KeyError(f"no file {name!r} in this batch; files: {sorted(self.files)[:12]}")
+            raise KeyError(f"no file {name!r} in this batch; files: {sorted(self.files)[:12]}"
+                           + (f"; worked examples (read-only): {sorted(self.examples)}" if self.examples else ""))
         self.check_source_pin(path)
         if name not in self._pkgs:
             self._pkgs[name] = DocxPackage.from_path(path)
@@ -1256,9 +1276,9 @@ class _Batch:
                 raise KeyError("no template was attached to this request")
             path = self.template
         else:
-            if file not in self.files:
+            if file not in self.files and file not in self.examples:
                 raise KeyError(f"no file {file!r} in this batch; files: {sorted(self.files)[:12]}")
-            path = self.files[file]
+            path = self.files.get(file) or self.examples[file]
         wanted = sorted({int(n) for n in (pages or [1]) if int(n) >= 1})[:3] or [1]
         render_options = {"renderer": self.renderer} if self.renderer != "auto" else {}
         pngs = vision.page_pngs(path, wanted, Path(self.work_dir) / "pages", **render_options)

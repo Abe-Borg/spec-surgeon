@@ -14,8 +14,11 @@ import {
   OBLITERATE_GRANTS,
   OBLITERATE_KEPT,
   converses,
+  failedCopyLine,
   modeChoice,
   modeHeld,
+  obliterateKeyNote,
+  obliterateSubject,
   unverifiedLine,
 } from "../src/lib/modes.ts";
 import { normalizeView } from "../src/lib/view.ts";
@@ -87,4 +90,33 @@ test("while a run's saved copies wait on its recovery, the switches that would e
   assert.equal(normalizeView({ recovery_blocked: why }).recovery_blocked, why);
   assert.equal(normalizeView({}).recovery_blocked, "");
   assert.equal(normalizeView({ recovery_blocked: 3 }).recovery_blocked, "");
+});
+
+test("a to-do row offers Obliterate only when the server says so, names the copy it kept, and warns for that document", () => {
+  // the server's words reach the page as they are: the row's button state and the checks the kept copy failed
+  const v = normalizeView({
+    todo: [
+      { path: "a", name: "A.docx", why: "failed", reason: "Its preview did not pass its checks.", obliterate: "", failed_copy: ["V2 (Text preservation)"] },
+      { path: "b", name: "B.docx", why: "refused", reason: "The plan could not be applied to it.", obliterate: "Finish the pass over your to-do list first, or drop it." },
+      { path: "c", name: "C.docx", why: "held", reason: "You marked its preview as needing more work." },
+    ],
+  });
+  assert.equal(v.todo[0].obliterate, "");
+  assert.deepEqual(v.todo[0].failed_copy, ["V2 (Text preservation)"]);
+  assert.match(v.todo[1].obliterate ?? "", /Finish the pass/);
+  assert.equal(v.todo[2].obliterate, undefined); // Obliterate hidden in Settings: the row reads as it always did
+  assert.equal(
+    failedCopyLine(["V2 (Text preservation)"]),
+    "A copy was made and failed V2 (Text preservation). Obliterate mode can take it as it is, marked UNVERIFIED.",
+  );
+  assert.equal(failedCopyLine([]), "");
+  assert.equal(failedCopyLine(undefined), "");
+  // the warning names the one document, and says what happens to the others
+  assert.match(obliterateSubject("A.docx"), /^For A\.docx: Obliterate mode turns on and the pass begins over that one document\./);
+  assert.match(obliterateSubject("A.docx"), /Every other document, copy and to-do entry stays as it is\./);
+  // without a key the copy that failed can still be taken (no AI is used for that); anything else needs the key
+  assert.equal(obliterateKeyNote(true, false), "");
+  assert.equal(obliterateKeyNote(true, true), "");
+  assert.equal(obliterateKeyNote(false, false), "Obliterate mode uses the AI: connect your API key in Settings first.");
+  assert.match(obliterateKeyNote(false, true), /you can take the copy that failed as it is \(no AI is used for that\)/);
 });

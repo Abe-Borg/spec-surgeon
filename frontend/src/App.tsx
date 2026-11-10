@@ -1,7 +1,7 @@
 // Adapted from Build-a-Spec's frontend/src/App.tsx (copy-based reuse): the
 // layout and the one place the job stream's events dispatch.
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
-import type { Attachment, Choice, ExportKind, JobEvent, Mode, Recipe, RecipeInputs, SavedRecipe, Update, View } from "./types";
+import type { Attachment, Choice, ExportKind, JobEvent, Mode, Recipe, RecipeInputs, SavedRecipe, TodoItem, Update, View } from "./types";
 import * as api from "./lib/api";
 import { actionButton, discardButton } from "./lib/action";
 import { composerState, transcript } from "./lib/chat";
@@ -389,6 +389,19 @@ export default function App() {
     if (!busyRef.current) applyView(api.setMode("obliterate", true));
   }, [applyView]);
   const onHandOff = useCallback((paths: string[]) => applyView(api.handOff(paths)), [applyView]);
+  // A to-do row's Obliterate this one: the same warning, naming the document, unless the mode is already on (its
+  // warning was confirmed when it was turned on); then the pass begins over that one document.
+  const [todoWarning, setTodoWarning] = useState<TodoItem | null>(null);
+  const onObliterateTodo = useCallback((item: TodoItem) => {
+    if (busyRef.current) return;
+    if (view.mode === "obliterate") applyView(api.obliterateTodo(item.path));
+    else setTodoWarning(item);
+  }, [applyView, view.mode]);
+  const onConfirmTodoWarning = useCallback(() => {
+    const item = todoWarning;
+    setTodoWarning(null);
+    if (item && !busyRef.current) applyView(api.obliterateTodo(item.path, true));
+  }, [applyView, todoWarning]);
 
   // Safe mode's buttons: the same list for the whole session, fetched once.
   const [recipes, setRecipes] = useState<Recipe[]>([]);
@@ -766,6 +779,7 @@ export default function App() {
           onStartOver={onStartOver}
           onUndo={onUndo}
           onPutBack={onPutBack}
+          onObliterateTodo={onObliterateTodo}
           onZoom={onZoom}
           onHandOff={onHandOff}
           onSaveRecipe={onOpenSaveRecipe}
@@ -832,6 +846,15 @@ export default function App() {
           keyReady={!!view.connection?.ready}
           onCancel={() => setWarning(false)}
           onConfirm={onObliterate}
+        />
+      )}
+      {todoWarning && (
+        <ObliterateWarning
+          keyReady={!!view.connection?.ready}
+          subject={todoWarning.name}
+          failedCopy={(todoWarning.failed_copy ?? []).length > 0}
+          onCancel={() => setTodoWarning(null)}
+          onConfirm={onConfirmTodoWarning}
         />
       )}
     </div>

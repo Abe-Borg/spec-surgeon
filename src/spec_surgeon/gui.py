@@ -314,7 +314,8 @@ class Session:
     @_session_action
     def compile(self, request: str, log: Log, history: Optional[List[str]] = None,
                 fresh: Optional[List[str]] = None, context: Optional[str] = None,
-                todo: Optional[List[str]] = None, earlier: Optional[List[str]] = None) -> str:
+                todo: Optional[List[str]] = None, earlier: Optional[List[str]] = None,
+                examples: Optional[Dict[str, Path]] = None) -> str:
         """Start a conversation about ``request`` over the current files. Returns a status line; sets ``spec`` when
         Claude's first answer is a spec, otherwise ``turn`` says what Claude needs from the user. It opens the session
         folder (``out_dir``): conversation.json and compile.json there after every turn, and the first preview or
@@ -322,7 +323,9 @@ class Session:
         come to be planned (set aside after a preview, say), never the user's words; ``todo`` names the documents
         waiting on the user's to-do list (one line each, with why), which the conversation does not hold; ``earlier``
         is the window's account of the exchanges Claude answered without a plan (one line each: what the user asked,
-        the first sentence of the answer), finished requests this one may refer to."""
+        the first sentence of the answer), finished requests this one may refer to. ``examples`` (Obliterate's case
+        file, label → path) are documents the conversation's tools, and a custom method's writer after it, may read as
+        worked examples and no spec may name."""
         from .conversation import Conversation
         if not request.strip():
             raise ValueError("Type what you want done.")
@@ -342,7 +345,8 @@ class Session:
                                          word_sources=self.replay_word_sources, input_files=self.inputs,
                                          history=list(history or []), fresh=list(fresh or []), context=context or "",
                                          todo=list(todo or []), earlier=list(earlier or []), unguarded=self.unguarded,
-                                         on_context=self.context_observer)
+                                         on_context=self.context_observer,
+                                         examples=dict(examples or {}) if self.unguarded else None)
         try:
             turn = self.conversation.start()
         except Exception:
@@ -649,6 +653,9 @@ class Session:
                         approved_words=list(self.conversation.sources if self.conversation else [request]),
                         unguarded=self.unguarded, template=self.template if self.unguarded else None,
                         input_files=list(self.inputs or []) if self.unguarded else [],
+                        # the case file's worked examples, as the conversation's tools read them
+                        examples=dict(getattr(getattr(self.conversation, "batch", None), "examples", None) or {})
+                        if self.unguarded else None,
                         resume_from=writer_dir if paused is not None else None)
         pending["paused"] = str(writer_dir) if g.budget_stop else None
         if not g.passed:

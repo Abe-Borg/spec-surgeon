@@ -366,6 +366,8 @@ class WindowState:
                            "copies": int(raw.get("copies_to_create") or 0) if kind == "approve" else 0,
                            "unpreviewed": int(raw.get("unpreviewed") or 0) if kind == "approve" else 0},
                 "todo": [dict(item) for item in raw.get("todo", [])], "focus": list(raw.get("focus", [])),
+                # Obliterate's free rung: the documents of the pass whose failed copy can be taken as it is
+                "failed_copies": [dict(item) for item in raw.get("failed_copies") or []],
                 "working": raw["working"], "budget": {"paused": bool(raw["budget_paused"]),
                                                       "reason": raw.get("pause_reason", "")},
                 "discard": "" if busy else raw.get("discard", ""),
@@ -928,6 +930,23 @@ def create_app(state: WindowState, *, dev: bool = False) -> FastAPI:
             state.task.put_back(str(body.get("path") or ""))
         except ValueError as exc:
             return error(str(exc))
+        return state.view()
+
+    @app.post("/api/todo/obliterate")
+    async def obliterate_todo(request: Request):
+        """**Obliterate this one**, on a to-do entry: Obliterate mode for that one document (its warning acknowledged
+        this time, unless the mode is already on), and the pass over it alone. No model call."""
+        if state.busy:
+            return busy_error()
+        try:
+            body = await json_object(request)
+        except ValueError as e:
+            return error(str(e))
+        try:
+            state.task.obliterate_todo(str(body.get("path") or ""), acknowledged=body.get("acknowledged") is True)
+        except ValueError as exc:
+            return error(str(exc))
+        state.save_settings()          # the mode it turned on is never kept: the next launch opens as before
         return state.view()
 
     @app.post("/api/new-conversation")

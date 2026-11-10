@@ -17,7 +17,7 @@ import { TRUST_FACTS as F } from "./trustFacts.ts";
  * Bump whenever chapter or step ORDER changes: the resume record (lib/tourStorage.ts) keeps numeric indexes, and a
  * stale one would land a reload on another chapter than the one it was left at. A bump discards it.
  */
-export const TOUR_VERSION = 6;
+export const TOUR_VERSION = 7;
 
 /** The version a finished tour is recorded as (settings.json `tutorial_version`); bump it when the tour changes
  *  enough that someone who finished the old one should be invited again. */
@@ -583,6 +583,17 @@ export const TOUR: readonly TourChapter[] = [
         title: "The same list beside the copies",
         body:
           "Every document on the list says why it is there: the red X, your word to the assistant, a plan that could not be applied to it, a preview that did not pass its checks while the others did, or a copy that could not be made. Put back takes one off without a pass: it is among the documents the next request works on, as it is. Start over from the originals clears the list. The list is kept with the conversation and comes back with it if the window closes unexpectedly.",
+      },
+      {
+        id: "todo-obliterate",
+        capabilities: ["todo.obliterate", "todo.failed-copy"],
+        mode: "explanatory",
+        anchor: "todo-list",
+        needs: "todo",
+        placement: "left",
+        title: "When neither mode could take it",
+        body:
+          "With Obliterate mode shown in Settings, each document here also carries Obliterate this one: its warning, then Obliterate mode for that one document, with the assistant told what the engine recorded (the refusal, or the checks its copy failed) and able to read a document that took the change as a worked example. When a copy was made and held back because it failed a check, the chat offers Use the copy that failed, marked UNVERIFIED: that copy joins your edited copies as it is, with no AI call, and Undo takes it off again.",
       },
       {
         id: "building-on",

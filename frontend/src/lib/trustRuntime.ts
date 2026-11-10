@@ -344,6 +344,38 @@ export const RUNTIME_CARDS: RuntimeCard[] = [
       "copy; its results are kept beside it.",
   },
   {
+    covers: ["A42", "A43", "B21"],
+    title: "Obliterate from the to-do list: one document, and the copy that failed",
+    you:
+      "With Obliterate mode shown in Settings: Obliterate this one beside a document on the to-do list, tick the " +
+      "box under its warning and press Turn on Obliterate (no warning when the mode is already on). Then, when the " +
+      "chat shows that the copy that failed is kept, Use the copy that failed (or type Use the copy that failed, " +
+      "marked UNVERIFIED).",
+    runs:
+      "Without a click: when a document goes on the to-do list because the engine stopped on it or because its copy " +
+      "failed a check, the entry keeps a case file — the engine's code, reason and details, the failed checks as the " +
+      "independent checker named them, where the copy that failed is kept when it is the whole of the plan (never a " +
+      "chain's, which stopped at the step that failed), and a document of the same run that took the change. " +
+      "Obliterate this one turns the mode on as the top bar's switch does and begins the pass over that one " +
+      "document; every other document, copy and to-do entry stays as it is. Use the copy that failed checks that " +
+      "the kept copy is still the bytes the checker read, that the document is still the file it was made from and " +
+      "that this file has not changed, then writes those bytes to a new folder in the scratch folder as that " +
+      "document's edited copy, marked UNVERIFIED with the checks it failed — what Obliterate's own run of the same " +
+      "plan delivers. It is one change: listed under What you've done so far, undone by Undo the last change.",
+    sent:
+      "Nothing for either click. If you then type a request, the conversation sends what it sends in Obliterate " +
+      "mode and, with it, the case file of that document; its tools — and a custom method's writer after it — may " +
+      "also read the document that took the change, as it was and as its copy, as a worked example.",
+    ai: NONE,
+    bounds:
+      "Offered only while Settings shows Obliterate mode, and turned on only after its warning. The case file " +
+      "changes nothing in Safe or Default mode: their conversation is told the entry's one sentence, as before. " +
+      "The worked example can be read, never planned: no plan, binding or template can name it. A copy that " +
+      "changed since it was checked, whose document has moved on (another change, an undo, a start over) or " +
+      "whose source changed is refused, and nothing moves. Your originals are never written, and the copy the " +
+      `run or preview held back is left where it was. Obliterate this one waits ${WHILE_CHECKED}.`,
+  },
+  {
     covers: ["A23", "A24", "A25", "A29", "A30", "A37"],
     title: "Safe mode: choosing a mode, pressing a button, changing your mind (in every mode), handing documents over",
     you:
