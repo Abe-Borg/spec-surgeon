@@ -438,6 +438,7 @@ def test_the_methods_writer_reads_the_worked_example_and_the_method_never_receiv
     from make_fixtures import build
     from spec_surgeon import codegen
     from test_codegen import GOOD_OP
+    from test_obliterate import FREE_HEADER
     d = tmp_path / "specs"
     d.mkdir()
     sample, example = d / "21 00 00 – SPEC 0.docx", d / "21 01 00 – SPEC 1.docx"
@@ -446,10 +447,12 @@ def test_the_methods_writer_reads_the_worked_example_and_the_method_never_receiv
     label = EXAMPLE_AFTER.format(name=example.name)
     fake = FakeClient(resp(tool("show_part_text", {"file": label, "part": "word/document.xml"}, "r1")),
                       resp(tool("show_part_text", {"file": "EXAMPLE after: nowhere.docx", "part": "x"}, "r2")),
-                      resp(tool("submit_op", {"source": GOOD_OP, "params": {"twips": 900}})))
+                      resp(tool("submit_op", {"source": FREE_HEADER}, "s1")), resp(tool("confirm_op", {}, "c1")))
     g = codegen.generate_op("widen it", "widen it", [sample], tmp_path / "cg", client=fake, unguarded=True,
                             examples={label: example})
     assert g.passed, g.attempts
+    report = fake.requests[3]["messages"][-1]["content"][0]["content"]
+    assert sample.name in report and example.name not in report                      # an example is no sample
     first = fake.requests[0]["messages"][0]["content"]
     assert "WORKED EXAMPLES (read-only" in first and label in first
     read = fake.requests[1]["messages"][-1]["content"][0]

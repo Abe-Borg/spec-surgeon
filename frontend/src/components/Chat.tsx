@@ -348,8 +348,8 @@ export default function Chat({
           >
             <span className="min-w-0 flex-1">
               <span className="font-semibold text-err">Obliterate mode.</span> Claude may write wording and change
-              anything Word stores; a copy whose checks fail is delivered marked UNVERIFIED. Copies only — your
-              originals are never written.
+              anything Word stores; a copy whose checks fail is delivered marked UNVERIFIED, and a custom
+              method&rsquo;s copy UNPROVEN. Copies only — your originals are never written.
             </span>
             <button
               type="button"

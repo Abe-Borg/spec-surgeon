@@ -494,6 +494,10 @@ def test_a_checkpoint_of_another_job_is_not_continued(folder, tmp_path, change):
     g, fake, f = _paused_writer(folder, tmp_path)
     other = sorted(folder.glob("*.docx"))[1]
     again = FakeClient(resp(tool("submit_op", {"source": GOOD_OP, "params": {"twips": 900}}, "a1")))
+    if change == "mode":
+        # an Obliterate writer: its method is its apply() alone, and it confirms the report of what it changed
+        from test_obliterate import FREE_HEADER
+        again = FakeClient(resp(tool("submit_op", {"source": FREE_HEADER}, "a1")), resp(tool("confirm_op", {}, "a2")))
     logged = []
     options = dict(brief="REQUEST: header 0.625 in\nUSER: only the header", log=logged.append,
                    resume_from=tmp_path / "cg", client=again)
@@ -510,7 +514,7 @@ def test_a_checkpoint_of_another_job_is_not_continued(folder, tmp_path, change):
         (tmp_path / "cg" / "history.json").unlink()
     with llm.budget_scope(llm.CallBudget(max_calls=10)):
         g2 = generate_op("header 0.625 in", "set the header distance", samples, out, **options)
-    assert g2.passed and len(again.requests[0]["messages"]) == 1 and g2.calls == 1   # a fresh start, said so
+    assert g2.passed and len(again.requests[0]["messages"]) == 1 and g2.calls == len(again.requests)   # a fresh start, said so
     assert any("cannot be continued" in line for line in logged), logged
 
 

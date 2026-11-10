@@ -351,25 +351,29 @@ export const OBLITERATE_OPERATIONS: readonly TypicalOperation[] = [
     task: "Edit what built-ins refuse: headers built as text boxes, cover-page text boxes, shapes",
     can: "Yes, via a custom method",
     note:
-      "The sandbox, the import whitelist, and the time and memory limits still hold. Your attachments are " +
-      "available to the method. Before you approve, the exact words its sample copies add and remove are listed " +
-      "in the chat and under each sample, as the independent checker read them.",
+      "The method predicts nothing: it just does the work on a copy of each document, so each copy is delivered " +
+      "marked UNPROVEN. The sandbox, the import whitelist, and the time and memory limits still hold. Your " +
+      "attachments are available to the method. Before you approve, every document's copy is made and what it " +
+      "changes is listed in the chat and under each copy, as the independent checker read it.",
   },
   {
     task: "Custom methods beyond formatting: text changes, new parts, tracked revisions in your name",
-    can: "Yes",
+    can: "Yes, marked UNPROVEN",
     note:
-      `Failed checks go back to the writer up to ${F.obliterateCheckRounds} times. ` +
-      "The exact words added and removed are listed before you approve — in the chat and under each sample — from " +
-      "the independent checker's own reading of the sample copies, never from the method's or the model's account; a " +
-      "method that changes no words is said to change none.",
+      "The writer reads the independent checker's report of what its method changed before it takes it, and a " +
+      `copy whose file is broken goes back to the writer up to ${F.obliterateCheckRounds} times. ` +
+      "The exact words added and removed, and what else differs (paragraphs, tables and pictures counted, " +
+      "formatting, styles, numbering, settings, parts), are listed before you approve — in the chat and under each " +
+      "copy — from the checker's own reading, never from the method's or the model's account; a method that " +
+      "changes no words is said to change none. Create delivers the copies you were shown.",
   },
   {
     task: "Deliver a copy that fails a check anyway",
     can: "Yes, marked UNVERIFIED",
     note:
-      "The writer may keep a failed check with a reason you read beside the copy. The package-integrity checks V1, " +
-      "V4, V5a, V5c and V9 cannot be kept with a reason: they go back to the writer each round. After " +
+      "A plan's copy that fails any of its checks is delivered with the checks it failed. A custom method's copy " +
+      "is checked for being a file Word opens (its parts, references, tracked-change ids and markup, and the " +
+      "schema), and one that fails goes back to the writer each round. After " +
       `${F.obliterateCheckRounds} rounds the latest method is used, and its copy is delivered marked UNVERIFIED ` +
       "with those failures listed.",
   },

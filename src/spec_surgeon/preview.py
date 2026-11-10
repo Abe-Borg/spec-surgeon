@@ -133,8 +133,11 @@ def generated_key(g: Any) -> Dict[str, Any]:
         key["unguarded"] = True                   # an Obliterate method's approval is never a guarded one's
         if getattr(g, "attachments", None):
             key["attachments"] = list(g.attachments)          # the attached files' pinned bytes it was written with
-        if getattr(g, "accepted_failures", None):
-            key["accepted_failures"] = dict(g.accepted_failures)   # the reasons the user read beside the copies
+        # Nothing was predicted for an Obliterate method's copies, so the approval is of the results themselves: the
+        # md5 of each copy the user was shown (``FileTrial.output_md5``), by its source. Create delivers those bytes
+        # (``codegen.run_generated``); a copy made again, or one that changed, is not the one approved.
+        key["results"] = sorted([str(t.source), t.output_md5] for t in (getattr(g, "trials", None) or [])
+                                if getattr(t, "passed", False) and getattr(t, "output_md5", ""))
     return key
 
 
@@ -233,6 +236,12 @@ class SampleView:
     # them (V6/V7 once the pages were compared). Empty for a chain's or a custom method's sample; not saved.
     output_md5: str = ""
     record_checks: Dict[str, Dict[str, str]] = field(default_factory=dict)
+    # An Obliterate custom method's copy (``codegen.FileTrial.unproven``): nothing was predicted for it, so with no
+    # failed check it is UNPROVEN, never passed; ``changes`` is what else it changes beside its words, in the
+    # verifier's own sentences (``verify.difference_lines``: D1 of its record)
+    unproven: bool = False
+    changes: List[str] = field(default_factory=list)
+    problem: str = ""                             # a custom method's sample no copy could be made of: why
 
     def failed_marks(self) -> List[str]:
         """The failed checks as a delivered copy lists them (``FileResult.unverified``): ``V2 (Text preservation)``."""
@@ -244,6 +253,8 @@ class SampleView:
                 "checks": self.checks, "images": [str(i) for i in self.images], "exception": self.exception,
                 "look_pages": self.look_pages, "pages_before": self.pages_before, "pages_after": self.pages_after,
                 "geometry": self.geometry, "text_changes": self.text_changes,
+                **({"unproven": True, "changes": list(self.changes)} if self.unproven else {}),
+                **({"problem": self.problem} if self.problem else {}),
                 **({"render_warnings": self.render_warnings} if self.render_warnings else {}),
                 **({"stages": self.stages} if self.stages else {}),
                 **({"outcomes": self.outcomes} if self.outcomes else {}),
@@ -276,6 +287,16 @@ GEOMETRY_RENDERED_NOT_COMPARED = {"status": "NA", "at": "run",
 GEOMETRY_AT_RUN_STEPS = {"status": "NA", "at": "run",
                          "note": "Page layout of a plan done in steps is checked step by step when the copies are "
                                  "created; the preview renders the last step's pages only."}
+# an Obliterate custom method's copy whose pages were not rendered: nothing was predicted, so there is no layout
+# check waiting at the run either (no ``at``: the note is the whole verdict)
+GEOMETRY_SHOWN = {"status": "NA",
+                  "note": "No pages were rendered here. A custom method in Obliterate mode predicts no layout: its "
+                          "pages are shown beside the original's, never compared with them."}
+# an Obliterate custom method's copy the renderer could not open while it opened the original: the one check of the
+# file that takes Word (or LibreOffice), failed in the preview as the run fails it (V6)
+COPY_NOT_OPENED = ("The program that opens Word files opened the original and could not open this copy, so its pages "
+                   "are not shown: Word may repair or refuse it.")
+V6_MARK = "V6 (Automated render comparison)"
 # a plan that gives up the source render as its layout reference (``geometry_reference`` "none"): one sentence for the
 # window however many operations give it up; each operation's own reason (``geometry_reason``, labelled ``#n op``)
 # stays in V7's record and in the preview text (``geometry_text``)
@@ -656,6 +677,46 @@ def text_changes_lines(samples: Sequence[Any]) -> List[str]:
     return out
 
 
+OTHER_CHANGES_HEAD = ("Before you approve — what else the custom method changes beside the words, as the independent "
+                      "reader found it in each copy:")
+
+
+def shown_changes_lines(samples: Sequence[Any]) -> List[str]:
+    """The app's own sentences about what an Obliterate custom method's copies change beside their words
+    (``SampleView.changes``: D1 of each copy's record), said in the chat before the approval button and kept in the
+    transcript: nothing when no sample is such a copy; otherwise the heading and one line per distinct finding (the
+    same finding in several documents is one line naming them all)."""
+    known = [s for s in samples if getattr(s, "unproven", False) and getattr(s, "changes", None)]
+    if not known:
+        return []
+    lines: Dict[str, List[str]] = {}
+    for s in known:
+        name = Path(s.source).name
+        for line in s.changes:
+            names = lines.setdefault(str(line), [])
+            if name not in names:
+                names.append(name)
+    out = [OTHER_CHANGES_HEAD]
+    for line, names in lines.items():
+        who = names[0] if len(names) == 1 else ", ".join(names[:-1]) + " and " + names[-1]
+        out.append(f"\u2022 {who}: {line}")
+    return out
+
+
+NO_COPY_HEAD = ("No copy could be made of these, so none is created; each goes on your to-do list when the others "
+                "are created:")
+
+
+def no_copy_lines(samples: Sequence[Any]) -> List[str]:
+    """The app's own sentences about the documents an Obliterate custom method could make no copy of
+    (``SampleView.problem``), said in the chat before the approval button: nothing when every document has its copy;
+    otherwise the heading and each document with the reason."""
+    none = [s for s in samples if getattr(s, "problem", "")]
+    if not none:
+        return []
+    return [NO_COPY_HEAD] + [f"\u2022 {Path(s.source).name}: {str(s.problem).rstrip('.')}." for s in none]
+
+
 def _preview_log(out_dir: Path, title: str):
     """``logs/preview.log`` beside the preview (a diagnostic never stops the work it describes: an unwritable log is
     silently no log)."""
@@ -745,6 +806,13 @@ def render_samples(samples: List[SampleView], out_dir: Path, renderer: str, do_r
         sp, op = srcs.get(a), outs.get(b)
         if not sp or not op:
             warn(f"{labels[str(Path(s.source))]}: render failed")
+            if sp and getattr(s, "unproven", False):
+                # nothing was predicted for this copy, so that it opens is what there is to check: failed here, never
+                # left for the run to find after the approval
+                s.checks["V6"], s.passed = "FAIL", False
+                s.geometry = {"status": "FAIL", "note": COPY_NOT_OPENED}
+                if isinstance(s.record_checks, dict):
+                    s.record_checks["V6"] = {"name": "Automated render comparison", "summary": COPY_NOT_OPENED}
             continue
         s.source_pdf, s.output_pdf = Path(sp), Path(op)
         s.look_pages = [1]                     # page 1 at least, even when the comparison below cannot run
@@ -797,7 +865,7 @@ def _sample_geometry(samples: List[SampleView], out_dir: Path, backend: Optional
         if s.geometry is not None or s.exception is not None or not s.output:
             continue
         if not s.source_pdf or not s.output_pdf or not backend:
-            s.geometry = dict(GEOMETRY_AT_RUN)
+            s.geometry = dict(GEOMETRY_SHOWN if getattr(s, "unproven", False) else GEOMETRY_AT_RUN)
             continue
         if s.plan is None:
             s.geometry = dict(GEOMETRY_RENDERED_AT_RUN)
@@ -867,13 +935,21 @@ class GeneratedPreview:
         labels = sample_labels(self.samples)
         for s in self.samples:
             failed = [k for k, v in s.checks.items() if v == "FAIL"]
-            out.append(f"   {labels[str(Path(s.source))]}: verification {'PASS' if s.passed else 'FAIL ' + str(failed)}"
+            verdict = ("verification PASS" if s.passed and not s.unproven else
+                       "UNPROVEN (made; no fault found in its file; its changes are listed, not proven)"
+                       if s.passed else f"no copy could be made ({s.problem})" if s.problem else
+                       f"UNVERIFIED (made; checks of its file FAILED: {failed})" if s.unproven and failed else
+                       "verification FAIL " + str(failed))
+            out.append(f"   {labels[str(Path(s.source))]}: {verdict}"
                        + (f"; pages: {s.pages_before} → {s.pages_after}" if s.pages_before is not None else "")
                        + (f"; images: {[i.name for i in s.images]}" if s.images else "")
                        + geometry_text(s))
         words = text_changes_lines(self.samples)
         if words:
             out += ["WORDS (the independent checker's reading of the sample copies, V2):"] + [f"   {w}" for w in words]
+        other = shown_changes_lines(self.samples)
+        if other:
+            out += ["WHAT ELSE CHANGED (the independent reader's report of each copy, D1):"] + [f"   {x}" for x in other]
         if self.review is not None:
             out += ["", self.review.to_text()]
         from .readable import REPORT_BYTES, bounded
@@ -898,6 +974,7 @@ def _preview_generated(g: Any, out_dir: Path, renderer: str, do_render: bool) ->
     unique across the samples, rendered beside their sources. ``logs/preview.log`` has each sample's verification and
     what the renderer said."""
     from .batch import output_names
+    from .verify import difference_lines
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     name = getattr(g, "name", "") or "generated"
@@ -915,9 +992,16 @@ def _preview_generated(g: Any, out_dir: Path, renderer: str, do_render: bool) ->
             sv = SampleView(source=Path(t.source), passed=bool(t.passed) and not getattr(t, "unverified", None),
                             checks={c.id: c.status for c in t.record.checks} if t.record is not None else {},
                             plan=getattr(t, "plan", None) if t.record is not None else None)
+            # Obliterate: nothing was predicted for this copy — never shown as verified, even with no failed check
+            sv.unproven = bool(getattr(t, "unproven", False) or getattr(g, "unguarded", False))
+            if t.record is None and getattr(t, "problems", None):
+                # no copy could be made of this document: its card says why (``ui_feedback.failed_preview_checks``)
+                from .ui_feedback import plain_problem
+                sv.problem = "; ".join(plain_problem(x) for x in t.problems[:2])[:600]
             if t.record is not None:
                 # the words the copy adds and removes, from the verifier's own V2 record — the method's plan has no say
                 sv.text_changes = text_changes_of(t.record.to_dict())
+                sv.changes = difference_lines(t.record)
                 _log_verification(log, Path(t.source).name, t.record)
                 for line in text_changes_lines([sv]):
                     log.detail(f"sample {Path(t.source).name}: {line}")
@@ -930,6 +1014,11 @@ def _preview_generated(g: Any, out_dir: Path, renderer: str, do_render: bool) ->
                 sv.output.write_bytes(Path(t.output).read_bytes())
             gp.samples.append(sv)
         gp.renderer = render_samples(gp.samples, out_dir, renderer, do_render, gp.warnings, log=log)
+        for t, sv in zip(trials, gp.samples):
+            # an Obliterate copy the renderer could not open: the trial carries the mark from here on, so the chat,
+            # the notes and the delivered copy all say what the card says
+            if sv.unproven and sv.checks.get("V6") == "FAIL" and V6_MARK not in (getattr(t, "unverified", None) or []):
+                t.unverified.append(V6_MARK)
         write_preview_files(gp)
         return gp
     except BaseException as e:

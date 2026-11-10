@@ -46,7 +46,7 @@ that ends a job is authoritative.
   "samples": [{"source": "…", "name": "21 13 13.docx", "images": ["/api/image?path=…"],
                "pages_before": 12, "pages_after": 12, "passed": true, "failures": [],
                "geometry": {"status": "PASS", "note": "Page layout checked on the rendered pages: …"},
-               "text_changes": null}],
+               "text_changes": null, "unproven": false, "changes": [], "no_copy": false}],
   "occurrences": [{"source": "…", "name": "21 13 13.docx", "status": "planned | refused", "reason": "",
                    "items": [{"key": "…", "part": "word/document.xml", "paragraph": 11, "start": 30, "end": 38, "where": "the body",
                               "heading": "2.01", "before": "H. See the", "match": "2022 CBC", "after": "portal.",
@@ -119,8 +119,12 @@ Rules the page relies on:
   the view carries no `pdfs` and no `action.export` any more.
 - `modes` lists `obliterate` only while Settings → Advanced shows it (`show_obliterate`). In `obliterate` the page is
   the conversation, as in `default`, with Obliterate's strip above the composer; the engine runs with
-  `Session.unguarded` (CLAUDE.md, "Modes"). `results[].unverified` names the checks a copy failed when it was
-  delivered anyway in that mode (`[]` for a verified copy); the page marks it UNVERIFIED.
+  `Session.unguarded` (CLAUDE.md, "Modes"). `results[].unverified` is a copy's marks in that mode (`[]` for a
+  verified copy): a check it failed and was delivered with reads `V2 (Text preservation)`, and the page marks the
+  copy UNVERIFIED; a copy a custom method made carries
+  `UNPROVEN (a custom method made it: what it changed was shown to you, not proven)`, and with no failed check
+  beside it the page marks the copy UNPROVEN. A later copy built on a marked one keeps each mark behind
+  `in an earlier copy: `.
 - `tutorial` is the guided tour (docs/CONVERSATIONAL_DESKTOP.md, "The guided tour"): `active` while the practice
   workspace stands in for the conversation, `id` the tour's lease, `scenario` the chapter state last built (one of
   `tutorial.SCENARIOS`: `start`, `button`, `copies`, `find`, `conversation`, `question`, `plan`, `todo`, or `""` before the
@@ -164,6 +168,18 @@ Rules the page relies on:
   `[]` when the method changes no words; `null` for an ordinary plan's sample (the chat's sentences say what the plan changes) and for a
   sample the checker left no record of; absent from an older server. The chat says the same words as an app message
   before the approval button, once per preview.
+- `samples[].unproven` is true for a copy a custom method made in Obliterate mode: nothing was predicted for it, so
+  the page never shows it as Checked — **Not proven** when `passed` is true (the independent reader found no fault
+  in its file), **Did not pass** with `failures` when a check of its file failed (it is still created, marked
+  UNVERIFIED). For such a method `samples` holds every document it is for, not a few per layout: each copy is made
+  before approval and Create delivers those copies. `samples[].changes` is what else the copy changes beside its
+  words, in the independent reader's own sentences (its D1 record: counts of paragraphs, tables and pictures,
+  formatting, styles, numbering, settings, relationships, parts, and any changed part it compared by bytes only);
+  `[]` when it found none and for every other sample. `samples[].no_copy` is true for a document the method could
+  make no copy of: `failures` holds one entry with check `Preview` and the reason, the page shows **No copy** and
+  no marks, `action.copies` does not count it, and it goes on the `todo` list when the others are created. All
+  three are false, `[]` and false for an ordinary plan's sample and a Default custom method's; absent from an older
+  server.
 - `occurrences` is the find-and-replace list of the plan waiting for the user (stages `preview` and `question`; empty
   otherwise, and empty when the plan has no `replace_table` op): one entry per document the plan covers — every
   document, not the sampled ones only — with every occurrence the plan found, kept or unticked (`skipped`). `where`

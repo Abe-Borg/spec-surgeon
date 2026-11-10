@@ -31,7 +31,7 @@ export default function WhyTrustIt({ onDeepDive }: { onDeepDive: () => void }) {
           },
           {
             t: "Every change is predicted, then proved",
-            d: "Before anything changes, the engine works out from your original exactly what will change in every file. After the edit, a separate checker that shares no code with the editing compares the original and the copy against that prediction — that change, and nothing else. A copy that fails is set aside, never delivered — except in Obliterate mode, hidden unless you show it in Settings, which delivers it marked UNVERIFIED with the checks it failed.",
+            d: "Before anything changes, the engine works out from your original exactly what will change in every file. After the edit, a separate checker that shares no code with the editing compares the original and the copy against that prediction — that change, and nothing else. A copy that fails is set aside, never delivered — except in Obliterate mode, hidden unless you show it in Settings, which delivers it marked UNVERIFIED with the checks it failed, and where a custom method predicts nothing: its copies are shown to you before you approve, with what each changes, and delivered marked UNPROVEN.",
           },
           {
             t: "Claude plans; the engine edits",
@@ -40,8 +40,9 @@ export default function WhyTrustIt({ onDeepDive }: { onDeepDive: () => void }) {
                 Claude turns your words into a plan of built-in operations, and the plan is checked before you see it.
                 When no operation fits, Claude may write a small program instead — formatting only, unless it carries
                 out an outcome plan you are shown — which runs in a sandbox on copies, predicts its own change, and must pass
-                the same checker. Obliterate mode lifts the formatting-only limit and lets a failed check through,
-                never the sandbox or the copies-only rule.
+                the same checker. Obliterate mode lifts the formatting-only limit and the prediction (there the
+                program just does the work, the checker reports what it changed, and you approve the copies
+                themselves) and lets a failed check through, never the sandbox or the copies-only rule.
               </>
             ),
           },

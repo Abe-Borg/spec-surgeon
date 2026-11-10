@@ -17,9 +17,27 @@ CHECK_MESSAGES = {
     "V9": "The original file could not pass the check required before delivery.",
     "V10": "The copy's formatting, filename or another requested property does not match the approved plan.",
     "FINAL": "The copy does not meet one of the plan's final requirements.",
-    "UNREAD": "The copy changes a part of the Word file that no check reads (a chart, an embedded file, stored data, "
-              "the theme), so nothing proves what it now holds.",
 }
+# The same ids as an Obliterate custom method's copy fails them (``verify.run_difference``): nothing was predicted
+# for it, so its checks are of the file itself — what Word repairs or refuses.
+SHOWN_CHECK_MESSAGES = {
+    "V1": "The copy's file has a fault Word repairs or refuses: a part that does not parse, a broken reference or a "
+          "part without its content type.",
+    "V4": "The copy's tracked changes carry an id Word cannot tell apart or cannot read.",
+    "V5a": CHECK_MESSAGES["V5a"],
+    "V5c": CHECK_MESSAGES["V5c"],
+    "V6": "The copy's pages could not be rendered: the program that opens Word files could not open it.",
+    "V9": CHECK_MESSAGES["V9"],
+}
+
+
+def plain_problem(problem) -> str:
+    """A custom method's problem in the words a person reads: its first line, without the sandbox's traceback (that
+    is the method writer's to read, and stays in the record), and a refusal the method itself raised
+    (``JobException``) as its reason alone, without the code and the exception's name."""
+    import re
+    line = str(problem or "").split("\n(traceback", 1)[0].strip()
+    return re.sub(r"^\[[^\]]+\]\s+JobException:\s+", "", line)
 
 
 def failed_preview_checks(sample):
@@ -30,12 +48,38 @@ def failed_preview_checks(sample):
     for stage in getattr(sample, "stages", None) or []:
         failed.update(key for key, status in stage.get("checks", {}).items() if status == "FAIL")
     if not failed:
+        problem = str(getattr(sample, "problem", "") or "").strip()
+        if problem:                             # a custom method's sample no copy could be made of
+            return [{"check": "Preview", "reason": f"No copy of it could be made: {problem.rstrip('.')}."}]
         return [{"check": "Preview", "reason": "The preview could not complete its checks. The diagnostic record has the details."}]
-    return [{"check": key, "reason": CHECK_MESSAGES.get(key, "A verification check did not pass. The diagnostic record has the details.")}
+    # an Obliterate custom method's copy fails the checks of its file, in their own words
+    messages = {**CHECK_MESSAGES, **SHOWN_CHECK_MESSAGES} if getattr(sample, "unproven", False) else CHECK_MESSAGES
+    return [{"check": key, "reason": messages.get(key, "A verification check did not pass. The diagnostic record has the details.")}
             for key in sorted(failed)]
 
 
 PREVIEW_FAILED = "Its preview did not pass its checks"
+
+# A copy's marks (``DocumentTask.unverified``: by attached original, a list of strings). A failed check reads
+# ``V2 (Text preservation)``: the copy is UNVERIFIED. A copy an Obliterate custom method made, for which nothing was
+# predicted, carries ``UNPROVEN_MARK`` as well: with no failed check beside it the copy is UNPROVEN — its changes
+# were shown to the user, and nothing proved them. A later copy built on a marked one keeps each mark behind
+# ``in an earlier copy: `` (``DocumentTask._mark_unverified``).
+UNPROVEN_MARK = "UNPROVEN (a custom method made it: what it changed was shown to you, not proven)"
+
+
+def is_unproven_mark(mark) -> bool:
+    return "UNPROVEN" in str(mark)
+
+
+def failed_marks(marks) -> list:
+    """The failed checks among a copy's marks: what makes it UNVERIFIED."""
+    return [str(m) for m in marks or [] if not is_unproven_mark(m)]
+
+
+def unproven_only(marks) -> bool:
+    """A copy that is UNPROVEN and nothing worse: marked so, with no failed check beside it."""
+    return bool(marks) and not failed_marks(marks)
 
 
 def failed_sample_message(sample):

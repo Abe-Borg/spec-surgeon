@@ -16,6 +16,16 @@ from spec_surgeon.preview import (NO_WORDS_CHANGE, WORDS_CHANGE_HEAD, SampleView
                                   text_change_phrase, text_changes_lines, text_changes_of, word_changes)
 from spec_surgeon.verify import run_suite
 from test_codegen import GOOD_OP
+from test_obliterate import FREE_HEADER, FREE_TITLE
+
+
+def rewording(title: str, edit: str, tracked: bool = False) -> str:
+    """An Obliterate custom method (its ``apply()`` alone) that makes one edit in the paragraph reading ``title``:
+    the only kind of custom method that may change words, so the one whose words are listed."""
+    op = (FREE_TITLE.replace('"FIRE SUPPRESSION"', repr(title)).replace('Edit(0, 4, "WATER")', edit)
+          .replace("TRACKED = False", f"TRACKED = {tracked}"))
+    assert op != FREE_TITLE or (title, edit, tracked) == ("FIRE SUPPRESSION", 'Edit(0, 4, "WATER")', False)
+    return op
 
 
 def record(*actual):
@@ -118,12 +128,14 @@ def source(tmp_path) -> Path:
 
 
 def test_a_custom_methods_preview_carries_the_words_its_copy_changes_from_the_trials_record(source, tmp_path):
-    from test_governed_codegen import CONTENT_OP
-    op = CONTENT_OP.replace('content == "FIRE SUPPRESSION"', 'content == "SPEC 1"').replace("Edit(0, 4,", "Edit(0, 6,")
-    worded = trial(op, source, {}, {"replacement": "DRAFT"}, tmp_path / "w", unguarded=True)
+    op = rewording("SPEC 1", 'Edit(0, 6, "DRAFT")')
+    worded = trial(op, source, {}, {}, tmp_path / "w", unguarded=True)
     assert worded.passed and worded.unverified == [], (worded.problems, worded.unverified)
-    plain = trial(GOOD_OP, source, {}, {"twips": 900}, tmp_path / "p", unguarded=True)
+    plain = trial(FREE_HEADER, source, {}, {}, tmp_path / "p", unguarded=True)
     assert plain.passed
+    # a method written in Default mode changes no words (its limits refuse one that would): none are listed
+    formatting = trial(GOOD_OP, source, {}, {"twips": 900}, tmp_path / "f")
+    assert formatting.passed and text_changes_of(formatting.record.to_dict()) == []
     gp = preview_generated(SimpleNamespace(name="op", trials=[worded, plain]), tmp_path / "pv", renderer="none",
                            do_render=False)
     # the words are the verifier's reading of the copy, the record's V2 entries word for word
@@ -144,12 +156,13 @@ def test_a_custom_methods_preview_carries_the_words_its_copy_changes_from_the_tr
 def test_the_verifiers_record_of_the_delivered_copy_reproduces_the_preview_s_words(source, tmp_path):
     """The disclosure is bound to the approval through the trial it is derived from: the same method on the same
     bytes gives the same V2 entries, in the preview and in the run."""
-    from test_governed_codegen import CONTENT_OP
-    op = CONTENT_OP.replace('content == "FIRE SUPPRESSION"', 'content == "SPEC 1"').replace("Edit(0, 4,", "Edit(0, 6,")
-    first = trial(op, source, {}, {"replacement": "DRAFT"}, tmp_path / "a", unguarded=True)
-    again = trial(op, source, {}, {"replacement": "DRAFT"}, tmp_path / "b", unguarded=True)
+    op = rewording("SPEC 1", 'Edit(0, 6, "DRAFT")')
+    first = trial(op, source, {}, {}, tmp_path / "a", unguarded=True)
+    again = trial(op, source, {}, {}, tmp_path / "b", unguarded=True)
     assert text_changes_of(first.record.to_dict()) == text_changes_of(again.record.to_dict())
-    # and the record of the output bytes themselves, read by the suite afresh, says the same
+    assert text_changes_of(first.record.to_dict())[0]["added"] == ["DRAFT"]
+    # and the record of the output bytes themselves, read by the suite afresh, says the same: the Obliterate record
+    # lists the words with the suite's own comparison
     rec = run_suite(source.read_bytes(), first.output.read_bytes(), {"job": "x", "mode": "untracked", "diffs": []},
                     str(source), str(first.output))
     assert text_changes_of(rec.to_dict()) == text_changes_of(first.record.to_dict())
@@ -212,10 +225,8 @@ def titled(tmp_path) -> Path:
 
 
 def test_a_tracked_edit_by_a_custom_method_is_listed_from_the_checkers_views(titled, tmp_path):
-    from test_governed_codegen import CONTENT_OP
-    op = CONTENT_OP.replace('author="Tester"', "author=pkg.author").replace('RevisionStamp.now("Tester"',
-                                                                            "RevisionStamp.now(pkg.author")
-    replaced = trial(op, titled, {}, {"replacement": "WATER", "tracked": True}, tmp_path / "r", unguarded=True)
+    replaced = trial(rewording("FIRE SUPPRESSION", 'Edit(0, 4, "WATER")', tracked=True), titled, {}, {},
+                     tmp_path / "r", unguarded=True)
     assert replaced.passed and replaced.unverified == [], (replaced.problems, replaced.unverified)
     data = replaced.record.get("V2").data
     assert "word/document.xml" in data["views"]["parts"]                      # the body carries revisions now
@@ -225,8 +236,8 @@ def test_a_tracked_edit_by_a_custom_method_is_listed_from_the_checkers_views(tit
         {"part": "word/document.xml", "where": "body paragraph 2", "paragraph": 1, "removed": ["FIRE"],
          "added": ["WATER"], "tracked": True}]
     # a pure tracked deletion: V2's own comparison reads the same words (the deleted ones stay in the copy, marked)
-    deleting = op.replace('Edit(0, 4, params["replacement"])', 'Edit(0, 5, "")')
-    deleted = trial(deleting, titled, {}, {"replacement": "", "tracked": True}, tmp_path / "d", unguarded=True)
+    deleted = trial(rewording("FIRE SUPPRESSION", 'Edit(0, 5, "")', tracked=True), titled, {}, {}, tmp_path / "d",
+                    unguarded=True)
     assert deleted.passed and deleted.unverified == [], (deleted.problems, deleted.unverified)
     assert deleted.record.get("V2").data["actual"] == []
     assert text_changes_of(deleted.record.to_dict()) == [
@@ -237,7 +248,8 @@ def test_a_tracked_edit_by_a_custom_method_is_listed_from_the_checkers_views(tit
     assert gp.samples[0].text_changes[0]["removed"] == ["FIRE"]
     assert "words removed “FIRE” (in the copy's tracked changes)" in gp.to_text()
     # the same edit untracked: the two views agree, nothing is marked tracked
-    plain = trial(op, titled, {}, {"replacement": "WATER", "tracked": False}, tmp_path / "p", unguarded=True)
+    plain = trial(rewording("FIRE SUPPRESSION", 'Edit(0, 4, "WATER")'), titled, {}, {}, tmp_path / "p",
+                  unguarded=True)
     assert plain.passed
     assert text_changes_of(plain.record.to_dict()) == [
         {"part": "word/document.xml", "where": "body paragraph 2", "paragraph": 1, "removed": ["FIRE"], "added": ["WATER"]}]

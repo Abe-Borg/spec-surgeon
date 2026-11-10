@@ -530,7 +530,7 @@ function HowItWorks() {
           },
           {
             t: "Three modes, one engine",
-            d: "A Safe-mode button builds its plan in code from your form, with no AI call; in Default mode Claude writes the plan from your words. Either plan is previewed, approved and checked by the same engine, and there is nothing to run outside this window. Obliterate mode, hidden unless Settings → Advanced shows it, uses the same engine and the same checks, but a failed check no longer holds a copy back.",
+            d: "A Safe-mode button builds its plan in code from your form, with no AI call; in Default mode Claude writes the plan from your words. Either plan is previewed, approved and checked by the same engine, and there is nothing to run outside this window. Obliterate mode, hidden unless Settings → Advanced shows it, uses the same engine and the same checks, but a failed check no longer holds a copy back, and a custom method there predicts nothing: you approve the copies it made, each listed with what it changes.",
           },
         ]}
       />

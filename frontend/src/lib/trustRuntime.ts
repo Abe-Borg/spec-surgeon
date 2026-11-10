@@ -274,20 +274,26 @@ export const RUNTIME_CARDS: RuntimeCard[] = [
       "independent checker's own comparison of each copy with its original (check V2), never from the method or the " +
       "model, or say that no words change. In Obliterate mode " +
       "(its own card) it is offered whenever any method could make the change, may change anything Word stores, " +
-      "and may use the template, pictures and tables you attached (a change to a part no check reads, such as a chart, " +
-      "an embedded file, stored data or the theme, is a failed check of its own, UNREAD); a result whose only " +
-      "failures are its checks goes " +
-      `back to Claude up to ${F.obliterateCheckRounds} times to fix them or keep each with a reason you read beside ` +
-      "every copy (the package-integrity checks V1, V4, V5a, V5c and V9 cannot be kept with a reason: they go back " +
-      "each round); after those rounds the latest method is used, and its copies are delivered marked UNVERIFIED " +
-      "with those failures listed, which the chat says before you approve.",
+      "and may use the template, pictures and tables you attached. There the method predicts nothing: it just does " +
+      "the work on a copy, and the independent checker reports what differs from the original (the words added and " +
+      "removed; the paragraphs, tables, pictures, text boxes, fields and tracked changes counted before and after; " +
+      "the formatting, styles, numbering, settings, relationships and parts that changed; and any changed part it " +
+      "compared by its bytes only, such as a chart, an embedded file, stored data or the theme) and checks that the " +
+      "copy is a file Word opens: its parts, references, tracked-change ids and markup, and the schema. Claude reads " +
+      `that report and takes the method or fixes it, over at most ${F.obliterateReportRounds} reports; a copy whose ` +
+      `file fails a check goes back up to ${F.obliterateCheckRounds} times, after which the latest method is used. ` +
+      "The method's copy of every document is then made, the chat and each copy's card say what it changes, and " +
+      "Create delivers those same copies: each marked UNPROVEN (shown to you, not proven), or UNVERIFIED with the " +
+      "checks its file failed.",
     sent: "To the Anthropic API: the request, the sample files' XML and text that its tools read, and each failure's " +
-      "reason; in Obliterate mode also what its tools read of the files you attached.",
+      "reason; in Obliterate mode also the checker's report of what the method changed in the sample copies, and " +
+      "what its tools read of the files you attached.",
     ai: codegenModel,
     bounds:
       `Up to ${F.customMethodAttempts} submissions, each sandbox run ${F.customMethodSeconds} s and ` +
       `${F.customMethodMemoryMB} MB. Every call counts toward the pause. The method edits nothing of yours: its copies ` +
-      "are delivered only after your click, each checked again.",
+      "are delivered only after your click, each checked again (in Obliterate mode, the copies you were shown, " +
+      "and none that changed since).",
   },
   {
     covers: ["B8"],
@@ -327,10 +333,10 @@ export const RUNTIME_CARDS: RuntimeCard[] = [
       "Showing it is kept in settings.json; being in it never is, so the next start opens in Safe or Default. While " +
       "it is on, the conversation's gate traces placed words to you or to the reply you read (Claude may write " +
       "wording; every word it places must be in its reply, or the plan is refused), a custom method may change " +
-      "anything Word stores and use the files you attached (its " +
-      `failed checks go back to Claude up to ${F.obliterateCheckRounds} times first, and the words its sample copies ` +
-      "add and remove are listed in the chat and under each sample before you approve, from the independent " +
-      "checker's own record of each copy), and a copy that fails its check is " +
+      "anything Word stores and use the files you attached (it predicts nothing and just does the work, so its " +
+      "copy of every document is made before you approve, each listed in the chat and on its card with what it " +
+      "changes, from the independent checker's own record; a copy whose file is broken goes back to Claude up to " +
+      `${F.obliterateCheckRounds} times first; its copies are delivered marked UNPROVEN), and a copy that fails its check is ` +
       "delivered marked UNVERIFIED instead of being held back, with no recovery after it; its preview page already " +
       "says Did not pass, and the plan stands. The mark stays on every later copy built on it, in every mode, " +
       "until Start over, Undo or removing the document. Entering or leaving it " +

@@ -546,7 +546,7 @@ function Dossier() {
             [
               "Write a custom method",
               "Write one small Python operation when nothing built-in fits.",
-              `Formatting only, except under an outcome plan, where it may make exactly that plan’s changes, wording included (in Obliterate mode, below: any change Word stores, its failed checks reported, not blocking). Checked as text (whitelisted modules, no file, process or network calls), run on copies in a separate process (${F.customMethodSeconds} s, ${F.customMethodMemoryMB} MB, writes only in its own folder), and every result must pass the independent checker (and, under an outcome plan, its check of the outcomes).`,
+              `Formatting only, except under an outcome plan, where it may make exactly that plan’s changes, wording included (in Obliterate mode, below: any change Word stores, with nothing predicted — the checker reports what each copy changed, and you approve the copies). Checked as text (whitelisted modules, no file, process or network calls), run on copies in a separate process (${F.customMethodSeconds} s, ${F.customMethodMemoryMB} MB, writes only in its own folder), and every result must pass the independent checker (and, under an outcome plan, its check of the outcomes).`,
             ],
             [
               "Propose outcomes, try repairs (recovery)",
@@ -593,8 +593,24 @@ function Dossier() {
           ]}
         />
         <Term
+          word="UNVERIFIED"
+          claim="Obliterate mode only: the copy failed a check and was delivered anyway, with the checks it failed listed beside it. The mark stays on every later copy built on it, in every mode."
+          not={[
+            "That the copy is wrong: a failed check says the copy is not what was predicted, or that its file has a fault Word repairs.",
+            "That the rest of the copy was proven: read it in Word before you use it.",
+          ]}
+        />
+        <Term
+          word="UNPROVEN"
+          claim="Obliterate mode only: a custom method made the copy, and nothing was predicted to hold it to. The independent checker read the original and the copy, listed what differs (the words, and what else changed), and found no fault in the file itself. You were shown that list and the copy’s pages before you approved, and Create delivered that same copy."
+          not={[
+            "Verified: no check says the change is the one you asked for, or that nothing else changed. The list of what differs is the evidence, and reading it is yours.",
+            "That every difference is described: a changed part the checker does not read by its content (a chart, an embedded file, stored data, the theme) is named as changed, not explained.",
+          ]}
+        />
+        <Term
           word="Approved"
-          claim="You pressed Create edited copies (or Save ready copies) on a plan whose fingerprint covers the plan and the exact content of each file. A changed file or plan voids the approval. In Safe and Default modes, a document whose preview failed a check is not part of it (it waits under Left untouched), and Create refuses a preview none of whose samples passed. Save ready copies exports only the recovery's ready files. Export’s Word (Tracked Changes OFF) and PDF (Clean) are approved by your choice in the menu: each runs one plan fixed in the app over your edited copies and changes none of them."
+          claim="You pressed Create edited copies (or Save ready copies) on a plan whose fingerprint covers the plan and the exact content of each file. A changed file or plan voids the approval. For a custom method in Obliterate mode the fingerprint covers each copy it made, so the click approves those copies and no others. In Safe and Default modes, a document whose preview failed a check is not part of it (it waits under Left untouched), and Create refuses a preview none of whose samples passed. Save ready copies exports only the recovery's ready files. Export’s Word (Tracked Changes OFF) and PDF (Clean) are approved by your choice in the menu: each runs one plan fixed in the app over your edited copies and changes none of them."
           not={[
             "That you read every sentence of the plan.",
             "That Claude understood you — only that the engine will do exactly what is on screen.",

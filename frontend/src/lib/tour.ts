@@ -642,7 +642,7 @@ export const TOUR: readonly TourChapter[] = [
         placement: "bottom",
         title: "Obliterate mode, behind a warning",
         body:
-          "Settings → Advanced → Show Obliterate mode adds a third choice to the switch. Choosing it opens its warning every time: what it grants (Claude may write wording itself, a custom method may change anything Word stores, a copy that fails a check is delivered marked UNVERIFIED), what it costs, and what still holds (copies only, the sandbox, the independent checks on every copy). Turn on Obliterate works only once the box under it is ticked, and the app never opens in it.",
+          "Settings → Advanced → Show Obliterate mode adds a third choice to the switch. Choosing it opens its warning every time: what it grants (Claude may write wording itself; a custom method may change anything Word stores, its copies shown to you and delivered marked UNPROVEN; a copy that fails a check is delivered marked UNVERIFIED), what it costs, and what still holds (copies only, the sandbox, the independent checks on every copy). Turn on Obliterate works only once the box under it is ticked, and the app never opens in it.",
       },
     ],
   },

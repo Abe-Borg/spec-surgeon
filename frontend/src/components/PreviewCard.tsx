@@ -3,6 +3,7 @@ import { imageSrc } from "../lib/api";
 import type { Mark } from "../lib/review";
 import { pageCount } from "../lib/workbench";
 import { NO_WORDS_CHANGE, WORDS_CHANGE_TITLE, wordChangeLines } from "../lib/wordChanges";
+import { OTHER_CHANGES_TITLE, sampleBadge } from "../lib/modes";
 import PaperCard from "./PaperCard";
 
 interface Props {
@@ -105,6 +106,26 @@ function WordChanges({ sample, name }: { sample: Sample; name: string }) {
   );
 }
 
+/**
+ * What else a custom method's copy changes beside its words (`samples[].changes`): the independent reader's own
+ * sentences about the copy an Obliterate method made — counts, formatting, styles, numbering, settings, parts.
+ * Nothing for any other sample.
+ */
+function OtherChanges({ sample, name }: { sample: Sample; name: string }) {
+  const changes = sample.unproven ? (sample.changes ?? []) : [];
+  if (changes.length === 0) return null;
+  return (
+    <div className="mb-2 text-xs leading-relaxed" data-changes="listed">
+      <p className="font-medium text-paper-ink">{OTHER_CHANGES_TITLE}</p>
+      <ul className="mt-1 list-disc space-y-1 pl-4 text-paper-ink" aria-label={`Other changes in ${name}`}>
+        {changes.map((line, index) => (
+          <li key={`${index}-${line}`}>{line}</li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
 /** The checkmark's hover text while the preview gets its copy, as every preview does until it carries the X. */
 export const GETS_COPY_TITLE = "Gets a copy: every preview does until you mark it with the red X";
 /** The X's hover text while the preview gets its copy. */
@@ -114,6 +135,10 @@ export const SET_ASIDE_TITLE =
 export const GETS_COPY_SUBTITLE = "Gets a copy when you create the edited copies.";
 /** The subtitle of a preview marked with the red X. */
 export const HELD_SUBTITLE = "Set aside: it goes on your to-do list; the other copies are created first.";
+
+/** The subtitle of a document a custom method could make no copy of. */
+export const NO_COPY_SUBTITLE =
+  "No copy of it could be made, so none is created. It goes on your to-do list when the others are created.";
 
 /** The subtitle of a preview the server set aside: it did not pass while another did. */
 export const SET_ASIDE_SUBTITLE =
@@ -125,7 +150,10 @@ export const SET_ASIDE_SUBTITLE =
  * the rendered before/after pages (a click opens the zoom), and the two marks
  * — the green checkmark, filled from the start, says it gets its copy; the
  * red X sets the document aside for more work after the others are created,
- * and the checkmark or a second X takes it back. A preview the
+ * and the checkmark or a second X takes it back. A copy a custom method made
+ * in Obliterate mode is badged "Not proven", never "Checked", and lists what
+ * else it changes beside its words; a document the method could make no copy
+ * of says why and carries no marks. A preview the
  * server set aside (it did not pass while another did) keeps its pages and
  * its failed checks, so you see why, but carries no marks: no copy of it is
  * made, and it is listed under Left untouched.
@@ -135,12 +163,17 @@ export default function PreviewCard({ sample, mark, canReview, onMark, onZoom }:
   const name = sample.name || sample.source.split(/[\\/]/).pop() || "";
   const title = `Preview · ${name}`;
   const aside = sample.set_aside === true;
+  const noCopy = sample.no_copy === true;
+  const badge = sampleBadge(sample);
+  const tone = { ok: "border-ok/50 text-ok", warn: "border-warn/60 text-warn", err: "border-err/50 text-err" }[badge.tone];
   return (
     <div data-tour="preview-card">
     <PaperCard
       title={title}
       subtitle={
-        aside
+        noCopy
+          ? NO_COPY_SUBTITLE
+          : aside
           ? SET_ASIDE_SUBTITLE
           : mark === "hold"
             ? HELD_SUBTITLE
@@ -151,31 +184,27 @@ export default function PreviewCard({ sample, mark, canReview, onMark, onZoom }:
       aside={
         <div className="flex items-center gap-2">
           <span
-            className={`rounded-full border px-2 py-px text-[10px] font-medium tracking-wide uppercase ${
-              sample.passed ? "border-ok/50 text-ok" : "border-err/50 text-err"
-            }`}
-            title={
-              sample.passed
-                ? "This sample was applied and verified in memory; the source was not touched."
-                : aside
-                  ? "This sample did not pass every check, so no copy of it is made; the other documents can still get theirs."
-                  : "This sample did not pass every check; the plan needs another look."
-            }
+            className={`rounded-full border px-2 py-px text-[10px] font-medium tracking-wide uppercase ${tone}`}
+            title={badge.title}
+            data-badge={badge.label}
           >
-            {sample.passed ? "Checked" : "Did not pass"}
+            {badge.label}
           </span>
-          {canReview && !aside && <ReviewMarks name={name} mark={mark ?? "good"} onMark={(m) => onMark(sample.source, m)} />}
+          {canReview && !aside && !noCopy && <ReviewMarks name={name} mark={mark ?? "good"} onMark={(m) => onMark(sample.source, m)} />}
         </div>
       }
     >
       {!sample.passed && (sample.failures ?? []).length > 0 && (
         <ul className="mb-2 space-y-1 text-xs leading-relaxed text-err" aria-label={`Failed checks for ${name}`}>
           {sample.failures!.map((failure) => (
-            <li key={failure.check}>{failure.reason} <span className="text-paper-dim">({failure.check})</span></li>
+            <li key={failure.check}>
+              {failure.reason} {!noCopy && <span className="text-paper-dim">({failure.check})</span>}
+            </li>
           ))}
         </ul>
       )}
       <WordChanges sample={sample} name={name} />
+      <OtherChanges sample={sample} name={name} />
       {sample.geometry?.note && (
         <p className={`mb-1 text-xs leading-relaxed ${sample.geometry.status === "FAIL" ? "text-err" : "text-paper-dim"}`}>
           {sample.geometry.note}
@@ -215,7 +244,7 @@ export default function PreviewCard({ sample, mark, canReview, onMark, onZoom }:
           })}
           <p className="text-[11px] text-paper-faint">Before on the left, after on the right. Click to enlarge.</p>
         </div>
-      ) : (
+      ) : noCopy ? null : (
         <p className="mt-2 text-xs text-paper-dim">
           Page appearance was not checked for this document; open the edited copy in Word.
         </p>

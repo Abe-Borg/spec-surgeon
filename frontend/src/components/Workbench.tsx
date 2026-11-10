@@ -4,7 +4,7 @@ import type { Mark, Reviews } from "../lib/review";
 import type { Unticks } from "../lib/occurrences";
 import { changedTip, copiesNote, copyTip, doneCoverage, doneSteps, doneSubtitle, isSaved, notSavedTip, openTarget, planHasContent, runFolder, saveRecipeBlocked, saveRecipeTip, undoLink } from "../lib/workbench";
 import { TOUR_HOLD } from "../lib/tour";
-import { failedCopyLine, unverifiedLine } from "../lib/modes";
+import { copyMark, failedCopyLine, resultsLead, unverifiedLine } from "../lib/modes";
 import DocumentsTray from "./DocumentsTray";
 import Markdown from "./Markdown";
 import PaperCard from "./PaperCard";
@@ -335,12 +335,7 @@ function Workbench({
           <div ref={resultsRef} className="scroll-mt-6" data-tour="results">
           <PaperCard
             title="Your edited copies"
-            subtitle={
-              (view.results.some((r) => (r.unverified ?? []).length > 0)
-                ? "Each copy was checked against the plan. A copy marked UNVERIFIED failed a check and was delivered anyway (Obliterate mode): check it in Word before you use it. Your originals stay intact. "
-                : "Each copy was checked against the plan, word for word. Click one to open it in Word; your originals stay intact. ") +
-              copiesNote(view)
-            }
+            subtitle={resultsLead(view.results) + copiesNote(view)}
             aside={
               folder ? (
                 <Tip tip={`Open the folder holding these copies (the window's scratch folder, kept only while it is open): ${folder}`}>
@@ -398,17 +393,21 @@ function Workbench({
                         NOT SAVED
                       </span>
                     )}
-                    {(result.unverified ?? []).length > 0 && (
+                    {copyMark(result.unverified) !== "" && (
                       <span
-                        className="ml-auto flex-none rounded-full border border-err/50 bg-err/10 px-2 py-0.5 text-[10px] font-semibold tracking-wide text-err"
+                        className={`ml-auto flex-none rounded-full border px-2 py-0.5 text-[10px] font-semibold tracking-wide ${
+                          copyMark(result.unverified) === "UNVERIFIED" ? "border-err/50 bg-err/10 text-err" : "border-warn/50 bg-warn/10 text-warn"
+                        }`}
                         title={unverifiedLine(result.unverified)}
                       >
-                        UNVERIFIED
+                        {copyMark(result.unverified)}
                       </span>
                     )}
                   </button>
-                  {(result.unverified ?? []).length > 0 && (
-                    <p className="pb-2 pl-6 text-[11px] leading-snug text-err">{unverifiedLine(result.unverified)}</p>
+                  {copyMark(result.unverified) !== "" && (
+                    <p className={`pb-2 pl-6 text-[11px] leading-snug ${copyMark(result.unverified) === "UNVERIFIED" ? "text-err" : "text-warn"}`}>
+                      {unverifiedLine(result.unverified)}
+                    </p>
                   )}
                 </li>
               ))}

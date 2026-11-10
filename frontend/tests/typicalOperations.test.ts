@@ -56,9 +56,11 @@ test("the Obliterate rows quote the check rounds from the trust facts and say wh
   for (const row of OBLITERATE_OPERATIONS) assert.doesNotMatch(row.note, /\b(two|three|four|five)\b/i, row.task);
   const delivered = OBLITERATE_OPERATIONS.find((row) => row.can === "Yes, marked UNVERIFIED");
   assert.ok(delivered);
-  // not a delivery gate: the five checks cannot be kept with a reason, go back each round, and after the rounds the
-  // latest method's copy is delivered marked UNVERIFIED with them listed
-  assert.match(delivered.note, /V1, V4, V5a, V5c and V9 cannot be kept with a reason: they go back to the writer each round/);
+  // not a delivery gate: a broken copy goes back each round, and after the rounds the latest method's copy is
+  // delivered marked UNVERIFIED with its failed checks listed
+  assert.match(delivered.note, /checked for being a file Word opens .*, and one that fails goes back to the writer each round/);
+  // a custom method's own copies are never called verified: nothing was predicted for them
+  assert.ok(OBLITERATE_OPERATIONS.some((row) => row.can === "Yes, marked UNPROVEN" && /predict|checker's own reading/.test(row.note)));
   assert.match(delivered.note, new RegExp(`After ${rounds} rounds the latest method is used`));
   assert.match(delivered.note, /delivered marked UNVERIFIED with those failures listed/);
   assert.doesNotMatch(delivered.note, /never be kept/);

@@ -331,7 +331,12 @@ class WindowState:
                     "images": [self.image_url(p) for p in sv.images if Path(p).is_file()],
                     "pages_before": sv.pages_before, "pages_after": sv.pages_after, "passed": sv.passed,
                     "failures": failed_preview_checks(sv), "geometry": sv.geometry,
-                    "text_changes": getattr(sv, "text_changes", None), "set_aside": str(sv.source) in aside}
+                    "text_changes": getattr(sv, "text_changes", None), "set_aside": str(sv.source) in aside,
+                    # an Obliterate custom method's copy: never shown as verified, with what else it changes
+                    "unproven": bool(getattr(sv, "unproven", False)),
+                    "changes": list(getattr(sv, "changes", None) or []),
+                    # a custom method's document no copy could be made of: its card says why, and none is created
+                    "no_copy": bool(getattr(sv, "problem", ""))}
                    for sv in raw["samples"]]
         unverified = raw.get("unverified") or {}
         exported = raw.get("exported") or {}

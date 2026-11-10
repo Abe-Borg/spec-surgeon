@@ -219,6 +219,14 @@ class DocxPackage:
     def write_xml(self, part: str, root: etree._Element) -> None:
         self.write(part, serialize_xml(root))
 
+    def set_bytes(self, part: str, data: bytes) -> None:
+        """``write`` under the name a custom method may call (Obliterate: a picture's bytes, a part that is not XML).
+        The sandbox's whitelist refuses the attribute ``write`` on anything, because lxml's own trees have a ``write``
+        that reaches the file system; this one only substitutes a member of the working package."""
+        if not isinstance(data, (bytes, bytearray)):
+            raise TypeError("set_bytes takes the member's bytes")
+        self.write(part, bytes(data))
+
     def substitutions(self) -> Dict[str, bytes]:
         """Changed SOURCE members only (the v0.1.0 job interface)."""
         return dict(self._subs)

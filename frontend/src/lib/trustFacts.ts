@@ -57,6 +57,7 @@ export const TRUST_FACTS = {
   customMethodMemoryMB: 2048,
   customMethodAttempts: 50,
   obliterateCheckRounds: 3,
+  obliterateReportRounds: 5,
   analysisSeconds: 120,
   analysisMemoryMB: 1024,
   // Text patterns in a plan (ops/patterns.py; the checker's twin verify/patterns.py)
