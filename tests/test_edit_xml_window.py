@@ -147,6 +147,28 @@ def test_an_edit_that_changes_no_words_says_so(tmp_path):
     assert RAW_NO_WORDS_CHANGE in heard and "formatting or markup of 1 paragraph" in heard
 
 
+def test_text_outside_the_paragraphs_is_said_as_changed_never_as_no_words(tmp_path):
+    """A raw edit of text the paragraph reader does not read (here a document property; a chart's title is the same
+    case): the chat and the card list it, and neither says that no words change."""
+    a = document(tmp_path / "a.docx")
+    author = {"request": "r", "summary": "Set the author property.", "mode": "untracked",
+              "ops": [{"op": "edit_xml", "params": {"part": "docProps/core.xml", "xpath": "//dc:creator", "count": 1,
+                                                    "action": "set_text", "text": "Design Team"}}]}
+    task = task_for(tmp_path, FakeClient(submit(author)))
+    task.attach([a])
+    task.set_mode("obliterate", acknowledged=True)
+    view = task.perform("send", text="Set the document's author property to Design Team with a raw XML edit.")
+    assert view["stage"] == "preview", said(task)[-1]
+    [sample] = task._samples_view()["samples"]
+    assert sample["raw_xml"] and sample["passed"]
+    assert sample["text_changes"] == [{"part": "docProps/core.xml", "paragraph": None, "other": True,
+                                       "where": "docProps/core.xml, other text (not a paragraph's words)",
+                                       "removed": ["python-docx"], "added": ["Design Team"]}]
+    [heard] = [t for t in said(task) if t.startswith(RAW_WORDS_CHANGE_HEAD)]
+    assert "text removed “python-docx”; text added “Design Team”" in heard
+    assert RAW_NO_WORDS_CHANGE not in said(task)
+
+
 def test_default_mode_refuses_the_plan_at_the_gate_and_the_model_is_told_why(tmp_path):
     a = document(tmp_path / "a.docx")
     fake = FakeClient(submit(RAW), resp(text("I cannot do that here."), stop="end_turn"))

@@ -339,7 +339,9 @@ def refusal_message(exception, step: bool = True):
                        + (f" It selects: {'; '.join(str(x) for x in first[:3])}." if first else ""))
     if code == "xml-part" and details.get("part"):
         why = {"missing": "This document has no part named", "bookkeeping": "A raw XML edit does not change",
-               "not-xml": "This part is not XML a raw edit can read:"}.get(details.get("why"), "The raw XML edit cannot change")
+               "not-xml": "This part is not XML a raw edit can read:",
+               "outside-root": "A raw XML edit cannot keep the comment or processing instruction outside the root "
+                               "element of"}.get(details.get("why"), "The raw XML edit cannot change")
         return head + f"{why} {details['part']}."
     if code == "xml-action" and details.get("element"):
         return head + (f"The raw XML edit cannot {str(details.get('action') or 'change').replace('_', ' ')} the "

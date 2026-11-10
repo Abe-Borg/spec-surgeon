@@ -21,7 +21,7 @@ export const NO_WORDS_CHANGE = "No words change: the checker read the same words
 export const WORDS_CHANGE_TITLE = "Words the method changes, as the independent checker read them:";
 /** The same two sentences for a plan with a raw XML edit (`samples[].raw_xml`): its words are listed, not predicted. */
 export const RAW_NO_WORDS_CHANGE =
-  "The raw XML edit changes no words: the checker read the same words in this copy as in the original, in the parts it edits.";
+  "The raw XML edit changes no words: in the parts it edits, the checker read the same text in this copy as in the original — the words of every paragraph and any other text between tags. Values it sets in attributes are in the edit's own sentence.";
 export const RAW_WORDS_CHANGE_TITLE = "Words the raw XML edit changes, as the independent checker read them:";
 
 const quote = (words: string[]): string => words.map((w) => `\u201c${w}\u201d`).join(", ");
@@ -31,7 +31,10 @@ export function wordChangeLine(change: TextChange): WordChangeLine {
   const removed = quote(change.removed ?? []);
   const added = quote(change.added ?? []);
   const notes: string[] = [];
-  if (change.block === "new") notes.push(added ? "a new paragraph" : "a new paragraph without words");
+  if (change.other) {
+    if (change.unread) notes.push("its text could not be read in the copy");
+    if (change.more) notes.push(`${change.more} more not listed`);
+  } else if (change.block === "new") notes.push(added ? "a new paragraph" : "a new paragraph without words");
   else if (change.block === "gone") notes.push(removed ? "the whole paragraph" : "an empty paragraph removed");
   else if (!removed && !added) notes.push("only the spacing changes, no words");
   if (change.tracked) notes.push("in the copy's tracked changes");

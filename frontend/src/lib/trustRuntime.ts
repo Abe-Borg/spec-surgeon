@@ -345,11 +345,14 @@ export const RUNTIME_CARDS: RuntimeCard[] = [
       "elements that is, and one action — set or remove an attribute, remove, replace, insert, set the text, or " +
       "unwrap. A document where the XPath finds another number of elements is set aside untouched. The " +
       "independent checker finds the elements with its own reading of the XPath, makes the same edit in its own " +
-      "copy of the part and compares the whole part with the copy's: exactly those elements changed as stated, and " +
-      "nothing else in that part did. What the edit does to the words is not predicted. It is listed from the " +
-      "sample copies, in the chat and under each preview, before the button: the words added and removed, then " +
-      "what else changed. Text the edit places passes the same check as any wording in this mode. The file's " +
-      "own relationship and content-type parts are never edited this way. Entering or leaving the mode " +
+      "copy of the part and compares the whole part with the copy's, exactly, text between tags included: exactly " +
+      "those elements changed as stated, and nothing else in that part did. What the edit does to the words is not " +
+      "predicted. It is listed from the sample copies, in the chat and under each preview, before the button: the " +
+      "words added and removed, any other text between tags (a chart's title, a document property), then what " +
+      "else changed. A value set in an attribute is not listed as words: the plan's own sentence quotes it. Text " +
+      "the edit places passes the same check as any wording in this mode. The file's own relationship and " +
+      "content-type parts are never edited this way, nor a part the app could not write back whole. Entering or " +
+      "leaving the mode " +
       `voids the plan on screen, so it waits ${WHILE_CHECKED}.`,
     sent:
       "Nothing when you choose it. The conversation then sends what it sends in Default mode; after the preview " +

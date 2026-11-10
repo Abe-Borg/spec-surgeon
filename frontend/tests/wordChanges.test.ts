@@ -58,4 +58,19 @@ test("a raw XML edit's words are listed under its own heading, never the method'
   assert.match(RAW_NO_WORDS_CHANGE, /^The raw XML edit changes no words/);
   assert.match(RAW_NO_WORDS_CHANGE, /in the parts it edits/);
   for (const said of [RAW_WORDS_CHANGE_TITLE, RAW_NO_WORDS_CHANGE]) assert.doesNotMatch(said, /method/);
+  // "no words" is said of every text node the checker compared, and of attributes it says where to read them
+  assert.match(RAW_NO_WORDS_CHANGE, /any other text between tags/);
+  assert.match(RAW_NO_WORDS_CHANGE, /attributes are in the edit's own sentence/);
+});
+
+test("text that is not a paragraph's words is listed where the server says it is", () => {
+  const chart: TextChange = {
+    part: "word/charts/chart1.xml", where: "word/charts/chart1.xml, other text (not a paragraph's words)",
+    paragraph: null, removed: ["Flow test results"], added: [], other: true,
+  };
+  assert.deepEqual(wordChangeLine(chart), {
+    where: "word/charts/chart1.xml, other text (not a paragraph's words)", removed: "\u201cFlow test results\u201d", added: "", note: "",
+  });
+  assert.equal(wordChangeLine({ ...chart, more: 3 }).note, "3 more not listed");
+  assert.equal(wordChangeLine({ ...chart, removed: [], unread: true }).note, "its text could not be read in the copy");
 });

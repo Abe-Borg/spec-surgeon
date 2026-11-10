@@ -335,9 +335,11 @@ mode you last used (Safe the first time; never Obliterate).
   to data, a field that will not resolve: the edit clears exactly that, and the plan the other documents got then
   runs as the next step, checked as in any mode. The edit itself is proven: the independent checker finds the
   elements with its own reading of the XPath, makes the same edit in its own copy of the part and compares the whole
-  part, so exactly those elements changed as stated and nothing else in that part did. What the edit does to the
-  words is not predicted; it is listed from the sample copies, in the chat and under each preview, before you
-  approve — the words added and removed, then what else changed. Such a copy is checked, not UNPROVEN; an edit that
+  part exactly, text between tags included, so exactly those elements changed as stated and nothing else in that
+  part did. What the edit does to the words is not predicted; it is listed from the sample copies, in the chat and
+  under each preview, before you approve — the words added and removed, any other text between tags that is not a
+  paragraph's words (a chart's title, a document property), then what else changed. A value the edit sets in an
+  attribute is not listed as words; the plan's own sentence quotes it. Such a copy is checked, not UNPROVEN; an edit that
   leaves markup Word repairs or will not open is made as stated and fails the check of its file, and the copy is
   then delivered marked **UNVERIFIED**. The file's own relationship and content-type parts are not edited this way.
   And a copy that fails a check is
@@ -614,7 +616,9 @@ recorded for the requests that follow.
 - The raw XML edit exists in Obliterate mode only. Its XPath is XPath 1.0 over a fixed table of prefixes (others can
   be declared with the edit), at most 1,000 characters, with 2 seconds to run on a part; inside `[ ]` it may not
   start a path at the root of the part, and it may not use the `following` or `preceding` axis. It changes one XML
-  part per edit, never the package's relationship or content-type parts, and is never tracked. To clear an obstacle
+  part per edit, never the package's relationship or content-type parts nor a part with a comment or processing
+  instruction outside its root element (the app could not write it back whole), and is never tracked. Text it places
+  between tags is traced like any Obliterate wording; attribute values are not. To clear an obstacle
   and then run a plan, the two are separate steps of one request; a plan whose template operation carries bindings
   cannot follow another step, so that case is two requests.
 - The installer is unsigned: the checksum checks prove the download is the file the release lists, not who published it.

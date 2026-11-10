@@ -19,19 +19,27 @@ The check, on a fresh copy of the SOURCE part:
 3. the action can be done to every one of them (else the op had to refuse: the root removed, replaced, unwrapped or
    given a sibling; an element inside another selected one removed, replaced or unwrapped; an attribute removed that
    is not there; text set on an element that holds elements; an element unwrapped that lacks its one ``keep`` child or
-   holds text of its own);
+   holds text of its own), and the part has no comment or processing instruction outside its root element (the
+   app's writer keeps none, so the op had to refuse such a part);
 4. this module makes the edit itself, last element first: an attribute set or deleted; the element taken out (the
    text that followed it stays); the elements of ``xml`` — white space between elements dropped, an element's own
    text kept — placed before or after it, or as its first or last children, or in its place; its text set (a
    WordprocessingML text element given ``xml:space="preserve"`` when the text starts or ends with white space); or
    its children, or its ``keep`` child's, put in its place;
-5. the result is compared WHOLE with the output part (``tree_difference``): exactly those elements changed as
-   stated, and nothing else in the part did.
+5. the result is compared WHOLE and EXACTLY with the output part (``_v_exact``): every node's name, attributes,
+   text and the text after it, comments and processing instructions included, with no rule about which white space
+   or which text matters — a raw edit may be of any XML (a picture's SVG, stored data), where the text between
+   elements is content. Exactly those elements changed as stated, and nothing else in the part did.
 
 The part is then one a kind compared whole (``ctx.verified_parts`` for a text part, ``ctx.verified_members`` for any
 other), so the residual leaves it to this kind. The suite reads ``raw_parts`` for the same parts: their text is not
 predicted block by block (no plan could, without making the edit), so V2, V3, the counts of V4 and V5b leave them to
 this comparison, and the record lists what the edit did to the words instead (``D1``, ``verify/difference.py``).
+
+The words V2 lists are the ones its reader reads: the text elements of WordprocessingML paragraphs. A raw edit may
+change any part, and text the reader does not read — a chart's title, a drawing's text, a document property, stored
+data — so ``unread_text_changes`` lists that too, for the suite to put beside V2's entries: nothing the record says
+about "no words changed" is said of text nobody read. Attribute values are not text here: the edit states them.
 """
 from __future__ import annotations
 
@@ -40,13 +48,13 @@ import hashlib
 import json
 import re
 import threading
+from collections import Counter
 from typing import Any, Dict, List, Optional, Tuple
 
 from lxml import etree
 
-from .markup import tree_difference
 from .props import Ctx
-from .reader import W
+from .reader import M, W
 
 V_XPATH_TIMEOUT_S = 2.0
 V_MAX_XPATH_CHARS = 1000
@@ -55,6 +63,10 @@ _V_BOOKKEEPING = "[Content_Types].xml"
 _V_ACTIONS = {"set_attribute", "remove_attribute", "remove", "replace", "insert", "set_text", "unwrap"}
 _V_WHERE = {"before", "after", "first_child", "last_child"}
 _V_KEEPS_SPACE = {W + "t", W + "delText", W + "instrText", W + "delInstrText"}
+# what V2's reader reads as a paragraph's words (textcheck.TEXT_TAGS, inside a w:p): everything else is listed apart
+_V_READ_AS_WORDS = _V_KEEPS_SPACE | {M + "t"}
+V_SHOWN_TEXTS = 40               # stretches of other text a record lists per part, each way
+V_SHOWN_TEXT_CHARS = 200         # characters of one stretch
 _V_PREFIXES = (
     ("w", "http://schemas.openxmlformats.org/wordprocessingml/2006/main"),
     ("r", "http://schemas.openxmlformats.org/officeDocument/2006/relationships"),
@@ -401,6 +413,95 @@ def _v_shape(a: Dict[str, Any]) -> None:
         raise ValueError("the edit's keep is not a name")
 
 
+def _v_label(node) -> str:
+    if not isinstance(node.tag, str):
+        return "comment" if node.tag is etree.Comment else "processing instruction"
+    name = etree.QName(node)
+    return name.localname
+
+
+def _v_cut(text: Optional[str]) -> str:
+    text = text or ""
+    return repr(text if len(text) <= 80 else text[:79] + "…")
+
+
+def _v_exact(mine, theirs) -> Optional[str]:
+    """None when the two trees are the same node for node — name, attributes, text, the text after the node; comments
+    and processing instructions too — else where they first differ, in document order. No white space is set aside
+    and no text is left out: this is the comparison of a part that may be any XML."""
+    waiting: List[Tuple[Any, Any, str, bool]] = [(mine, theirs, "", True)]
+    while waiting:
+        x, y, path, top = waiting.pop()
+        here = f"{path}/{_v_label(x)}"
+        if x.tag != y.tag:
+            return f"{path or '/'}: <{_v_label(x)}> where the copy has <{_v_label(y)}>"
+        if isinstance(x.tag, str):
+            if dict(x.attrib) != dict(y.attrib):
+                names = sorted(set(x.attrib) | set(y.attrib))
+                said = [f"{etree.QName(n).localname}: {x.get(n)!r}→{y.get(n)!r}" for n in names if x.get(n) != y.get(n)]
+                return f"{here}: attributes {', '.join(said[:6])}"
+        elif x.tag is etree.ProcessingInstruction and x.target != y.target:
+            return f"{here}: the instruction's target {x.target!r}→{y.target!r}"
+        if (x.text or "") != (y.text or ""):
+            return f"{here}: text {_v_cut(x.text)}→{_v_cut(y.text)}"
+        if not top and (x.tail or "") != (y.tail or ""):
+            return f"{here}: the text after it {_v_cut(x.tail)}→{_v_cut(y.tail)}"
+        ours, others = list(x), list(y)
+        if len(ours) != len(others):
+            return f"{here}: {len(ours)}→{len(others)} child nodes"
+        for at in range(len(ours) - 1, -1, -1):
+            waiting.append((ours[at], others[at], f"{here}[{at}]", False))
+    return None
+
+
+def _v_around(root) -> List[Tuple[str, str]]:
+    """The comments and processing instructions beside the root element (before it, then after it)."""
+    before = [(_v_label(n), n.text or "") for n in root.itersiblings(preceding=True)][::-1]
+    return before + [(_v_label(n), n.text or "") for n in root.itersiblings()]
+
+
+def _v_under_paragraph(el) -> bool:
+    above = el.getparent()
+    while above is not None:
+        if above.tag == W + "p":
+            return True
+        above = above.getparent()
+    return False
+
+
+def _v_unread(root) -> List[str]:
+    """Every stretch of text in the tree that V2's paragraph reader does not read, in document order: the text of an
+    element that is not one of a paragraph's text elements, and the text after any node. White space alone is none."""
+    found: List[str] = []
+    for event, node in etree.iterwalk(root, events=("start", "end", "comment", "pi")):
+        if event == "start":
+            if (node.text or "").strip() and not (node.tag in _V_READ_AS_WORDS and _v_under_paragraph(node)):
+                found.append(node.text)
+        elif node is not root and (node.tail or "").strip():
+            found.append(node.tail)
+    return found
+
+
+def unread_text_changes(before_root, after_root) -> Dict[str, Any]:
+    """The text V2's reader does not read that one tree has and the other lacks: ``removed`` and ``added``, each in
+    its tree's order, a stretch that occurs as often in both left out; white space collapsed and long stretches cut
+    for the record, ``more`` counting what the lists leave out. Empty lists when that text is the same."""
+    was, now = _v_unread(before_root), _v_unread(after_root)
+    gone, new = Counter(was) - Counter(now), Counter(now) - Counter(was)
+
+    def listed(texts: List[str], left: Counter) -> List[str]:
+        out = []
+        for text in texts:
+            if left[text] > 0:
+                left[text] -= 1
+                shown = " ".join(text.split())
+                out.append(shown if len(shown) <= V_SHOWN_TEXT_CHARS else shown[:V_SHOWN_TEXT_CHARS - 1] + "…")
+        return out
+    removed, added = listed(was, gone), listed(now, new)
+    return {"removed": removed[:V_SHOWN_TEXTS], "added": added[:V_SHOWN_TEXTS],
+            "more": max(0, len(removed) - V_SHOWN_TEXTS) + max(0, len(added) - V_SHOWN_TEXTS)}
+
+
 def xml_edit(ctx: Ctx, a: Dict[str, Any], errs: List[str]) -> str:
     part = a.get("part")
     if not isinstance(part, str) or part not in ctx.src.names:
@@ -430,11 +531,17 @@ def xml_edit(ctx: Ctx, a: Dict[str, Any], errs: List[str]) -> str:
                     f"(their places differ)")
         return what
     refusal = _v_must_refuse(chosen, a)
+    if not refusal and _v_around(expected):
+        refusal = "the part has a comment or processing instruction outside its root element, which the writer " \
+                  "does not keep"
     if refusal:
         errs.append(f"xml_edit: {a['action']} cannot be done in {part} ({refusal}): the op had to refuse")
         return what
     _v_edit(chosen, a, prefixes)
-    difference = tree_difference(expected, ctx.out.xml(part))
+    theirs = ctx.out.xml(part)
+    difference = _v_exact(expected, theirs)
+    if difference is None and _v_around(theirs):
+        difference = "the copy has a comment or processing instruction outside its root element"
     if difference:
         errs.append(f"xml_edit: {part} is not the source with exactly the stated edit: {difference}")
     return what
@@ -454,10 +561,12 @@ XML_EDIT_CONTRACT = (
     "name ({namespace}local), value, text, xml, position (before | after | first_child | last_child) or keep "
     "({namespace}local, or null) as the action uses them. The verifier evaluates the XPath itself on the source "
     "part, requires exactly count elements at exactly those places and makes the edit itself. Compared: that edited "
-    "copy of the source part, whole, with the output part. An edit the operation had to refuse (the root removed, nested selections removed, "
+    "copy of the source part, whole and exactly (every node's name, attributes, text and the text after it), with "
+    "the output part. An edit the operation had to refuse (the root removed, nested selections removed, "
     "a missing attribute removed, text set on an element with children, an unwrap without its one keep child or "
-    "over text) is a failure. The part's text is not predicted block by block: V2, V3, V4's counts and V5b leave "
-    "the part to this comparison, and the record lists what the edit did to the words (D1).")
+    "over text, a part with a comment or processing instruction outside its root element) is a failure. The part's text is not predicted block by block: V2, V3, V4's counts and V5b leave "
+    "the part to this comparison, and the record lists what the edit did to the words (V2's entries for the part, "
+    "the text its reader does not read under raw_text, and D1).")
 XML_EDIT_EXAMPLE = {
     "kind": "xml_edit", "part": "word/document.xml", "xpath": "//w:sdt[w:sdtPr/w:dataBinding]", "namespaces": {},
     "count": 1, "places_sha256": "<sha256 of [[0,4]]>", "action": "unwrap",

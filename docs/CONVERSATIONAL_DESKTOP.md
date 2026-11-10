@@ -346,15 +346,22 @@ What it lifts (`Session.unguarded`; CLAUDE.md, "Modes"):
   attribute; remove, replace or insert elements; set text; unwrap). It is a built-in operation, so it predicts first
   — what it predicts is the edit itself, carried as the V10 assertion `xml_edit` with a digest of the places of the
   selected elements — and it refuses what it cannot state exactly: another count than stated (`xml-count`), a part
-  that is missing, not XML, or the package's own bookkeeping (`xml-part`), an action an element cannot take or that
+  that is missing, not XML, the package's own bookkeeping, or one with a comment or processing instruction outside
+  its root element, which `serialize_xml` would not keep (`xml-part`), an action an element cannot take or that
   would change nothing (`xml-action`), an XPath past its deadline (`xpath-timeout`).
   - **Proven by a twin.** `verify/xmledit.py` shares no code with the operation: it judges and evaluates the XPath
     itself, checks the count and the places, refuses for itself what the operation had to refuse, makes the same
-    edit in its own copy of the source part and compares that with the copy's part whole (`markup.tree_difference`).
+    edit in its own copy of the source part and compares that with the copy's part whole and exactly (`_v_exact`:
+    every node's name, attributes, text and the text after it, comments and processing instructions included; no
+    rule about which white space matters, since the part may be any XML — a picture's SVG, stored data).
   - **The words are listed, not predicted.** For the parts a raw edit changes (`raw_parts(plan)`), `verify/suite.py`
     leaves the part's text to that whole-part comparison: V2 lists the part's changes without holding them to a
     prediction (`data.raw_parts`), V3, the counts of V4 and V5b skip the part, and the record gains D1 "What
-    changed". Any other part is checked as always. `preview.raw_listing` reads that record into
+    changed". Any other part is checked as always. V2's reader reads the words of paragraphs, so the suite also
+    lists the raw parts' other text between tags — a chart's title, a drawing's text, a document property, stored
+    data (`verify.xmledit.unread_text_changes`, V2's `raw_text`): "no words change" is said only when every text
+    node compared the same. Attribute values are markup, quoted by the plan's own sentence, never listed as words.
+    `preview.raw_listing` reads that record into
     `SampleView.text_changes` and `.changes` (`raw_xml` true), the chat says both before the button
     (`DocumentTask._say_raw_changes`), and the model hears them with the next message. The copy is verified, never
     UNPROVEN; the checks of the file itself still run, so an edit that breaks the schema, repeats a revision id or
@@ -369,8 +376,9 @@ What it lifts (`Session.unguarded`; CLAUDE.md, "Modes"):
     schema, prompts and `describe_op`; the gate refuses a plan that names it outside Obliterate
     (`compiler._mode_errors`, `[obliterate-only]`), in a spec, a stage or a layout; a custom method's writer is
     never offered its assertion kind and may not assert it (`verify.xmledit.OP_ONLY_KINDS`, `codegen.hard_limits`).
-    Text it places (`set_text`'s text, the text inside `xml`) is traced like any Obliterate wording
-    (`compiler.placed_words`).
+    Text it places (`set_text`'s text, and every stretch of text inside `xml`, whatever comment or element stands
+    beside it: `fragment_text`) is traced like any Obliterate wording (`compiler.placed_words`); attribute values
+    are not.
 - **Holding back.** A copy that fails a check is delivered to the run's `outputs/` instead of `failed/`, its record
   kept with every failure and V9 saying *delivered UNVERIFIED*; a chain's step hands its copy on and the chain's copy
   carries everything that failed. The preview already says so: a sample whose copy fails a check shows **Did not

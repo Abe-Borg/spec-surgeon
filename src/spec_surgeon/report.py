@@ -176,7 +176,8 @@ FAILURE_EXPLANATIONS: Dict[str, Tuple[str, str]] = {
         "Raw XML Edit Names a Part It Cannot Change",
         "A raw XML edit (Obliterate mode) names a part this file does not have, one that is not XML, or one of the "
         "package's own bookkeeping members (its relationships and content types), which a raw edit does not change. "
-        "Name the part as the file lists it.",
+        "Name the part as the file lists it. A part with a comment or a processing instruction outside its root "
+        "element is refused too: the app could not write it back without losing those.",
     ),
     "xml-action": (
         "Raw XML Edit Cannot Be Done to a Selected Element",

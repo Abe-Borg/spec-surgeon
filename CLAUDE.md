@@ -89,10 +89,13 @@ Obliterate also has one built-in operation the other modes do not: **`edit_xml`*
 XPath, the exact count of elements it selects, and one action (`ACTIONS`: set or remove an attribute; remove, replace,
 insert; set text; unwrap). It is a built-in op, so it predicts first: the prediction is the edit itself, the V10
 assertion `xml_edit` with a digest of the selected elements' places, and the verifier's twin (`verify/xmledit.py`)
-judges and evaluates the XPath itself, makes the same edit in its own copy of the part and compares the part whole.
+judges and evaluates the XPath itself, makes the same edit in its own copy of the part and compares the part whole
+and exactly (`_v_exact`: text and the text after each node too, no significance rules — the part may be any XML).
 What the edit does to the words is NOT predicted: for the parts such an assertion names (`raw_parts(plan)`)
-`verify/suite.py` leaves the part to that comparison in V2, V3, V4's counts and V5b and adds D1 "What changed"; the
-words and D1's lines are listed before approval from the verifier's record (`preview.raw_listing` →
+`verify/suite.py` leaves the part to that comparison in V2, V3, V4's counts and V5b, lists the text V2's paragraph
+reader does not read (`unread_text_changes` → V2's `raw_text`: a chart's title, a property) and adds D1 "What
+changed"; the words, that other text and D1's lines are listed before approval from the verifier's record
+(`preview.raw_listing` →
 `SampleView.raw_xml`/`text_changes`/`changes`, `DocumentTask._say_raw_changes`). Its copies are verified, never
 UNPROVEN; the checks of the file still run, so a broken result fails them and is delivered UNVERIFIED. It touches its
 part whole, so it is always a step of its own and never tracked; "clear the obstacle, then the same plan" is explicit
@@ -102,8 +105,10 @@ keeps the plan the document was set aside from (`DocumentTask._case_plan`, `CASE
 prompts and `describe_op` (their prompts and tools stay byte-stable), the gate refuses a plan that names it
 (`compiler._mode_errors`, `[obliterate-only]`), and a custom method may never assert its kind
 (`verify.xmledit.OP_ONLY_KINDS`, `codegen.hard_limits`). Its XPath is bounded on both sides (`check_xpath` /
-`_v_judge`: `MAX_XPATH_CHARS`, `XPATH_TIMEOUT_S`, no root path inside `[ ]`, no `following`/`preceding` axis). Text it
-places is traced like any Obliterate wording (`compiler.placed_words`). Pinned by `tests/test_edit_xml.py` and
+`_v_judge`: `MAX_XPATH_CHARS`, `XPATH_TIMEOUT_S`, no root path inside `[ ]`, no `following`/`preceding` axis). Every
+stretch of text it places is traced like any Obliterate wording (`fragment_text`, `compiler.placed_words`); attribute
+values are markup, neither traced nor listed as words (the plan's sentence quotes them). A part with a comment or
+processing instruction outside its root is refused (`serialize_xml` would not keep it). Pinned by `tests/test_edit_xml.py` and
 `tests/test_edit_xml_window.py`.
 
 Obliterate is the top rung of a ladder (the owner's decision, 2026-11-10): Safe, then Default for what Safe could not

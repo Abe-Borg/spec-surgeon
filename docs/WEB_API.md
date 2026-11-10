@@ -171,7 +171,11 @@ Rules the page relies on:
 - `samples[].raw_xml` is true for a sample of a plan that holds a raw XML edit (`edit_xml`, Obliterate mode only).
   The edit itself is proven like any plan's change (`passed`, the badge **Checked**; never `unproven`); what it does
   to the words is not predicted, so the sample carries the listing: `text_changes` is the words that edit's step
-  changes in the parts it edits (the checker's V2 entries for the record's `raw_parts`; `[]` when it changes none),
+  changes in the parts it edits (the checker's V2 entries for the record's `raw_parts`), followed by one entry per
+  part for any other text between tags that is not a paragraph's words — a chart's title, a drawing's text, a
+  document property — marked `other: true`, with `paragraph` null, `where` naming the part and saying so, `more`
+  when the lists leave stretches out and `unread` when the part's text could not be read in the copy (V2's
+  `raw_text`); `[]` only when every text node of those parts compared the same,
   and `changes` what else that step changes (its D1 sentences). The page shows both under the sample, under the
   headings "Words the raw XML edit changes…" and "What else the raw XML edit's step changes…", and the chat says the
   same before the approval button, once per preview (`DocumentTask._say_raw_changes`). False for every other

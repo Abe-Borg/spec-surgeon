@@ -323,6 +323,9 @@ def test_an_action_a_selected_element_cannot_take_refuses_the_file(source, param
     {"xpath": "//w:p", "count": 1, "action": "replace", "xml": "<!DOCTYPE x [<!ENTITY e 'boom'>]><w:p>&e;</w:p>"},
     {"xpath": "//w:p", "count": 1, "action": "replace", "xml": "<q:p/>"},
     {"xpath": "//w:p", "count": 1, "action": "remove", "tracked": True},
+    {"xpath": "//w:t", "count": 1, "action": "set_text", "text": "a\x00b"},
+    {"xpath": "//w:t", "count": 1, "action": "set_text", "text": "a\x0bb"},
+    {"xpath": "//w:pgMar", "count": 2, "action": "set_attribute", "name": "w:header", "value": "5\x0176"},
 ])
 def test_a_request_that_is_not_one_stated_edit_is_refused_before_the_file_is_read(source, params):
     assert refusal(source, part=DOC, **params).code == "bad-params"
@@ -540,6 +543,130 @@ def test_what_word_repairs_or_refuses_is_still_a_failed_check_of_the_copy(source
     assert "not counted here" in rec.get("V4").summary and plan["rev_delta"] == {"ins": 0, "del": 0}
 
 
+# ---- any XML, compared exactly; and the text the paragraph reader does not read --------------------------------------
+
+MIXED = (b'<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'
+         b'<svg xmlns="http://www.w3.org/2000/svg"><text x="1">Hello<tspan>world</tspan>!</text>\n  <g/>\n</svg>')
+SVG = "http://www.w3.org/2000/svg"
+
+
+def with_member(data: bytes, name: str, content: bytes) -> bytes:
+    """``data`` with the member ``name`` holding ``content`` (the fixture's stored-data part stands in for any XML
+    the document carries: a picture's SVG, a chart, stored data)."""
+    work = DocxPackage(data).copy()
+    work.set_bytes(name, content)
+    return work.output_bytes()
+
+
+def test_a_part_of_any_xml_is_compared_exactly_text_between_elements_included(source):
+    """The whole-part comparison has no rule about which text matters: in a part of mixed content the text after an
+    element is content, and a copy that changes it beside the stated edit fails — white space too."""
+    mixed = with_member(source, "customXml/item1.xml", MIXED)
+    plan, out, rec = edit(mixed, part="customXml/item1.xml", xpath="//s:tspan", count=1, action="set_attribute",
+                          name="fill", value="red", namespaces={"s": SVG})
+    assert {"V1", "V2", "V10"}.isdisjoint(failed(rec)), failed(rec)
+    assert zipfile.ZipFile(io.BytesIO(out)).read("customXml/item1.xml").count(b"world</tspan>!</text>") == 1
+    for wrong, said in ((b"world</tspan>?</text>", "the text after it '!'→'?'"),            # a tail
+                        (b"world</tspan>!</text>\n    <g/>", "the text after it"),            # white space alone
+                        (b"Hullo<tspan", "text 'Hello'→'Hullo'"),
+                        (b"</svg><!-- left behind -->", "outside its root element")):
+        good = zipfile.ZipFile(io.BytesIO(out)).read("customXml/item1.xml")
+        old = {b"world</tspan>?</text>": b"world</tspan>!</text>", b"world</tspan>!</text>\n    <g/>":
+               b"world</tspan>!</text>\n  <g/>", b"Hullo<tspan": b"Hello<tspan", b"</svg><!-- left behind -->": b"</svg>"}[wrong]
+        assert good.count(old) == 1
+        bad = judged(mixed, with_member(out, "customXml/item1.xml", good.replace(old, wrong)), plan)
+        assert said in failed(bad).get("V10", ""), (wrong, failed(bad))
+    # the same holds in a Word part: a stray word between two runs is not the stated edit
+    plan, out, rec = edit(source, part=DOC, xpath="//w:tbl", count=1, action="remove")
+    root = part_of(out)
+    next(root.iter(W + "r")).tail = "stray"
+    assert "the text after it ''→'stray'" in failed(judged(source, with_part(out, DOC, root), plan))["V10"]
+    # removing an element keeps the text that followed it, on both sides
+    plan, out, rec = edit(mixed, part="customXml/item1.xml", xpath="//s:tspan", count=1, action="remove",
+                          namespaces={"s": SVG})
+    assert rec.get("V10").status == "PASS" and b"<text x=\"1\">Hello!</text>" in zipfile.ZipFile(
+        io.BytesIO(out)).read("customXml/item1.xml")
+
+
+def test_a_part_with_a_comment_or_instruction_outside_its_root_is_refused_not_rewritten_without_it(source):
+    """The app writes a part from its root element, which keeps nothing beside it: such a part is refused, and a plan
+    that edits one anyway is the operation's defect, which the verifier names."""
+    for around in (b"<!-- Generator: a drawing program -->", b"<?mso-contentType?>"):
+        marked = with_member(source, "customXml/item1.xml", MIXED.replace(b"<svg ", around + b"<svg ", 1))
+        stop = refusal(marked, part="customXml/item1.xml", xpath="//s:tspan", count=1, action="remove",
+                       namespaces={"s": SVG})
+        assert stop.code == "xml-part" and stop.details["why"] == "outside-root"
+        assert "outside the root element of customXml/item1.xml" in refusal_message(
+            {"code": stop.code, "reason": stop.reason, "details": stop.details})
+    after = with_member(source, "customXml/item1.xml", MIXED + b"<!-- after -->")
+    assert refusal(after, part="customXml/item1.xml", xpath="//s:g", count=1, action="remove",
+                   namespaces={"s": SVG}).details["why"] == "outside-root"
+    # the operation that does not refuse loses the comment; the verifier says it had to refuse
+    marked = with_member(source, "customXml/item1.xml", MIXED.replace(b"<svg ", b"<!-- Generator --><svg ", 1))
+    real = ex.outside_root
+    ex.outside_root = lambda root: False
+    try:
+        plan, out, rec = edit(marked, part="customXml/item1.xml", xpath="//s:g", count=1, action="remove",
+                              namespaces={"s": SVG})
+    finally:
+        ex.outside_root = real
+    assert b"Generator" not in zipfile.ZipFile(io.BytesIO(out)).read("customXml/item1.xml")
+    assert "outside its root element, which the writer does not keep): the op had to refuse" in failed(rec)["V10"]
+
+
+def test_text_that_is_not_a_paragraphs_words_is_listed_never_said_to_be_unchanged(source):
+    """V2 reads the words of paragraphs. A raw edit may change other text — a chart's title, a drawing's text, a
+    document property, stored data — in a text part or any other: the record lists it, and the window's "no words
+    change" is never said of text nobody read."""
+    # a part that is no text part: a document property
+    plan, out, rec = edit(source, part="docProps/core.xml", xpath="//dc:creator", count=1, action="set_text",
+                          text="Design team")
+    assert {"V1", "V2", "V10"}.isdisjoint(failed(rec)), failed(rec)
+    assert rec.get("V2").data["raw_text"] == [{"part": "docProps/core.xml", "removed": ["python-docx"],
+                                               "added": ["Design team"], "more": 0}]
+    words, _other = raw_listing(rec)
+    assert words == [{"part": "docProps/core.xml", "where": "docProps/core.xml, other text (not a paragraph's words)",
+                      "paragraph": None, "removed": ["python-docx"], "added": ["Design team"], "other": True}]
+    from spec_surgeon.preview import RAW_NO_WORDS_CHANGE, RAW_WORDS_CHANGE_HEAD, SampleView, raw_words_lines
+    sample = SampleView(source=Path("a.docx"))
+    sample.raw_xml, sample.text_changes = True, words
+    assert raw_words_lines([sample]) == [
+        RAW_WORDS_CHANGE_HEAD, "• a.docx, docProps/core.xml, other text (not a paragraph's words): text removed "
+                               "“python-docx”; text added “Design team”"]
+    # a text part: DrawingML text inside a paragraph is not one of the reader's text elements
+    root = part_of(source)
+    holder = etree.SubElement(next(root.iter(W + "r")), "{%s}t" % ex.NAMESPACES["a"])
+    holder.text = "Flow test results"
+    drawn = with_part(source, DOC, root)
+    plan, out, rec = edit(drawn, part=DOC, xpath="//a:t", count=1, action="remove")
+    assert rec.passed, failed(rec)
+    assert rec.get("V2").data["actual"] == []                                   # no paragraph's words changed
+    words, _other = raw_listing(rec)
+    assert [(w["where"], w["removed"], w["added"]) for w in words] == [
+        ("body, other text (not a paragraph's words)", ["Flow test results"], [])]
+    # a raw edit that changes no text at all: only then is "no words" said, of every text node that was compared
+    plan, out, rec = edit(source, part=DOC, xpath="//w:pgMar", count=2, action="set_attribute", name="w:header",
+                          value="576")
+    assert raw_listing(rec)[0] == [] and rec.get("V2").data["raw_text"] == []
+    sample.text_changes = []
+    assert raw_words_lines([sample]) == [RAW_NO_WORDS_CHANGE]
+    assert "any other text between tags" in RAW_NO_WORDS_CHANGE and "attributes" in RAW_NO_WORDS_CHANGE
+    # a paragraph's own words stay V2's entries, placed by paragraph; the same text is not listed twice
+    plan, out, rec = edit(source, part=DOC, xpath="//w:body/w:p[1]/w:r/w:t", count=1, action="set_text",
+                          text="SECTION 21 13 13")
+    assert rec.get("V2").data["raw_text"] == [] and [w["where"] for w in raw_listing(rec)[0]] == ["body paragraph 1"]
+    # many stretches: the lists are bounded and say how many they leave out
+    root = part_of(source, "docProps/core.xml")
+    for n in range(vx.V_SHOWN_TEXTS + 5):
+        etree.SubElement(root, "note").text = f"note {n}"
+    noted = with_part(source, "docProps/core.xml", root)
+    plan, out, rec = edit(noted, part="docProps/core.xml", xpath="//note", count=vx.V_SHOWN_TEXTS + 5, action="remove")
+    [entry] = raw_listing(rec)[0]
+    assert len(entry["removed"]) == vx.V_SHOWN_TEXTS and entry["more"] == 5
+    from spec_surgeon.preview import text_change_phrase
+    assert text_change_phrase(entry).endswith("(and 5 more stretches not listed)")
+
+
 # ---- a step of its own: clear the obstacle, then the same plan -------------------------------------------------------
 
 def run_chain(src: bytes, chain: Dict[str, Any]):
@@ -658,6 +785,15 @@ def test_text_a_raw_edit_places_passes_the_gate_only_when_the_user_has_read_it(b
     ]}
     assert compiler.placed_words(worded) == ["SECTION 21 13 13"]
     assert compiler.placed_words(placed) == ["Coordination draft"]
+    # nothing inside a fragment hides the words beside it: a comment, a child element, the text after either
+    hidden = copy.deepcopy(placed)
+    hidden["ops"][0]["params"]["xml"] = "<w:p><w:r><w:t>Unshown wording<!--note--></w:t></w:r></w:p>"
+    assert compiler.placed_words(hidden) == ["Unshown wording"]
+    _outcome, errors = compose_submission(copy.deepcopy(hidden), batch, ["change it"], unguarded=True)
+    assert len(errors) == 1 and "Unshown wording" in errors[0] and "the user has not read them" in errors[0]
+    assert ex.fragment_text("<x>before<b>inside</b>between<!--c-->after<?p i?>last</x>") == [
+        "before", "inside", "between", "after", "last"]
+    assert ex.fragment_text("<w:p>\n  <w:r>\n    <w:t>only this</w:t>\n  </w:r>\n</w:p>") == ["only this"]
     assert compiler.placed_words(RAW_SPEC) == []                # an edit that places no text has no words to trace
     attribute = {"request": "r", "summary": "s", "mode": "untracked", "ops": [
         {"op": "edit_xml", "params": {"part": DOC, "xpath": "//w:pgMar", "count": 2, "action": "set_attribute",

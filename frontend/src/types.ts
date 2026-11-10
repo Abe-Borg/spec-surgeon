@@ -202,6 +202,12 @@ export interface TextChange {
   block?: "new" | "gone";
   /** Set when the words sit in the copy's tracked changes (the checker's accept-all and reject-all views differ). */
   tracked?: boolean;
+  /** A raw XML edit's sample only: text that is not a paragraph's words (a chart's title, a drawing's text, a
+   *  document property, stored data), which `where` says; `paragraph` is null. `more` counts stretches the lists
+   *  leave out; `unread` is set when the part's text could not be read in the copy. */
+  other?: boolean;
+  more?: number;
+  unread?: boolean;
 }
 
 /** One find-and-replace occurrence the waiting plan found (docs/WEB_API.md, `occurrences[].items[]`). */

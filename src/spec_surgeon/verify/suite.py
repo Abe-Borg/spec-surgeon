@@ -418,7 +418,7 @@ def _run_suite(source: bytes, output: bytes, plan: Dict[str, Any], source_name: 
     # as this verifier edits it itself, so nothing in it goes unchecked. Its text is not predicted block by block —
     # no plan could, without making the edit — so the block-by-block checks below leave it to that comparison, and
     # the record lists what the edit did to the words (D1).
-    from .xmledit import raw_parts
+    from .xmledit import raw_parts, unread_text_changes
     raw = set(raw_parts(plan))
 
     # V1 — package hash whitelist, predicted member removals/additions, member order, package integrity
@@ -521,6 +521,21 @@ def _run_suite(source: bytes, output: bytes, plan: Dict[str, Any], source_name: 
         actual = sorted(((c["part"], c["before"], c["after"]) for c in actual_text_changes if c["part"] not in raw),
                         key=_total_key)
         listed = sum(1 for c in actual_text_changes if c["part"] in raw)
+        # V2's reader reads the words of paragraphs. A raw edit may change text it does not read (a chart's title, a
+        # drawing's text, a document property, stored data), in a text part or any other: listed here, so that "no
+        # words changed" is never said of text nobody read.
+        raw_text = []
+        for part in sorted(raw):
+            try:
+                before_root = src_xml[part] if part in src_xml else src.xml(part)
+                after_root = out_xml[part] if part in out_xml else out.xml(part)
+                found = unread_text_changes(before_root, after_root)
+            except Exception as e:  # noqa: BLE001 — a part that does not read is V1's and V10's failure; said here
+                raw_text.append({"part": part, "removed": [], "added": [], "more": 0,
+                                 "unread": f"{type(e).__name__}: {e}"})
+                continue
+            if found["removed"] or found["added"]:
+                raw_text.append({"part": part, **found})
         v2_ok = expected == actual
         missing = [e for e in expected if e not in actual]
         extra = [a for a in actual if a not in expected]
@@ -548,10 +563,12 @@ def _run_suite(source: bytes, output: bytes, plan: Dict[str, Any], source_name: 
                             + f"; diffs found: {len(actual)}; "
                             f"matches predicted list exactly: {'yes' if v2_ok else 'NO'}"
                             + ("" if v2_ok else f" — missing {len(missing)}, unpredicted {len(extra)}")
-                            + (f"; raw XML edit of {sorted(raw)}: {listed} more text block(s) differ there, listed "
-                               f"(D1) and proven by V10's whole-part comparison, not predicted" if raw else ""),
+                            + (f"; raw XML edit of {sorted(raw)}: {listed} more text block(s) differ there, and "
+                               f"other text (not a paragraph's words) in {len(raw_text)} part(s); listed, and "
+                               f"proven by V10's whole-part comparison, not predicted" if raw else ""),
                             {"parts": scope, "actual": actual_text_changes, "missing": missing, "unpredicted": extra,
-                             "views": views, **({"raw_parts": sorted(raw)} if raw else {})}))
+                             "views": views,
+                             **({"raw_parts": sorted(raw), "raw_text": raw_text} if raw else {})}))
         rec.set(CheckResult("V3", "Structural children", "PASS" if not struct_changes else "FAIL",
                             "w:tab(in w:r)/w:br/w:cr/noBreakHyphen/sym/fldChar/… per block: "
                             + ("identical on every aligned block, or changed exactly as the plan declared" if not struct_changes

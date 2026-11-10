@@ -10,7 +10,8 @@ puts it in a step of its own: it changes its part as a whole).
 It is a built-in op, so it predicts first (invariant 1). What it predicts is the edit itself, exactly:
 
 * ``part``: one XML part of the package, by its member name. Relationships (``.rels``) and ``[Content_Types].xml`` are
-  the package's own bookkeeping and are refused.
+  the package's own bookkeeping and are refused, and so is a part with a comment or a processing instruction outside
+  its root element: the app writes a part from its root, which would not keep them (``outside_root``).
 * ``xpath``: an XPath 1.0 expression that selects ELEMENTS of that part. It is evaluated on the source, with a fixed
   table of prefixes (``NAMESPACES``; ``namespaces`` adds others) and nothing else: no variables, no extension
   functions. Inside a predicate it may not start a new search of the whole part (``//``, a path from the root), and
@@ -27,17 +28,23 @@ It is a built-in op, so it predicts first (invariant 1). What it predicts is the
 The plan carries the edit as a V10 assertion (``xml_edit``) with a digest of the places of the selected elements
 (``places_digest``: each element's position among its parent's children, from the root). The verifier
 selects with its own evaluation of the same expression, makes the same edit with its own code on its own copy of the
-source part, and compares that with the output part whole: exactly those elements changed as stated, and nothing else
-in the part did. What the edit does to the words, the tracked changes and the pages is not predicted here — nothing
-could, in general, without making the edit — so the verifier lists it instead (the Obliterate record's "what changed",
-``verify/difference.py``) and the user reads that list before approving. The part's text checks (V2, V3, the delta of
+source part, and compares that with the output part whole and exactly — every node's name, attributes, text and the
+text after it, with no rule about which white space matters, because the part may be any XML: exactly those elements
+changed as stated, and nothing else in the part did. What the edit does to the words, the tracked changes and the
+pages is not predicted here — nothing could, in general, without making the edit — so the verifier lists it instead
+(the words of paragraphs from V2's reader, any other text between tags from ``verify.xmledit.unread_text_changes``,
+and the Obliterate record's "what changed", ``verify/difference.py``) and the user reads that list before approving. The part's text checks (V2, V3, the delta of
 V4, V5b) are the whole-part comparison's for this part; the checks of the file itself (the package, revision ids, the
 schema, revision grammar) run as for any copy.
 
-Words: the ``text`` of ``set_text`` and the text inside ``xml`` are words placed in a document, so they pass the same
-gate as any Obliterate wording (``compiler.placed_words``): the user's own, or shown in the reply the user reads.
+Words: the ``text`` of ``set_text`` and every stretch of text inside ``xml`` (``fragment_text``) are words placed in a
+document, so they pass the same gate as any Obliterate wording (``compiler.placed_words``): the user's own, or shown
+in the reply the user reads. Attribute values are markup, not wording: they are not traced and not listed as words —
+the plan's own sentence quotes them (``describe``). A value Word shows as text (a list label, a field instruction,
+alternative text) is therefore read by the user in that sentence only (docs/BACKLOG.md, O3a).
 
-Refusals: ``xml-part`` (no such part, or not one this op changes), ``xml-count`` (the expression selects another
+Refusals: ``xml-part`` (no such part, not XML, the package's bookkeeping, or one the app's writer would not keep
+whole), ``xml-count`` (the expression selects another
 number of elements), ``xml-action`` (the action cannot be done to a selected element: the root removed, an element
 inside another selected one, text set on an element that has children …), ``xpath-timeout``; a malformed parameter is
 ``bad-params``.
@@ -341,14 +348,36 @@ def parse_fragment(xml: Any, namespaces: Dict[str, str]) -> List[etree._Element]
 
 
 def fragment_text(xml: Any, namespaces: Optional[Dict[str, str]] = None) -> List[str]:
-    """The text a fragment places, each element's own (``compiler.placed_words``); [] when it does not parse (the
-    plan refuses it)."""
+    """Every stretch of text a fragment places (``compiler.placed_words``): the text of each element, whatever else
+    it holds, and the text after each node inside it — a comment or a child element never hides the words beside it.
+    A comment's own text is not placed as words. [] when the fragment does not parse (the plan refuses it)."""
     try:
         kids = parse_fragment(xml, namespaces or dict(NAMESPACES))
     except JobException:
         return []
-    return [node.text for kid in kids for node in kid.iter()
-            if isinstance(node.tag, str) and not len(node) and (node.text or "").strip()]
+    out: List[str] = []
+    for kid in kids:
+        for node in kid.iter():                  # elements, comments and processing instructions, in document order
+            if isinstance(node.tag, str) and (node.text or "").strip():
+                out.append(node.text)
+            if node is not kid and (node.tail or "").strip():
+                out.append(node.tail)
+    return out
+
+
+def _xml_string(value: str, what: str) -> str:
+    """``value``, or a refusal when XML cannot hold it (a control character, half a surrogate pair)."""
+    try:
+        etree.Element("probe").set("probe", value)
+    except (ValueError, UnicodeError):
+        raise _bad(f"{what} holds a character XML cannot hold (a control character); give it without") from None
+    return value
+
+
+def outside_root(root: etree._Element) -> bool:
+    """Whether the part has a comment or a processing instruction beside its root element. The app writes a part from
+    its root (``serialize_xml``), which keeps none of those, so such a part cannot be edited exactly."""
+    return root.getprevious() is not None or root.getnext() is not None
 
 
 def _own_text(el: etree._Element) -> bool:
@@ -421,11 +450,11 @@ def check_action(params: Dict[str, Any], namespaces: Dict[str, str]) -> Dict[str
     if action == "set_attribute":
         if not isinstance(params.get("value"), str):
             raise _bad("value must be the attribute's new value, as text")
-        out["value"] = params["value"]
+        out["value"] = _xml_string(params["value"], "value")
     if action == "set_text":
         if not isinstance(params.get("text"), str):
             raise _bad("text must be the element's new text")
-        out["text"] = params["text"]
+        out["text"] = _xml_string(params["text"], "text")
     if "xml" in uses:
         parse_fragment(params.get("xml"), namespaces)
         out["xml"] = params["xml"]
@@ -641,6 +670,10 @@ class EditXml(Op):
         except (etree.XMLSyntaxError, XmlDoctype, ValueError) as error:
             raise JobException(f"{part} is not XML this op can read: {error}", "xml-part",
                                {"part": part, "why": "not-xml"}) from None
+        if outside_root(root):
+            raise JobException(f"{part} has a comment or a processing instruction outside its root element, which "
+                               f"would not be kept when the part is written; a raw XML edit changes nothing it does "
+                               f"not state", "xml-part", {"part": part, "why": "outside-root"})
         targets = select_elements(root, expr, namespaces, part)
         if len(targets) != count:
             found = [_describe_match(el, namespaces) for el in targets[:SHOWN_MATCHES]]

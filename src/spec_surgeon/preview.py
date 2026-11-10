@@ -639,6 +639,12 @@ def text_change_phrase(entry: Dict[str, Any]) -> str:
     paragraph named as such, and a change of spacing alone said to be one."""
     removed, added, block = entry.get("removed") or [], entry.get("added") or [], entry.get("block")
     tracked = " (in the copy's tracked changes)" if entry.get("tracked") else ""
+    if entry.get("other"):                       # a raw XML edit's text outside the paragraphs (``raw_listing``)
+        if entry.get("unread"):
+            return "its text could not be read in the copy"
+        said = ([f"text removed {_quoted(removed)}"] if removed else []) + ([f"text added {_quoted(added)}"] if added else [])
+        more = entry.get("more")
+        return "; ".join(said) + (f" (and {more} more stretch{'' if more == 1 else 'es'} not listed)" if more else "")
     if block == "new":
         return (f"a new paragraph, words added {_quoted(added)}" if added else "a new paragraph without words") + tracked
     if block == "gone":
@@ -659,8 +665,11 @@ WORDS_CHANGE_HEAD = ("Before you approve — the words the custom method changes
 
 
 # The same two sentences for a plan with a raw XML edit (``edit_xml``): its words are listed, not predicted
-RAW_NO_WORDS_CHANGE = ("The raw XML edit changes no words: the independent checker read the same words in the sample "
-                       "copies as in the originals, in the parts it edits.")
+RAW_NO_WORDS_CHANGE = ("The raw XML edit changes no words: in the parts it edits, the independent checker read the "
+                       "same text in the sample copies as in the originals — the words of every paragraph and any "
+                       "other text between tags. Values it sets in attributes are in the edit's own sentence.")
+# how the place of text that is not a paragraph's words is said (a chart's title, a drawing's text, a property)
+OTHER_TEXT = "other text (not a paragraph's words)"
 RAW_WORDS_CHANGE_HEAD = ("Before you approve — the words the raw XML edit changes, as the independent checker read "
                          "them in the sample copies:")
 
@@ -702,15 +711,31 @@ RAW_OTHER_CHANGES_HEAD = ("Before you approve — what else the raw XML edit's s
 
 def raw_listing(record: Any) -> Optional[Tuple[List[Dict[str, Any]], List[str]]]:
     """What a raw XML edit did, as the verifier listed it in a step's record: the words of the parts the edit
-    changes (V2's entries for its ``raw_parts``, through ``text_changes_of``) and the record's D1 sentences. None for
-    a record of a step without one: its words are predicted, and its plan's sentences say them."""
+    changes (V2's entries for its ``raw_parts``, through ``text_changes_of``), then the text of those parts that is
+    not a paragraph's words and that V2's reader therefore does not read — a chart's title, a drawing's text, a
+    document property, stored data (V2's ``raw_text``; entries marked ``other``, their place said with
+    ``OTHER_TEXT``) — and the record's D1 sentences. None for a record of a step without one: its words are
+    predicted, and its plan's sentences say them."""
     record = record if isinstance(record, dict) else getattr(record, "to_dict", lambda: {})()
     v2 = next((c for c in record.get("checks") or [] if isinstance(c, dict) and c.get("id") == "V2"), None)
-    raw = (v2 or {}).get("data", {}).get("raw_parts") if isinstance((v2 or {}).get("data"), dict) else None
+    data = (v2 or {}).get("data") if isinstance((v2 or {}).get("data"), dict) else {}
+    raw = data.get("raw_parts")
     if not raw:
         return None
     from .verify import difference_lines
     words = [entry for entry in text_changes_of(record) or [] if entry.get("part") in raw]
+    for item in data.get("raw_text") or []:
+        if not isinstance(item, dict):
+            continue
+        part = str(item.get("part") or "")
+        entry: Dict[str, Any] = {"part": part, "where": f"{part_words(part)}, {OTHER_TEXT}", "paragraph": None,
+                                 "removed": [str(x) for x in item.get("removed") or []],
+                                 "added": [str(x) for x in item.get("added") or []], "other": True}
+        if item.get("more"):
+            entry["more"] = int(item["more"])
+        if item.get("unread"):
+            entry["unread"] = True
+        words.append(entry)
     return words, difference_lines(record)
 
 
