@@ -103,11 +103,14 @@ def export_pdfs(copies: Dict[Path, Path], folder: Path, prefer: str = "auto",
     the copy (``<stem>.pdf``; the copies' names are unique in a run, so the PDFs' are too). Never raises for one file:
     a copy whose PDF cannot be made, or whose PDF fails ``check_pdf``, is in ``failed`` with the reason. ``basis``:
     what the report says the PDFs were made from (Export anyway's are made from a file Word saved, which no check
-    passed)."""
+    passed). A copy whose name another copy of the call already has (compared as Windows compares file names) gets
+    no PDF and says so: both would be written to one file, and one document's PDF must never be handed over as
+    another's — the callers name their copies apart, and this holds if one ever does not."""
     log = log or (lambda msg: None)
     detail = detail or (lambda msg: None)
     folder = Path(folder)
     copies = {Path(k): Path(v) for k, v in copies.items()}
+    asked = dict(copies)                                   # every document asked for: the report lists them all
     backend, why = renderer(prefer)
     result = PdfExport(folder, backend, render.describe(backend) if backend else "")
     with diag.span("pdf.export", folder=str(folder), file_count=len(copies), backend=backend) as outcome:
@@ -115,6 +118,15 @@ def export_pdfs(copies: Dict[Path, Path], folder: Path, prefer: str = "auto",
             result.failed = {source: f"no program on this computer can make a PDF ({why})" for source in copies}
         elif copies:
             folder.mkdir(parents=True, exist_ok=True)
+            named: Dict[str, Path] = {}
+            for source, copy in list(copies.items()):
+                first = named.setdefault(copy.stem.casefold(), source)
+                if first != source:
+                    reason = (f"its PDF would take the name of {first.name}'s ({copy.stem}.pdf), so none was made "
+                              f"for it")
+                    result.failed[source] = reason
+                    diag.event("pdf.file_failed", level="warning", source=str(source), copy=str(copy), reason=reason)
+                    del copies[source]
             said: List[str] = []
 
             def said_too(message: str) -> None:
@@ -146,7 +158,7 @@ def export_pdfs(copies: Dict[Path, Path], folder: Path, prefer: str = "auto",
                 diag.event("pdf.file_ready", source=str(source), copy=str(copy), pdf=str(pdf),
                            pages=result.pages[source])
         outcome.update(saved=len(result.pdfs), failed=len(result.failed))
-    write_report(result, copies, basis)
+    write_report(result, asked, basis)
     return result
 
 

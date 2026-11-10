@@ -304,6 +304,18 @@ def _comment_parts(copy: Path) -> Set[str]:
         return set()
 
 
+def _own_name(name: str, taken: Set[str]) -> str:
+    """``name``, or ``name (2)``, ``name (3)``… when an earlier document of this export already has it (compared as
+    Windows compares file names), and ``taken`` told so. Two working copies can share a name — documents with the
+    same file name, each edited in a run of its own — and everything made from them here is named after it."""
+    stem, suffix = Path(name).stem, Path(name).suffix
+    own, n = name, 2
+    while own.casefold() in taken:
+        own, n = f"{stem} ({n}){suffix}", n + 1
+    taken.add(own.casefold())
+    return own
+
+
 def make_anyway(copies: Dict[str, Path], kind: str, run_dir: Path, *,
                 log: Optional[Callable[[str], None]] = None) -> Anyway:
     """The clean version of each copy in ``copies`` ({key: copy}) for ``kind`` (``accepted`` or ``pdf``), MADE BY
@@ -314,7 +326,9 @@ def make_anyway(copies: Dict[str, Path], kind: str, run_dir: Path, *,
     it found into words. For ``pdf`` the file Word saved is rendered and the PDF looked at as any clean PDF is
     (``pdf_export``). Nothing is planned or predicted: no file made here is checked the way ``make_clean``'s are, and
     the caller names each as unchecked. A document Word cannot finish, or whose PDF cannot be made, has no file and
-    the reason. The copies are read, never written."""
+    the reason. The copies are read, never written. Each document's file is saved under a name of its own within
+    the export (``_own_name``), so that two copies with one name never share a PDF or a record (Codex review on PR
+    #189: the renderer names a PDF after the file it is given, and all of them land in one folder)."""
     import json
 
     from . import stopping, word_actions
@@ -329,13 +343,14 @@ def make_anyway(copies: Dict[str, Path], kind: str, run_dir: Path, *,
     if not sources:
         return result
     clean: Dict[str, Path] = {}
+    taken: Set[str] = set()
     with diag.span("export.anyway", kind=kind, file_count=len(sources), run_dir=str(run_dir),
                    actions=list(actions)) as outcome:
         log(WORD_MAKING)
         for number, (key, copy) in enumerate(sources.items(), 1):
             stopping.check("export")              # Stop lands between the documents; Word's own wait looks at it too
             work = run_dir / "word" / f"{number:03d}"
-            private, made = work / "in" / copy.name, work / copy.name
+            private, made = work / "in" / copy.name, work / _own_name(copy.name, taken)
             try:
                 data = copy.read_bytes()
                 private.parent.mkdir(parents=True, exist_ok=True)
@@ -360,7 +375,7 @@ def make_anyway(copies: Dict[str, Path], kind: str, run_dir: Path, *,
             result.said[key] = word_actions.account(report)
             result.read[key] = reading(record, made, kind, _comment_parts(copy))
             try:
-                kept = run_dir / "records" / f"{copy.stem}.record.json"
+                kept = run_dir / "records" / f"{made.stem}.record.json"
                 kept.parent.mkdir(parents=True, exist_ok=True)
                 kept.write_text(json.dumps(record.to_dict(), indent=2, ensure_ascii=False), encoding="utf-8")
             except OSError as error:

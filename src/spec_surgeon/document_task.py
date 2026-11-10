@@ -4316,9 +4316,10 @@ class DocumentTask:
         if anyway:
             for origin, *_ in plan:              # made: no longer offered (one Word could not finish still is)
                 self.export_missed.get(kind, {}).pop(copies[origin], None)
+            # each file by the name it was saved under: two copies with one name are told apart by it
             self.say(self._export_anyway_said(
-                kind, folder, [(Path(copies[origin]).name, clean.said.get(origin, []), clean.read.get(origin, []))
-                               for origin, *_ in plan], already, missing, renderer))
+                kind, folder, [(dest.name, clean.said.get(origin, []), clean.read.get(origin, []))
+                               for origin, dest, *_ in plan], already, missing, renderer))
         else:
             self.say(self._export_said(kind, folder, len(plan), already, missing, renderer,
                                        sum(1 for origin, *_ in plan if failed_marks(self.unverified.get(origin))),
@@ -4349,8 +4350,8 @@ class DocumentTask:
     def _export_anyway_said(kind: str, folder: Path, files: List[tuple], already: int, missing: Dict[str, str],
                             renderer: str) -> str:
         """What the chat says after Export anyway: what Word made and where, named UNCHECKED, and for each file
-        (``(name, Word's own account, what the app's reading found)``) Word's count in Word's words and the reading
-        of the file Word saved; then each document without a file with why."""
+        (``(the name it was saved under, Word's own account, what the app's reading found)``) Word's count in Word's
+        words and the reading of the file Word saved; then each document without a file with why."""
         from .exports import UNCHECKED
         count = len(files)
         one = count == 1

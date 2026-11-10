@@ -14,7 +14,8 @@ Pinned here: the offer is Obliterate's alone, for marked copies alone, and only 
 without a file; Word gets a private copy and exactly the fixed commands; the file is written as Word made it and named
 UNCHECKED, with Word's count and the app's reading; a file whose words differ, or that keeps a tracked change, is
 saved and said; a document Word cannot finish gets no file and stays offered; the edited copies, the history and Undo
-are untouched; no AI call; Stop ends the job; Safe and Default are told nothing of it.
+are untouched; two copies that share a file name each get their own file; no AI call; Stop ends the job; Safe and
+Default are told nothing of it.
 """
 from __future__ import annotations
 
@@ -96,6 +97,12 @@ def folder(tmp_path, name) -> Path:
 
 def said(task) -> str:
     return task.messages[-1]["text"]
+
+
+def words(docx: Path) -> str:
+    """The body's text, however Word split it into runs."""
+    with zipfile.ZipFile(docx) as z:
+        return "".join(t.text or "" for t in etree.fromstring(z.read("word/document.xml")).iter(W + "t"))
 
 
 # ---- the fixed commands ----------------------------------------------------------------------------------------------
@@ -375,10 +382,10 @@ def test_word_makes_the_clean_pdf_from_a_copy_it_deleted_the_comments_of(tmp_pat
                            "not make them, so Word deleted every comment and accepted every tracked change on a "
                            "private copy of each, and the PDFs were made from that by LibreOffice. No check proves the "
                            "files are your edited copies with nothing else changed.")
-    assert (f"equation.docx — Word's own count: Delete all comments: nothing to do; 1 tracked change accepted. "
+    assert (f"equation.pdf — Word's own count: Delete all comments: nothing to do; 1 tracked change accepted. "
             f"{CLEAN_PDF_READING}") in text
     # the comments Word deleted are not words the copy lost: only what else differs is a finding
-    assert "styled.docx — Word's own count: 1 comment deleted; " in text and "block of text differ" not in text
+    assert "styled.pdf — Word's own count: 1 comment deleted; " in text and "block of text differ" not in text
     assert state_of(task) == before and "export_anyway" not in task.view()
 
 
@@ -405,6 +412,77 @@ def test_a_comment_word_left_in_the_file_the_pdf_is_made_from_is_said(tmp_path, 
     assert CLEAN_PDF_READING not in text
     # and the comments Word did NOT delete are words the copy still has: no block is counted as differing for them
     assert "of text differ" not in text
+
+
+def test_two_copies_with_one_name_each_get_their_own_file(tmp_path, word, monkeypatch, no_ai):
+    """Two documents with the same file name in different folders, each edited in a run of its own, have working
+    copies with the same name. Each gets its own Word-made file, its own PDF and its own record: one document's PDF
+    is never the other's (Codex review on PR #189: the PDFs were rendered into one folder under one name)."""
+    import hashlib
+
+    from fx_revisions import awkward
+    from spec_surgeon import render
+    from spec_surgeon.verify.geometry import fitz
+    from test_export_clean import write_pdf
+
+    def rendered(files, out_dir, backend, workers=4, log=None, detail=None, cache=None):
+        # a PDF that says which file it was made from: the fingerprint of that file's bytes
+        return {Path(f): write_pdf(Path(out_dir) / (Path(f).stem + ".pdf"),
+                                   hashlib.md5(Path(f).read_bytes()).hexdigest()) for f in files}
+    monkeypatch.setattr(pdf_export, "renderer", lambda prefer="auto": ("word", ""))
+    monkeypatch.setattr(render, "render_pdfs", rendered)
+    first, second = tmp_path / "docs" / "north" / "equation.docx", tmp_path / "docs" / "south" / "equation.docx"
+    for path, intro in ((first, b"Intro paragraph."), (second, b"Another intro.")):
+        path.parent.mkdir(parents=True)
+        with zipfile.ZipFile(io.BytesIO(awkward("math"))) as source, zipfile.ZipFile(path, "w") as target:
+            for name in source.namelist():
+                target.writestr(name, source.read(name).replace(b"Intro paragraph.", intro))
+    task = DocumentTask(Session(client=FakeClient(), out_root=tmp_path / "out", visual_check=False), render=False,
+                        obliterate_allowed=True)
+    task.attach([first, second])
+    task.set_mode("obliterate", acknowledged=True)
+    for path in (first, second):                 # a run each: Word's own action, so each copy is UNPROVEN
+        view = task.perform("word_actions", path=str(path), actions=["repair"])
+        task.perform("primary", token=view["token"])
+    assert [Path(c).name for c in task.working.values()] == ["equation.docx", "equation.docx"]
+    for kind, names in (("pdf", ["equation (2).pdf", "equation.pdf"]), ("accepted", ["equation (2).docx", "equation.docx"])):
+        dest = folder(tmp_path, kind)
+        assert task.export(dest, kind)["saved"] == 0
+        made = task.export(dest, kind, anyway=True)
+        assert made["saved"] == 2 and made["missing"] == {} and sorted(p.name for p in dest.iterdir()) == names
+        run = next(p for p in (Path(task.session.out_root) / exports.EXPORT_FOLDER).iterdir()
+                   if p.name.endswith(f"-{kind}-anyway"))
+        saved = sorted((run / "word").glob("*/*.docx"))             # the file Word saved for each document
+        assert len(saved) == 2
+        assert "Intro paragraph." in words(saved[0]) and "Another intro." in words(saved[1])
+        if kind == "pdf":
+            # each PDF was made from its own document's file, and both reached the folder
+            said_by = {fitz.open(str(pdf))[0].get_text().strip() for pdf in dest.iterdir()}
+            assert said_by == {hashlib.md5(p.read_bytes()).hexdigest() for p in saved}
+        else:
+            assert {p.read_bytes() for p in dest.iterdir()} == {p.read_bytes() for p in saved}
+        # and in the export's own folder nothing shares a name: a file per document, a record per document
+        assert len({p.name.casefold() for p in saved}) == 2
+        assert len(list((run / "records").glob("*.record.json"))) == 2
+        # the chat tells the two apart by the names they were saved under
+        for name in names:
+            assert f" {name} — Word's own count: " in said(task)
+
+
+def test_two_files_with_one_name_are_never_rendered_into_one_pdf(tmp_path, renderer):
+    """The guard under the callers' own naming: asked for PDFs of two files with one name, the PDF maker makes the
+    first and says why the second has none — it never writes both to one file and hands one out as the other's."""
+    north, south = tmp_path / "north" / "Spec.docx", tmp_path / "south" / "spec.docx"
+    for path in (north, south):
+        path.parent.mkdir()
+        path.write_bytes(redlined_set(tmp_path / "docs", ["21 13 13.docx"])[0].read_bytes())
+    made = pdf_export.export_pdfs({Path("a/north.docx"): north, Path("a/south.docx"): south}, tmp_path / "run" / "pdf")
+    assert list(made.pdfs) == [Path("a/north.docx")] and made.pdfs[Path("a/north.docx")].name == "Spec.pdf"
+    assert made.failed == {Path("a/south.docx"): "its PDF would take the name of north.docx's (spec.pdf), so none "
+                                                 "was made for it"}
+    assert renderer["calls"] == [[north]]                      # the second was never rendered over the first
+    report = (tmp_path / "run" / pdf_export.REPORT_NAME).read_text(encoding="utf-8")
+    assert "| north.docx | pdf/Spec.pdf | 1 |" in report and "| south.docx | none: its PDF would take the name" in report
 
 
 def test_a_pdf_that_cannot_be_made_from_words_file_is_named_and_stays_offered(tmp_path, word, renderer, no_ai):

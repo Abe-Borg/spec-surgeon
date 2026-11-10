@@ -395,7 +395,9 @@ What it lifts (`Session.unguarded`; CLAUDE.md, "Modes"):
     `delete_comments`, then `accept_changes`, for PDF (Clean). Both are entries of `word_actions.MENU` with their
     code in `render/word_actions.py`; `delete_comments` is `offered=False`, as `convert` is — on no menu the user
     picks from, outside the `word_action` operation's values, so no plan can name it. `make_anyway` writes a
-    private copy of the edited copy's bytes under the run's folder (`exports\<stamp>-<kind>-anyway\word\<n>\in\`),
+    private copy of the edited copy's bytes under the run's folder (`exports\<stamp>-<kind>-anyway\word\<n>\in\`;
+    the file Word saves beside it is named after the copy, numbered when an earlier copy of the export has that
+    name, `_own_name`, so that two same-named copies never share a PDF or a record),
     has Word run the commands through the one seam (`word_actions.run_word_actions`: a private instance, macros
     disabled, links not updated, tracking off while they run, one save), and for the PDF renders the file Word
     saved with `pdf_export.export_pdfs` (`check_pdf` as for any clean PDF; `PDF_REPORT.md` says what the PDFs were
