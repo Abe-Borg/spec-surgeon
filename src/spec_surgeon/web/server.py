@@ -168,7 +168,8 @@ class WindowState:
         self.updates = updates
         self.version = version
         self.lock = threading.Lock()
-        self.thread: Optional[threading.Thread] = None
+        self.thread: Optional[threading.Thread] = None   # the newest job's thread: what shutdown joins
+        self._ended: Optional[threading.Thread] = None   # that thread once its job is over (``busy``, ``start_job``)
         self.cancel: Optional[threading.Event] = None
         self.started_at = 0.0
         self.job: Optional[Dict[str, Any]] = None       # the running job's clock, for the watch (``job_status``)
@@ -225,7 +226,12 @@ class WindowState:
 
     @property
     def busy(self) -> bool:
-        return self._transition or (self.thread is not None and self.thread.is_alive())
+        """A job runs, or the tour is swapping the task. A job is over the moment before its last event (``done`` or
+        ``error``) goes on the queue, not when its thread returns: the thread marks itself ended first
+        (``start_job``), so whoever reads that event may send the next request at once and is never answered 409 for
+        a job that has said it ended. A thread that died without saying so is not busy either."""
+        thread = self.thread
+        return self._transition or (thread is not None and thread is not self._ended and thread.is_alive())
 
     @property
     def settings_task(self) -> DocumentTask:
@@ -400,7 +406,9 @@ class WindowState:
     # ---- jobs ----
     def start_job(self, action: str, **values) -> queue.Queue:
         """Run ``task.perform`` on a worker thread; the queue carries the job's events, ending with ``done`` or
-        ``error``. Raises RuntimeError when a job is already running."""
+        ``error``. Raises RuntimeError when a job is already running. The window is busy with the job until that
+        last event is about to go on the queue (``busy``), so the next job may start while this one's thread is
+        still returning."""
         with self.lock:
             if self.busy:
                 raise RuntimeError("busy")
@@ -482,6 +490,10 @@ class WindowState:
                 diag.app_log().info(job_ended_line(action, task.stage, stopped=bool(terminal.get("stopped")),
                                                    failure=failure, cost=task._cost(),
                                                    seconds=time.perf_counter() - queued))
+                # The job is over before anyone can read that it is (``busy``): everything it writes is written, and
+                # this thread has only the last event left to hand over. Nothing may follow the event but the return.
+                with self.lock:
+                    self._ended = threading.current_thread()
                 events.put(terminal)
             diag.app_log().info(job_started_line(action, values))
             self.thread = threading.Thread(target=context.run, args=(target,), daemon=False, name="spec-surgeon-job")

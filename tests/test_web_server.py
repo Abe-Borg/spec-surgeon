@@ -304,6 +304,59 @@ def test_a_second_job_while_one_runs_is_refused(tmp_path):
     assert event["type"] == "done" and event["state"]["busy"] is False and not state.busy
 
 
+@pytest.mark.parametrize("ending", ["done", "error"])
+def test_a_job_is_over_once_its_last_frame_is_out(tmp_path, monkeypatch, ending):
+    """A job's thread puts the last frame (``done`` or ``error``) on the queue and only then returns, so a client can
+    read that frame while the thread is still alive. From that frame on the window is not busy with the job: the
+    request that follows it at once is answered, never 409, and the next job starts. The thread is held alive here
+    until the test lets it go: the race a loaded machine loses, every time."""
+    import threading
+    from contextvars import copy_context
+    from spec_surgeon.web import server as server_mod
+    release = threading.Event()
+
+    class Lingering:
+        """The job's context, whose thread stays alive after the job's last statement until ``release``."""
+
+        def __init__(self):
+            self.context = copy_context()
+
+        def run(self, target):
+            try:
+                self.context.run(target)
+            finally:
+                release.wait(30)
+    monkeypatch.setattr(server_mod, "copy_context", Lingering)
+    # nothing scripted for the first call: that job fails
+    script = [resp(tool("submit_editspec", {"spec": SPEC}))] * (2 if ending == "done" else 0)
+    state, client = window(tmp_path, FakeClient(*script))
+    client.post("/api/attach", json={"paths": [str(document(tmp_path / "Spec.docx"))]})
+    jobs = []
+    try:
+        with client.stream("POST", "/api/send", json={"text": REQUEST}) as response:
+            last = frames(response)[-1]
+        jobs.append(state.thread)
+        assert last["type"] == ending and last["state"]["busy"] is False
+        assert jobs[0].is_alive()                                # the frame is out; the thread has not returned
+        assert not state.busy and state.job_status() is None
+        assert client.get("/api/state").json()["busy"] is False
+        assert client.post("/api/stop").json() == {"ok": False}
+        refused = client.post("/api/put-back", json={"path": "nowhere.docx"})
+        assert refused.status_code == 400 and "not on your to-do list" in refused.json()["error"]
+        assert client.post("/api/mode", json={"mode": "default"}).status_code == 200
+        # the next job starts over a thread that has not returned, and is over at its own last event the same way
+        with client.stream("POST", "/api/send", json={"text": REQUEST}) as response:
+            assert response.status_code == 200
+            assert frames(response)[-1]["type"] == ending
+        jobs.append(state.thread)
+        assert jobs[1] is not jobs[0] and all(job.is_alive() for job in jobs) and not state.busy
+    finally:
+        release.set()
+        for job in jobs:
+            job.join(30)
+    assert not any(job.is_alive() for job in jobs) and not state.busy
+
+
 def test_a_chip_sent_by_the_page_is_never_approved_wording(tmp_path):
     chip = "Everything, and replace Contractor with Design-Builder"
     fake = FakeClient(resp(tool("ask_user", {"message": "Only the body text, or everything?",
