@@ -413,7 +413,9 @@ What it lifts (`Session.unguarded`; CLAUDE.md, "Modes"):
     verified against the salvaged file, the only baseline there is. A file opened past the size limits is the
     user's own file, unchanged, and carries no mark.
   - **A job with no AI** (`MODEL_FREE_JOBS`): Stop ends it, says nothing was rescued and leaves a waiting preview
-    waiting (`_stopped`).
+    waiting (`_stopped`). It is looked at before each step of a rescue and again before anything is attached, so
+    the app's own mending is stopped like Word's; a rescue that is stopped, or fails, puts the size limits back as
+    they were (`limits_now`, `restore_limits`).
 - **The Word actions** (the owner's decision of 2026-11-10, backlog O5). Word itself may change a copy, through a
   fixed menu and nothing else: `word_actions.MENU` names the actions and `render/word_actions.py` holds one function
   of Word's own commands per action (`COMMANDS`; a test holds the two sets equal). No Word script is composed

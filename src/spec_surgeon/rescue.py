@@ -39,7 +39,7 @@ from typing import Any, Dict, List, Optional
 from lxml import etree
 
 from . import diagnostics as diag
-from . import word_actions
+from . import stopping, word_actions
 from .package import DocxPackage, W, serialize_xml
 from .package_limits import ArchiveLimits
 
@@ -218,6 +218,21 @@ def raised_limits(path: Path) -> Dict[str, int]:
     return raised
 
 
+def limits_now() -> Dict[str, Optional[str]]:
+    """This process's archive-limit settings as they are, to put back (``restore_limits``) when a rescue that raised
+    them comes to nothing."""
+    return {key: os.environ.get(key) for key in ("SPEC_SURGEON_ARCHIVE_" + name.upper()
+                                                 for name in ArchiveLimits.__dataclass_fields__)}
+
+
+def restore_limits(before: Dict[str, Optional[str]]) -> None:
+    for key, value in before.items():
+        if value is None:
+            os.environ.pop(key, None)
+        else:
+            os.environ[key] = value
+
+
 def apply_limits(limits: Dict[str, int]) -> None:
     """Raise this process's archive limits (and its worker processes', which inherit the environment): each named
     limit to the value given, when that is more than it is now. Never lowers one."""
@@ -276,16 +291,28 @@ def rescue_file(path: Path, kind: str, workdir: Path, password: Optional[str] = 
     under ``workdir`` (never beside or over ``path``), then checked as any attached file is; while it is still
     refused for something the app itself can mend, that is mended too (``MAX_STEPS`` in all). ``RescueFailed`` when
     no document comes of it, ``NeedsPassword`` when Word wants one. ``too-large`` writes nothing: it raises this
-    window's limits (``Rescued.limits``) and the file is attached as it is."""
-    from .triage import triage_file
+    window's limits (``Rescued.limits``) and the file is attached as it is. Stop is looked at before each step
+    (``stopping.check``); a rescue that is stopped, or fails, leaves the limits as they were."""
     path, workdir = Path(path), Path(workdir)
     if kind not in KINDS:
         raise RescueFailed(f"There is nothing to try for {path.name}.")
+    before = limits_now()
+    try:
+        return _rescue_file(path, kind, workdir, password)
+    except BaseException:
+        restore_limits(before)                   # (stopped or failed: nothing was rescued, so nothing stays raised)
+        raise
+
+
+def _rescue_file(path: Path, kind: str, workdir: Path, password: Optional[str]) -> Rescued:
+    from . import triage
+    triage_file = triage.triage_file
     name = path.stem + ".docx"
     done = Rescued(kind)
     with diag.span("rescue.file", source=str(path), kind=kind) as outcome:
         current = path
         for step in range(1, MAX_STEPS + 1):
+            stopping.check("the rescue")
             if kind == "too-large":
                 done.limits = raised_limits(current)
                 apply_limits(done.limits)

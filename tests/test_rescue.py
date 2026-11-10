@@ -538,3 +538,55 @@ def test_stop_ends_a_rescue_and_touches_nothing_else(tmp_path, plain, monkeypatc
     assert task.stage == "preview" and task.session.spec is not None            # the waiting preview still waits
     assert [a["state"] for a in attached(task)] == [attached(task)[0]["state"], "refused"]
     assert "rescue" in server.MODEL_FREE_JOBS
+
+
+def test_stop_during_the_apps_own_rescue_attaches_nothing_and_raises_no_limit(tmp_path, plain, monkeypatch):
+    """Stop is looked at between a rescue's steps and before anything is attached, whoever does the mending: a
+    stopped rescue leaves the refused file refused, a waiting preview waiting, and the size limits where they were."""
+    import threading
+
+    from spec_surgeon import stopping
+    for field in ArchiveLimits.__dataclass_fields__:
+        monkeypatch.delenv("SPEC_SURGEON_ARCHIVE_" + field.upper(), raising=False)
+    event = threading.Event()
+    mended = rescue._without_doctype
+
+    def stopped_while_mending(data):
+        made = mended(data)
+        event.set()                              # the user presses Stop while the app writes the part again
+        return made
+    monkeypatch.setattr(rescue, "_without_doctype", stopped_while_mending)
+    fake = FakeClient(resp(tool("submit_editspec", {"spec": SPEC})))
+    task = task_for(tmp_path, fake)
+    good, typed = document(tmp_path / "good.docx"), write(tmp_path, "typed.docx", with_doctype(plain))
+    task.set_mode("obliterate", acknowledged=True)
+    task.attach([good, typed])
+    view = task.perform("send", text="Make the FIRE SUPPRESSION title bold.")
+    assert view["stage"] == "preview"
+    with stopping.scope(event), pytest.raises(stopping.Stopped):
+        task.perform("rescue", path=str(typed))
+    assert [a["state"] for a in attached(task)][1] == "refused" and Path(attached(task)[1]["path"]) == typed
+    assert task.stage == "preview" and task.session.spec is not None            # the waiting preview still waits
+    assert said(task)[-1].startswith("Stopped. Nothing was rescued")
+    left = tmp_path / "out" / "rescued"
+    assert not left.exists() or not any(left.rglob("*"))
+    # Stop pressed before it began: nothing is even read
+    monkeypatch.setattr(rescue, "_without_doctype", lambda data: pytest.fail("a stopped rescue mended a part"))
+    with stopping.scope(event), pytest.raises(stopping.Stopped):
+        task.perform("rescue", path=str(typed))
+    # and a size-limit rescue that is stopped, or fails, leaves the limits as they were
+    monkeypatch.setenv("SPEC_SURGEON_ARCHIVE_MAX_ARCHIVE_BYTES", "1000")
+    big = write(tmp_path, "big.docx", plain)
+    from spec_surgeon import triage as triage_module
+    real = triage_module.triage_file
+
+    def stopped_after_raising(path):
+        if Path(path) == big and ArchiveLimits.from_environment().max_archive_bytes != 1000:
+            event.set()
+            stopping.check("the rescue")
+        return real(path)
+    monkeypatch.setattr(triage_module, "triage_file", stopped_after_raising)
+    event.clear()
+    with stopping.scope(event), pytest.raises(stopping.Stopped):
+        rescue.rescue_file(big, "too-large", tmp_path / "w")
+    assert ArchiveLimits.from_environment().max_archive_bytes == 1000

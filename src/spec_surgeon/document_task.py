@@ -2286,8 +2286,16 @@ class DocumentTask:
         n = 2
         while work.exists():
             work, n = work.with_name(f"{work.name.split('-r')[0]}-r{n}"), n + 1
+        limits = rescue.limits_now()
         try:
             done = rescue.rescue_file(attachment.path, kind, work, password=secret)
+            # Stop pressed while the file was being mended or converted: nothing is attached, and nothing that
+            # was planned or shown is touched (``_stopped``)
+            stopping.check("the rescue")
+        except stopping.Stopped:
+            rescue.restore_limits(limits)
+            shutil.rmtree(work, ignore_errors=True)
+            raise
         except rescue.NeedsPassword as why:
             shutil.rmtree(work, ignore_errors=True)      # (the app's own folder, made a moment ago and empty of use)
             attachment.rescue = "password"       # now known: the next press asks for it before Word is tried
