@@ -129,6 +129,8 @@ def generated_key(g: Any) -> Dict[str, Any]:
     parameters and approved adaptive outcome — the same key as the window's ``Session._generated_key``."""
     key = {"generated_source": g.source, "select": g.select, "params": g.params,
            "goal_contract": getattr(g, "goal_contract", None), "goal_bindings": getattr(g, "goal_bindings", {})}
+    if getattr(g, "word_actions", None):
+        key["word_actions"] = list(g.word_actions)   # Obliterate's named Word actions, in their order
     if getattr(g, "unguarded", False):
         key["unguarded"] = True                   # an Obliterate method's approval is never a guarded one's
         if getattr(g, "attachments", None):
@@ -249,6 +251,11 @@ class SampleView:
     # which change it is, for the words that say so: "xml" (a raw XML edit) or "part" (a part replaced with a file of
     # the user's, Obliterate's hands-on tools); "" for any other sample
     raw_what: str = ""
+    # who made an unproven copy, for the words that say so: "word" (Obliterate's named Word actions), "" (a custom
+    # method); ``word_account``: Word's own account of what it did to this copy, one line per action — Word's words,
+    # shown apart from the independent reader's (``codegen.FileTrial.notes``)
+    made_by: str = ""
+    word_account: List[str] = field(default_factory=list)
 
     def failed_marks(self) -> List[str]:
         """The failed checks as a delivered copy lists them (``FileResult.unverified``): ``V2 (Text preservation)``."""
@@ -261,6 +268,8 @@ class SampleView:
                 "look_pages": self.look_pages, "pages_before": self.pages_before, "pages_after": self.pages_after,
                 "geometry": self.geometry, "text_changes": self.text_changes,
                 **({"unproven": True, "changes": list(self.changes)} if self.unproven else {}),
+                **({"made_by": self.made_by} if self.made_by else {}),
+                **({"word_account": list(self.word_account)} if self.word_account else {}),
                 **({"raw_xml": True, "raw_what": self.raw_what or "xml", "changes": list(self.changes)}
                    if self.raw_xml else {}),
                 **({"problem": self.problem} if self.problem else {}),
@@ -563,8 +572,10 @@ def _v2_changes(data: Dict[str, Any]) -> List[Dict[str, Any]]:
     revision, and for a part that carries one (``views["parts"]``) the union of the verifier's accept-all and
     reject-all view comparisons instead — the block text V2 enumerates keeps tracked-deleted text, so a tracked
     deletion reads as no change there and a tracked replacement as its deleted and inserted words run together.
-    A block the two views do not agree on is marked ``tracked``: the words sit in the copy's tracked changes. A record
-    without ``views`` (older) gives the ``actual`` entries alone."""
+    A block the two views do not agree on is marked ``tracked``: the words sit in the copy's tracked changes — or
+    ``settled``, when the record says the copy's part carries none (``views["after"]``): they were a tracked change
+    of the original that the copy accepted or rejected. A record without ``views`` (older) gives the ``actual``
+    entries alone."""
     actual = _entries(data.get("actual"))
     views = data.get("views")
     if not isinstance(views, dict):
@@ -580,8 +591,15 @@ def _v2_changes(data: Dict[str, Any]) -> List[Dict[str, Any]]:
             found = merged.setdefault(key, {"part": key[0], "before_index": key[1], "after_index": key[2],
                                             "views": {}})
             found["views"][which] = (entry.get("before"), entry.get("after"))
+    after = views.get("after")
+    still = {str(p) for p in after} if isinstance(after, list) else None
     for found in merged.values():
-        found["tracked"] = found["views"].get("accepted") != found["views"].get("rejected")
+        differ = found["views"].get("accepted") != found["views"].get("rejected")
+        if differ and still is not None and found["part"] not in still:
+            # the copy carries no tracked change in this part: the original's was settled (accepted or rejected)
+            found["settled"] = True
+        else:
+            found["tracked"] = differ
         out.append(found)
     return out
 
@@ -630,6 +648,8 @@ def text_changes_of(record: Any) -> Optional[List[Dict[str, Any]]]:
             entry["block"] = "gone"
         if a.get("tracked"):
             entry["tracked"] = True
+        if a.get("settled"):
+            entry["settled"] = True
         out.append(entry)
     return out
 
@@ -642,7 +662,8 @@ def text_change_phrase(entry: Dict[str, Any]) -> str:
     """One entry of ``text_changes_of`` as the window says it: ``words removed “FIRE”; words added “WATER”``, a whole
     paragraph named as such, and a change of spacing alone said to be one."""
     removed, added, block = entry.get("removed") or [], entry.get("added") or [], entry.get("block")
-    tracked = " (in the copy's tracked changes)" if entry.get("tracked") else ""
+    tracked = (" (in the copy's tracked changes)" if entry.get("tracked") else
+               " (a tracked change of the original, settled in the copy)" if entry.get("settled") else "")
     if entry.get("other"):                       # a raw XML edit's text outside the paragraphs (``raw_listing``)
         if entry.get("unread"):
             return "its text could not be read in the copy"
@@ -676,6 +697,40 @@ RAW_NO_WORDS_CHANGE = ("The raw XML edit changes no words: in the parts it edits
 OTHER_TEXT = "other text (not a paragraph's words)"
 RAW_WORDS_CHANGE_HEAD = ("Before you approve — the words the raw XML edit changes, as the independent checker read "
                          "them in the sample copies:")
+
+
+# The same headings for copies Word made (Obliterate's named Word actions), and for Word's own account of them
+WORD_WORDS_CHANGE_HEAD = ("Before you approve — the words Word's actions change, as the independent checker read them "
+                          "in each copy:")
+WORD_OTHER_CHANGES_HEAD = ("Before you approve — what else Word's actions change beside the words, as the independent "
+                           "reader found it in each copy:")
+WORD_ACCOUNT_HEAD = ("What Word itself says it did (Word's own count, not the independent reader's; the lists above "
+                     "are what the reader found):")
+
+
+def maker_heads(g: Any) -> Tuple[str, str]:
+    """The headings over the words and over the other changes of ``g``'s copies: a custom method's, or Word's."""
+    if getattr(g, "word_actions", None):
+        return WORD_WORDS_CHANGE_HEAD, WORD_OTHER_CHANGES_HEAD
+    return WORDS_CHANGE_HEAD, OTHER_CHANGES_HEAD
+
+
+def word_account_lines(samples: Sequence[Any]) -> List[str]:
+    """Word's own account of what its actions did to each copy (``SampleView.word_account``), under a heading that
+    says whose words they are; [] when no sample carries one."""
+    known = [s for s in samples if getattr(s, "word_account", None)]
+    if not known:
+        return []
+    lines: Dict[str, List[str]] = {}
+    for s in known:
+        names = lines.setdefault("; ".join(s.word_account), [])
+        if Path(s.source).name not in names:
+            names.append(Path(s.source).name)
+    out = [WORD_ACCOUNT_HEAD]
+    for said, names in lines.items():
+        who = names[0] if len(names) == 1 else ", ".join(names[:-1]) + " and " + names[-1]
+        out.append(f"\u2022 {who}: {said}.")
+    return out
 
 
 def text_changes_lines(samples: Sequence[Any], head: str = WORDS_CHANGE_HEAD,
@@ -810,7 +865,7 @@ def raw_words_lines(samples: Sequence[Any]) -> List[str]:
     return text_changes_lines([s for s in samples if getattr(s, "raw_xml", False)], head, none)
 
 
-def shown_changes_lines(samples: Sequence[Any], raw: bool = False) -> List[str]:
+def shown_changes_lines(samples: Sequence[Any], raw: bool = False, head: Optional[str] = None) -> List[str]:
     """The app's own sentences about what an Obliterate custom method's copies change beside their words
     (``SampleView.changes``: D1 of each copy's record), said in the chat before the approval button and kept in the
     transcript: nothing when no sample is such a copy; otherwise the heading and one line per distinct finding (the
@@ -826,7 +881,7 @@ def shown_changes_lines(samples: Sequence[Any], raw: bool = False) -> List[str]:
             names = lines.setdefault(str(line), [])
             if name not in names:
                 names.append(name)
-    out = [_raw_said(samples)[2] if raw else OTHER_CHANGES_HEAD]
+    out = [_raw_said(samples)[2] if raw else head or OTHER_CHANGES_HEAD]
     for line, names in lines.items():
         who = names[0] if len(names) == 1 else ", ".join(names[:-1]) + " and " + names[-1]
         out.append(f"\u2022 {who}: {line}")
@@ -1057,11 +1112,14 @@ class GeneratedPreview:
     review_ack: str = ""
     log_path: Optional[Path] = None                               # logs/preview.log
     rendered: bool = False                                        # made with Render pages on (pages + visual check)
+    by_word: bool = False                                         # the copies are Word's (the named Word actions)
 
     def to_text(self) -> str:
-        out = [f"PREVIEW — one-off custom transform {self.name!r} (AI-written, tested on sample files)"]
+        out = [f"PREVIEW — named Word actions, run by Word on a copy of each document" if self.by_word else
+               f"PREVIEW — one-off custom transform {self.name!r} (AI-written, tested on sample files)"]
         out += [f"WARNING: {w}" for w in self.warnings]
-        out.append("SAMPLES (run in the sandbox and verified; sources untouched):")
+        out.append("COPIES (made by Word and read by the independent reader; sources untouched):" if self.by_word
+                   else "SAMPLES (run in the sandbox and verified; sources untouched):")
         labels = sample_labels(self.samples)
         for s in self.samples:
             failed = [k for k, v in s.checks.items() if v == "FAIL"]
@@ -1074,12 +1132,17 @@ class GeneratedPreview:
                        + (f"; pages: {s.pages_before} → {s.pages_after}" if s.pages_before is not None else "")
                        + (f"; images: {[i.name for i in s.images]}" if s.images else "")
                        + geometry_text(s))
-        words = text_changes_lines(self.samples)
+        heads = (WORD_WORDS_CHANGE_HEAD, WORD_OTHER_CHANGES_HEAD) if self.by_word else (WORDS_CHANGE_HEAD,
+                                                                                    OTHER_CHANGES_HEAD)
+        words = text_changes_lines(self.samples, heads[0])
         if words:
             out += ["WORDS (the independent checker's reading of the sample copies, V2):"] + [f"   {w}" for w in words]
-        other = shown_changes_lines(self.samples)
+        other = shown_changes_lines(self.samples, head=heads[1])
         if other:
             out += ["WHAT ELSE CHANGED (the independent reader's report of each copy, D1):"] + [f"   {x}" for x in other]
+        said = word_account_lines(self.samples)
+        if said:
+            out += ["WORD'S OWN ACCOUNT (not the independent reader's):"] + [f"   {x}" for x in said]
         if self.review is not None:
             out += ["", self.review.to_text()]
         from .readable import REPORT_BYTES, bounded
@@ -1108,9 +1171,10 @@ def _preview_generated(g: Any, out_dir: Path, renderer: str, do_render: bool) ->
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     name = getattr(g, "name", "") or "generated"
-    log = _preview_log(out_dir, f"one-off custom transform {name!r}")
+    word = bool(getattr(g, "word_actions", None))
+    log = _preview_log(out_dir, "named Word actions" if word else f"one-off custom transform {name!r}")
     try:
-        gp = GeneratedPreview(out_dir=out_dir, name=name, log_path=log.path, rendered=bool(do_render))
+        gp = GeneratedPreview(out_dir=out_dir, name=name, log_path=log.path, rendered=bool(do_render), by_word=word)
         trials = list(getattr(g, "trials", None) or [])
         names = output_names([Path(t.source) for t in trials])
         for t in trials:
@@ -1124,6 +1188,9 @@ def _preview_generated(g: Any, out_dir: Path, renderer: str, do_render: bool) ->
                             plan=getattr(t, "plan", None) if t.record is not None else None)
             # Obliterate: nothing was predicted for this copy — never shown as verified, even with no failed check
             sv.unproven = bool(getattr(t, "unproven", False) or getattr(g, "unguarded", False))
+            if word:
+                sv.made_by = "word"
+                sv.word_account = [str(x) for x in getattr(t, "notes", None) or []]
             if t.record is None and getattr(t, "problems", None):
                 # no copy could be made of this document: its card says why (``ui_feedback.failed_preview_checks``)
                 from .ui_feedback import plain_problem

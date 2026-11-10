@@ -214,6 +214,77 @@ class WordSession:
         return out[0], out[1]
 
 
+    def run_actions(self, docx: Path, out: Path, actions: Sequence[str]) -> list:
+        """The named Word actions (``render.word_actions.COMMANDS``, a fixed menu) on a private copy of ``docx``, in
+        the order given, in one opening, saved once as ``out`` (a .docx). Links are not updated at opening (the
+        user's own Word option is read, turned off for the opening and put back); tracking is off while the actions
+        run, so none of them is recorded as a tracked change, and the document's own setting is put back before the
+        save. Returns ``[{"action", "count", "note"}]``: Word's own account. An action that raises stops the run
+        with nothing saved, and ``failure_stage`` names it (``word_action_<id>``)."""
+        from .. import diagnostics as diag
+        from .word_actions import COMMANDS, WD_FORMAT_XML_DOCUMENT
+        actions = [str(a) for a in actions]
+        if not actions or any(a not in COMMANDS for a in actions):
+            raise ValueError("unknown Word action")
+        self.stage = "word_copy"
+        with diag.span("render.word_copy", source=str(docx)):
+            src = self._copy(Path(docx))
+        self.stage = "word_open"
+        options, links = None, None
+        try:
+            options = self.app.Options
+            links = bool(options.UpdateLinksAtOpen)
+            options.UpdateLinksAtOpen = False
+        except Exception:  # noqa: BLE001 — a Word without the option updates no links at opening anyway
+            links = None
+        try:
+            with diag.span("render.word_open", source=str(docx), temporary=str(src), repair="repair" in actions):
+                doc = self.app.Documents.Open(str(src), ConfirmConversions=False, ReadOnly=False,
+                                              AddToRecentFiles=False, Visible=False, OpenAndRepair="repair" in actions,
+                                              NoEncodingDialog=True)
+        except BaseException:
+            self.failure_stage = self.stage
+            raise
+        finally:
+            if links is not None:
+                try:
+                    options.UpdateLinksAtOpen = links
+                except Exception:  # noqa: BLE001
+                    pass
+        report = []
+        try:
+            tracking = None                      # the document's own setting, once it could be read and turned off
+            for action in actions:
+                if tracking is None:
+                    try:
+                        was = bool(doc.TrackRevisions)
+                        doc.TrackRevisions = False
+                        tracking = was
+                    except Exception:  # noqa: BLE001 — a protected document: asked again after its protection is off
+                        tracking = None
+                self.stage = "word_action_" + action
+                with diag.span("render.word_action", action=action) as outcome:
+                    count, note = COMMANDS[action](doc)
+                    outcome.update(count=int(count), note=str(note or ""))
+                report.append({"action": action, "count": int(count), "note": str(note or "")})
+            if tracking:
+                doc.TrackRevisions = True
+            self.stage = "word_save"
+            with diag.span("render.word_save", output=str(out)):
+                try:
+                    doc.SaveAs2(str(out), FileFormat=WD_FORMAT_XML_DOCUMENT, AddToRecentFiles=False)
+                except AttributeError:           # a Word older than 2010
+                    doc.SaveAs(str(out), FileFormat=WD_FORMAT_XML_DOCUMENT, AddToRecentFiles=False)
+        except BaseException:
+            self.failure_stage = self.stage
+            raise
+        finally:
+            self.stage = "word_close"
+            with diag.span("render.word_close", source=str(docx)):
+                doc.Close(SaveChanges=0)
+        return report
+
+
 def render_pdfs(files: Sequence[Path], out_dir: Path, log: Optional[Callable[[str], None]] = None,
                 detail: Optional[Callable[[str], None]] = None, timeout: Optional[float] = None) -> Dict[Path, Path]:
     """{docx: pdf} for the files Word rendered. The files are shared over up to ``word_worker.word_instances``

@@ -19,6 +19,8 @@ export interface WordChangeLine {
 
 export const NO_WORDS_CHANGE = "No words change: the checker read the same words in this copy as in the original.";
 export const WORDS_CHANGE_TITLE = "Words the method changes, as the independent checker read them:";
+/** The same heading for a copy Word made (`samples[].made_by` "word", Obliterate's named Word actions). */
+export const WORD_WORDS_CHANGE_TITLE = "Words Word's actions change, as the independent checker read them:";
 /** The same two sentences for a plan with a raw XML edit (`samples[].raw_xml`): its words are listed, not predicted. */
 export const RAW_NO_WORDS_CHANGE =
   "The raw XML edit changes no words: in the parts it edits, the checker read the same text in this copy as in the original — the words of every paragraph and any other text between tags. Values it sets in attributes are in the edit's own sentence.";
@@ -29,7 +31,8 @@ export const PART_NO_WORDS_CHANGE =
 export const PART_WORDS_CHANGE_TITLE = "Words the replaced part changes, as the independent checker read them:";
 
 /** The two sentences a sample's word list is shown under: a custom method's, a raw XML edit's, or a replaced part's. */
-export function wordsHeadings(sample: Pick<Sample, "raw_xml" | "raw_what">): { title: string; none: string } {
+export function wordsHeadings(sample: Pick<Sample, "raw_xml" | "raw_what" | "made_by">): { title: string; none: string } {
+  if (sample.made_by === "word") return { title: WORD_WORDS_CHANGE_TITLE, none: NO_WORDS_CHANGE };
   if (!sample.raw_xml) return { title: WORDS_CHANGE_TITLE, none: NO_WORDS_CHANGE };
   return sample.raw_what === "part"
     ? { title: PART_WORDS_CHANGE_TITLE, none: PART_NO_WORDS_CHANGE }
@@ -50,6 +53,7 @@ export function wordChangeLine(change: TextChange): WordChangeLine {
   else if (change.block === "gone") notes.push(removed ? "the whole paragraph" : "an empty paragraph removed");
   else if (!removed && !added) notes.push("only the spacing changes, no words");
   if (change.tracked) notes.push("in the copy's tracked changes");
+  if (change.settled) notes.push("a tracked change of the original, settled in the copy");
   return { where: change.where || change.part, removed, added, note: notes.join(", ") };
 }
 

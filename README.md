@@ -362,7 +362,26 @@ mode you last used (Safe the first time; never Obliterate).
   the checks: a part that is no longer well-formed XML, or a reference left pointing at nothing, shows **Did not
   pass**, and in this mode the copy is still created, marked **UNVERIFIED**. None of these tools uses AI or needs
   an API key, nothing they read is sent anywhere, and Claude is never told of them and cannot use them. They are
-  never remembered: the next time you choose Obliterate the box is empty again. Obliterate is the last rung of a ladder —
+  never remembered: the next time you choose Obliterate the box is empty again. While the mode is on, each document
+  also carries **Word actions**: a fixed menu of things Microsoft Word itself does to a copy — *Open and repair,
+  then save*; *Remove protection*; *Accept all tracked changes*; *Reject all tracked changes*; *Update fields*;
+  *Unlink fields* (headers and footers keep theirs live, for their page numbers and running titles); *Turn automatic
+  numbers into typed text*; *Leave compatibility mode*; *Turn text boxes into plain text*; *Delete drawn shapes*
+  (pictures, charts and embedded objects stay). Tick the actions (they run in the order you tick them, *Open and
+  repair* first), tick **Also run on the other documents** if they should get them too, and press **Run in Word**.
+  No AI is used and no API key is needed; Claude may also name the same actions in a plan of its own. Nothing else
+  can be asked of Word: no script is written for it by you or by Claude, and an action that is not on the menu is
+  refused. Word opens a private copy of the document — never your file — in an instance of its own, with macros
+  disabled and links not updated, and saves the result under a new name. Because Word saves the whole file again,
+  nothing is predicted: the copy is made first, and the chat and the copy's card list the words it adds and removes
+  and what else it changes, as the independent reader found them (it pairs the parts by their place in the document
+  and sets Word's own save marks aside, so a save that changes nothing reads as nothing changed), with Word's own
+  count of what it did shown apart, as Word's. **Create edited copies** then delivers that same copy without running
+  Word again, marked **UNPROVEN** (or **UNVERIFIED** if it does not open as a file). A document Word cannot finish,
+  or finds nothing to do in, gets no copy and Word's reason. Nothing else can be planned in the same approval:
+  whatever the document still needs is your next request, on the copy Word made — and when you ran the action on a
+  document from your to-do list, the pass stays open and **Continue** plans the request it was set aside from on that
+  copy. Needs Microsoft Word on this computer. Obliterate is the last rung of a ladder —
   Safe first, Default for what Safe could not take, Obliterate for the one or two documents neither could — so it
   also starts from the to-do list: **Obliterate this one**, beside a document there, opens the same warning and then
   turns the mode on for that one document, the request it was set aside from standing and every other document,
@@ -630,6 +649,14 @@ recorded for the requests that follow.
   replaced, never added or removed. The part browser shows XML indented for reading (the file's own bytes are what
   Save writes), 400 lines to a page, lists a part over 32 MB without showing it, and lists up to 200 lines for a
   search. A replacement cannot be saved as a step of a recipe.
+- Obliterate's Word actions need Microsoft Word on this computer and are limited to the menu: nothing else can be
+  asked of Word. A plan of Word actions holds nothing else (no other operation, step or layout), so a change that
+  needs Word and then something more is two requests. Word may take up to 5 minutes a document. A restriction set
+  with a password is not removed (Word needs the password; a raw XML edit can take the restriction out of the
+  settings part). Unlink fields leaves headers and footers alone; update fields skips a field that reads another
+  file or asks a question; text boxes that are in line with the text, or inside a drawing canvas, are left as they
+  are. A copy Word made is never called verified, and its run cannot be saved as a step of a recipe. No test machine
+  has Word, so each action's behaviour on real documents is proven only by your own runs (docs/BACKLOG.md).
 - The raw XML edit exists in Obliterate mode only. Its XPath is XPath 1.0 over a fixed table of prefixes (others can
   be declared with the edit), at most 1,000 characters, with 2 seconds to run on a part; inside `[ ]` it may not
   start a path at the root of the part, and it may not use the `following` or `preceding` axis. It changes one XML

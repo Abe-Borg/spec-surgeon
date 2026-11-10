@@ -10,6 +10,8 @@ import {
   type TraySection,
 } from "../lib/workbench";
 import { PARTS_BUTTON, partsTip } from "../lib/handsOn";
+import { WORD_BUTTON, wordTip } from "../lib/wordActions";
+import type { WordMenu } from "../types";
 import { primaryBtn, quietBtn } from "./ModalShell";
 import Tip from "./Tip";
 
@@ -38,6 +40,11 @@ interface Props {
   /** Obliterate's hands-on tools are on: each document carries **Parts**, its read-only part browser. Absent
    *  otherwise. */
   onParts?: (attachment: Attachment) => void;
+  /** Obliterate mode: each document carries **Word actions**, the menu of named actions Word itself runs on a copy
+   *  (lib/wordActions.ts). Absent in Safe and Default. */
+  onWord?: (attachment: Attachment) => void;
+  /** The menu the view carries, for the button's tip (Word may not be on this computer). */
+  word?: WordMenu | null;
 }
 
 const BUSY_TIP = "Finish or stop the current work first";
@@ -74,6 +81,8 @@ function AttachmentCard({
   showKind,
   onRemove,
   onParts,
+  onWord,
+  word,
 }: {
   attachment: Attachment;
   scope: "" | "To do" | "Working on";
@@ -84,6 +93,8 @@ function AttachmentCard({
   showKind: boolean;
   onRemove: (attachment: Attachment) => void;
   onParts?: (attachment: Attachment) => void;
+  onWord?: (attachment: Attachment) => void;
+  word?: WordMenu | null;
 }) {
   const refused = attachment.state === "refused";
   const tag = showKind ? kindTag(attachment) : "";
@@ -109,6 +120,18 @@ function AttachmentCard({
           <p className="mt-0.5 text-[12px] leading-snug text-err">{attachment.reason || "This file was left out."}</p>
         )}
       </div>
+      {onWord && attachment.kind === "document" && !refused && (
+        <Tip tip={wordTip(attachment.name, false, word ?? null)}>
+          <button
+            type="button"
+            onClick={() => onWord(attachment)}
+            data-capability="word.actions"
+            className="rounded-md border border-err/40 px-1.5 py-0.5 text-[11px] whitespace-nowrap text-err transition-colors hover:bg-err/10"
+          >
+            {WORD_BUTTON}
+          </button>
+        </Tip>
+      )}
       {onParts && attachment.kind === "document" && !refused && (
         <Tip tip={partsTip(attachment.name, false)}>
           <button
@@ -225,6 +248,8 @@ export default function DocumentsTray({
   hasCopies,
   blocked,
   onParts,
+  onWord,
+  word,
 }: Props) {
   const held = busy || uploading || !!blocked;
   const holdTip = uploading ? "Reading the files you added…" : busy ? BUSY_TIP : blocked;
@@ -252,6 +277,8 @@ export default function DocumentsTray({
             showKind={section !== "template"}
             onRemove={onRemove}
             onParts={section === "documents" ? onParts : undefined}
+            onWord={section === "documents" ? onWord : undefined}
+            word={word}
           />
         ))}
       </ul>

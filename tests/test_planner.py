@@ -139,7 +139,7 @@ def test_catalog_and_schema_cover_every_op():
         assert sorted(consts) == sorted(offered)
     # a hands-on tool (replace_part) is no conversation's in any mode: the window builds its plan
     assert set(OPS) - set(op_catalog(unguarded=True)["ops"]) == {"replace_part"}
-    assert set(OPS) - set(op_catalog()["ops"]) == {"edit_xml", "replace_part"}
+    assert set(OPS) - set(op_catalog()["ops"]) == {"edit_xml", "replace_part", "word_action"}
     assert {e["request"] for e in cat["worked_examples"]} >= {"change all font to Arial", "remove all headers and footers"}
     json.dumps(cat)
 

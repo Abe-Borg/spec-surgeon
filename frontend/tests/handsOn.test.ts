@@ -101,12 +101,14 @@ test("a replaced part's listing has its own headings, never a method's or a raw 
 });
 
 test("the warning can be confirmed without a key for what uses no AI", () => {
+  // the mode always holds something that uses no AI (the Word actions beside each document), so no key is needed
+  // to turn it on; the note says what works without one and what does not
   assert.equal(canTurnOnObliterate(true, false, false), true);
-  assert.equal(canTurnOnObliterate(false, false, false), false);
+  assert.equal(canTurnOnObliterate(false, false, false), true);
   assert.equal(canTurnOnObliterate(false, true, false), true);
   assert.equal(canTurnOnObliterate(false, false, true), true);
   assert.equal(obliterateKeyNote(true, false, true), "");
-  assert.match(obliterateKeyNote(false, false, true), /the hands-on tools work without one \(no AI is used for them\)/);
+  assert.match(obliterateKeyNote(false, false, true), /the Word actions beside each document and the hands-on tools work without one \(no AI is used for them\)/);
   assert.match(obliterateKeyNote(false, false, true), /the conversation in Obliterate mode needs the key/);
-  assert.equal(obliterateKeyNote(false, false), "Obliterate mode uses the AI: connect your API key in Settings first.");
+  assert.match(obliterateKeyNote(false, false), /^No API key is connected: the Word actions beside each document work without one/);
 });

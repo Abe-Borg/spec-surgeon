@@ -45,6 +45,7 @@ QUIET_ROUTES = frozenset({"/api/state", "/api/update", "/api/image", "/api/healt
 SLOW_REQUEST_MS = 2000
 WAITS_ON_USER = frozenset({"/api/pick", "/api/part/save"})    # a native dialog: slow because the user takes their time
 KNOWN_FAILURES = {"ValueError", "TrialsFailed", "TransformFailed", "SpecError", "FileNotFoundError", "PermissionError"}
+MODEL_FREE_JOBS = ("word_actions",)      # jobs that call no AI in a conversation mode: Stop ends the job itself
 NOT_BUILT = """<!doctype html><meta charset="utf-8"><title>Spec Surgeon</title>
 <body style="font-family:system-ui;margin:3rem;max-width:40rem"><h1>Spec Surgeon</h1>
 <p>The window's page has not been built. From the project folder:</p>
@@ -345,7 +346,10 @@ class WindowState:
                     "no_copy": bool(getattr(sv, "problem", "")),
                     # a plan with a raw XML edit (Obliterate): its words and other changes are listed from the copy
                     "raw_xml": bool(getattr(sv, "raw_xml", False)),
-                    "raw_what": str(getattr(sv, "raw_what", "") or "")}
+                    "raw_what": str(getattr(sv, "raw_what", "") or ""),
+                    # a copy Word made (Obliterate's named Word actions), and Word's own account of what it did
+                    "made_by": str(getattr(sv, "made_by", "") or ""),
+                    "word_account": list(getattr(sv, "word_account", None) or [])}
                    for sv in raw["samples"]]
         unverified = raw.get("unverified") or {}
         exported = raw.get("exported") or {}
@@ -364,6 +368,8 @@ class WindowState:
                    for source, output in raw["results"].items()]
         return {"version": self.version, "busy": busy, "stage": stage, "mode": raw.get("mode", "default"),
                 "hands_on": raw.get("hands_on") is True,
+                # Obliterate's menu of named Word actions (None in Safe and Default: nothing of it reaches them)
+                "word": raw.get("word") if isinstance(raw.get("word"), dict) else None,
                 "modes": task.available_modes(), "template": task.template_info(),
                 "left_untouched": [dict(e) for e in raw.get("left_untouched", [])],
                 "connection": {"ready": task.session.claude_ready(), "origin": self.key_origin},
@@ -449,7 +455,9 @@ class WindowState:
 
             # Stop in Safe mode, which calls no AI, ends the job itself (``stopping``); in Default and Obliterate it cuts
             # the AI call off and a file operation already running finishes first (docs/CONVERSATIONAL_DESKTOP.md)
-            whole_job = cancel if task.mode == "safe" else None
+            # (and a job of Obliterate's Word actions picked from the menu, which calls no AI either: Stop ends it
+            # between documents and terminates the private Word it started)
+            whole_job = cancel if task.mode == "safe" or action in MODEL_FREE_JOBS else None
 
             def target():
                 terminal: Dict[str, Any]
@@ -994,6 +1002,30 @@ def create_app(state: WindowState, *, dev: bool = False) -> FastAPI:
         except OSError as e:
             return error(upload_failure(name, e))
         return stream("replace_part", path=path, part=part, file=str(target))
+
+    # ---- Obliterate's named Word actions (docs/WEB_API.md, "Word actions"; ``word_actions.py``) ----
+    @app.post("/api/word-actions")
+    async def word_actions(request: Request):
+        """**Word actions**: ``{"path", "actions": [id, …], "every"?}`` — Word runs the named actions, in that
+        order, on a copy of the document (``every``: of each document in scope), and the copies are previewed: a job,
+        as a button's ``/api/recipe``, with no AI call. Nothing joins the working set until the preview is approved.
+        Refused outside Obliterate mode."""
+        if state.busy:
+            return busy_error()
+        if state.tutorial.active:
+            return error("End the tour first; this changes a copy of your own documents.", 409)
+        try:
+            body = await json_object(request)
+            actions = body.get("actions")
+            if not isinstance(actions, list) or not all(isinstance(a, str) for a in actions):
+                raise ValueError("Choose at least one Word action.")
+            path = str(body.get("path") or "")
+            state.task._word_document(path)                           # Obliterate is on, and the document is there
+            from .. import word_actions as menu
+            menu.check(actions)                                       # refused before any job starts
+        except ValueError as e:
+            return error(str(e))
+        return stream("word_actions", path=path, actions=list(actions), every=body.get("every") is True)
 
     @app.post("/api/handoff")
     async def hand_off(request: Request):

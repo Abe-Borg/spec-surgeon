@@ -518,13 +518,17 @@ class FileTrial:
     # Obliterate: nothing was predicted for this copy. Its record is the verifier's report of what differs
     # (``verify.run_difference``), and with no failed check it is UNPROVEN, never verified
     unproven: bool = False
+    # Obliterate's Word actions: Word's own account of what it did to this copy, one line per action
+    # (``word_actions.account``) — Word's words, kept apart from the verifier's record
+    notes: List[str] = field(default_factory=list)
 
     def to_dict(self):
         return {"source": str(self.source), "passed": self.passed, "problems": self.problems,
                 "output": str(self.output) if self.output else None, "output_md5": self.output_md5,
                 "identity": self.identity.to_dict() if self.identity is not None else None,
                 "goal_binding": self.goal_binding, "unverified": list(self.unverified),
-                **({"unproven": True} if self.unproven else {})}
+                **({"unproven": True} if self.unproven else {}),
+                **({"notes": list(self.notes)} if self.notes else {})}
 
 
 def trial(source: str, f: Path, select, params, workdir: Path, *, goal_contract=None, goal_binding=None,
@@ -656,6 +660,13 @@ class GeneratedOp:
     budget_stop: bool = False
     calls: int = 0
     check_rounds: int = 0
+    # Obliterate's named Word actions (``word_actions``; docs/BACKLOG.md O5): not a written method at all. The copies
+    # are made by Word running these actions, in this order, and everything after — the copies kept from before the
+    # approval, the verifier's report of each, the marks — is an Obliterate method's (``unguarded`` is set, ``source``
+    # is empty and no sandbox runs). ``origin``: where the plan came from (``Session.outcome_source``: ``"word"``,
+    # the user's own pick from the menu, with no AI call; ``"compiled"``, Claude's plan)
+    word_actions: List[str] = field(default_factory=list)
+    origin: str = ""
 
 
 # What the independent verifier said of a method's copies, in the words the plan's details and the notes the model
@@ -671,6 +682,18 @@ SAMPLES_UNVERIFIED = ("The copies were made and FAILED checks of their files. Ob
 SAMPLES_LAYOUT = ("The sample copies' rendered pages FAILED the page-layout check (V7): the words do not sit where the "
                   "method's plan says they will. Create is unavailable for this method (a copy that fails the check "
                   "is never delivered):")
+# The same two verdicts for copies Word made (Obliterate's named Word actions)
+WORD_UNPROVEN = ("Word made the copies and the independent reader found no fault in their files. Word saves the whole "
+                 "file again, so nothing was predicted and nothing proves the change is the one asked for: what each "
+                 "copy changes is listed before approval, and each copy is delivered marked UNPROVEN.")
+WORD_UNVERIFIED = ("Word made the copies, and checks of their files FAILED. Obliterate mode keeps them, and a copy "
+                   "that fails a check is delivered marked UNVERIFIED with its failed checks beside it:")
+VERDICT_HEADS = (SAMPLES_PASSED, SAMPLES_UNPROVEN, SAMPLES_UNVERIFIED, SAMPLES_LAYOUT, WORD_UNPROVEN, WORD_UNVERIFIED)
+
+
+def by_word(g: Any) -> bool:
+    """``g``'s copies are made by Word's named actions (``GeneratedOp.word_actions``), not by a written method."""
+    return bool(getattr(g, "word_actions", None))
 
 
 def unverified_lines(g: Any) -> List[str]:
@@ -689,6 +712,8 @@ def samples_verdict(g: Any, layout: Sequence[str] = ()) -> List[str]:
     ``SAMPLES_UNVERIFIED`` and then ``unverified_lines`` when a copy failed a check, else ``SAMPLES_UNPROVEN`` —
     never a pass."""
     failed = unverified_lines(g)
+    if by_word(g):
+        return [WORD_UNVERIFIED, *failed] if failed else [WORD_UNPROVEN]
     if getattr(g, "unguarded", False):
         return [SAMPLES_UNVERIFIED, *failed] if failed else [SAMPLES_UNPROVEN]
     return [SAMPLES_LAYOUT, *layout] if layout else [SAMPLES_PASSED]
@@ -817,6 +842,15 @@ def trial_options(g: GeneratedOp) -> Dict[str, Any]:
     if getattr(g, "unguarded", False):
         return {"unguarded": True, "attachments": list(getattr(g, "attachments", []) or [])}
     return {}
+
+
+def trial_of(g: GeneratedOp, f: Path, workdir: Path, **extra) -> FileTrial:
+    """One document's copy by ``g``, tried and read: Word's named actions when that is what ``g`` is
+    (``word_actions.trial``), else its code in the sandbox (``trial``) with the options every trial of it takes."""
+    if by_word(g):
+        from .word_actions import trial as word_trial
+        return word_trial(g.word_actions, Path(f), Path(workdir))
+    return trial(g.source, Path(f), g.select, g.params, Path(workdir), **trial_options(g), **extra)
 
 
 def _canonical_bindings(bindings):
@@ -1691,7 +1725,7 @@ def _kept_trial(kept: Optional[FileTrial], f: Path) -> FileTrial:
                          identity=kept.identity)
     return FileTrial(f, True, [], Path(kept.output), copy.deepcopy(kept.record), kept.output_md5, kept.identity,
                      kept.goal_binding, unverified=list(kept.unverified), plan=copy.deepcopy(kept.plan),
-                     unproven=kept.unproven)
+                     unproven=kept.unproven, notes=list(getattr(kept, "notes", []) or []))
 
 
 def _run_generated_files(g, files, out_dir, log, output_names, source_pins, acquisition_errors, renderer, do_render):
@@ -1842,7 +1876,8 @@ def _save_generated_run(g, files, results, out_dir):
     metadata = {"job": "generated", "request": g.request, "spec": None, "chain": None,
                 "approved_words": list(g.approved_words), "files": pending, "set_aside_count": len(pending),
                 "passed_count": sum(result.passed for result in results), "total_batch_files": len(files),
-                "generated": {"source": g.source, "select": g.select, "params": g.params, "name": g.name}}
+                "generated": {"source": g.source, "select": g.select, "params": g.params, "name": g.name,
+                              **({"word_actions": list(g.word_actions)} if by_word(g) else {})}}
     if g.goal_contract is not None:
         metadata.update(goal_contract=copy.deepcopy(g.goal_contract), goal_bindings=copy.deepcopy(g.goal_bindings),
                         enforce_goals=True)

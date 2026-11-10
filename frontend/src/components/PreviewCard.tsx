@@ -4,6 +4,7 @@ import type { Mark } from "../lib/review";
 import { pageCount } from "../lib/workbench";
 import { wordChangeLines, wordsHeadings } from "../lib/wordChanges";
 import { otherChangesTitle, sampleBadge } from "../lib/modes";
+import { WORD_ACCOUNT_TITLE } from "../lib/wordActions";
 import PaperCard from "./PaperCard";
 
 interface Props {
@@ -127,6 +128,25 @@ function OtherChanges({ sample, name }: { sample: Sample; name: string }) {
   );
 }
 
+/**
+ * Word's own account of what its named actions did to this copy (`samples[].word_account`): Word's count, under a
+ * heading that says whose words they are — never mixed into the independent reader's lists above it.
+ */
+function WordAccount({ sample, name }: { sample: Sample; name: string }) {
+  const said = sample.made_by === "word" ? (sample.word_account ?? []) : [];
+  if (said.length === 0) return null;
+  return (
+    <div className="mb-2 text-xs leading-relaxed" data-word-account="listed">
+      <p className="font-medium text-paper-ink">{WORD_ACCOUNT_TITLE}</p>
+      <ul className="mt-1 list-disc space-y-1 pl-4 text-paper-ink" aria-label={`What Word says it did in ${name}`}>
+        {said.map((line, index) => (
+          <li key={`${index}-${line}`}>{line}</li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
 /** The checkmark's hover text while the preview gets its copy, as every preview does until it carries the X. */
 export const GETS_COPY_TITLE = "Gets a copy: every preview does until you mark it with the red X";
 /** The X's hover text while the preview gets its copy. */
@@ -206,6 +226,7 @@ export default function PreviewCard({ sample, mark, canReview, onMark, onZoom }:
       )}
       <WordChanges sample={sample} name={name} />
       <OtherChanges sample={sample} name={name} />
+      <WordAccount sample={sample} name={name} />
       {sample.geometry?.note && (
         <p className={`mb-1 text-xs leading-relaxed ${sample.geometry.status === "FAIL" ? "text-err" : "text-paper-dim"}`}>
           {sample.geometry.note}

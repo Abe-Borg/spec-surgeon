@@ -692,8 +692,8 @@ apply. Your own wording may be placed, but the user must read it first: the app 
 user's own words or to the reply shown in the chat (your plain text and submit_editspec's message), and refuses a
 plan whose placed words appear in neither. A custom method still runs in the sandbox, on copies, and the independent
 checks still run on every copy; their failures are shown to the user beside the copy instead of stopping it. Built-in
-operations still refuse what they cannot predict: edit_xml (below) or a custom method is the way past such a refusal.
-Change only what the user asked for.
+operations still refuse what they cannot predict: edit_xml or a Word action (both below), or a custom method, is the
+way past such a refusal. Change only what the user asked for.
 
 RAW XML (edit_xml, this mode only). When one thing in a document's XML is what stops it (a content control bound to
 data, a text box Word keeps twice, a field, an attribute) clear exactly that thing with edit_xml: one part, an XPath
@@ -709,6 +709,21 @@ gone, and it is checked as always. A flat list of ops will not do that: every op
 document as it is. What the edit does to the words is not predicted: the app lists the words it adds and removes from
 the sample copies before the user approves. So say in your reply, in plain words, what the edit takes out or changes
 and why that clears the way, and never use it to make a change a built-in operation makes.
+
+WORD ACTIONS (word_action, this mode only). Microsoft Word itself can run a fixed menu of named actions on a copy of
+each document; the word_action operation lists them, and nothing else can be asked of Word. Use one when what stops a
+document is something Word's own command clears whole: every field unlinked or updated, every tracked change accepted
+or rejected, automatic numbers made typed text, protection or compatibility mode removed, text boxes made plain text,
+drawn shapes deleted, a file Word must repair. Prefer edit_xml whenever one stated edit of one part does the job: that
+edit is proven, and Word's work is only shown. A plan of Word actions holds nothing else: {"summary", "ops": [...]}
+whose ops are all word_action, in the order Word should run them, with no select, no stages and no layouts. Nothing is
+predicted for it: the app has Word make every document's copy before the user approves, lists the words each copy adds
+and removes and what else it changes, and delivers each copy marked UNPROVEN. So say in your reply exactly which
+actions will run and what each does to the document, and leave out (leave_out) every document that does not need
+them. Whatever else the request needs is the next request, planned on the copies Word made: to finish a document a
+plan refused, run the Word action that clears what stopped it, and once its copy is created submit the plan it was
+set aside from, unchanged. When no action on the menu fits, say which one is missing; never describe a Word command
+that is not on it.
 """
 
 # Obliterate mode rewrites the base rules it lifts instead of contradicting them at the end of the prompt: each pair
@@ -1786,7 +1801,9 @@ def compose_submission(spec: Any, batch: _Batch, sources: Sequence[str],
     ``shown``, the reply the user reads in the chat, and admits Obliterate's own operations (``_mode_errors``:
     ``edit_xml`` is refused in every other mode, whoever built the spec); ``hands_on`` (the plan the window builds
     while Obliterate's hands-on tools are on, never a model's submission) admits the hands-on tools' own operation,
-    ``replace_part``, which is refused everywhere else; everything else — validation, attached
+    ``replace_part``, which is refused everywhere else; a plan that names Obliterate's Word actions
+    (``word_action``) must hold nothing else and is not dry-planned (``word_actions.plan_problem``): Word makes
+    its copies before approval; everything else — validation, attached
     files, the dry plan, the composition — is the same. ``skips`` are the keys of the occurrences the user unticked in the preview
     (``skip_record_key``): a ``replace_table.skip`` entry that is not among them is refused in every mode."""
     from .chain import validate_chain
@@ -1802,6 +1819,22 @@ def compose_submission(spec: Any, batch: _Batch, sources: Sequence[str],
             # unsupported outcome the user would never see (the plan branch wins the turn); refused to the model
             return spec, ["a submission is either steps or layouts to run, or a question / an unsupported outcome, "
                           "never both: drop the stages or layouts, or drop the questions / unsupported"]
+        return spec, []
+    from . import word_actions
+    if word_actions.names_word(spec):
+        # Obliterate's named Word actions (docs/BACKLOG.md O5): a plan of their own, which nothing dry-plans — Word
+        # makes every document's copy before approval (``gui.Session._word_copies``). Beside any other operation, in
+        # a step or a layout, it is refused: nothing can be predicted for what follows a file Word saved again.
+        why = word_actions.plan_problem(spec)
+        if why:
+            return spec, ["[word-alone] " + why]
+        try:
+            validate_spec(spec)
+        except SpecError as e:
+            return spec, [f"[{e.code}] {e.reason}"]
+        if not word_actions.available():
+            return spec, ["[word-missing] " + word_actions.NO_WORD + " Plan it another way (a raw XML edit, a custom "
+                          "method), or say that this change needs Word."]
         return spec, []
     if isinstance(spec.get("layouts"), list):
         return _check_layouts(spec, batch, sources, leave_out, unguarded, shown, skips)

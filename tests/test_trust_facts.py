@@ -164,6 +164,7 @@ def expected() -> dict:
         "partPageLines": const("hands_on.py", "PAGE_LINES"),
         "partSearchHits": const("hands_on.py", "SEARCH_HITS"),
         "maxShownPartMB": const("hands_on.py", "MAX_SHOWN_BYTES") // MIB,
+        "wordActionMinutes": int(const("word_actions.py", "TIMEOUT_S")) // 60,
         "maxTableOrPictureMB": const("inputs.py", "MAX_BYTES") // MIB,
         "maxDocxMB": class_const("package_limits.py", "ArchiveLimits", "max_archive_bytes") // MIB,
         "wordTimeoutSeconds": int(const("render/word_worker.py", "DEFAULT_TIMEOUT")),

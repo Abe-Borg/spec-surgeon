@@ -57,6 +57,11 @@ class TransformFailed(RuntimeError):
         super().__init__(self.PREFIX + details)
 
 
+class WordActionsFailed(RuntimeError):
+    """Obliterate's named Word actions made no copy of any document (Word is not there, or it stopped on every one,
+    or found nothing to do): nothing is previewed, the plan is void, and the message says why per document."""
+
+
 class TrialsFailed(RuntimeError):
     """A transform tried on the batch's sample files (``Session._prove``: sandbox + the full suite) did not pass on
     every one — a recorded refusal naming each failing sample, never a defect. Nothing changed in the session."""
@@ -160,7 +165,8 @@ class Session:
     outcome_source: str = ""                      # where the outcome came from: "compiled" (the conversation),
                                                   # "recipe" (a Safe-mode button: ``model_free``), "saved" (a saved
                                                   # recipe: ``model_free`` too), "hands-on" (Obliterate's Replace
-                                                  # this part: ``model_free`` too), "" (none, or a test)
+                                                  # this part: ``model_free`` too), "word" (Obliterate's Word actions
+                                                  # picked from the menu: ``model_free`` too), "" (none, or a test)
     left_out: List[Path] = field(default_factory=list)   # documents the user left out of the request: the plan, its
                                                   # preview and its run cover the others (``planned_files``)
     left_out_reasons: Dict[str, str] = field(default_factory=dict)   # str(resolved path) → why a Safe-mode button
@@ -276,10 +282,10 @@ class Session:
     @property
     def model_free(self) -> bool:
         """The outcome is a Safe-mode button's (``recipes``), a saved recipe's (``saved_recipes``, source
-        ``"saved"``) or a hands-on tool's (Obliterate's Replace this part, source ``"hands-on"``): its preview and its
-        run make no AI call — no visual check of the pages, no investigation or recovery of the documents it sets
-        aside."""
-        return self.outcome_source in ("recipe", "saved", "hands-on")
+        ``"saved"``), a hands-on tool's (Obliterate's Replace this part, source ``"hands-on"``) or the user's own pick
+        from Obliterate's menu of Word actions (source ``"word"``): its preview and its run make no AI call — no
+        visual check of the pages, no investigation or recovery of the documents it sets aside."""
+        return self.outcome_source in ("recipe", "saved", "hands-on", "word")
 
     def outcome_key(self) -> Any:
         """What the approval token is taken over beside the files: the spec, a chain's key, or the plan per layout."""
@@ -593,9 +599,18 @@ class Session:
         if approval_token(pending["key"], self._pending_files(pending)) != pending["token"]:
             raise ValueError("The original files changed; press Preview to prepare the transform again.")
         message = self._generate_custom(pending, log, render)
+        self._note_generated()
+        return message
+
+    def _note_generated(self) -> None:
+        """What the conversation hears once a method's copies are made — a written method's, or Word's named
+        actions' — and what its transcript shows: the verdict, the words the copies add and remove, what else they
+        change and the documents that got no copy, each from the independent reader's record."""
         if self.conversation is not None:
-            from .codegen import samples_verdict, unverified_lines
+            from .codegen import by_word, samples_verdict, unverified_lines
             from .preview import layout_failures, no_copy_lines, shown_changes_lines, text_changes_lines
+            word = by_word(self.generated)
+            made = "Word made the copies" if word else "Custom transform prepared"
             failed = unverified_lines(self.generated)
             # samples whose rendered pages failed V7 in the preview: never called passed either (a method written in
             # Safe or Default mode; an Obliterate method predicts no layout)
@@ -604,14 +619,17 @@ class Session:
                 # Obliterate: a method kept with failed checks is never called passed — this note is what the model
                 # plans on next turn, and its transcript line is what the user reads
                 self.conversation.note("\n".join(samples_verdict(self.generated, layout)),
-                                       display="Custom transform prepared, with failed checks — "
+                                       display=f"{made}, with failed checks — "
                                        + "; ".join(failed)
                                        + ". Review the preview before Run: a copy that fails a check is delivered "
                                          "marked UNVERIFIED.")
             elif getattr(self.generated, "unguarded", False):
                 # Obliterate: nothing was predicted, so the copies are shown, never called verified
                 self.conversation.note("\n".join(samples_verdict(self.generated)),
-                                       display="Custom transform prepared. Nothing proves its change is the one asked "
+                                       display="Word made the copies. Nothing proves the change is the one asked "
+                                       "for: review what each copy changes before Run; the copies are delivered "
+                                       "marked UNPROVEN." if word else
+                                       "Custom transform prepared. Nothing proves its change is the one asked "
                                        "for: review what each copy changes before Run; its copies are delivered "
                                        "marked UNPROVEN.")
             elif layout:
@@ -625,32 +643,32 @@ class Session:
             # the words the method's sample copies add and remove, as the independent checker read them (never the
             # method's or the model's account): a note of its own, so the transcript keeps them beside the verdict and
             # the model hears them next turn; the window says them before the button (``DocumentTask._say_text_changes``)
-            words = text_changes_lines(getattr(self.generated_preview, "samples", None) or [])
+            from .preview import maker_heads
+            heads = maker_heads(self.generated)
+            words = text_changes_lines(getattr(self.generated_preview, "samples", None) or [], heads[0])
             if words:
                 self.conversation.note("\n".join(words))
             # Obliterate: what else each copy changes (the verifier's D1 report), the model hearing it too
-            other = shown_changes_lines(getattr(self.generated_preview, "samples", None) or [])
+            other = shown_changes_lines(getattr(self.generated_preview, "samples", None) or [], head=heads[1])
             if other:
                 self.conversation.note("\n".join(other))
             none = no_copy_lines(getattr(self.generated_preview, "samples", None) or [])
             if none:
                 self.conversation.note("\n".join(none))
             self._save_chat()
-        return message
 
     @staticmethod
     def _every_copy(g, files: Sequence[Path], folder: Path, log: Log) -> None:
         """An Obliterate method's copy of every document, in the documents' order: the writer's trials of the samples
         as they are, and one trial now of each other document (``folder``). A document whose copy cannot be made keeps
         the reason (its preview says so, and Create sets it aside)."""
-        from .codegen import trial, trial_options
+        from .codegen import trial_of
         made = {Path(t.source).resolve(): t for t in g.trials}
         rest = [f for f in files if Path(f).resolve() not in made]
         if rest:
             log(f"Making the method's copy of the other {len(rest)} document(s)…")
         for i, f in enumerate(rest):
-            made[Path(f).resolve()] = trial(g.source, Path(f), g.select, g.params, folder / f"{i:03d}",
-                                            **trial_options(g))
+            made[Path(f).resolve()] = trial_of(g, Path(f), folder / f"{i:03d}")
         g.trials = [made[Path(f).resolve()] for f in files if Path(f).resolve() in made]
 
     def _pending_files(self, pending) -> List[Path]:
@@ -734,14 +752,14 @@ class Session:
         are taken BEFORE the trials, so a file that changes while they run voids them. Raises ``exc`` (``TrialsFailed``,
         a RuntimeError) naming every sample that fails; changes nothing in the session. Returns (token, inputs,
         trials)."""
-        from .codegen import trial, trial_options
+        from .codegen import trial_of
         from .preview import approval_inputs, _approval_token_from_inputs
         key = self._generated_key(g)
         inputs = approval_inputs(key, files)
         token = _approval_token_from_inputs(key, inputs)
-        trials = [trial(g.source, f, g.select, g.params, folder / f"{i:02d}", **trial_options(g),
-                        **({"goal_binding": g.goal_bindings.get(str(f))}
-                           if getattr(g, "goal_contract", None) is not None else {})) for i, f in enumerate(samples)]
+        trials = [trial_of(g, f, folder / f"{i:02d}",
+                           **({"goal_binding": g.goal_bindings.get(str(f))}
+                              if getattr(g, "goal_contract", None) is not None else {})) for i, f in enumerate(samples)]
         bad = [f"{t.source.name}: {'; '.join(t.problems[:2])}" for t in trials if not t.passed]
         # an Obliterate method is tried on every document, and one it cannot take keeps its reason while the others
         # go on (its preview says why; Create gives it no copy): only a method that makes no copy at all is refused
@@ -767,11 +785,15 @@ class Session:
         that stops leaves nothing runnable (Preview tries the transform again)."""
         from .preview import preview_generated
         # a new transform takes the documents left out with it; one tried or previewed again keeps the outcome's own
-        self._set_outcome(generated=g, left_out=self.left_out if left_out is None else left_out)
+        # (and why each was left out, when the app's own plan said so: Word actions run on one document)
+        reasons = dict(self.left_out_reasons)
+        self._set_outcome(generated=g, source=getattr(g, "origin", ""),
+                          left_out=self.left_out if left_out is None else left_out)
+        self.left_out_reasons = {k: v for k, v in reasons.items() if Path(k) in set(self.left_out)}
         self.generated_intent = intent
         self.generated_preview = preview_generated(g, out / "preview", "auto", render)
         log(f"Preview log: {out / 'preview' / 'logs' / 'preview.log'}")
-        if render and self.visual_check:
+        if render and self.visual_check and not self.model_free:
             self._visual_check(self.generated_preview, intent, out / "preview", log)
         self.generated_token, self.generated_inputs = token, inputs
 
@@ -830,13 +852,19 @@ class Session:
                   or bool(getattr(self.generated_preview, "rendered", False)) != bool(render)):
                 self._preview_again(render, log)        # Render pages changed: pages and the visual check follow it
             gp = self.generated_preview
+            from .codegen import by_word
             return ((gp.to_text() + "\n\n") if gp is not None else "") + (
+                "Word made the copies; nothing proves the change is the one asked for. Review what each copy changes "
+                "before Run." if by_word(self.generated) else
                 # an Obliterate method predicts nothing: its copies are shown, never called verified
                 "AI-written transform prepared; nothing proves its change is the one asked for. Review what each "
                 "copy changes before Run." if getattr(self.generated, "unguarded", False) else
                 "AI-written transform verified. Review its preview before Run.")
         if self.spec is None:
             raise ValueError("nothing to preview — describe the change first")
+        from . import word_actions
+        if word_actions.plan_actions(self.spec) is not None:
+            return self._word_copies(render, log)       # Obliterate's named Word actions: the copies are the preview
         files = self.planned_files()              # the same set Run checks and runs (no template, nothing left out)
         out = self._session_dir()                 # beside the conversation's records
         from .editspec import is_chain
@@ -885,6 +913,79 @@ class Session:
             self._set_outcome(left_out=self.left_out)   # the documents left out stay out of the outcome plan too
             return self._after_turn(c.investigate_failure(evidence))
         return self.preview.to_text()
+
+    @_session_action
+    def _word_copies(self, render: bool, log: Log) -> str:
+        """A plan of Obliterate's named Word actions (``word_actions.plan_actions``) becomes the session's outcome as
+        its copies: Word runs the actions on a private copy of every planned document, in the documents' order
+        (``word_actions.trial``), each copy is read by the verifier's report and kept, and the preview is of those
+        copies — the path of an Obliterate custom method (``GeneratedOp.word_actions``), whose approval is of the
+        copies' own bytes and whose Create delivers them without running Word again. A document Word could not finish
+        (or found nothing to do in) gets no copy and keeps the reason. No copy at all: the plan is void and
+        ``WordActionsFailed`` says why."""
+        from . import llm, stopping, word_actions
+        from .codegen import GeneratedOp, unverified_lines
+        from .preview import approval_inputs, _approval_token_from_inputs, explain_approval_change
+        spec, source = self.spec, self.outcome_source
+        left_out, reasons = list(self.left_out), dict(self.left_out_reasons)
+        actions = word_actions.check(word_actions.plan_actions(spec))
+        files = self.planned_files()
+
+        def void(message: str):
+            if self.conversation is not None:
+                self.conversation.note(message)
+            self._set_outcome(left_out=left_out)
+            self._save_chat()
+            return WordActionsFailed(message)
+
+        if not word_actions.available():
+            raise void(word_actions.NO_WORD)
+        if not files:
+            raise void("No document is in this plan, so Word has nothing to run on.")
+        out = self._session_dir()
+        before = approval_inputs({}, files)
+        g = GeneratedOp(name="word-actions", passed=True, request=str(spec.get("request") or ""),
+                        proposal=word_actions.describe(actions), unguarded=True, word_actions=list(actions),
+                        origin=source)
+        log(f"Word is running {len(actions)} action(s) on a copy of {len(files)} document(s); nothing is saved over "
+            f"your files…")
+        for i, f in enumerate(files):
+            stopping.check("Word actions")
+            if llm.cancel_requested():
+                raise llm.UserCancelled("Stopped before Word opened the next document. No copy was created.")
+            log(f"Word: {f.name}…")
+            g.trials.append(word_actions.trial(actions, f, out / "word" / f"{i:03d}"))
+        if not any(t.passed for t in g.trials):
+            from .ui_feedback import plain_problem
+            raise void("Word made no copy, so there is nothing to preview. " + " ".join(
+                f"{Path(t.source).name}: {'; '.join(plain_problem(x) for x in t.problems[:2]).rstrip('.')}."
+                for t in g.trials[:12]))
+        key = self._generated_key(g)
+        inputs = approval_inputs(key, files)
+        try:
+            token = _approval_token_from_inputs(key, inputs)
+        except OSError:
+            token = ""
+        moved = explain_approval_change({"files": before["files"]}, {"files": inputs["files"]},
+                                        since="Word started on the documents")
+        if moved:
+            token, inputs = "", {**inputs, "files": before["files"]}
+            log("A file changed while Word was working — Preview makes every copy again on the files as they are "
+                "now:" + "".join(f"\n  • {w}" for w in moved))
+        intent = "\n".join([f"NAMED WORD ACTIONS, run by Word on a copy of each document, for: {g.request}",
+                            f"WHAT THEY DO: {g.proposal}"]
+                           + ([f"THE CONVERSATION:\n{self.conversation.brief()}"] if self.conversation else []))
+        self.left_out_reasons = reasons
+        self._show_generated(g, out, token, inputs, intent, render, log, left_out=left_out)
+        self._note_generated()
+        failed = unverified_lines(g)
+        made = sum(1 for t in g.trials if t.passed)
+        return (f"Word made {made} cop{'y' if made == 1 else 'ies'}"
+                + (", and checks of their files FAILED — " + "; ".join(failed) + " (a copy that fails a check is "
+                   "delivered marked UNVERIFIED with those checks beside it). " if failed else
+                   ". Nothing was predicted, so nothing proves the change is the one asked for: read what each copy "
+                   "changes; each is delivered marked UNPROVEN. ")
+                + "Run delivers these copies as they are (never over your files).")
 
     # ---- Claude's visual check: findings accompany preview consent ----
     def _intent(self) -> str:
@@ -993,7 +1094,9 @@ class Session:
             from .preview import approval_inputs, explain_approval_change
             what = explain_approval_change(self.generated_inputs or {},
                                           approval_inputs(self._generated_key(self.generated), self.planned_files()))
-            return ("a file changed since the AI-written transform was tested — press Preview again"
+            from .codegen import by_word
+            return (("a file changed since Word made the copies — press Preview again" if by_word(self.generated) else
+                     "a file changed since the AI-written transform was tested — press Preview again")
                     + "".join(f"\n  • {detail}" for detail in what))
         preview = self._current_review()[0]
         if preview is None:

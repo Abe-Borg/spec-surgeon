@@ -56,6 +56,8 @@ interface Props {
   tourActive?: boolean;
   /** Obliterate's hands-on tools are on: a document's **Parts** opens its read-only part browser. */
   onParts?: (attachment: Attachment) => void;
+  /** A document's **Word actions** (Obliterate mode): opens the menu of named Word actions for it. */
+  onWord?: (attachment: Attachment) => void;
 }
 
 /** Save as a recipe on the paper: the accent's outline and words, white inside. */
@@ -139,6 +141,7 @@ function Workbench({
   onSaveRecipe,
   tourActive = false,
   onParts,
+  onWord,
 }: Props) {
   const occurrences = view.occurrences ?? [];
   const safe = view.mode === "safe";
@@ -187,6 +190,8 @@ function Workbench({
           hasCopies={(view.working?.generation ?? 0) > 0}
           blocked={view.recovery_blocked ?? ""}
           onParts={view.hands_on ? onParts : undefined}
+          onWord={view.mode === "obliterate" && view.word ? onWord : undefined}
+          word={view.word}
         />
 
         {view.samples.length === 0 && view.results.length === 0 && (busy || !hasPlan) && (
