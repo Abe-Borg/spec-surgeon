@@ -26,6 +26,8 @@ import { composerRecipes } from "./lib/savedRecipes";
 import { EMPTY_SAFE_FORM, openForm, type SafeFormState } from "./lib/recipes";
 import ObliterateWarning from "./components/ObliterateWarning";
 import PartsModal from "./components/PartsModal";
+import WordActionsModal from "./components/WordActionsModal";
+import { wordRequest } from "./lib/wordActions";
 import { modeChoice } from "./lib/modes";
 import TourOverlay from "./components/TourOverlay";
 import { TOUR_COMPLETION_VERSION, preparedInputs, preparedRecipe, type TourStep } from "./lib/tour";
@@ -413,6 +415,25 @@ export default function App() {
     setPartsOf(null);
     void runJob(api.replacePart(doc.path, part, file), `Replace the part ${part} of ${doc.name} with my file ${file.name}.`, "replace_part");
   }, [partsOf, runJob]);
+  // Obliterate's named Word actions (lib/wordActions.ts): a document's menu, and the job it starts. No AI is used.
+  const [wordOf, setWordOf] = useState<Attachment | null>(null);
+  // the documents a plan covers now: those of a pass over the to-do list, else every one not waiting on the list
+  const documentsInScope = useMemo(() => {
+    const waiting = new Set(view.todo.map((item) => item.path));
+    const docs = view.attachments.filter((a) => a.kind === "document" && a.state !== "refused");
+    return (view.focus.length > 0 ? docs.filter((a) => view.focus.includes(a.path)) : docs.filter((a) => !waiting.has(a.path))).length;
+  }, [view.attachments, view.todo, view.focus]);
+  useEffect(() => {
+    if (view.mode !== "obliterate" || !view.word) setWordOf(null);
+  }, [view.mode, view.word]);
+  const onRunWord = useCallback((actions: string[], every: boolean) => {
+    const doc = wordOf;
+    const menu = view.word;
+    if (!doc || !menu || busyRef.current) return;
+    setWordOf(null);
+    const labels = actions.map((id) => menu.actions.find((a) => a.id === id)?.label ?? id);
+    void runJob(api.wordActions(doc.path, actions, every), wordRequest(doc.name, labels, every, documentsInScope), "word_actions");
+  }, [wordOf, view.word, runJob, documentsInScope]);
   const onHandOff = useCallback((paths: string[]) => applyView(api.handOff(paths)), [applyView]);
   // A to-do row's Obliterate this one: the same warning, naming the document, unless the mode is already on (its
   // warning was confirmed when it was turned on); then the pass begins over that one document.
@@ -812,6 +833,7 @@ export default function App() {
           onSaveRecipe={onOpenSaveRecipe}
           tourActive={tourActive}
           onParts={setPartsOf}
+          onWord={setWordOf}
         />
       </main>
       <input
@@ -883,6 +905,16 @@ export default function App() {
           onClose={() => setPartsOf(null)}
           onSave={onSavePart}
           onReplace={onReplacePart}
+        />
+      )}
+      {wordOf && view.mode === "obliterate" && view.word && (
+        <WordActionsModal
+          document={wordOf}
+          menu={view.word}
+          others={Math.max(0, documentsInScope - 1)}
+          busy={busy || tourActive}
+          onClose={() => setWordOf(null)}
+          onRun={onRunWord}
         />
       )}
       {todoWarning && (

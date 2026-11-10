@@ -17,7 +17,7 @@ import { TRUST_FACTS as F } from "./trustFacts.ts";
  * Bump whenever chapter or step ORDER changes: the resume record (lib/tourStorage.ts) keeps numeric indexes, and a
  * stale one would land a reload on another chapter than the one it was left at. A bump discards it.
  */
-export const TOUR_VERSION = 8;
+export const TOUR_VERSION = 9;
 
 /** The version a finished tour is recorded as (settings.json `tutorial_version`); bump it when the tour changes
  *  enough that someone who finished the old one should be invited again. */
@@ -653,6 +653,16 @@ export const TOUR: readonly TourChapter[] = [
         title: "Obliterate's hands-on tools",
         body:
           "Obliterate's warning has one more box, off unless you tick it: the hands-on tools (the mode's strip above the message box switches them too). Parts, beside each document, then shows the parts its file is made of — the XML as text, with a search. It is read-only: nothing in the window edits XML. Save this part writes one out as it is; you change it in an editor of your own, and Replace this part puts your file in its place in a copy, after a preview. The app proves the copy holds exactly your file's bytes and lists the words that changes before you approve. No AI is used, and Claude cannot use these tools.",
+      },
+      {
+        id: "word-actions",
+        capabilities: ["word.actions", "word.run", "word.every"],
+        mode: "explanatory",
+        anchor: "settings",
+        placement: "bottom",
+        title: "Obliterate's Word actions",
+        body:
+          "In Obliterate mode each document also carries Word actions: a fixed menu of things Microsoft Word itself does to a copy, such as accepting every tracked change, unlinking fields, turning text boxes into plain text or repairing the file. Tick the actions (they run in the order ticked), tick the box under the list if the other documents should get them too, and press Run in Word. No AI is used, and Word is asked for nothing off the menu. Word saves the whole file again, so nothing is predicted: the copy is made first, what it changes is listed from it before you approve, and Create delivers that same copy, marked UNPROVEN. Claude may name the same actions in a plan.",
       },
     ],
   },

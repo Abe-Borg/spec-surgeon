@@ -389,6 +389,17 @@ export const OBLITERATE_OPERATIONS: readonly TypicalOperation[] = [
   },
   {
     task:
+      "Have Word itself do it: unlink every field, accept every tracked change, turn automatic numbers into typed " +
+      "text, turn text boxes into plain text, delete drawn shapes, repair a file",
+    can: "Yes, with Word actions",
+    note:
+      "A fixed menu beside each document; pick the actions and Word runs them on a copy, with no AI. Word saves " +
+      "the whole file again, so nothing is predicted: what the copy changes is listed before you approve, and it " +
+      "is delivered marked UNPROVEN. Anything else the document needs is the next request, on that copy. Needs " +
+      "Microsoft Word on this computer.",
+  },
+  {
+    task:
       "Look inside a document and fix a part by hand: read its XML, save a part out, edit it in your own editor, " +
       "put it back",
     can: "Yes, with the hands-on tools",

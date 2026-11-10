@@ -56,11 +56,13 @@ OBLITERATE_ON = ("Obliterate mode is on. Claude may write wording and custom met
                  "and a copy whose checks fail is delivered marked UNVERIFIED instead of being held back. A custom "
                  "method predicts nothing: you approve the copies it made, and each is delivered marked UNPROVEN. "
                  "Claude may also plan a raw XML edit: the app proves the edit itself, and lists the words it changes "
-                 "before you approve. "
+                 "before you approve. Word itself can run named actions on a copy, from the Word actions menu beside "
+                 "each document or in a plan of Claude's: nothing is predicted for them, so you approve the copies "
+                 "Word made. "
                  "Copies only; your originals are never written. What was planned before is void.")
 OBLITERATE_OFF = ("Obliterate mode is off: every placed word is yours again, custom methods are formatting only, raw "
-                  "XML edits are refused, and a copy whose checks fail is held back. What was planned in Obliterate "
-                  "mode is void.")
+                  "XML edits and Word actions are refused, and a copy whose checks fail is held back. What was "
+                  "planned in Obliterate mode is void.")
 REPLAN = " Continue plans your request again under these rules, or say what you want."
 # Obliterate's hands-on tools (the owner's decision of 2026-11-10; docs/BACKLOG.md O4): off unless the user turns
 # them on with the mode, and gone with it
@@ -71,8 +73,18 @@ HANDS_ON_ON = ("Hands-on tools are on. Parts, beside each document, shows the pa
 HANDS_ON_OFF = "Hands-on tools are off."
 HANDS_ON_NEEDED = "The hands-on tools are off. Obliterate mode's warning turns them on, or its strip above the message box."
 PART_ONLY_THERE = "The part was replaced in {name} only; this document was not asked about."
+# Obliterate's named Word actions (the owner's decision of 2026-11-10; docs/BACKLOG.md O5), picked from the menu
+WORD_ONLY_THERE = "Word ran its actions on {name} only; this document was not asked about."
+WORD_LABEL = "Word actions"
+WORD_OBLITERATE_ONLY = "The Word actions are Obliterate mode's: turn Obliterate on first."
+# What a pass over the to-do list is told once Word has run on its document, and what the user is told with it
+WORD_THEN_SAME = ("A WORD ACTION WAS RUN ON THIS COPY SINCE IT WENT ON THE LIST (the changes already made list it), and "
+                  "the pass goes on. If that cleared what stopped the document, submit the plan it was set aside from "
+                  "as it is, with no step before it; it is planned on the copy Word made and checked as always.")
+WORD_PASS_GOES_ON = (" {names} {is_} still in your to-do pass: Continue plans the request {it} was set aside from on "
+                     "{this} cop{y}, or tell me what else {it} need{s}. Drop this request puts {it} back on the list.")
 # the plans the app builds itself in a conversation mode: pressed again, never handed to Claude as a request to plan
-OWN_PLANS = ("saved", "hands-on")
+OWN_PLANS = ("saved", "hands-on", "word")
 START_OVER = "Start over from the originals"   # the reply (a chip, a button) that drops the working copies
 LEFT_OUT_REASON = "You asked to leave it out of this request; it stays as it is."
 WORK_TODO = "Work on the documents I set aside"  # the reply (a chip, typed) that begins the pass over the to-do list
@@ -100,7 +112,9 @@ CLEAR_THEN_SAME = ("To finish a document one thing stopped: submit stages. The f
                    "exact); the next stage's spec is the plan above, unchanged (its own stages, in order, when it "
                    "has stages). The app plans each stage on the copy the one before it made and checks each. A plan "
                    "whose template operation carries bindings cannot follow another stage: clear the obstacle in one "
-                   "request, and ask for the plan on the copy in the next.")
+                   "request, and ask for the plan on the copy in the next. When a Word action (word_action) is what "
+                   "clears it, it cannot be a stage: submit the Word actions alone; once their copy is created the "
+                   "pass goes on, and you then submit the plan above as it is.")
 WHY_FAILED_COPY = "A copy taken as it failed its checks is not a step a recipe can repeat."
 # how What you've done so far and Undo name that change: the request the copy was made for, then this
 FAILED_COPY_TAKEN = "the copy that failed, taken as it is"
@@ -1000,7 +1014,8 @@ class DocumentTask:
             elif marks:
                 # UNPROVEN: a custom method made it in Obliterate mode, and nothing was predicted for it
                 earlier = all(str(m).startswith(EARLIER_COPY) for m in marks)
-                lines.append(f"{Path(d).name} is UNPROVEN (Obliterate mode): a custom method made "
+                maker = "Word's named actions" if any("Word made it" in str(m) for m in marks) else "a custom method"
+                lines.append(f"{Path(d).name} is UNPROVEN (Obliterate mode): {maker} made "
                              f"{'an earlier copy of it' if earlier else 'its copy'}, and what that changed was shown "
                              "to the user, not proven; plan on it with that in mind")
         return lines
@@ -1016,6 +1031,8 @@ class DocumentTask:
         why = self.focus.get("why") or {}
         case = self._case_note()            # Obliterate alone: what the engine recorded, and the worked example
         case = "\n\n" + case if case else ""
+        if self.focus.get("after_word") and self.mode == "obliterate":
+            case += "\n\n" + WORD_THEN_SAME  # a Word action ran on the copy since: the plan goes as it is
         if all((why.get(d) or {}).get("why", WHY_HELD) == WHY_HELD for d in self.focus["documents"]):
             return ("SET ASIDE AFTER A PREVIEW: the user looked at the before/after pages of the plan below for these "
                     "documents and said they need more work. Their request stands; their latest words say what should "
@@ -1187,12 +1204,16 @@ class DocumentTask:
         self.session.end_conversation()
 
     # ---- continue on the result ----
-    def _advance_generation(self, done: Optional[Sequence[str]] = None, request: Optional[str] = None) -> None:
+    def _advance_generation(self, done: Optional[Sequence[str]] = None, request: Optional[str] = None,
+                            keep_pass: bool = False) -> None:
         """The delivered copies become the working set: the next request builds on them, the originals stay as they
         are, and the model is told what was already done. The conversation that led here is over (its files are
         not the next request's). ``done``: the sentences of the change these copies carry when no plan is open to
         read them from (``use_failed_copy``: the plan the failed copy was made by), and ``request`` how What you've
-        done so far names the run (there: the request, and that the copy was taken as it failed)."""
+        done so far names the run (there: the request, and that the copy was taken as it failed). ``keep_pass``
+        (Obliterate's Word actions, run in a pass over the to-do list): the pass does not end with these copies —
+        its documents stay the only ones in scope and the request they were set aside from is the request again, to
+        be planned on the copies Word made (``_pass_goes_on``)."""
         moved: List[str] = []                                     # the originals whose copy this run delivered
         for original, output in self.results.items():
             if Path(output).is_file():
@@ -1238,8 +1259,15 @@ class DocumentTask:
             self.applied.setdefault(key, []).extend(done)         # these copies carry the change; no other copy does
         self.fresh = []                                           # every document now attached was there for this run
         self.generation += 1
-        self.decisions = []
-        self.focus = None                                         # a pass over set-aside documents ends with its copies
+        if keep_pass and self.focus:
+            # the pass goes on: the request its documents were set aside from stands, and Continue plans it on the
+            # copies Word made; the copies are in the working set already, and Undo takes them off as any run's
+            self.focus["after_word"] = self.generation      # (Undo back past it takes the note off: ``undo``)
+            self.decisions = list(self.focus.get("decisions") or [])
+            self.stage = "resume" if self.decisions else "done"
+        else:
+            self.decisions = []
+            self.focus = None                                     # a pass over set-aside documents ends with its copies
         self._sync()
         self.session._set_outcome()
         self.session.end_conversation()
@@ -1298,6 +1326,8 @@ class DocumentTask:
         if s.outcome_source == "recipe" and self._button:
             return {**empty, "steps": [saved_recipes.button_step(self._button, self._button_inputs,
                                                                  self.decisions[0] if self.decisions else "")]}
+        if s.generated is not None and getattr(s.generated, "word_actions", None):
+            return {**empty, "why_not": saved_recipes.WHY_WORD}     # Word's own actions: approved copy by copy
         if s.generated is not None or s.pending_custom_transform is not None:
             return {**empty, "why_not": saved_recipes.WHY_CUSTOM}
         if s.spec is None or s.recovery is not None:
@@ -1385,7 +1415,8 @@ class DocumentTask:
         if self.stage not in ("done", "empty", "resume") or self.session.recovery is not None:
             return ("Drop the request that is open first, or finish it."
                     if self.discard_kind() == "request" else "Finish the request that is open first.")
-        if self.focus:
+        if self.focus and int(self.focus.get("after_word") or 0) != self.generation:
+            # (a pass that goes on after Obliterate's Word actions: the copy Word just made in it can be undone)
             return "Finish the pass over your to-do list first."
         return ""
 
@@ -1509,6 +1540,8 @@ class DocumentTask:
             if working else []
         for key in point.get("todo_added", []):
             self.todo.pop(key, None)
+        if self.focus and int(self.focus.get("after_word") or 0) > self.generation:
+            self.focus.pop("after_word", None)   # the copy Word made in this pass is the one undone
         self._shown_again(point)
         self._before_button = self._pending_undo = None
         self._sync()
@@ -1545,7 +1578,7 @@ class DocumentTask:
 
     def perform(self, action, *, text="", token="", choice_id="", chip=False, hold=(), wording=None, recipe="",
                 inputs=None, skip=(), kind="", folder="", steps=None, rev=None, path="", part="", file="",
-                log=lambda _: None, events=None):
+                actions=(), every=False, log=lambda _: None, events=None):
         """Worker entry point. One ledger covers every nested model call and every turn. ``events`` is the window's
         live channel (docs/WEB_API.md: status, activity, text_delta, thinking_delta, message, plan, samples, results,
         question, cost); without one the job runs silently and the view says everything at the end. ``hold`` (the
@@ -1557,7 +1590,10 @@ class DocumentTask:
         ``kind`` and ``folder`` (the ``export`` action) are a clean export's kind and the folder it writes into: it is
         no request, so the request open, its spending and the stage are left as they are (``_export_job``). ``path``,
         ``part`` and ``file`` (the ``replace_part`` action) are a document, one of its parts and the file that takes
-        the part's place: Obliterate's hands-on tools, a plan the app builds with no AI call (``_replace_part``)."""
+        the part's place: Obliterate's hands-on tools, a plan the app builds with no AI call (``_replace_part``).
+        ``path``, ``actions`` and ``every`` (the ``word_actions`` action) are a document, the named Word actions to
+        run on its copy in order, and whether every other document in scope gets them too: Obliterate's menu of Word
+        actions, a plan the app builds with no AI call (``_word_actions``)."""
         self.problem = ""
         self._events = events
         self.save(in_progress=True)
@@ -1596,6 +1632,8 @@ class DocumentTask:
                     self._occurrences(skip, checkpointed_log)
                 elif action == "replace_part":
                     self._replace_part(path, part, file, checkpointed_log)
+                elif action == "word_actions":
+                    self._word_actions(path, actions, every, checkpointed_log)
                 else:
                     raise ValueError("Unknown task action")
         except stopping.Stopped:
@@ -2146,6 +2184,112 @@ class DocumentTask:
         diag.event("task.replace_part", document=attachment.path.name, part=part, bytes=chosen.stat().st_size)
         self._settle(log)
 
+    # ---- Obliterate's named Word actions (docs/BACKLOG.md O5) ----
+    def word_menu(self) -> Optional[Dict[str, Any]]:
+        """The menu of Word actions as the window shows it, in Obliterate mode alone: whether Word can be reached
+        here (asked once), why not when it cannot, and the actions in the menu's order. None in Safe and Default:
+        their view carries nothing of it."""
+        if self.mode != "obliterate":
+            return None
+        from . import word_actions
+        ready = word_actions.available()
+        return {"available": ready, "why": "" if ready else word_actions.NO_WORD, "actions": word_actions.menu(),
+                "minutes": int(word_actions.TIMEOUT_S // 60)}
+
+    def _word_document(self, path):
+        """The attached document a Word action is asked for, and its current file; refused outside Obliterate."""
+        if self.mode != "obliterate":
+            raise ValueError(WORD_OBLITERATE_ONLY)
+        key = str(Path(str(path)))
+        attachment = next((a for a in self.attachments
+                           if str(a.path) == key and not a.template and not a.reference and not a.refused), None)
+        if attachment is None:
+            raise ValueError("That document is not attached.")
+        return attachment, Path(self.current_of(attachment.path))
+
+    def _word_actions(self, path, actions, every, log):
+        """**Word actions**, Obliterate's menu (the owner's decision of 2026-11-10): the plan of ``word_action`` ops
+        built from the actions the user ticked, in the menu's order of their choosing, through the one gate
+        (``compose_submission(unguarded=True)``), then the preview — which for this plan is Word making every
+        planned document's copy now (``Session._word_copies``): each read by the independent reader, shown, and
+        delivered as shown when approved, marked UNPROVEN. No AI call (``Session.model_free``, source ``"word"``).
+        ``every``: the other documents in scope get the actions too; otherwise the one document, every other left
+        out. A choice that cannot be used is said in one message and nothing is previewed."""
+        from . import compiler, word_actions
+        attachment, current = self._word_document(path)
+        s = self.session
+        blocked = self._hands_on_blocked()          # the same rule: a plan of its own, after what is open is finished
+        if not blocked and not word_actions.available():
+            blocked = word_actions.NO_WORD
+        if blocked:
+            self._revision += 1
+            self.say(f"{WORD_LABEL}: {blocked}")
+            return
+        try:
+            chosen = word_actions.check(list(actions or []))
+        except ValueError as why:
+            self._revision += 1
+            self.say(f"{WORD_LABEL}: {why}")
+            return
+        files = s.files(outcome=False)
+        target = next((p for p in files if _same_file_key(p) == _same_file_key(current)), None)
+        if target is None:
+            self._revision += 1
+            if self.focus and str(attachment.path) not in self.todo:
+                names = ", ".join(Path(k).name for k in self.focus["documents"])
+                self.say(f"{WORD_LABEL}: a pass over your to-do list is open on {names}, and {attachment.path.name} "
+                         f"is not part of it. Finish the pass or drop it first.")
+            else:
+                self.say(f"{WORD_LABEL}: {attachment.path.name} waits on your to-do list, out of every plan. Put it "
+                         f"back, or use Obliterate this one, first.")
+            return
+        labels = [word_actions.ACTIONS[a].label for a in chosen]
+        several = every is True and len(files) > 1
+        where = f"every document ({len(files)})" if several else attachment.path.name
+        request = f"Run in Word on {where}: " + "; then ".join(labels) + "."
+        spec = {"request": request, "summary": word_actions.describe(chosen), "mode": "untracked",
+                "ops": [{"op": word_actions.OP, "params": {"action": a}} for a in chosen]}
+        left_out = ({} if several else
+                    {str(p): WORD_ONLY_THERE.format(name=attachment.path.name) for p in files if p is not target})
+        self._emit({"type": "status", "kind": "checking", "text": "Word is working on a copy…"})
+        batch = compiler._Batch(files, self.template(), input_files=self.references())
+        outcome, errors = compiler.compose_submission(spec, batch, [request], leave_out=list(left_out),
+                                                      unguarded=True)
+        if errors:
+            self._revision += 1
+            self.say(f"{WORD_LABEL} cannot be used here: " + "; ".join(errors[:3]))
+            return
+        focus = self.focus                          # a pass over the to-do list goes on: its document is the one
+        shown_before = (dict(self.results), self.stage)
+        s.end_conversation()
+        self.results = {}
+        self.say(request, "user")
+        self.say("Planned without AI. " + " ".join(word_actions.sentences(chosen)) + " Word saves the whole file "
+                 "again, so nothing is predicted: Word makes each copy now, on a private copy of the document, and "
+                 "what it changes is read from that copy and listed below, before the button. Up to "
+                 f"{int(word_actions.TIMEOUT_S // 60)} minutes a document.")
+        self.decisions = [request]
+        self._button, self._button_inputs = "", {}
+        self._running_recipe = None
+        s._set_outcome(spec=outcome, source="word", left_out=list(left_out), left_out_reasons=left_out)
+        cases = [(((focus or {}).get("case") or {}).get(k) or {}).get("code") for k in (focus or {}).get("documents", [])]
+        # (which refusal codes reach the Word actions: what the next menu item is decided from)
+        diag.event("task.word_actions", document=attachment.path.name, actions=chosen, every=several,
+                   case_codes=[c for c in cases if c])
+        try:
+            self._settle(log)
+        except stopping.Stopped:
+            self.results = shown_before[0]          # Stop: the window shows the copies it showed before the pick
+            raise
+        if s.generated is None and s.spec is None and not s.pending_custom_transform:
+            # Word made no copy at all (said by ``_settle``): the pick ends here with the window as it was; the pass,
+            # if any, waits as it did
+            self.decisions = list(focus.get("decisions") or []) if focus else []
+            self._invalidate()
+            self.results = shown_before[0]
+            if not self.decisions:
+                self.stage = "done" if self.results and self.generation else "empty"
+
     # ---- saved recipes ----
     def _recipe_blocked(self) -> str:
         """Why a saved recipe cannot run now; '' when it can. In Safe mode it replaces a waiting preview, as a button
@@ -2592,8 +2736,17 @@ class DocumentTask:
             if outcome.needs_preview:
                 self._emit({"type": "plan", "plan": self._plan_view()})    # the plan shows before any page renders
                 log("Preparing and checking the preview…")
-                s.make_preview(self.render, log,
-                               on_preview=lambda: self._emit({"type": "samples", **self._samples_view()}))
+                from .gui import WordActionsFailed
+                try:
+                    s.make_preview(self.render, log,
+                                   on_preview=lambda: self._emit({"type": "samples", **self._samples_view()}))
+                except WordActionsFailed as why:
+                    # Obliterate's Word actions made no copy: the plan is void (the session did that) and the reason
+                    # is said; the conversation, when there is one, has heard it and waits for the user's words
+                    self.say(str(why))
+                    self._collect_conversation()
+                    outcome = s.outcome()
+                    break
                 self._emit({"type": "samples", **self._samples_view()})     # again with Claude's visual findings
             else:
                 with self._conversation():
@@ -3137,19 +3290,41 @@ class DocumentTask:
         else:
             shaky = sum(1 for k in self.results if failed_marks(self.unverified.get(k)))
             shown = sum(1 for k in self.results if unproven_only(self.unverified.get(k)))
+            maker = "Word" if getattr(s.generated, "word_actions", None) else "a custom method"
+            # Obliterate's Word actions in a pass over the to-do list: the pass goes on with its document, which
+            # still waits for the plan it was set aside from (``_advance_generation(keep_pass=)``)
+            going = self._pass_goes_on()
             self.say(f"{n} document {'copy is' if n == 1 else 'copies are'} ready. You can open them, describe "
                      f"another change to make on top of them, or start over from the originals." +
                      (f" {shaky} {'was' if shaky == 1 else 'were'} delivered UNVERIFIED: a check failed, and each "
                       f"one's failed checks are beside it." if shaky else "") +
-                     (f" {shown} {'is' if shown == 1 else 'are'} UNPROVEN: a custom method made "
+                     (f" {shown} {'is' if shown == 1 else 'are'} UNPROVEN: {maker} made "
                       f"{'it' if shown == 1 else 'them'}, and what it changed was shown to you, not proven. Check "
                       f"{'it' if shown == 1 else 'each'} in Word before you use {'it' if shown == 1 else 'them'}."
-                      if shown else ""))
+                      if shown else "") +
+                     (WORD_PASS_GOES_ON.format(names=", ".join(Path(k).name for k in going),
+                                               is_="is" if len(going) == 1 else "are",
+                                               it="it" if len(going) == 1 else "they",
+                                               this="this" if len(going) == 1 else "these",
+                                               y="y" if len(going) == 1 else "ies",
+                                               s="s" if len(going) == 1 else "") if going else ""))
         self._attach_sibling(self._binned)      # each case file names a document of this run that took the change
-        self._advance_generation()
+        self._advance_generation(keep_pass=not beside and bool(self._pass_goes_on()))
         binned, self._binned = self._binned, []
         if not beside:
             self._offer_todo(binned)
+
+    def _pass_goes_on(self) -> List[str]:
+        """The documents of the pass over the to-do list that goes on after this run: Obliterate's Word actions
+        delivered a copy of every one of them, and each still waits for the plan it was set aside from (the pass is
+        where its case file is). [] for any other run: a pass ends with its copies."""
+        if not self.focus or not getattr(self.session.generated, "word_actions", None):
+            return []
+        documents = list(self.focus["documents"])
+        if not documents or any(not Path(self.results.get(k, "")).is_file() or k not in self.results
+                                for k in documents):
+            return []
+        return documents
 
     def _refused_now(self, held: Sequence[Path] = ()) -> List[tuple]:
         """At Create: the documents of the displayed plan its preview refused, or set aside because their sample
@@ -3288,9 +3463,11 @@ class DocumentTask:
         for item in s.last_trials or []:
             if item.passed and item.output:
                 self.results[str(self.origin_of(item.source))] = str(item.output)
-                # an Obliterate method's copy: its failed checks, and that nothing was predicted for it
+                # an Obliterate method's copy, or one Word made: its failed checks, and that nothing was predicted
+                from .word_actions import UNPROVEN_MARK as WORD_MARK
+                mark = WORD_MARK if getattr(s.generated, "word_actions", None) else UNPROVEN_MARK
                 marks = list(getattr(item, "unverified", None) or []) + (
-                    [UNPROVEN_MARK] if getattr(item, "unproven", False) else [])
+                    [mark] if getattr(item, "unproven", False) else [])
                 self._mark_unverified(str(self.origin_of(item.source)), marks)
 
     def pdf_info(self) -> Dict[str, Any]:
@@ -3326,8 +3503,9 @@ class DocumentTask:
         Obliterate method's other changes are said too: the counts, styles, numbering, settings and parts the
         independent reader found changed in each copy (``preview.shown_changes_lines``), and the documents it could
         make no copy of, each with the reason (``preview.no_copy_lines``)."""
-        from .codegen import SAMPLES_LAYOUT, SAMPLES_PASSED, SAMPLES_UNPROVEN, SAMPLES_UNVERIFIED, samples_verdict
-        from .preview import layout_failures, no_copy_lines, shown_changes_lines, text_changes_lines
+        from .codegen import VERDICT_HEADS, samples_verdict
+        from .preview import (layout_failures, maker_heads, no_copy_lines, shown_changes_lines, text_changes_lines,
+                              word_account_lines)
         s = self.session
         gp = s.generated_preview if s.generated is not None else None
         if gp is None or gp is self._words_said_for:
@@ -3335,15 +3513,18 @@ class DocumentTask:
         self._words_said_for = gp
         layout = layout_failures(getattr(gp, "samples", None) or [])
         if getattr(s.generated, "unguarded", False) or layout:
-            heads = (SAMPLES_PASSED, SAMPLES_UNPROVEN, SAMPLES_UNVERIFIED, SAMPLES_LAYOUT)
-            self.say("\n\n".join(line if line in heads else f"• {line}"
+            self.say("\n\n".join(line if line in VERDICT_HEADS else f"• {line}"
                                   for line in samples_verdict(s.generated, layout)))
-        lines = text_changes_lines(getattr(gp, "samples", None) or [])
+        words_head, other_head = maker_heads(s.generated)      # a custom method's copies, or Word's
+        lines = text_changes_lines(getattr(gp, "samples", None) or [], words_head)
         if lines:
             self.say("\n\n".join(lines))         # a paragraph each: the page shows a note of several as a block
-        other = shown_changes_lines(getattr(gp, "samples", None) or [])
+        other = shown_changes_lines(getattr(gp, "samples", None) or [], head=other_head)
         if other:
             self.say("\n\n".join(other))
+        said = word_account_lines(getattr(gp, "samples", None) or [])
+        if said:                                 # Word's own count, under a heading that says whose words they are
+            self.say("\n\n".join(said))
         none = no_copy_lines(getattr(gp, "samples", None) or [])
         if none:                                 # an Obliterate method's documents it could make no copy of
             self.say("\n\n".join(none))
@@ -3390,11 +3571,20 @@ class DocumentTask:
         assumptions = review_display.spec_assumptions(s.spec)
         if not changes and s.generated is not None:
             # a method kept with failed checks (Obliterate) is never called passed: the details name the checks
-            from .codegen import samples_verdict
+            from .codegen import by_word, samples_verdict
             from .preview import layout_failures
             layout = layout_failures(getattr(s.generated_preview, "samples", None) or [])
-            changes = [{"title": "Requested changes", "summary": s.generated.proposal,
-                        "details": [s.generated.request, *samples_verdict(s.generated, layout)]}]
+            if by_word(s.generated):
+                # Obliterate's named Word actions: one change per action, in the order Word ran them
+                from . import word_actions
+                verdict = samples_verdict(s.generated)
+                changes = [{"title": word_actions.ACTIONS[a].label, "summary": sentence,
+                            "details": [s.generated.request, *verdict]}
+                           for a, sentence in zip(s.generated.word_actions,
+                                                  word_actions.sentences(s.generated.word_actions))]
+            else:
+                changes = [{"title": "Requested changes", "summary": s.generated.proposal,
+                            "details": [s.generated.request, *samples_verdict(s.generated, layout)]}]
         if not changes:
             return []
         return [{"id": "", "label": "", "count": count, "files": [], "changes": changes, "assumptions": assumptions}]
@@ -3480,7 +3670,9 @@ class DocumentTask:
                              "changes": list(getattr(sv, "changes", None) or []),
                              "no_copy": bool(getattr(sv, "problem", "")),
                              "raw_xml": bool(getattr(sv, "raw_xml", False)),
-                             "raw_what": str(getattr(sv, "raw_what", "") or "")}
+                             "raw_what": str(getattr(sv, "raw_what", "") or ""),
+                             "made_by": str(getattr(sv, "made_by", "") or ""),
+                             "word_account": list(getattr(sv, "word_account", None) or [])}
                             for sv in samples],
                 "occurrences": self._occurrences_view(preview),
                 "warnings": list(dict.fromkeys(getattr(preview, "warnings", []) or [])),
@@ -3614,6 +3806,7 @@ class DocumentTask:
         states = self.export_states()
         waits = self._recovery_blocked() if self.obliterate_allowed and self.todo else ""   # asked once, for the rows
         return {"stage": self.stage, "mode": self.mode, "hands_on": self.mode == "obliterate" and self.hands_on,
+                "word": self.word_menu(),
                 "messages": list(self.messages),
                 "left_untouched": [{k: e[k] for k in ("path", "name", "reason")} for e in self.left_untouched]
                 if self.stage != "preview" else [],
@@ -4011,6 +4204,8 @@ class DocumentTask:
             cases = {k: c for k, v in focus["case"].items() if k in documents and (c := _restored_case(v))}
             if cases:
                 self.focus["case"] = cases
+        if self.focus is not None and type(focus.get("after_word")) is int:
+            self.focus["after_word"] = focus["after_word"]      # a Word action ran on its copy in this pass
 
     @staticmethod
     def _restored_undo(points) -> List[Dict[str, Any]]:

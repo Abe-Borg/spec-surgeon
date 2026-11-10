@@ -74,6 +74,9 @@ WHY_CHOSEN = ("It changes paragraphs chosen in particular documents by their out
               "others.")
 WHY_PART = ("It replaced a part of one document with a file you chose that time (a hands-on tool), so it cannot be "
             "repeated on others.")
+WHY_WORD = ("Word made its copies, and you approved each copy as it was shown, not a plan the engine checks. A recipe "
+            "keeps only plans the engine runs and checks as they are written; run the Word actions again when you "
+            "need them.")
 
 
 class RecipeRunError(ValueError):
@@ -151,6 +154,8 @@ def portable_plan(plan: Any) -> Tuple[Optional[Dict[str, Any]], str]:
                 return None, WHY_CAPITALS
             if o.get("op") == "replace_part":
                 return None, WHY_PART            # a hands-on tool: one document's part, a file chosen that time
+            if o.get("op") == "word_action":
+                return None, WHY_WORD            # Word's own actions: each copy approved as shown, nothing checked
             pred = (o.get("select") or {}).get("paragraphs") if isinstance(o.get("select"), dict) else None
             if isinstance(pred, dict) and "indices_by_document" in pred:
                 return None, WHY_CHOSEN          # read_outline's paragraphs, pinned to each document's bytes (N2)

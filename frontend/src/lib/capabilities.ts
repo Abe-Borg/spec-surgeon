@@ -87,6 +87,10 @@ export const END_USER_CAPABILITIES = [
   "handson.parts",
   "handson.save-part",
   "handson.replace-part",
+  // Obliterate's named Word actions (a fixed menu Word itself runs on a copy; no AI when picked here)
+  "word.actions",
+  "word.run",
+  "word.every",
   "window.reload",
 ] as const;
 

@@ -208,6 +208,17 @@ FAILURE_EXPLANATIONS: Dict[str, Tuple[str, str]] = {
         "The file chosen to replace a part (Obliterate mode's hands-on tools) holds exactly the bytes the part "
         "already has, so nothing would change. Save your changes to the file in your editor, then choose it again.",
     ),
+    "word-alone": (
+        "Word Actions Are a Plan of Their Own",
+        "The plan names one of Obliterate mode's Word actions beside other operations, in a step or in a layout. "
+        "Word saves the whole file again, so nothing can be predicted for the action or for anything planned after "
+        "it. Run the Word actions alone; once their copies are created, plan the rest on those copies.",
+    ),
+    "word-missing": (
+        "Microsoft Word Is Not Available",
+        "Obliterate mode's Word actions are Word's own commands and run nowhere else. Word is not installed on this "
+        "computer, or the app cannot reach it. Nothing was planned.",
+    ),
     "hands-on-only": (
         "A Hands-On Tool, Not a Plan's Operation",
         "The plan names the operation behind Replace this part, one of Obliterate mode's hands-on tools. Only the "
@@ -216,8 +227,8 @@ FAILURE_EXPLANATIONS: Dict[str, Tuple[str, str]] = {
     ),
     "obliterate-only": (
         "Operation of Obliterate Mode Only",
-        "The plan names an operation that only Obliterate mode has (the raw XML edit). It was refused before anything "
-        "was planned. Obliterate mode is turned on in the window, after its warning.",
+        "The plan names an operation that only Obliterate mode has (the raw XML edit, a Word action). It was refused "
+        "before anything was planned. Obliterate mode is turned on in the window, after its warning.",
     ),
     "conflict": (
         "Two Operations Touch the Same Thing",

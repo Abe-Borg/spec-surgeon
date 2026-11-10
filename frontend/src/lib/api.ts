@@ -215,6 +215,12 @@ export async function* replacePart(path: string, part: string, file: File): Asyn
   yield* readSse<JobEvent>(resp);
 }
 
+/** Obliterate's named Word actions: Word runs them, in this order, on a copy of the document (`every`: of each
+ *  document in scope), and the copies are previewed — a job with no AI call (docs/WEB_API.md, `POST
+ *  /api/word-actions`). */
+export const wordActions = (path: string, actions: string[], every = false) =>
+  streamJob("/api/word-actions", every ? { path, actions, every: true } : { path, actions });
+
 /** Safe mode's "Try these in Default mode": the documents the last button left untouched go on the to-do list. */
 export async function handOff(paths: string[]): Promise<View> {
   return normalizeView(await post<unknown>("/api/handoff", { paths }));

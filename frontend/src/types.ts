@@ -19,6 +19,23 @@ export interface Attachment {
   current: string;
 }
 
+/** One of Obliterate's named Word actions, as the menu lists it (docs/WEB_API.md, the view's `word`). */
+export interface WordAction {
+  id: string;
+  label: string;
+  /** Exactly what Word does to the copy. */
+  does: string;
+}
+
+/** Obliterate's menu of named Word actions: whether Word can be reached on this computer (`why` when it cannot),
+ *  the actions in the menu's order, and how many minutes Word may take over one document. */
+export interface WordMenu {
+  available: boolean;
+  why: string;
+  actions: WordAction[];
+  minutes: number;
+}
+
 /** One member of a document's package, as Obliterate's hands-on browser lists it (docs/WEB_API.md, `/api/parts`). */
 export interface PartInfo {
   name: string;
@@ -225,6 +242,11 @@ export interface Sample {
   /** Which change the listing is of: `xml` (a raw XML edit) or `part` (a part replaced with a file of the user's,
    *  Obliterate's hands-on tools); "" or absent for any other sample. */
   raw_what?: "xml" | "part" | "";
+  /** Who made an `unproven` copy: `word` (Obliterate's named Word actions); "" or absent for a custom method. */
+  made_by?: "word" | "";
+  /** Word's own account of what its actions did to this copy, one line per action: Word's count, shown apart from
+   *  the independent reader's lists. Absent for any other sample. */
+  word_account?: string[];
   /** The custom method could make no copy of this document (`failures` says why): Create makes none, and the
    *  document goes on the to-do list. */
   no_copy?: boolean;
@@ -247,6 +269,9 @@ export interface TextChange {
   block?: "new" | "gone";
   /** Set when the words sit in the copy's tracked changes (the checker's accept-all and reject-all views differ). */
   tracked?: boolean;
+  /** The words were a tracked change of the original that the copy settled (accepted or rejected): the copy's part
+   *  carries no tracked change. Absent from older servers. */
+  settled?: boolean;
   /** A raw XML edit's sample only: text that is not a paragraph's words (a chart's title, a drawing's text, a
    *  document property, stored data), which `where` says; `paragraph` is null. `more` counts stretches the lists
    *  leave out; `unread` is set when the part's text could not be read in the copy. */
@@ -589,6 +614,8 @@ export interface View {
   /** Obliterate's hands-on tools are on (the read-only part browser, Save this part, Replace this part): only in
    *  Obliterate mode, off unless the user turned them on, never kept. False from an older server. */
   hands_on: boolean;
+  /** Obliterate's menu of named Word actions; null in Safe and Default, and from an older server. */
+  word: WordMenu | null;
   /** The attached template, as a header/footer template. */
   template: TemplateInfo;
   /** What the last Safe-mode button left untouched (after its copies were created). */

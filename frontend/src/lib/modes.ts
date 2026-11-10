@@ -4,6 +4,7 @@
  * trust dossier. Obliterate is offered only when Settings → Advanced shows it, and is chosen only after its warning,
  * every time; a launch never opens in it.
  */
+import { WORD_OTHER_CHANGES_TITLE } from "./wordActions.ts";
 import type { Mode } from "../types.ts";
 
 export const MODE_LABELS: Record<Mode, string> = { safe: "Safe", default: "Default", obliterate: "Obliterate" };
@@ -23,11 +24,12 @@ export const OBLITERATE_GRANTS: readonly string[] = [
   "Claude may write a custom method that changes anything Word stores: text in any part, text boxes, shapes, structure — not only formatting. The method predicts nothing and just does the work, so you approve the copies it made, not a plan; each is delivered marked UNPROVEN.",
   "A copy whose checks fail is delivered anyway, marked UNVERIFIED with the checks it failed, instead of being held back; the mark stays on every later copy built on it.",
   "Claude may plan a raw XML edit: one stated change to the XML of one part of a file — which elements, exactly how many, and what is done to each. The app proves that exactly those elements changed as stated and nothing else in that part did. What the edit does to the words is not predicted: it is listed for you from the copies before you approve.",
+  "Microsoft Word itself may change a copy, through a fixed menu of named actions — repair, accept or reject every tracked change, update or unlink fields, turn automatic numbers into typed text, remove protection, leave compatibility mode, turn text boxes into plain text, delete drawn shapes. You pick them from Word actions beside a document (no AI is used), or Claude names them in a plan. Word saves the whole file again, so nothing is predicted: you approve the copies Word made, and each is delivered marked UNPROVEN.",
 ];
 
 /** What Obliterate costs. */
 export const OBLITERATE_COSTS: readonly string[] = [
-  "No proof that the rest of the file is untouched: a failed check is a warning, not a stop, and a custom method's copy is checked only for being a file Word opens.",
+  "No proof that the rest of the file is untouched: a failed check is a warning, not a stop, and a custom method's copy is checked only for being a file Word opens. A copy Word made is checked for less still: that it opens as a file, nothing more, because every byte of it is Word's own writing.",
   "Content can be lost or invented without a refusal, and a copy may need Word's repair to open: a raw XML edit is made as stated even when the result is not a file Word accepts, and the checks say so on the copy.",
   "The same request can give different results from one run to the next.",
   "More AI spending: custom methods are written and tested on your files.",
@@ -40,6 +42,7 @@ export const OBLITERATE_KEPT: readonly string[] = [
   "A custom method still runs in a separate process, under the same import whitelist and time and memory limits, writing only in its own folder.",
   "The independent checks still run on every copy, and their results are kept beside it.",
   "Before you approve a custom method, its copy of every document is made, and the chat and each copy's card list what it changes — the words added and removed, and what else differs — as the independent checker read it, never as the method describes it. Create delivers those same copies.",
+  "Word is asked only for actions on the app's fixed menu: no script or command is written for it, by you or by Claude. It opens a private copy of the document — never your file — in an instance of its own, with macros disabled and links not updated, and Create never runs it again: the copy you were shown is the copy delivered.",
 ];
 
 /** The box the user ticks before Obliterate turns on. */
@@ -82,18 +85,15 @@ export function obliterateSubject(name: string): string {
  *  still be taken (no AI is used for that); anything else in the mode needs the key. "" with a key. */
 export function obliterateKeyNote(keyReady: boolean, failedCopy: boolean, handsOn = false): string {
   if (keyReady) return "";
-  if (handsOn) {
-    return "No API key is connected: the hands-on tools work without one (no AI is used for them), but the conversation in Obliterate mode needs the key.";
-  }
-  return failedCopy
-    ? "No API key is connected: you can take the copy that failed as it is (no AI is used for that), but anything else in Obliterate mode needs the key."
-    : "Obliterate mode uses the AI: connect your API key in Settings first.";
+  const free = ["the Word actions beside each document", ...(handsOn ? ["the hands-on tools"] : [])];
+  const copy = failedCopy ? " You can also take the copy that failed as it is (no AI is used for that)." : "";
+  return `No API key is connected: ${free.join(" and ")} work without one (no AI is used for them), but the conversation in Obliterate mode needs the key.${copy}`;
 }
 
-/** Whether the warning can be confirmed: with a key; or without one for what uses no AI — the hands-on tools once
- *  their toggle is ticked, or a to-do row's kept copy. */
-export function canTurnOnObliterate(keyReady: boolean, failedCopy: boolean, handsOn: boolean): boolean {
-  return keyReady || failedCopy || handsOn;
+/** Whether the warning can be confirmed. The mode always holds something that uses no AI — the menu of Word
+ *  actions beside each document — so no API key is needed to turn it on; the note above says what does need one. */
+export function canTurnOnObliterate(_keyReady: boolean, _failedCopy: boolean, _handsOn: boolean): boolean {
+  return true;
 }
 
 /** A copy's mark that says a custom method made it in Obliterate mode (the server's `UNPROVEN_MARK`, or that mark
@@ -117,13 +117,23 @@ export function copyMark(marks: readonly string[] | undefined): "" | "UNVERIFIED
 /** What UNPROVEN means, wherever the page says it. */
 export const UNPROVEN_MEANS =
   "a custom method made it, and nothing was predicted to hold it to: what it changed was shown to you before you approved it, not proven";
+/** The same for a copy Word made (Obliterate's named Word actions). */
+export const WORD_UNPROVEN_MEANS =
+  "Word made it, running named actions and saving the whole file again, and nothing was predicted to hold it to: what it changed was shown to you before you approved it, not proven";
+
+/** Word's named actions made the copy the marks are of (the server's mark says who made it), now or in an earlier
+ *  copy this one builds on. */
+export function madeByWord(marks: readonly string[] | undefined): boolean {
+  return (marks ?? []).some((mark) => isUnprovenMark(mark) && mark.includes("Word made it"));
+}
 
 /** A copy's marks in one line, or "" for a verified copy. */
 export function unverifiedLine(marks: readonly string[] | undefined): string {
   if (!marks || marks.length === 0) return "";
   const failed = failedMarks(marks);
-  if (failed.length === 0) return `UNPROVEN — ${UNPROVEN_MEANS}. Check it in Word before you use it.`;
-  const shown = failed.length < marks.length ? " A custom method made it, so the rest of what it changed was shown to you, not proven." : "";
+  const word = madeByWord(marks);
+  if (failed.length === 0) return `UNPROVEN — ${word ? WORD_UNPROVEN_MEANS : UNPROVEN_MEANS}. Check it in Word before you use it.`;
+  const shown = failed.length < marks.length ? ` ${word ? "Word" : "A custom method"} made it, so the rest of what it changed was shown to you, not proven.` : "";
   return `UNVERIFIED — ${failed.join("; ")} failed.${shown} Check it in Word before you use it.`;
 }
 
@@ -133,19 +143,26 @@ export function resultsLead(results: readonly { unverified?: string[] }[]): stri
   if (!marks.some(Boolean)) return "Each copy was checked against the plan, word for word. Click one to open it in Word; your originals stay intact. ";
   const said = [marks.some((m) => m === "") ? "A copy with no mark was checked against the plan." : ""];
   if (marks.includes("UNVERIFIED")) said.push("A copy marked UNVERIFIED failed a check and was delivered anyway (Obliterate mode).");
-  if (marks.includes("UNPROVEN")) said.push("A copy marked UNPROVEN was made by a custom method that predicted nothing: what it changed was shown to you, and nothing proved it.");
+  if (marks.includes("UNPROVEN")) said.push("A copy marked UNPROVEN was made by a custom method or by Word's named actions, with nothing predicted: what it changed was shown to you, and nothing proved it.");
   return `${said.filter(Boolean).join(" ")} Check a marked copy in Word before you use it. Your originals stay intact. `;
 }
 
 /** A preview card's badge: the word, its tone and its hover text. A copy a custom method made in Obliterate mode is
  *  never "Checked": nothing was predicted to check it against. */
-export function sampleBadge(sample: { passed: boolean; unproven?: boolean; set_aside?: boolean; no_copy?: boolean }): {
+export function sampleBadge(sample: { passed: boolean; unproven?: boolean; set_aside?: boolean; no_copy?: boolean; made_by?: string }): {
   label: string;
   tone: "ok" | "warn" | "err";
   title: string;
 } {
+  const word = sample.made_by === "word";
   if (sample.no_copy) {
-    return { label: "No copy", tone: "err", title: "The custom method could not make a copy of this document, so none is created. It goes on your to-do list with the reason." };
+    return {
+      label: "No copy",
+      tone: "err",
+      title: word
+        ? "Word could not make a copy of this document, or found nothing to do in it, so none is created. It goes on your to-do list with the reason."
+        : "The custom method could not make a copy of this document, so none is created. It goes on your to-do list with the reason.",
+    };
   }
   if (!sample.passed) {
     return {
@@ -162,7 +179,9 @@ export function sampleBadge(sample: { passed: boolean; unproven?: boolean; set_a
     return {
       label: "Not proven",
       tone: "warn",
-      title: "A custom method made this copy. The independent reader found no fault in its file and lists what it changed; nothing proves the change is the one you asked for. It is created marked UNPROVEN.",
+      title: word
+        ? "Word made this copy, running the named actions and saving the whole file again. The independent reader found that it opens as a file and lists what it changed; nothing proves the change is the one you asked for. It is created marked UNPROVEN."
+        : "A custom method made this copy. The independent reader found no fault in its file and lists what it changed; nothing proves the change is the one you asked for. It is created marked UNPROVEN.",
     };
   }
   return { label: "Checked", tone: "ok", title: "This sample was applied and verified in memory; the source was not touched." };
@@ -176,7 +195,8 @@ export const RAW_OTHER_CHANGES_TITLE = "What else the raw XML edit's step change
 export const PART_OTHER_CHANGES_TITLE = "What else the replaced part changes, as the independent reader found it:";
 
 /** The heading over a sample's other changes: a custom method's copy, a raw XML edit's step, or a replaced part. */
-export function otherChangesTitle(sample: { unproven?: boolean; raw_xml?: boolean; raw_what?: string }): string {
+export function otherChangesTitle(sample: { unproven?: boolean; raw_xml?: boolean; raw_what?: string; made_by?: string }): string {
+  if (sample.made_by === "word") return WORD_OTHER_CHANGES_TITLE;
   if (sample.unproven || !sample.raw_xml) return OTHER_CHANGES_TITLE;
   return sample.raw_what === "part" ? PART_OTHER_CHANGES_TITLE : RAW_OTHER_CHANGES_TITLE;
 }

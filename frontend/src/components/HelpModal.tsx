@@ -12,6 +12,7 @@ import { useDialogFocus } from "../lib/dialogFocus";
 import { HELP_TITLES, HELP_TOPICS, modelLabel, releaseNotesBody, updateStatus, type HelpTopic } from "../lib/help";
 import { OBLITERATE_COSTS, OBLITERATE_GRANTS, OBLITERATE_KEPT } from "../lib/modes";
 import { HANDS_ON_SAYS } from "../lib/handsOn";
+import { WORD_SAYS } from "../lib/wordActions";
 import { TOUR } from "../lib/tour";
 import {
   DEFAULT_LIMITS,
@@ -95,7 +96,9 @@ function HowToUse({ onStartTourAt }: { onStartTourAt: (chapter: string) => void 
                   that document alone after the same warning; when a copy of it was made and held back because it
                   failed a check, the chat offers <Tag>Use the copy that failed, marked UNVERIFIED</Tag>, which takes
                   that copy as it is with no AI call. The warning also carries one box, empty every time:{" "}
-                  <Tag>Also turn on the hands-on tools</Tag>. {HANDS_ON_SAYS.join(" ")}
+                  <Tag>Also turn on the hands-on tools</Tag>. {HANDS_ON_SAYS.join(" ")} While the mode is on, each
+                  document also carries <Tag>Word actions</Tag>: {WORD_SAYS.join(" ")} A document Word cannot
+                  finish, or finds nothing to do in, gets no copy and the reason.
                 </>
               ),
             },

@@ -84,6 +84,13 @@ def cancellation_scope(event):
         _CANCEL_EVENT.reset(token)
 
 
+def cancel_requested() -> bool:
+    """The user pressed Stop in this job (``cancellation_scope``): work between model calls that can end early —
+    Word running a document's actions before the next one's — asks, and raises ``UserCancelled`` itself."""
+    event = _CANCEL_EVENT.get()
+    return bool(event is not None and event.is_set())
+
+
 _STREAM_OBSERVER: ContextVar = ContextVar("spec_surgeon_stream_observer", default=None)
 _THINKING_DISPLAY = {"type": "adaptive", "display": "summarized"}   # the model's thinking summary, for the window
 _thinking_display_refused = False                                    # latched off for the process after one 400

@@ -404,6 +404,47 @@ export const RUNTIME_CARDS: RuntimeCard[] = [
       `Replace this part waits ${WHILE_CHECKED}, and while a preview or a question is open.`,
   },
   {
+    covers: ["A48", "A49"],
+    title: "Obliterate's Word actions: Word itself changes a copy, from a fixed menu",
+    you:
+      "In Obliterate mode: Word actions beside a document; in its dialog, tick the actions (they run in the order " +
+      "ticked), tick Also run on the other documents if they should get them too, and press Run in Word; after " +
+      "the preview, Create edited copies. Or ask Claude for a change one of the menu's actions makes, and approve " +
+      "the plan it previews.",
+    runs:
+      "The menu is fixed in the app: open and repair, remove protection, accept or reject every tracked change, " +
+      "update or unlink fields, turn automatic numbers into typed text, leave compatibility mode, turn text boxes " +
+      "into plain text, delete drawn shapes. Each is code the app ships that calls Word's own command; nothing is " +
+      "written for Word at run time. For each document in the plan the app writes a private copy of its bytes " +
+      "into the scratch folder and starts Microsoft Word on this computer, in an instance of its own with macros " +
+      "disabled and links not updated; Word opens that copy, runs the actions in order with tracking off, saves " +
+      "the result under a new name and closes. Word writes the whole file again when it saves, so nothing is " +
+      "predicted and no plan is checked: the independent reader pairs the parts of the copy with the original's " +
+      "by their place in the document (Word names them again), sets Word's own save marks aside, and lists the " +
+      "words added and removed and what else differs — counts, formatting, styles, numbering, settings, " +
+      "relationships, parts. Those lists, Word's own count of what it did (shown apart, as Word's), and the " +
+      "before and after pages are in the chat and under each copy's card before the button. Create runs nothing: " +
+      "it delivers the copies you were shown, each marked UNPROVEN, or UNVERIFIED when a copy does not open as a " +
+      "file. A document Word could not finish, or found nothing to do in, gets no copy and goes on the to-do list " +
+      "with Word's reason. In a pass over the to-do list the pass stays open afterwards, so the request the " +
+      "document was set aside from can be planned on the copy Word made.",
+    sent:
+      "Picked from the menu: nothing. No document, no action and no result goes to Anthropic or anywhere else. " +
+      "When Claude names the actions, the conversation's own calls carry what they always carry; Word's work " +
+      "itself is on this computer either way.",
+    ai:
+      "No AI when you pick the actions from the menu. When Claude plans them: " + conversationModel,
+    bounds:
+      "Offered only in Obliterate mode: Safe and Default are told nothing of it, and a plan that names a Word " +
+      "action there is refused. Only actions on the menu: a plan that names anything else is refused, and so is " +
+      "one that mixes a Word action with any other operation, step or layout — after Word nothing can be " +
+      "predicted, so the rest is the next request, planned on the copies Word made. Word works on a private copy, " +
+      `never on your file or a working copy, for at most ${F.wordActionMinutes} minutes a document; past that, or ` +
+      "at Stop, the app ends the Word it started and no other. A copy that changed after it was shown, or a " +
+      "source that changed, is never delivered. Copies only: your originals are never written. Never a step of a " +
+      `saved recipe. It waits ${WHILE_CHECKED}, and while a preview or a question is open.`,
+  },
+  {
     covers: ["A42", "A43", "B21"],
     title: "Obliterate from the to-do list: one document, and the copy that failed",
     you:

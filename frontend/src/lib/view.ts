@@ -111,6 +111,7 @@ export const EMPTY_VIEW: View = {
   mode: "default",
   modes: ["safe", "default"],
   hands_on: false,
+  word: null,
   template: { kind: "none", typed_slots: [], reason: "" },
   left_untouched: [],
   tutorial: { active: false, id: null, scenario: null, finished_version: 0 },
@@ -142,6 +143,24 @@ export function startingLive(): LiveReply {
  * A view from the wire, with every field the page reads present. A server
  * one release ahead or behind never crashes the page over a missing list.
  */
+/** Obliterate's menu of Word actions as the server sent it; null when it sent none (an older server). */
+function wordMenu(value: unknown): View["word"] {
+  if (!value || typeof value !== "object") return null;
+  const menu = value as Record<string, unknown>;
+  const actions = (Array.isArray(menu.actions) ? menu.actions : []).flatMap((entry) => {
+    const a = entry as Record<string, unknown> | null;
+    return a && typeof a.id === "string" && typeof a.label === "string"
+      ? [{ id: a.id, label: a.label, does: typeof a.does === "string" ? a.does : "" }]
+      : [];
+  });
+  return {
+    available: menu.available === true,
+    why: typeof menu.why === "string" ? menu.why : "",
+    actions,
+    minutes: typeof menu.minutes === "number" && menu.minutes > 0 ? menu.minutes : 5,
+  };
+}
+
 export function normalizeView(raw: unknown): View {
   const v = (raw && typeof raw === "object" ? raw : {}) as Partial<View> &
     Record<string, unknown>;
@@ -189,6 +208,7 @@ export function normalizeView(raw: unknown): View {
     update: obj(v.update, EMPTY_VIEW.update),
     mode: v.mode === "safe" || v.mode === "obliterate" ? v.mode : "default",
     hands_on: v.mode === "obliterate" && v.hands_on === true,
+    word: v.mode === "obliterate" ? wordMenu(v.word) : null,
     modes: list<string>(v.modes).filter((m): m is View["mode"] => m === "safe" || m === "default" || m === "obliterate"),
     template: obj(v.template, EMPTY_VIEW.template),
     left_untouched: list(v.left_untouched),

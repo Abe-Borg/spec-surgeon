@@ -379,6 +379,60 @@ What it lifts (`Session.unguarded`; CLAUDE.md, "Modes"):
     Text it places (`set_text`'s text, and every stretch of text inside `xml`, whatever comment or element stands
     beside it: `fragment_text`) is traced like any Obliterate wording (`compiler.placed_words`); attribute values
     are not.
+- **The Word actions** (the owner's decision of 2026-11-10, backlog O5). Word itself may change a copy, through a
+  fixed menu and nothing else: `word_actions.MENU` names the actions and `render/word_actions.py` holds one function
+  of Word's own commands per action (`COMMANDS`; a test holds the two sets equal). No Word script is composed
+  anywhere: a case the menu cannot express is first a new menu item, decided from the refusal codes that reach the
+  menu (the event `task.word_actions` logs them from the pass's case file).
+  - **Who picks.** The user, from **Word actions** beside a document (`DocumentTask._word_actions`,
+    `POST /api/word-actions`; the view's `word` carries the menu and whether Word can be reached): the app builds
+    the plan — `word_action` ops in the order ticked — passes it through the gate and sets it as the outcome with
+    source `"word"` (`Session.model_free`: no visual check, no recovery; one of `OWN_PLANS`, never handed to Claude
+    as a request). One document unless **Also run on the other documents** is ticked (`WORD_ONLY_THERE` is why the
+    others are left out). Or Claude, in a plan: the op `word_action` is in Obliterate's catalog and prompt alone
+    (`Op.obliterate_only`; `compiler.UNGUARDED_PROMPT`, "WORD ACTIONS").
+  - **A plan of its own.** `word_actions.plan_problem`: a flat list of `word_action` ops and nothing else — no other
+    operation, select, stage, layout, binding or assertion — each action on the menu, none twice, `repair` first,
+    never both accepting and rejecting. The gate answers `[word-alone]`, `[word-missing]` where Word cannot be
+    reached, and `[obliterate-only]` outside the mode. The plan is not dry-planned and the op's `plan()` and
+    `apply()` refuse: Word saves the whole file again, so nothing can be predicted for it or for anything after it
+    (invariant 1's second exception).
+  - **The copies are the preview.** `Session.make_preview` hands such a plan to `_word_copies`: for each planned
+    document, `word_actions.trial` acquires the source as any trial does, writes a private copy of its bytes under
+    the session folder's `word/<n>/in/`, and has Word run the actions on it (`run_word_actions` →
+    `render.word_worker.run_word("actions")` → `WordSession.run_actions`: one private instance, macros disabled,
+    the user's own "update links at open" option turned off for the opening and put back, tracking off while the
+    actions run and the document's setting put back, one save as `.docx`, `TIMEOUT_S` for the document). The result
+    is a `codegen.FileTrial` as an Obliterate custom method's — `unproven`, its failed checks in `unverified`, Word's
+    own account in `notes` — and the session's outcome becomes a `GeneratedOp` with `word_actions` set, so
+    everything after is that method's path: the approval names each copy's bytes, Create delivers them
+    (`_kept_trial`) and never runs Word, a copy that changed since refuses it, and a file that moved has Preview
+    make every copy again (`trial_of`).
+  - **Read by content.** `verify.run_difference(rewritten=True)`: Word names the header and footer parts again and
+    gives every relationship id again, so the text parts are paired by their place in the document (`_roles`,
+    `_paired`: the body, the notes, each header and footer by the sections that use it and as what) and the
+    relationships and parts are said by the names the original gave them (`_renamed`, a picture by its bytes);
+    paragraphs, tables, sections, styles, numbering and settings are compared without Word's own save marks
+    (`_plain`). V4, V5a and V5c are N/A — the ids and the markup are Word's own writing — and V1 still fails a copy
+    that does not open as a package. A tracked change Word accepted or rejected is listed as "a tracked change of
+    the original, settled in the copy" (`views["after"]`), never as sitting in the copy's tracked changes.
+  - **Said before the button** (`_say_text_changes`): the verdict (`codegen.WORD_UNPROVEN` / `WORD_UNVERIFIED`), the
+    words each copy adds and removes, what else it changes, the documents that got no copy with Word's reason, and
+    last Word's own count, under a heading that says it is Word's (`preview.WORD_ACCOUNT_HEAD`,
+    `SampleView.word_account`). No copy at all: `gui.WordActionsFailed` voids the plan and the reason is said.
+  - **Then the same plan.** A Word action cannot be a stage, so "clear the obstacle, then the same plan" is two
+    requests. In a pass over the to-do list the pass stays open after the Word run (`_pass_goes_on`,
+    `_advance_generation(keep_pass=)`): its document is still the only one in scope, the request it was set aside
+    from is the request again, the stage is `resume`, and the conversation that Continue starts hears the case file
+    with `WORD_THEN_SAME`. Undo takes the copy Word just made off without ending the pass; Drop this request puts
+    the document back on the list with its copy.
+  - **Stop.** A job of the menu calls no AI, so Stop ends the job itself (`web.server.MODEL_FREE_JOBS` arms
+    `stopping`): between documents, and inside one by ending the worker and the private Word it owns. When Claude
+    planned the actions, Stop is asked between documents (`llm.cancel_requested`).
+  - **Without Word.** No test machine has Word. `tests/fake_word.py` stands behind `run_word_actions` and saves the
+    whole file again as Word does (every part written again, save marks added, headers renamed, relationship ids
+    given again); a stand-in for Word's object model runs `WordSession.run_actions` and every command. What Word
+    does with a real document is the owner's real-file run.
 - **The hands-on tools** (the owner's decision of 2026-11-10, backlog O4: the cheaper editor — nothing in the window
   edits XML). Off unless the user turns them on: a box in the warning, empty every time (`set_mode(hands_on=)`,
   `obliterate_todo(hands_on=)`), or the switch in the mode's strip (`set_hands_on`). `DocumentTask.hands_on` is

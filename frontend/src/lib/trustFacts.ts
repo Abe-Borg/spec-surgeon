@@ -71,6 +71,8 @@ export const TRUST_FACTS = {
   partPageLines: 400,
   partSearchHits: 200,
   maxShownPartMB: 32,
+  // Obliterate's named Word actions (word_actions.py): Word's time for one document, start to saved copy
+  wordActionMinutes: 5,
   // Attachments (inputs.py, package_limits.py)
   maxTableOrPictureMB: 20,
   maxDocxMB: 256,

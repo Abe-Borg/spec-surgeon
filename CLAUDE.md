@@ -13,8 +13,10 @@ files go to clients, so the one failure that matters is content lost or invented
 
 1. **Predict first.** `Op.plan()` computes every prediction (diffs, parts, members, revision deltas, assertions and
    their target counts) from the SOURCE, analytically; never by running the transform on a copy and reading the result.
-   One exception, the owner's (2026-11-10): a custom method written in Obliterate mode predicts nothing and is its
-   `apply()` alone (Modes, below); every built-in op predicts first in every mode.
+   Two exceptions, the owner's (2026-11-10), both Obliterate's alone (Modes, below): a custom method written there
+   predicts nothing and is its `apply()` alone; and a named Word action (`word_action`) predicts nothing, because Word
+   saves the whole file again, and is never planned or applied by the engine. Every other built-in op predicts first
+   in every mode.
 2. **The verifier shares no code with the transforms.** `src/spec_surgeon/verify/` imports nothing from `ops/`,
    `editspec.py`, `ooxml.py`, `package.py`, `goals.py`, `goal_contracts.py` or the Claude layer
    (`tests/test_independence.py`). It has its own readers, text extraction, selectors, style chains and definitions.
@@ -77,8 +79,9 @@ other changes follow them, `SampleView.changes`, `preview.shown_changes_lines`),
 the holding back of a copy that fails a check (`deliver_unverified`: delivered to `outputs/` marked UNVERIFIED, its
 failed checks in `FileResult.unverified`/`ChainFile.unverified`, no recovery; the mark stays on every later copy built
 on it, `DocumentTask._mark_unverified`, in every mode). The verifier still runs on every copy
-and reports; invariant 1 binds every built-in op, and invariants 2, 3, 4, 5 (built-in ops still refuse what they
-cannot predict; Obliterate's way past a refusal is a custom method) and 7 bind every mode, and so do copies only, the source guard, the sandbox and its
+and reports; invariant 1 binds every built-in op but `word_action` (below), and invariants 2, 3, 4, 5 (built-in ops
+still refuse what they cannot predict; Obliterate's way past a refusal is a raw XML edit, a Word action or a custom
+method) and 7 bind every mode, and so do copies only, the source guard, the sandbox and its
 whitelist, and the governed outcome path (never unguarded). Obliterate is hidden unless `Settings.show_obliterate`,
 needs the warning acknowledged each time (`DocumentTask.set_mode(acknowledged=True)`), voids the plan when entered or
 left, and is never what a launch opens in (`settings.MODES`, `web.server.launch_mode`). Pinned by
@@ -131,6 +134,35 @@ and the checks say what Word would not open — a changed part that is no longer
 (V1; `verify/suite._unreadable_v1`), never an exception out of the suite; V1 also fails a changed part whose root
 element is not its role's (`verify.reader.root_problems`) and names a relationship that lacks its id, type or target. A hands-on run is no recipe step
 (`saved_recipes.WHY_PART`). Pinned by `tests/test_hands_on.py`.
+
+Obliterate also has **named Word actions** (the owner's decision, 2026-11-10): Word itself may change a copy, through
+a FIXED MENU (`word_actions.MENU`: repair, remove protection, accept or reject every tracked change, update or unlink
+fields, numbers to typed text, leave compatibility mode, text boxes to plain text, delete drawn shapes). Each action
+is code the app ships (`render/word_actions.py`: Word's own commands; `WordSession.run_actions`, the worker's
+`actions` action); **no Word script is composed anywhere, by the user or by a model: a case the menu cannot express
+is first a new menu item**. The user picks actions beside a document (`DocumentTask._word_actions`,
+`/api/word-actions`; no AI: `outcome_source` `"word"`, `Session.model_free`; needs no hands-on toggle and no API key),
+or Claude names them in a plan (the op `word_action`, `Op.obliterate_only`, in Obliterate's catalog and prompt alone).
+Word saves the whole file again, so nothing is predicted (invariant 1's second exception) and nothing can be planned
+after it: a plan of Word actions holds nothing else — a flat list of `word_action` ops, no select, stage or layout
+(`word_actions.plan_problem`; the gate's `[word-alone]`, and `[word-missing]` where Word cannot be reached) — and is
+never dry-planned; the op's own `plan()` and `apply()` refuse. The path is an Obliterate custom method's
+(`GeneratedOp.word_actions`, `codegen.trial_of`): `Session._word_copies` has Word make every planned document's copy
+before approval (`word_actions.trial`: a private copy of the document's bytes, never the user's file or a working
+copy; macros disabled, links not updated, tracking off while the actions run, one save, `TIMEOUT_S` a document), the
+verifier reads each (`verify.run_difference(rewritten=True)`: text parts paired by their place in the document,
+`_paired`, never by the names Word gives again; Word's own save marks set aside, `_plain`; V4, V5a and V5c N/A because
+every byte is Word's own writing; V1 still fails a copy that does not open as a package), the words added and removed,
+what else differs and Word's own count (shown apart, as Word's: `SampleView.word_account`) are listed before the
+button, and Create delivers those bytes without running Word again (`codegen._kept_trial`), each marked UNPROVEN
+(`word_actions.UNPROVEN_MARK`) or UNVERIFIED. A document Word cannot finish, or finds nothing to do in, gets no copy
+and the reason; no copy at all voids the plan (`gui.WordActionsFailed`). "Clear the obstacle, then the same plan" is
+two requests here: in a pass over the to-do list the pass stays open after the Word run
+(`_advance_generation(keep_pass=)`, `DocumentTask._pass_goes_on`, the note `WORD_THEN_SAME`), and Continue plans the
+request the document was set aside from on the copy Word made. Not a recipe step (`saved_recipes.WHY_WORD`). No test
+machine has Word: `tests/fake_word.py` stands behind the one seam (`word_actions.run_word_actions`) and saves the
+whole file again as Word does; what Word itself does with a real document is the owner's real-file run. Pinned by
+`tests/test_word_actions.py`.
 
 Obliterate is the top rung of a ladder (the owner's decision, 2026-11-10): Safe, then Default for what Safe could not
 take, then Obliterate for the one or two documents neither could, so it also starts from the to-do list. A document
@@ -226,7 +258,8 @@ jobs). Details: `docs/CONVERSATIONAL_DESKTOP.md`.
     `elsewhere.py` (flags naming where a change kept to one place leaves the same words, and a fill in another case than the template; `plan_spec` runs it),
     `edit_xml.py` (the raw XML edit, Obliterate only — Modes, above; an op only Obliterate may plan sets
     `obliterate_only`), `replace_part.py` (a part replaced with the user's file, Obliterate's hands-on tools only:
-    `hands_on`, never offered to a model),
+    `hands_on`, never offered to a model), `word_action.py` (how a plan names one of Obliterate's Word actions; it
+    predicts nothing and its `plan()` and `apply()` refuse — Modes, above),
     `patterns.py` (`compile_pattern`: the one way a user- or model-written pattern is compiled under `ops/` — and
     outside it, for the model's read tools' `regex` and an outcome contract's locators — the `regex` module in its
     `V0` (`re`) behaviour, `REGEX_TIMEOUT_S` = 2 s on each text searched, `MAX_PATTERN_CHARS` = 1000 except for an
@@ -245,7 +278,8 @@ jobs). Details: `docs/CONVERSATIONAL_DESKTOP.md`.
     its whole-part comparison — Modes, above), `partswap.py` (V10 `part_bytes`: a replaced part's own hash),
     `difference.py` (the Obliterate record, `run_difference`:
     what differs between an original and a copy with nothing predicted, in a `VerificationRecord` every reader of a
-    record reads — Modes, above), `template_layout.py` (V7's template reference: the template
+    record reads; `rewritten=True` for a copy Word saved: parts paired by place, Word's save marks set aside —
+    Modes, above), `template_layout.py` (V7's template reference: the template
     as each document's plan makes it show, its fills in the slots and each section at the document's own text
     width, the template's vertical layout kept — live QA finding F08 — but the source's own header/footer distances
     where the plan keeps them, `keeps_distances` — the deep-dive stress test's D4), `explain.py`, `patterns.py` (the verifier's
@@ -337,6 +371,9 @@ jobs). Details: `docs/CONVERSATIONAL_DESKTOP.md`.
     gate; what it cannot match is left out with the reason, `Session.left_out_reasons`).
   - `hands_on.py` — Obliterate's hands-on tools, the reading half: a document's parts listed, one shown as text, a
     search across them (`Reader`; read-only, no model — Modes, above).
+  - `word_actions.py` — Obliterate's named Word actions: the fixed menu (`MENU`, `check`), what a plan of them must
+    be (`plan_problem`), the one seam to Word (`run_word_actions`) and one document through Word and the verifier
+    (`trial`). The commands themselves are `render/word_actions.py` (Modes, above).
   - `saved_recipes.py` — saved recipes: the runs of What you've done so far kept under a name (`Store`,
     `config_dir()\recipes.json`, each change read, made and written atomically under `recipes.json.lock`, which every
     window takes). A step is a Safe-mode button and
@@ -379,7 +416,8 @@ jobs). Details: `docs/CONVERSATIONAL_DESKTOP.md`.
     `examples/tutorial/`, the tour's showcase, shipped in the wheel and the app; `packaging/installed_wheel_smoke.py`
     checks the installed bytes against the checkout).
 - `tests/` — pytest; `make_fixtures.py` and `fx_*.py` build synthetic documents; `fake_claude.py` scripts Claude;
-  `fake_render.py` fakes the renderer seam (`render.render_pdf_groups`); `conftest.py` seals keys, config dir and
+  `fake_render.py` fakes the renderer seam (`render.render_pdf_groups`); `fake_word.py` stands in for Word behind
+  `word_actions.run_word_actions` (it saves the whole file again, as Word does); `conftest.py` seals keys, config dir and
   model, and hides Word and LibreOffice from every test not marked `@pytest.mark.render` (a test that looks at
   rendered pages carries the mark; one that fakes a renderer patches it itself); `describe_cases/` feeds
   `test_describe.py`. Only a failing test keeps its temporary folder (`tmp_path_retention_policy`, pyproject).
@@ -465,7 +503,8 @@ Standing decisions from the earlier rounds (their plans are in the git history):
   `edit_xml`, Modes; a catch-all deletion is its `remove`),
   with a read-only part browser and swap-a-part behind a toggle (built: the hands-on tools, Modes; in-app XML
   editing is not built); Word may edit
-  copies through a fixed menu of named actions the user or Claude chains (Claude-composed Word scripts are not
+  copies through a fixed menu of named actions the user or Claude chains (built: the Word actions, Modes — a plan of
+  their own, with nothing planned after them in the same approval; Claude-composed Word scripts are not
   built: a miss is first a new menu item); a file refused at attach may be rescued; Export may make a marked copy's
   clean version anyway. Until an item is built, the invariants and the Modes section describe the code as it is.
 - In Safe and Default, a custom method may do more kinds of formatting, never more kinds of change: a family is added

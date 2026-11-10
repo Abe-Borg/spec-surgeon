@@ -53,8 +53,8 @@ test("Obliterate opens its warning from any mode; the others switch at once", ()
 });
 
 test("the warning names what it grants, what it costs and what still holds", () => {
-  // the three guardrails it lifts, and the raw XML edit it adds
-  assert.equal(OBLITERATE_GRANTS.length, 4);
+  // the three guardrails it lifts, and what it adds: the raw XML edit and Word's named actions
+  assert.equal(OBLITERATE_GRANTS.length, 5);
   assert.ok(OBLITERATE_GRANTS.some((g) => g.includes("wording")));
   assert.ok(OBLITERATE_GRANTS.some((g) => g.includes("custom method")));
   assert.ok(OBLITERATE_GRANTS.some((g) => g.includes("UNVERIFIED")));
@@ -105,7 +105,7 @@ test("a copy a custom method made is UNPROVEN, never UNVERIFIED unless a check f
   assert.match(plain, /^Each copy was checked against the plan, word for word\./);
   assert.doesNotMatch(plain, /UNPROVEN|UNVERIFIED/);
   const shown = resultsLead([{ unverified: [unproven] }]);
-  assert.match(shown, /A copy marked UNPROVEN was made by a custom method that predicted nothing/);
+  assert.match(shown, /A copy marked UNPROVEN was made by a custom method or by Word's named actions, with nothing predicted/);
   assert.doesNotMatch(shown, /UNVERIFIED|checked against the plan/);
   const mixed = resultsLead([{ unverified: [] }, { unverified: ["V2 (Text preservation)"] }, { unverified: [unproven] }]);
   assert.match(mixed, /A copy with no mark was checked against the plan\. A copy marked UNVERIFIED failed a check .* A copy marked UNPROVEN/);
@@ -191,6 +191,6 @@ test("a to-do row offers Obliterate only when the server says so, names the copy
   // without a key the copy that failed can still be taken (no AI is used for that); anything else needs the key
   assert.equal(obliterateKeyNote(true, false), "");
   assert.equal(obliterateKeyNote(true, true), "");
-  assert.equal(obliterateKeyNote(false, false), "Obliterate mode uses the AI: connect your API key in Settings first.");
-  assert.match(obliterateKeyNote(false, true), /you can take the copy that failed as it is \(no AI is used for that\)/);
+  assert.match(obliterateKeyNote(false, false), /the Word actions beside each document work without one \(no AI is used for them\), but the conversation in Obliterate mode needs the key\.$/);
+  assert.match(obliterateKeyNote(false, true), /You can also take the copy that failed as it is \(no AI is used for that\)/);
 });

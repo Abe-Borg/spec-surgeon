@@ -1,6 +1,7 @@
 """A process boundary for Word COM, with private-instance-only cleanup.
 
-``run_word`` runs one action (the accept/reject oracle) in one spawned worker with one deadline;
+``run_word`` runs one action (the accept/reject oracle; the named Word actions of Obliterate mode, a fixed menu:
+``render/word_actions.py``) in one spawned worker with one deadline;
 ``run_word_batch`` renders a whole batch in one spawned worker that starts ONE private Word instance and
 renders every file in turn, the parent holding a deadline per file; ``run_word_batches`` splits a batch over up to
 ``word_instances`` such workers that render side by side, each with its own private Word. No process-name or process-tree kill
@@ -158,11 +159,11 @@ def _close_private_handle(handle, *, terminate):
         handle.Close()
 
 
-def _publish(rendered: Path, destination: Path) -> Path:
-    """Copy a worker's finished PDF to where the caller asked for it, atomically (staged beside it, then replaced):
-    a reader never sees a half-copied PDF. A missing or empty render is ``word-no-pdf``."""
+def _publish(rendered: Path, destination: Path, code: str = "word-no-pdf", what: str = "PDF") -> Path:
+    """Copy a worker's finished PDF (or the copy the Word actions saved) to where the caller asked for it, atomically
+    (staged beside it, then replaced): a reader never sees a half-copied file. A missing or empty one is ``code``."""
     if not rendered.is_file() or not rendered.stat().st_size:
-        raise WordWorkerError("word-no-pdf", "Word reported no error but wrote no PDF")
+        raise WordWorkerError(code, f"Word reported no error but wrote no {what}")
     destination = Path(destination)
     destination.parent.mkdir(parents=True, exist_ok=True)
     fd, staged_name = tempfile.mkstemp(prefix=".specsurgeon-render-", suffix=".pdf", dir=destination.parent)
@@ -231,6 +232,13 @@ def _worker(connection, request):
                 elif request["action"] == "accept_reject":
                     accepted, rejected = ws.accept_reject_text(Path(request["source"]))
                     result = {"ok": True, "version": version, "accept": accepted, "reject": rejected}
+                elif request["action"] == "actions":
+                    # the named Word actions (Obliterate mode): a fixed menu, on a private copy, saved under a new name
+                    # (saved in a folder of its own: never over the private copy Word has open, whatever its name)
+                    (scratch / "out").mkdir(exist_ok=True)
+                    report = ws.run_actions(Path(request["source"]), scratch / "out" / "edited.docx",
+                                            request["actions"])
+                    result = {"ok": True, "version": version, "report": report}
                 else:
                     raise ValueError("unknown Word worker action")
         except BaseException as exc:
@@ -247,15 +255,18 @@ def _worker(connection, request):
             connection.close()
 
 
-def run_word(action, source, *, pdf=None, timeout=None):
-    """Run through startup, COM work and Quit within one deadline; publish only success."""
+def run_word(action, source, *, pdf=None, timeout=None, actions=None, output=None):
+    """Run through startup, COM work and Quit within one deadline; publish only success. ``actions`` and ``output``
+    (the ``actions`` action): the named Word actions to run on ``source``, in order, and where the copy Word saves is
+    published once Word has closed."""
     seconds = _timeout(timeout)
     source = Path(source).resolve()
     context = multiprocessing.get_context("spawn")
     with tempfile.TemporaryDirectory(prefix="specsurgeon-word-", ignore_cleanup_errors=True) as directory:
         scratch = Path(directory)
         receive, send = context.Pipe(duplex=False)
-        request = {"action": action, "source": str(source), "scratch": str(scratch), "context": diag.context()}
+        request = {"action": action, "source": str(source), "scratch": str(scratch), "context": diag.context(),
+                   "actions": [str(a) for a in actions or []]}
         process = context.Process(target=_worker, args=(send, request), name="SpecSurgeon-Word")
         owned_handle = None
         failed = True
@@ -310,6 +321,8 @@ def run_word(action, source, *, pdf=None, timeout=None):
             if action == "render":
                 # Output is published only after Word has closed successfully and the worker exited.
                 _publish(scratch / "render.pdf", Path(pdf))
+            elif action == "actions":
+                _publish(scratch / "out" / "edited.docx", Path(output), "word-no-copy", "copy")
             failed = False
             return result
         finally:
