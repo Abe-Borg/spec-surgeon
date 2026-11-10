@@ -850,6 +850,47 @@ def test_a_file_changed_since_its_copy_was_made_has_every_copy_made_again_before
     assert "WATER 0 REVISED" in xml
 
 
+def test_a_shown_copy_that_changed_voids_the_approval_and_preview_makes_every_copy_again(tmp_path):
+    """The approval names each copy by the md5 recorded when it was checked, which a changed file does not move. So
+    before it runs, and when it decides whether its preview is current, the session reads the copies themselves: one
+    that changed or is gone refuses Create for every document, and Preview makes each copy again."""
+    quiet = lambda m: None
+    folder = tmp_path / "specs"
+    folder.mkdir()
+    files = [folder / f"21 0{i} 00 – SPEC {i}.docx" for i in range(2)]
+    for i, f in enumerate(files):
+        f.write_bytes(build(f"21 0{i} 00", f"SPEC {i}"))
+    fake = FakeClient(resp(tool("submit_editspec", {"spec": UNSUPPORTED, "custom_transform": "outside_limits",
+                                                     "custom_transform_reason": "beyond formatting"})),
+                      resp(tool("submit_op", {"source": FREE_WORDS}, "w0")), resp(tool("confirm_op", {}, "w1")))
+    s = Session(documents=files, out_root=tmp_path / "out", client=fake, unguarded=True, visual_check=False)
+    s.compile(UNSUPPORTED["request"], quiet)
+    s.reply(choice_id=s.turn.choices[0].id, log=quiet, render=False)
+    shown = [(Path(t.output), t.output_md5) for t in s.generated.trials]
+    assert s.generated_token and codegen.kept_copies_changed(s.generated) == []
+    for damage in ("changed", "gone"):
+        kept = Path(s.generated.trials[0].output)
+        if damage == "changed":
+            kept.write_bytes(kept.read_bytes() + b"\0")
+        else:
+            kept.unlink()
+        assert codegen.kept_copies_changed(s.generated) == [files[0].name]
+        # the approval's fingerprint alone does not see it: it is of the md5 recorded when the copy was checked
+        assert preview.approval_token(s._generated_key(s.generated), files) == s.generated_token
+        with pytest.raises(ValueError, match="a copy you were shown changed or is gone.*press Preview again"):
+            s.run(False, False, quiet)
+        assert not (s.out_dir / "run" / "outputs").exists()           # nothing was delivered, of either document
+        s.make_preview(render=False, log=quiet)
+        assert codegen.kept_copies_changed(s.generated) == [] and len(fake.requests) == 3
+        assert all(Path(t.output).is_file() and t.passed and t.unproven for t in s.generated.trials)
+        assert Path(s.generated.trials[0].output) != kept             # made again, in a new folder
+    assert [t.output_md5 for t in s.generated.trials] == [md5 for _path, md5 in shown]   # the same method, the same bytes
+    s.run(False, False, quiet)
+    assert all(t.passed and t.unproven and t.output.is_file() for t in s.last_trials)
+    # a method written in Default mode keeps no copy to change: its copies are made at the run
+    assert codegen.kept_copies_changed(codegen.GeneratedOp(source=GOOD_OP, passed=True)) == []
+
+
 def test_a_document_the_method_cannot_take_gets_no_copy_and_the_others_go_on(tmp_path):
     """The writer tries its method on samples; a document outside them that it cannot do the work on has no copy to
     approve. Its card says why, Create makes the others, and it waits on the to-do list."""

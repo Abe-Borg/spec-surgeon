@@ -301,7 +301,8 @@ What it lifts (`Session.unguarded`; CLAUDE.md, "Modes"):
     content controls, bookmarks, notes, comments and page breaks counted before and after; tracked changes before
     and after; the paragraphs whose formatting changed without their words, the tables whose own layout changed, the
     sections whose page setup changed; styles, numbering and settings added, removed and changed; relationships and
-    parts added, removed or left unreferenced; and every changed part it compared by its bytes only (a chart, an
+    parts added, removed or left unreferenced (an outside address, such as a hyperlink's, is read as it is written,
+    so a link that leads somewhere else is said with both addresses); and every changed part it compared by its bytes only (a chart, an
     embedded file, stored data, the theme), named as not read. None of that is ever a failure. It fails a copy only
     for what Word repairs or refuses: a part that is not well-formed XML, a relationship to nothing, a member with no
     content type, an `r:` reference that names no relationship, a revision id Word cannot tell apart or read, a new
@@ -319,7 +320,9 @@ What it lifts (`Session.unguarded`; CLAUDE.md, "Modes"):
     Checked), or **Did not pass** with the checks its file failed; a document the method could make no copy of says
     why, is counted out of the button's number, and goes on the to-do list when the others are created. The approval
     names each copy's bytes (`preview.generated_key`'s `results`), and Create delivers those copies without running
-    the method again (`codegen._kept_trial`); a copy that changed since it was checked is not delivered.
+    the method again (`codegen._kept_trial`). A copy that is no longer the bytes that were checked (changed, or
+    gone) voids the approval for every document: Create is refused, and Preview makes each copy again
+    (`codegen.kept_copies_changed`, read by `Session.run` and `Session.make_preview`).
   - **Never called verified.** The notes the model hears, the transcript lines beside them, the chat before the
     button (the app's own note, ahead of the words below: `DocumentTask._say_text_changes`), the window's message
     and the plan group's details say UNPROVEN, or UNVERIFIED with the checks each copy failed

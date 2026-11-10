@@ -67,7 +67,8 @@ The writer reads that report after a submission runs and takes the method with `
 reports; a copy whose file fails a check goes back `UNGUARDED_CHECK_ROUNDS` times, after which the latest method is
 used. The method's copy of every document is made before approval (`Session._every_copy`), the approval names each
 copy's bytes (`preview.generated_key`'s `results`), and Create delivers those copies without running the method again
-(`codegen._kept_trial`). No such copy is called verified or passed: each is marked UNPROVEN
+(`codegen._kept_trial`; a shown copy that changed or is gone refuses Create and has Preview make every copy again,
+`codegen.kept_copies_changed`). No such copy is called verified or passed: each is marked UNPROVEN
 (`ui_feedback.UNPROVEN_MARK`), and UNVERIFIED when a check of its file failed — `codegen.samples_verdict` words the
 note, the message and the plan's details. In every mode the words a method's copies add and remove are listed before
 approval from the verifier's V2 record, never from the method or the model — `preview.text_changes_of` →

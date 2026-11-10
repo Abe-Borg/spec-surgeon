@@ -43,7 +43,9 @@ checks what needs no prediction — that the copy is a file Word opens. So:
   leaves the best method that ran (fewest failed checks, then the latest), never one after a spending-check pause;
 * the method's copy of every document is made before approval (``gui.Session._every_copy``), the approval names
   each copy's bytes (``preview.generated_key``'s ``results``), and ``run_generated`` delivers those copies, never
-  running the method again (``_kept_trial``): the user approves results, and gets exactly the results approved.
+  running the method again (``_kept_trial``): the user approves results, and gets exactly the results approved. A
+  shown copy that changed or is gone voids the approval (``kept_copies_changed``): the session refuses the run and
+  its next preview makes every copy again.
 
 A passing op is saved (``generated_ops/<hash>.py`` + ``.history.json`` beside the batch's records) — a cache, not
 a registered op: promotion into ``ops/`` is a human decision, with tests. ``run_generated`` applies it to a batch
@@ -1632,6 +1634,27 @@ def _generated_source_pins(files, approved_inputs):
             raise ValueError(f"generated source {file.name} changed since approval; preview again")
         pins[key] = identity
     return pins, errors
+
+
+def kept_copies_changed(g: Any) -> List[str]:
+    """Obliterate: the documents whose copy — made, read and shown before approval (``GeneratedOp.trials``) — is no
+    longer the bytes that were checked: changed since, or gone. The approval names those bytes by the md5 recorded
+    when they were checked (``preview.generated_key``), which a changed file does not move, so the session asks this
+    before it runs the approval and when it decides whether its preview is current (``gui.Session``). [] for every
+    other method: its copies are made at the run."""
+    if not getattr(g, "unguarded", False) or getattr(g, "goal_contract", None) is not None:
+        return []
+    changed = []
+    for t in getattr(g, "trials", None) or []:
+        if not getattr(t, "passed", False) or t.output is None:
+            continue
+        try:
+            same = hashlib.md5(Path(t.output).read_bytes()).hexdigest() == t.output_md5
+        except OSError:
+            same = False
+        if not same:
+            changed.append(Path(t.source).name)
+    return changed
 
 
 def _kept_trial(kept: Optional[FileTrial], f: Path) -> FileTrial:

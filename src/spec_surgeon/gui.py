@@ -820,7 +820,9 @@ class Session:
             return self.continue_custom_transform(log, render)
         if self.generated is not None:
             files = self.planned_files()
-            if approval_token(self._generated_key(self.generated), files) != self.generated_token:
+            from .codegen import kept_copies_changed
+            if (approval_token(self._generated_key(self.generated), files) != self.generated_token
+                    or kept_copies_changed(self.generated)):   # (Obliterate: a copy shown is no longer those bytes)
                 self._prove_again(files, render, log)   # stale: Run would refuse forever — re-prove, then preview
             elif (self.generated_preview is None
                   or bool(getattr(self.generated_preview, "rendered", False)) != bool(render)):
@@ -1177,6 +1179,15 @@ class Session:
                            reason="generated_inputs_changed", changes=what)
                 raise ValueError("a file changed (or the folder changed) since the AI-written transform was tested — "
                                  "press Preview again" + ("".join(f"\n  • {w}" for w in what) if what else ""))
+            from .codegen import kept_copies_changed
+            stale = kept_copies_changed(self.generated)
+            if stale:
+                # an Obliterate method's approval is of the copies shown: one that changed or is gone voids it, for
+                # every document — Preview makes each copy again (``make_preview``), and that is approved afresh
+                diag.event("session.approval.refused", level="warning", gate="approval_digest",
+                           reason="generated_copies_changed", documents=stale)
+                raise ValueError("a copy you were shown changed or is gone since it was checked — press Preview again"
+                                 + "".join(f"\n  • {name}" for name in stale))
             selected = self._selected(files, only)
             out = (self.out_dir or self.new_out_dir()) / "run"
             diag.event("session.approval.accepted", approval_digest=self.generated_token,

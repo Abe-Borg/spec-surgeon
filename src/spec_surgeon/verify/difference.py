@@ -36,13 +36,14 @@ from __future__ import annotations
 import difflib
 import json
 import posixpath
+from collections import Counter
 from typing import Any, Dict, List, Set, Tuple
 
 from lxml import etree
 
 from .. import telemetry as diag
 from . import xsd as _xsd
-from .reader import SETTINGS_REL, STYLES_REL, THEME_REL, VPackage, W
+from .reader import REL, SETTINGS_REL, STYLES_REL, THEME_REL, VPackage, W
 from .suite import (WORD_ID_LIMIT, CheckResult, VerificationRecord, _annotation_ids, _grammar_errors, _id_number,
                     _property_change_grammar, _rev_elements, _total_key, has_content_revisions)
 from .textcheck import accept_view, blocks, diff_blocks, reject_view
@@ -55,6 +56,7 @@ NOTE = ("Nothing was predicted for this copy: a custom method made it in Obliter
 _REL_BASE = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/"
 NUMBERING_REL = _REL_BASE + "numbering"
 LISTED = 12                          # names a sentence lists in full before it says how many more
+ADDRESS_CHARS = 120                  # of an outside address (a hyperlink's, a linked picture's) a sentence quotes
 # what the report counts in the text parts, in the order it says them: (key, singular, plural, how it is found)
 _DRAWING = "{http://schemas.openxmlformats.org/drawingml/2006/main}"
 _WPS = "{http://schemas.microsoft.com/office/word/2010/wordprocessingShape}"
@@ -176,6 +178,36 @@ def _rels_owner(rels_member: str) -> str:
     if posixpath.basename(folder) != "_rels" or not name.endswith(".rels") or name == ".rels":
         return ""
     return posixpath.join(posixpath.dirname(folder), name[:-len(".rels")])
+
+
+def _relationships(pkg: VPackage) -> Counter:
+    """Every relationship of the package, counted: (owner part, kind, target, outside). An internal target is the
+    member it resolves to; an outside one (a hyperlink's address, a linked picture or template) is the address
+    itself, so a link that leads somewhere else is a relationship that went and one that came. A relationships part
+    that does not parse gives none (V1 names it)."""
+    names = set(pkg.names)
+    found: Counter = Counter()
+    for member in pkg.names:
+        folder, name = posixpath.split(member)
+        if not name.endswith(".rels") or posixpath.basename(folder) != "_rels":
+            continue
+        owner = _rels_owner(member)
+        if owner and owner not in names:
+            continue
+        try:
+            root = pkg.xml(member)
+        except (etree.XMLSyntaxError, ValueError):
+            continue
+        base = posixpath.dirname(owner)
+        for rel in root.findall(REL + "Relationship"):
+            kind = (rel.get("Type") or "").rsplit("/", 1)[-1]
+            target = rel.get("Target") or ""
+            outside = rel.get("TargetMode", "Internal") != "Internal"
+            if not outside:
+                target = target.lstrip("/") if target.startswith("/") else posixpath.normpath(
+                    posixpath.join(base, target))
+            found[(owner or "the package", kind, target, outside)] += 1
+    return found
 
 
 def _part_words(pkg: VPackage, part: str) -> str:
@@ -460,14 +492,15 @@ def _what_changed(src: VPackage, out: VPackage, src_xml, out_xml, changed, added
         said = [f"{k} {_named(settings[k])}" for k in ("added", "removed", "changed") if settings[k]]
         lines.append("Document settings: " + ("; ".join(said) + "." if said else "the settings part changed."))
 
-    # relationships and the parts themselves
-    def rels(pkg: VPackage) -> Set[Tuple[str, str, str]]:
-        return {(owner or "the package", (typ or "").rsplit("/", 1)[-1], target or "(an outside address)")
-                for _rp, owner, typ, target in pkg.all_relationships()}
-    r_before, r_after = rels(src), rels(out)
-    r_added, r_removed = sorted(r_after - r_before), sorted(r_before - r_after)
+    # relationships and the parts themselves; an outside address is read as it is written, so a hyperlink that now
+    # leads somewhere else is said with both addresses
+    r_before, r_after = _relationships(src), _relationships(out)
+    r_added, r_removed = sorted((r_after - r_before).elements()), sorted((r_before - r_after).elements())
     if r_added or r_removed:
         def one(r):
+            if r[3]:
+                address = r[2] if len(r[2]) <= ADDRESS_CHARS else r[2][:ADDRESS_CHARS] + "…"
+                return f"{r[1]} → {address or '(no address)'}, outside the file"
             return f"{r[1]} → {posixpath.basename(r[2]) if '/' in r[2] else r[2]}"
         lines.append("Relationships: " + "; ".join(
             f"{len(group)} {word} ({_named([one(r) for r in group])})"
@@ -496,7 +529,8 @@ def _what_changed(src: VPackage, out: VPackage, src_xml, out_xml, changed, added
     return lines, {"lines": lines, "counts": moved, "counts_before": before, "counts_after": after,
                    "formatting_only": formatting, "tables": tables, "page_setup": page_setup, "styles": styles,
                    "numbering": numbering, "settings": settings,
-                   "relationships": {"added": [list(r) for r in r_added], "removed": [list(r) for r in r_removed]},
+                   "relationships": {"added": [list(r[:3]) for r in r_added],
+                                     "removed": [list(r[:3]) for r in r_removed]},
                    "members": {"changed": changed, "added": added, "removed": removed, "orphaned": orphaned},
                    "unread": unread}
 

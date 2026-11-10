@@ -282,6 +282,49 @@ def test_parts_and_relationships_that_came_and_went_are_named(source):
     assert "Parts removed: docProps/thumbnail.jpeg." in difference_lines(rec)
 
 
+def test_a_link_that_now_leads_somewhere_else_is_said_with_both_addresses(source):
+    """A hyperlink's destination lives in a relationship that points outside the file. A copy that changes only that
+    address changes no word, paragraph or part the other sentences count, so the report reads the address itself:
+    the one that went and the one that came."""
+    HYPERLINK = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink"
+
+    def link(address):
+        def add(root):
+            for rel in root.findall(REL + "Relationship"):
+                if rel.get("Id") == "rIdLink":
+                    root.remove(rel)
+            rel = etree.SubElement(root, REL + "Relationship")
+            rel.set("Id", "rIdLink")
+            rel.set("Type", HYPERLINK)
+            rel.set("Target", address)
+            rel.set("TargetMode", "External")
+        return add
+    linked = edited(source, DOCUMENT_RELS, link("https://owner.example/standards"))
+    rec = record(linked, edited(linked, DOCUMENT_RELS, link("https://elsewhere.example/standards")))
+    assert rec.passed
+    assert difference_lines(rec) == [
+        "Relationships: 1 added (hyperlink → https://elsewhere.example/standards, outside the file); "
+        "1 removed (hyperlink → https://owner.example/standards, outside the file)."]
+    assert rec.get("D1").data["relationships"] == {
+        "added": [["word/document.xml", "hyperlink", "https://elsewhere.example/standards"]],
+        "removed": [["word/document.xml", "hyperlink", "https://owner.example/standards"]]}
+    # the same address twice is two relationships: a second link to it is one that came
+    def second(root):
+        rel = etree.SubElement(root, REL + "Relationship")
+        rel.set("Id", "rIdLinkAgain")
+        rel.set("Type", HYPERLINK)
+        rel.set("Target", "https://owner.example/standards")
+        rel.set("TargetMode", "External")
+    rec = record(linked, edited(linked, DOCUMENT_RELS, second))
+    assert difference_lines(rec) == [
+        "Relationships: 1 added (hyperlink → https://owner.example/standards, outside the file)."]
+    # a long address is cut in the sentence and whole in the data
+    long = "https://elsewhere.example/" + "a" * 300
+    rec = record(linked, edited(linked, DOCUMENT_RELS, link(long)))
+    assert long[:difference.ADDRESS_CHARS] + "…, outside the file" in said(rec) and long not in said(rec)
+    assert rec.get("D1").data["relationships"]["added"][0][2] == long
+
+
 def test_a_changed_part_the_report_does_not_read_is_named_as_unread(source):
     """The report says what it read. A theme, a picture's bytes, a data store: it compares their bytes and says so,
     so nothing that changed goes unsaid."""
