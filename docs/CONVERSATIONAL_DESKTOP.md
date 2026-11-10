@@ -379,6 +379,41 @@ What it lifts (`Session.unguarded`; CLAUDE.md, "Modes"):
     Text it places (`set_text`'s text, and every stretch of text inside `xml`, whatever comment or element stands
     beside it: `fragment_text`) is traced like any Obliterate wording (`compiler.placed_words`); attribute values
     are not.
+- **The rescue at attach** (the owner's decision of 2026-11-10, backlog O6; `rescue.py`). In Safe and Default a
+  file the attach-time check refuses is refused and nothing more. In Obliterate a refused document with something
+  to try carries **Try to rescue**, and a `.doc` or `.docm` can be attached to be rescued.
+  - **What is tried** is fixed by why the file was refused. `triage.Triage.code` names the refusal in one word (no
+    sentence the user reads comes from it) and `rescue.kind_of` maps it: `doctype`, `no-paragraph`, `too-large`
+    (the app's own); `format` (a `.doc` or `.docm`), `strict`, `unopenable`, `password` (Word's). `""` for a lock
+    file, a folder, a missing file or any other kind of file: still refused. The kind is read once, when the file
+    is checked (`Attachment.rescue`), and reaches the page in Obliterate alone.
+  - **The app's own.** `_without_doctype` parses each part that carries a declaration with entities unresolved, no
+    DTD loaded and no network, and writes it again from its root, which leaves the declaration out; a part that
+    uses an entity is not rescued, because that text exists only in the declaration. `_with_paragraph` adds one
+    empty `w:p` before the body's section properties. Both go through `DocxPackage.write` and `output_bytes`, so
+    every other member is the file's, byte for byte, in its order. `too-large` writes nothing: `raised_limits`
+    measures the file from the zip's own directory and raises the archive limits it is past — to `HEADROOM` times
+    what it measures, never past `CEILING` — in this process's environment (the worker processes inherit it);
+    `DocumentTask.archive_limits` keeps them in the journal and `restore` raises them again before it reads the
+    document.
+  - **Word's.** The same seam as the Word actions (`word_actions.run_word_actions`): the worker's `convert`, or
+    `repair` for a file that is not a package, on a private copy in the worker's own folder, macros disabled.
+    Word is always handed a password — the one typed, or `NO_PASSWORD` — so it never stops to ask behind a hidden
+    window: it ignores one a file does not need and answers a wrong one with its own error, which `wrong_password`
+    reads (`NeedsPassword`). The password travels page → `/api/rescue` → `perform(password=)` → `rescue_file` →
+    the worker's request, in memory; it is in no message, view, journal, span or log (the request middleware logs
+    the route, status and time, never a body).
+  - **Checked again.** What comes out goes through `triage_file`; while it is still refused for something the app
+    mends, that is mended (`MAX_STEPS`); refused for anything else, there is no document and the reason is said.
+  - **Attached, and marked.** `DocumentTask._rescue` removes the refused attachment and attaches the rescued file
+    through `attach` (so a waiting preview is void, as with any new document), in the same place in the list,
+    with `Attachment.salvaged` `{from, kind, steps, notes}`. The mark is the document's: it is in the journal
+    (`_restored_salvaged`), on the view's attachment in every mode, on each of its copies (`salvaged_line`, the
+    view's `salvaged`), in Export's summary, and in the history the model planning on it hears. Its copies are
+    verified against the salvaged file, the only baseline there is. A file opened past the size limits is the
+    user's own file, unchanged, and carries no mark.
+  - **A job with no AI** (`MODEL_FREE_JOBS`): Stop ends it, says nothing was rescued and leaves a waiting preview
+    waiting (`_stopped`).
 - **The Word actions** (the owner's decision of 2026-11-10, backlog O5). Word itself may change a copy, through a
   fixed menu and nothing else: `word_actions.MENU` names the actions and `render/word_actions.py` holds one function
   of Word's own commands per action (`COMMANDS`; a test holds the two sets equal). No Word script is composed

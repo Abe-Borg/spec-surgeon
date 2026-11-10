@@ -73,6 +73,8 @@ export const TRUST_FACTS = {
   maxShownPartMB: 32,
   // Obliterate's named Word actions (word_actions.py): Word's time for one document, start to saved copy
   wordActionMinutes: 5,
+  // Obliterate's rescue at attach (rescue.py): the largest file a rescue will raise the size limits for
+  rescueMaxFileGB: 2,
   // Attachments (inputs.py, package_limits.py)
   maxTableOrPictureMB: 20,
   maxDocxMB: 256,

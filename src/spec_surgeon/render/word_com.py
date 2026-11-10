@@ -214,13 +214,16 @@ class WordSession:
         return out[0], out[1]
 
 
-    def run_actions(self, docx: Path, out: Path, actions: Sequence[str]) -> list:
+    def run_actions(self, docx: Path, out: Path, actions: Sequence[str], password: Optional[str] = None) -> list:
         """The named Word actions (``render.word_actions.COMMANDS``, a fixed menu) on a private copy of ``docx``, in
         the order given, in one opening, saved once as ``out`` (a .docx). Links are not updated at opening (the
         user's own Word option is read, turned off for the opening and put back); tracking is off while the actions
         run, so none of them is recorded as a tracked change, and the document's own setting is put back before the
         save. Returns ``[{"action", "count", "note"}]``: Word's own account. An action that raises stops the run
-        with nothing saved, and ``failure_stage`` names it (``word_action_<id>``)."""
+        with nothing saved, and ``failure_stage`` names it (``word_action_<id>``). ``password`` (Obliterate's rescue
+        at attach alone): given to Word to open the copy with, so Word never stops to ask for one — the document's
+        own, or any string for a file that may have none (Word ignores it then, and refuses a wrong one with its own
+        error). It is passed to Word and nowhere else: never logged, kept or put in a span."""
         from .. import diagnostics as diag
         from .word_actions import COMMANDS, WD_FORMAT_XML_DOCUMENT
         actions = [str(a) for a in actions]
@@ -239,9 +242,10 @@ class WordSession:
             links = None
         try:
             with diag.span("render.word_open", source=str(docx), temporary=str(src), repair="repair" in actions):
+                secret = {} if password is None else {"PasswordDocument": password}
                 doc = self.app.Documents.Open(str(src), ConfirmConversions=False, ReadOnly=False,
                                               AddToRecentFiles=False, Visible=False, OpenAndRepair="repair" in actions,
-                                              NoEncodingDialog=True)
+                                              NoEncodingDialog=True, **secret)
         except BaseException:
             self.failure_stage = self.stage
             raise

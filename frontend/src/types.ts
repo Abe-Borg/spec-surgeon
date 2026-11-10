@@ -17,6 +17,24 @@ export interface Attachment {
   notes: string[];
   reason: string;
   current: string;
+  /** Obliterate mode only: what **Try to rescue** would try for this refused document (lib/rescue.ts
+   *  `RESCUE_TRIES`); absent when nothing can be tried, in Safe and Default, and from an older server. */
+  rescue?: string;
+  /** This document is a rescue's result: the file it was rescued from and what was done. It keeps the mark for as
+   *  long as it is attached, in every mode, and so does every copy made from it. Absent for an ordinary document. */
+  salvaged?: Salvaged;
+}
+
+/** The record a rescued document carries (docs/WEB_API.md, `attachments[].salvaged`). */
+export interface Salvaged {
+  /** The name of the file it was rescued from. */
+  from: string;
+  /** What the file was refused for (lib/rescue.ts `RESCUE_TRIES`). */
+  kind: string;
+  /** What was done, one sentence each, in order. */
+  steps: string[];
+  /** What the user must know of the result: it has no password; its macros are gone. */
+  notes: string[];
 }
 
 /** One of Obliterate's named Word actions, as the menu lists it (docs/WEB_API.md, the view's `word`). */
@@ -329,6 +347,9 @@ export interface Result {
    *  the copy is UNVERIFIED. A copy a custom method made carries a mark that begins "UNPROVEN": what it changed was
    *  shown, not proven. Either may follow "in an earlier copy: ". Empty for a verified copy (lib/modes.ts). */
   unverified?: string[];
+  /** This copy was made from a document the app rescued at attach: what its SALVAGED mark says. The copy is checked
+   *  against the rescued document, which nothing proves holds everything the user's file did. Absent otherwise. */
+  salvaged?: string;
   /** Where Export → Word (Tracked Changes ON) saved this copy, while that file is still there; "" while the copy
    *  lives only in the window's scratch folder. Absent from an older server. */
   saved_to?: string;

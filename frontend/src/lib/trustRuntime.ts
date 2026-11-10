@@ -404,6 +404,39 @@ export const RUNTIME_CARDS: RuntimeCard[] = [
       `Replace this part waits ${WHILE_CHECKED}, and while a preview or a question is open.`,
   },
   {
+    covers: ["A50"],
+    title: "Obliterate: Try to rescue a file the app refused",
+    you:
+      "In Obliterate mode: Try to rescue beside a document the app refused when you attached it (an old .doc or a " +
+      ".docm can be attached there too, to be rescued). For a document protected with a password: type it in the " +
+      "dialog that opens, then Try to rescue.",
+    runs:
+      "The app reads the refused file and tries the one thing that fits why it was refused. Its own mending, with " +
+      "no Word: a part that carries a document type declaration is written again without it; a body with no " +
+      "paragraph gets one empty paragraph; for a file past the size limits, nothing is written and the limits are " +
+      "raised for this window. Word's, on a private copy of the file in an instance the app starts for itself, " +
+      "with macros disabled: an old .doc, a .docm or a Strict Open XML document is saved as a .docx (a .docm's " +
+      "macros are not kept); a file that is not a readable package is opened with Open and Repair and saved; a " +
+      "document protected with a password is opened with the password you typed and saved without one. What " +
+      "comes out is checked like any attached file (and mended once more by the app if that is all it lacks), " +
+      "written into the scratch folder, and attached in the refused file's place. The chat says what was done " +
+      "and what the rescued document holds. It is marked Salvaged for as long as it is attached, in every mode, " +
+      "and every copy made from it carries the mark: the file could not be read as it was, so nothing compares " +
+      "the result with it. From then on it is a document like any other, and its copies are checked against the " +
+      "rescued file. A rescue that makes no document says why and leaves the file refused.",
+    sent: "Nothing. No file, no password and no result goes to Anthropic or anywhere else: a rescue makes no call.",
+    ai: NONE,
+    bounds:
+      "Offered only in Obliterate mode; Safe and Default refuse the file as before and cannot attach a .doc or " +
+      ".docm. Your file is read, never written. A lock file, a folder, a missing file and any other kind of file " +
+      "are still refused. The password is handed to Word for that one attempt and kept nowhere: not in settings, " +
+      "the conversation's record, a log or a diagnostic bundle. The rescued document has no password, and sits " +
+      "in the scratch folder until the window closes. A part that uses an entity its document type declaration " +
+      `defines is not rescued. The size limits are raised only as far as that file needs, never for a file over ${F.rescueMaxFileGB} GB, ` +
+      `and only until the window closes. Word gets ${F.wordActionMinutes} minutes; Stop ends it and the Word the ` +
+      `app started. It waits ${WHILE_CHECKED}.`,
+  },
+  {
     covers: ["A48", "A49"],
     title: "Obliterate's Word actions: Word itself changes a copy, from a fixed menu",
     you:

@@ -381,7 +381,22 @@ mode you last used (Safe the first time; never Obliterate).
   or finds nothing to do in, gets no copy and Word's reason. Nothing else can be planned in the same approval:
   whatever the document still needs is your next request, on the copy Word made — and when you ran the action on a
   document from your to-do list, the pass stays open and **Continue** plans the request it was set aside from on that
-  copy. Needs Microsoft Word on this computer. Obliterate is the last rung of a ladder —
+  copy. Needs Microsoft Word on this computer. A file the app **refuses when you attach it** can be rescued here:
+  it carries **Try to rescue**, and an old `.doc` or a `.docm` can be attached in this mode to be rescued. The app
+  tries the one thing that fits why the file was refused. Its own mending, with no Word: a part that carries an XML
+  document type declaration is written again without it; a body with no paragraph gets one empty paragraph; for a
+  file past the size limits nothing is written and the limits are raised for this window. Word's, on a private copy
+  with macros disabled: a `.doc`, a `.docm` (its macros are not kept) or a Strict Open XML document is saved as a
+  `.docx`; a file that is not a readable package is opened with Open and Repair; a document protected with a
+  password asks for it first, gives it to Word for that one attempt and keeps it nowhere. **Your file is read and
+  never changed.** What comes of it is attached in the refused file's place, marked **Salvaged** — a mark it keeps
+  for as long as it is attached, in every mode, and that every copy made from it carries too — because the file
+  could not be read as it was, so nothing can prove the rescue kept everything it held: compare the rescued
+  document with your file in Word before you rely on it. From then on it is a document like any other, and its
+  copies are checked against the rescued file. A document rescued with its password has **no password**
+  afterwards, and neither have its copies; it sits in the window's scratch folder until the window closes. No AI
+  is used. A lock file, a folder, a missing file and any other kind of file are still refused. Obliterate is the
+  last rung of a ladder —
   Safe first, Default for what Safe could not take, Obliterate for the one or two documents neither could — so it
   also starts from the to-do list: **Obliterate this one**, beside a document there, opens the same warning and then
   turns the mode on for that one document, the request it was set aside from standing and every other document,
@@ -649,6 +664,13 @@ recorded for the requests that follow.
   replaced, never added or removed. The part browser shows XML indented for reading (the file's own bytes are what
   Save writes), 400 lines to a page, lists a part over 32 MB without showing it, and lists up to 200 lines for a
   search. A replacement cannot be saved as a step of a recipe.
+- Obliterate's Try to rescue proves nothing about content: a rescued document and every copy made from it stay
+  marked Salvaged. Its Word-based rescues (a `.doc`, a `.docm`, a Strict Open XML, damaged or password-protected
+  document) need Microsoft Word on this computer; other kinds of file (`.rtf`, `.dotx`, a PDF) are not converted. A
+  part that uses an entity its document type declaration defines is not rescued. The size limits are raised only
+  for the window that asked, only as far as that file needs, and never for a file over 2 GB; a very large document
+  can still run the computer out of memory. A refused template is not rescued. No test machine has Word, so each
+  Word-based rescue is proven only by your own runs (docs/BACKLOG.md).
 - Obliterate's Word actions need Microsoft Word on this computer and are limited to the menu: nothing else can be
   asked of Word. A plan of Word actions holds nothing else (no other operation, step or layout), so a change that
   needs Word and then something more is two requests. Word may take up to 5 minutes a document. A restriction set

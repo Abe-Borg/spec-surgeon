@@ -78,7 +78,7 @@ On the owner's machine (Windows, Word): the W3 judge over every case, each failu
 behaviour recorded here with its evidence; the W4 recipe run once, its files and Word's resolutions checked in. The
 judge cannot see a repair prompt or how the Reviewing Pane draws the changes; those stay a manual look.
 
-### Obliterate: the cost ladder (O6–O8)
+### Obliterate: the cost ladder (O7–O8)
 
 The owner's decisions of 2026-11-10 (CLAUDE.md, "Standing decisions"). Obliterate is the emergency lever, reached
 last: Safe handles most of a batch, Default what Safe could not take, and Obliterate the one or two documents neither
@@ -96,8 +96,9 @@ the warning: a read-only browser of a document's parts (`hands_on.py`), **Save t
 O5 — the named Word actions: a fixed menu Word itself runs on a private copy (`word_actions.py`, the commands in
 `render/word_actions.py`), picked beside a document with no AI or named by Claude in a plan of their own
 (`ops/word_action.py`), every copy made before approval, read by O2's record as a file Word saved
-(`run_difference(rewritten=True)`) and delivered as shown, marked UNPROVEN. O6 judges its results by that record
-too.
+(`run_difference(rewritten=True)`) and delivered as shown, marked UNPROVEN — and O6 — the rescue at attach
+(`rescue.py`): a refused document's **Try to rescue**, the app's own mending or Word converting or repairing a
+private copy, the result attached as a new document marked SALVAGED for good.
 
 Rules for every item:
 
@@ -114,11 +115,11 @@ Rules for every item:
 
 | Item | What to build | What was decided |
 | --- | --- | --- |
-| O6 — rescue at attach | A file triage refuses offers **Try to rescue** in Obliterate: Word converts (`.doc`, `.docm`, Strict Open XML) or repairs it; a password is asked for and never stored, logged or sent to the model; the app strips a `<!DOCTYPE`, adds a missing body paragraph, or lifts the size limit. The rescued file becomes a new document with a permanent **salvaged** mark and then runs in any mode, verified against the salvaged baseline. A lock file, a folder or a missing file is still refused | When the original cannot be read, nothing can prove the rescue lost no content: the mark says so |
 | O7 — Export anyway | When a marked copy's clean version or PDF cannot be made the checked way, Export offers a Word-made one, named as unchecked in the summary | Amends invariant 7's exception ("never widen them"): the new choice is still fixed in code and named by the menu, never a model's |
 | O3a — what O3 left out, each on the owner's word | A raw edit of the package's relationship and content-type parts (today `edit_xml` refuses them, `xml-part`; the hands-on tools' Replace this part places any part as bytes, and a custom method changes those), and of a part with a comment or processing instruction outside its root element (refused too: `serialize_xml` writes a part from its root; Replace this part takes such a part as it is). Text an edit sets in an ATTRIBUTE that Word shows as words — a list label (`w:lvlText`), a field instruction, alternative text — traced by the wording gate and listed with the words (today attribute values are markup: the plan's own sentence quotes them, and D1 says that numbering or a field changed). The plan following the clearing step in ONE request when its template operation carries bindings (today invariant 5 refuses a source-bound template op that is not first, so it is two requests: clear, then ask for the plan on the copy). The clearing step proposed by the app with no model call, for the refusal codes the owner's runs show most (with O8's pick) | Not started until asked for |
 | O4a — what O4 left out, each on the owner's word | XML editing inside the window (decided against for now: edit a saved part in your own editor). Adding a part the document does not have, or removing one (`replace_part` replaces only; a custom method adds and removes). Replacing a part in several documents at once (one document per replacement today). The part browser on a file triage refused at attach (with O6's rescue). Comparing a part of the edited copy with the original's side by side (the dialog switches between the two files) | Not started until asked for |
-| O5a — what O5 left out, each on the owner's word | A Word action and other operations under ONE approval (today a plan of Word actions holds nothing else, `[word-alone]`: nothing can be predicted after a file Word saved again, so the rest is the next request, and in a pass over the to-do list the pass stays open for it; one approval would need the chain planner to plan its later steps on the copy Word made before approval). A password for **Remove protection** (asked for, never stored, logged or sent to the model; today Word's own refusal, with the hint that a raw XML edit can take the restriction out). **Unlink fields** in headers and footers, or by kind of field, as menu items of their own (today the body, notes and the body's text boxes). Text boxes in line with the text, inside a drawing canvas or linked to one another (today left as they are, and counted). Word's actions recorded as tracked changes (today tracking is off while they run). The **Save as a Word document** action on the menu (the worker has it, `convert`; its button comes with O6's rescue). Several documents at once in Word instances side by side (today one document at a time, a private Word each). And, after the owner's first runs: what a real Word save changes beyond the marks the report sets aside (`verify/difference._plain`: drawing and shape ids, list ids, anything Word tidies), so that a save that changes nothing reads as nothing changed on real files too | Not started until asked for |
+| O5a — what O5 left out, each on the owner's word | A Word action and other operations under ONE approval (today a plan of Word actions holds nothing else, `[word-alone]`: nothing can be predicted after a file Word saved again, so the rest is the next request, and in a pass over the to-do list the pass stays open for it; one approval would need the chain planner to plan its later steps on the copy Word made before approval). A password for **Remove protection** (asked for, never stored, logged or sent to the model; today Word's own refusal, with the hint that a raw XML edit can take the restriction out). **Unlink fields** in headers and footers, or by kind of field, as menu items of their own (today the body, notes and the body's text boxes). Text boxes in line with the text, inside a drawing canvas or linked to one another (today left as they are, and counted). Word's actions recorded as tracked changes (today tracking is off while they run). Several documents at once in Word instances side by side (today one document at a time, a private Word each). And, after the owner's first runs: what a real Word save changes beyond the marks the report sets aside (`verify/difference._plain`: drawing and shape ids, list ids, anything Word tidies), so that a save that changes nothing reads as nothing changed on real files too | Not started until asked for |
+| O6a — what O6 left out, each on the owner's word | Evidence for a rescue: the pages of the user's file beside the rescued document's, and the words they show compared (Word and LibreOffice both open a `.doc`; today the chat gives counts to hold against the file, and the mark says nothing is proven). Other kinds Word converts (`.rtf`, `.dotx`, `.dotm`, `.odt`; today `.doc` and `.docm`). A refused TEMPLATE rescued (today a refused template is an error at attach, never an attachment). The part browser on a refused file (O4a). The rescued document itself saved where the user chooses without a change made to it (today Export saves edited copies; a Word action or a hands-on save gets it out). A password for a file Word only half opens (a password to modify). The size limits lifted for one document rather than for the window. Removing the SALVAGED mark once the user has compared the two files (today it is permanent, as decided) | Not started until asked for |
 | O8 — optional, each on the owner's word | Rebuild from a clean template (the document's words, tables and pictures poured into a pristine template; the text-preservation check proves no word was lost). The outcome verifier (`goals.verify_goal`) on a rescued straggler where its request fits one of the effects it models. A pick, in the window, where a built-in op refused because it would not guess — for the refusal codes the owner's runs show most (log which codes reach Obliterate first) | Not started until asked for |
 
 Not in the plan: Claude-composed Word scripts, XML editing inside the window, replacing the import whitelist with an
@@ -184,6 +185,33 @@ write-back over the originals unless asked for (T1 is the claim most of the trus
 Everything else is built and tested on fixtures; nothing is done on fixtures alone. These runs need real
 specifications, Windows and Word, and only the owner can do them. Record what a run finds as a new item above.
 
+- **Obliterate's rescue at attach (O6, built 2026-11-10):** with Word and Obliterate shown in Settings; no API key
+  is needed. No rescue has been run by a real Word, so try each kind once, with a file you can afford to compare by
+  eye. In Default mode first: an old `.doc` cannot be attached, and a refused file shows no button. Then choose
+  Obliterate.
+  1. *Word's rescues.* Attach an old `.doc` (the file dialog now lists `.doc` and `.docm`): it is listed refused,
+     with **Try to rescue**. Press it. Expect the chat to say Word opened a private copy and saved it as a `.docx`,
+     what the rescued document holds, and that nothing proves it; the document is in the refused file's place,
+     named `.docx`, tagged **Salvaged** (hover the tag). Open it and your `.doc` side by side in Word and compare:
+     the text, the tables, the headers and footers, the numbering. Your `.doc` is unchanged (its modified time
+     too). The same with a `.docm` (the chat says its macros are not kept), a document saved as *Strict Open XML
+     Document*, and a damaged file Word offers to repair when you open it by hand (the chat says Open and Repair;
+     if Word cannot open it either, the chat gives Word's reason and the file stays refused).
+  2. *A password.* A document saved with a password to open: **Try to rescue** opens the password dialog. A wrong
+     password: the chat says Word refuses it, and nothing is attached. The right one: the document is rescued, and
+     the chat says it now has NO password. Then look for the password: it must not be in the chat, in the window's
+     logs (About → Open diagnostic logs) or in a diagnostic bundle you save right after.
+  3. *The app's own.* If you have one, a `.docx` another program wrote with a `<!DOCTYPE` line, or one whose body
+     is empty of paragraphs: rescued with no Word, the chat naming the part it wrote again.
+  4. *After the rescue.* Run a Safe-mode button and a Default-mode request on a salvaged document: the copies are
+     checked as always (no UNVERIFIED mark from the rescue), each copy's line says SALVAGED, **Export** says how
+     many were made from a rescued document, and closing and reopening the window after a crash-style exit (kill
+     it from Task Manager) keeps the tag. Remove the document: the tag is gone with it.
+  5. *Size.* A specification over 256 MB, if you have one: **Try to rescue** opens it as it is, the chat says which
+     limits were raised and that they stay raised until the window closes, and the document carries no mark. Watch
+     the memory while a change runs on it.
+  6. *Stop.* Press **Stop** while Word is converting: the chat says nothing was rescued, the file is still
+     refused, and a preview that was waiting for other documents still waits.
 - **Obliterate's Word actions (O5, built 2026-11-10):** with Word and Obliterate shown in Settings; no API key is
   needed for the menu. This is the first item whose core no test could run: the tests drive the app around Word
   with a stand-in for its save, and **no action has ever been run by a real Word**. So try each one, and keep a Word

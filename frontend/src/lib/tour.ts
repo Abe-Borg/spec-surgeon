@@ -17,7 +17,7 @@ import { TRUST_FACTS as F } from "./trustFacts.ts";
  * Bump whenever chapter or step ORDER changes: the resume record (lib/tourStorage.ts) keeps numeric indexes, and a
  * stale one would land a reload on another chapter than the one it was left at. A bump discards it.
  */
-export const TOUR_VERSION = 9;
+export const TOUR_VERSION = 10;
 
 /** The version a finished tour is recorded as (settings.json `tutorial_version`); bump it when the tour changes
  *  enough that someone who finished the old one should be invited again. */
@@ -663,6 +663,16 @@ export const TOUR: readonly TourChapter[] = [
         title: "Obliterate's Word actions",
         body:
           "In Obliterate mode each document also carries Word actions: a fixed menu of things Microsoft Word itself does to a copy, such as accepting every tracked change, unlinking fields, turning text boxes into plain text or repairing the file. Tick the actions (they run in the order ticked), tick the box under the list if the other documents should get them too, and press Run in Word. No AI is used, and Word is asked for nothing off the menu. Word saves the whole file again, so nothing is predicted: the copy is made first, what it changes is listed from it before you approve, and Create delivers that same copy, marked UNPROVEN. Claude may name the same actions in a plan.",
+      },
+      {
+        id: "rescue",
+        capabilities: ["rescue.try", "rescue.password"],
+        mode: "explanatory",
+        anchor: "settings",
+        placement: "bottom",
+        title: "Obliterate: rescue a refused file",
+        body:
+          "A file the app refuses when you attach it stays refused in Safe and Default. In Obliterate mode it carries Try to rescue, and an old .doc or a .docm can be attached to be rescued. The app mends what it can itself, or Word converts or repairs a private copy; a document protected with a password asks for it first, gives it to Word for that one attempt and keeps it nowhere. Your file is read, never changed. What comes of it is attached in its place, marked Salvaged for good, and so is every copy made from it: the file could not be read as it was, so nothing proves the rescue kept everything. No AI is used.",
       },
     ],
   },

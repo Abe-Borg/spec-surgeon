@@ -58,6 +58,8 @@ interface Props {
   onParts?: (attachment: Attachment) => void;
   /** A document's **Word actions** (Obliterate mode): opens the menu of named Word actions for it. */
   onWord?: (attachment: Attachment) => void;
+  /** A refused document's **Try to rescue** (Obliterate mode). */
+  onRescue?: (attachment: Attachment) => void;
 }
 
 /** Save as a recipe on the paper: the accent's outline and words, white inside. */
@@ -142,6 +144,7 @@ function Workbench({
   tourActive = false,
   onParts,
   onWord,
+  onRescue,
 }: Props) {
   const occurrences = view.occurrences ?? [];
   const safe = view.mode === "safe";
@@ -191,6 +194,7 @@ function Workbench({
           blocked={view.recovery_blocked ?? ""}
           onParts={view.hands_on ? onParts : undefined}
           onWord={view.mode === "obliterate" && view.word ? onWord : undefined}
+          onRescue={view.mode === "obliterate" ? onRescue : undefined}
           word={view.word}
         />
 
@@ -416,6 +420,11 @@ function Workbench({
                   {copyMark(result.unverified) !== "" && (
                     <p className={`pb-2 pl-6 text-[11px] leading-snug ${copyMark(result.unverified) === "UNVERIFIED" ? "text-err" : "text-warn"}`}>
                       {unverifiedLine(result.unverified)}
+                    </p>
+                  )}
+                  {result.salvaged && (
+                    <p className="pb-2 pl-6 text-[11px] leading-snug text-warn" data-salvaged="copy">
+                      {result.salvaged}
                     </p>
                   )}
                 </li>

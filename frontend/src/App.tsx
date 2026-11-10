@@ -27,6 +27,8 @@ import { EMPTY_SAFE_FORM, openForm, type SafeFormState } from "./lib/recipes";
 import ObliterateWarning from "./components/ObliterateWarning";
 import PartsModal from "./components/PartsModal";
 import WordActionsModal from "./components/WordActionsModal";
+import RescuePasswordModal from "./components/RescuePasswordModal";
+import { documentsAccept } from "./lib/rescue";
 import { wordRequest } from "./lib/wordActions";
 import { modeChoice } from "./lib/modes";
 import TourOverlay from "./components/TourOverlay";
@@ -256,7 +258,7 @@ export default function App() {
           pendingPickRef.current = kind;
           const input = fileInputRef.current;
           if (!input) return;
-          input.accept = ACCEPT[kind];
+          input.accept = kind === "documents" ? documentsAccept(view.mode) : ACCEPT[kind];
           input.multiple = kind !== "template";
           input.value = "";
           input.click();
@@ -268,7 +270,7 @@ export default function App() {
         setNotice(failureText(failure));
       }
     },
-    [applyView],
+    [applyView, view.mode],
   );
 
   const onFileInput = useCallback(
@@ -434,6 +436,23 @@ export default function App() {
     const labels = actions.map((id) => menu.actions.find((a) => a.id === id)?.label ?? id);
     void runJob(api.wordActions(doc.path, actions, every), wordRequest(doc.name, labels, every, documentsInScope), "word_actions");
   }, [wordOf, view.word, runJob, documentsInScope]);
+  // Obliterate's Try to rescue (lib/rescue.ts): an encrypted document asks for its password first; any other is
+  // tried at once. The password lives in the dialog and in the one request that carries it. No AI is used.
+  const [passwordOf, setPasswordOf] = useState<Attachment | null>(null);
+  useEffect(() => {
+    if (view.mode !== "obliterate") setPasswordOf(null);
+  }, [view.mode]);
+  const onRescue = useCallback((attachment: Attachment) => {
+    if (busyRef.current) return;
+    if (attachment.rescue === "password") setPasswordOf(attachment);
+    else void runJob(api.rescue(attachment.path), null, "rescue");
+  }, [runJob]);
+  const onRescueWithPassword = useCallback((password: string) => {
+    const doc = passwordOf;
+    if (!doc || busyRef.current) return;
+    setPasswordOf(null);
+    void runJob(api.rescue(doc.path, password), null, "rescue");
+  }, [passwordOf, runJob]);
   const onHandOff = useCallback((paths: string[]) => applyView(api.handOff(paths)), [applyView]);
   // A to-do row's Obliterate this one: the same warning, naming the document, unless the mode is already on (its
   // warning was confirmed when it was turned on); then the pass begins over that one document.
@@ -834,6 +853,7 @@ export default function App() {
           tourActive={tourActive}
           onParts={setPartsOf}
           onWord={setWordOf}
+          onRescue={onRescue}
         />
       </main>
       <input
@@ -915,6 +935,14 @@ export default function App() {
           busy={busy || tourActive}
           onClose={() => setWordOf(null)}
           onRun={onRunWord}
+        />
+      )}
+      {passwordOf && view.mode === "obliterate" && (
+        <RescuePasswordModal
+          document={passwordOf}
+          busy={busy || tourActive}
+          onClose={() => setPasswordOf(null)}
+          onRescue={onRescueWithPassword}
         />
       )}
       {todoWarning && (

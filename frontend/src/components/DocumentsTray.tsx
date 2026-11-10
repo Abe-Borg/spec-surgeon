@@ -11,6 +11,7 @@ import {
 } from "../lib/workbench";
 import { PARTS_BUTTON, partsTip } from "../lib/handsOn";
 import { WORD_BUTTON, wordTip } from "../lib/wordActions";
+import { RESCUE_BUTTON, SALVAGED_TAG, rescueTip, salvagedTip } from "../lib/rescue";
 import type { WordMenu } from "../types";
 import { primaryBtn, quietBtn } from "./ModalShell";
 import Tip from "./Tip";
@@ -45,6 +46,9 @@ interface Props {
   onWord?: (attachment: Attachment) => void;
   /** The menu the view carries, for the button's tip (Word may not be on this computer). */
   word?: WordMenu | null;
+  /** Obliterate mode: a refused document with something to try carries **Try to rescue** (lib/rescue.ts). Absent
+   *  in Safe and Default. */
+  onRescue?: (attachment: Attachment) => void;
 }
 
 const BUSY_TIP = "Finish or stop the current work first";
@@ -82,6 +86,7 @@ function AttachmentCard({
   onRemove,
   onParts,
   onWord,
+  onRescue,
   word,
 }: {
   attachment: Attachment;
@@ -94,6 +99,7 @@ function AttachmentCard({
   onRemove: (attachment: Attachment) => void;
   onParts?: (attachment: Attachment) => void;
   onWord?: (attachment: Attachment) => void;
+  onRescue?: (attachment: Attachment) => void;
   word?: WordMenu | null;
 }) {
   const refused = attachment.state === "refused";
@@ -113,6 +119,13 @@ function AttachmentCard({
             {attachment.name}
           </span>
           {tag && <Tag text={tag} />}
+          {attachment.salvaged && (
+            <Tip tip={salvagedTip(attachment.salvaged)}>
+              <span data-salvaged="document">
+                <Tag text={SALVAGED_TAG} tone="warn" />
+              </span>
+            </Tip>
+          )}
           {scope === "To do" && <Tag text="To do" tone="warn" />}
           {scope === "Working on" && <Tag text="Working on" tone="accent" />}
         </div>
@@ -120,6 +133,19 @@ function AttachmentCard({
           <p className="mt-0.5 text-[12px] leading-snug text-err">{attachment.reason || "This file was left out."}</p>
         )}
       </div>
+      {onRescue && attachment.kind === "document" && refused && attachment.rescue && (
+        <Tip tip={rescueTip(attachment, busy, word ?? null)}>
+          <button
+            type="button"
+            onClick={() => onRescue(attachment)}
+            disabled={busy}
+            data-capability="rescue.try"
+            className="rounded-md border border-err/40 px-1.5 py-0.5 text-[11px] whitespace-nowrap text-err transition-colors hover:bg-err/10 disabled:pointer-events-none disabled:opacity-40"
+          >
+            {RESCUE_BUTTON}
+          </button>
+        </Tip>
+      )}
       {onWord && attachment.kind === "document" && !refused && (
         <Tip tip={wordTip(attachment.name, false, word ?? null)}>
           <button
@@ -249,6 +275,7 @@ export default function DocumentsTray({
   blocked,
   onParts,
   onWord,
+  onRescue,
   word,
 }: Props) {
   const held = busy || uploading || !!blocked;
@@ -278,6 +305,7 @@ export default function DocumentsTray({
             onRemove={onRemove}
             onParts={section === "documents" ? onParts : undefined}
             onWord={section === "documents" ? onWord : undefined}
+            onRescue={section === "documents" ? onRescue : undefined}
             word={word}
           />
         ))}
@@ -337,7 +365,7 @@ export default function DocumentsTray({
       >
         {cards("documents")}
         <div className="mt-3 flex flex-wrap items-center gap-2">
-          <Tip tip={held ? holdTip : "Attach one or more .docx files to edit"}>
+          <Tip tip={held ? holdTip : onRescue ? "Attach .docx files to edit, or an old .doc or .docm to rescue" : "Attach one or more .docx files to edit"}>
             <button type="button" className={quietBtn} disabled={held} onClick={() => onAdd("documents")} data-capability="documents.add">
               Add Word documents
             </button>
