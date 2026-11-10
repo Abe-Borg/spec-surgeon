@@ -464,6 +464,10 @@ Any report is a sign of life: a showing page (`visible`) that sends nothing for 
 Order within a job: any number of `status`/`activity`/`thinking_delta`/`text_delta`, then `message` when a reply is
 complete, `plan`/`samples`/`results`/`question`/`cost` as they happen, then exactly one `done` or `error`.
 
+The job is over before its last frame is sent: by the time a client can read `done` or `error`, `busy` is false, the
+settings and the journal are written, and the next request (a route that answers 409 while `busy`, or the next job)
+is taken at once. The server never answers 409 on account of a job whose last frame is out.
+
 A `send` or `choose` voids the plan and pages on screen (the server sets the old outcome aside as it reads the
 reply), so the page takes them off the workbench when the job starts; `primary` keeps them until its view.
 
