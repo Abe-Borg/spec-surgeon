@@ -433,7 +433,7 @@ Rules the page relies on:
   about the documents it still checks, or **Work on my to-do list**) is not taken: the user's words and this
   sentence are added as messages, no model is called, and the stage and `action.token` stand. Its last clause names
   the way out where the check is ("continue it", "create the copies it fixed", or "answer its question, save the
-  ready copies, or set the rest aside for later"). The page greys the document tray's buttons and ✕, **Remove all
+  ready copies, or leave the rest for later"). The page greys the document tray's buttons and ✕, **Remove all
   documents**, the mode switch's held modes, **Put back**, the to-do card's and the grid's **Work on it now** and the
   grid's **Obliterate this one** with it as their hover text. An older server leaves it out (read as `""`).
 - The page keeps the unsent message and staged Safe form across mode switches. Only a conversation mode's draft

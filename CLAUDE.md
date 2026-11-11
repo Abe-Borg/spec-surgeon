@@ -218,20 +218,24 @@ prompt, tool, catalog or schema names it — and Safe and Default write every Ex
 all. Pinned by `tests/test_export_anyway.py`.
 
 Obliterate is the top rung of a ladder (the owner's decision, 2026-11-10): Safe, then Default for what Safe could not
-take, then Obliterate for the one or two documents neither could, so it also starts from the to-do list. A document
-that goes on the list because the engine stopped on it or its copy failed a check keeps a **case file** with its entry
-(`document_task._case_of_exception`, `_case_of_result`, `_case_of_sample`; journalled, `_restored_case`): the engine's
-record, the failed checks, the copy that failed when it is the whole of the plan (a batch's result or a plan's own
-preview sample, never a chain's), a document of the same run that got a verified copy, and the plan the document was
-set aside from (JSON, `_case_plan`). **Obliterate this one**
-(`DocumentTask.obliterate_todo`, `/api/todo/obliterate`) turns the mode on for one such document, behind the same
-setting and warning, and begins the pass over it alone (`start_todo(only=)`); its conversation hears the case file
-(`_case_note`) and may read the worked example, which no spec can name (`_focus_examples`,
+take, then Obliterate for the one or two documents neither could, so it also starts from the to-do list: the failed
+cells of where each document stands (Repository layout, below). A failed cell the engine made — it stopped on the
+document, or the document's copy failed a check — keeps a **case file** (`DocumentTask._owe` →
+`Standing.record(case=)`: the cell's, one per document per operation, no longer a to-do entry's, the owner's decision
+of 2026-11-11; built by `document_task._case_of_exception`, `_case_of_result`, `_case_of_sample`; journalled with the
+cell, `_restored_case`): the engine's record, the failed checks, the copy that failed when it is the whole of the
+plan (a batch's result or a plan's own preview sample, never a chain's), a document of the same run that got a
+verified copy, and the plan the document was set aside from (JSON, `_case_plan`). **Obliterate this one** is a
+failed cell's (`DocumentTask.obliterate_todo(path, operation=)`, `/api/todo/obliterate`): it turns the mode on for
+that one document, behind the same setting and warning, and begins the pass over it alone on that operation, or the
+oldest it owes (`start_todo(operation=, only=)`); its conversation hears that cell's case file (`_case_note`) and
+may read the worked example, which no spec can name (`_focus_examples`,
 `compiler._Batch.add_examples`). **Use the copy that failed, marked UNVERIFIED** (`USE_FAILED_COPY`,
 `use_failed_copy`) takes the held-back copy as it is with no AI call, only after `_failed_copy_problem` (its md5, the
 document still the file it was made from, `guard.drifted` on that file): one change, with an undo point. Safe and
-Default never read a case file: their pass tells the model the entry's one sentence, and their to-do entries are
-shown as before. Pinned by `tests/test_obliterate_handoff.py`. The rest of the ladder is in `docs/BACKLOG.md`
+Default never read a case file: their pass tells the model the cell's one sentence, and with Obliterate hidden a cell
+is shown as before (`_standing_view` adds `obliterate` and `failed_copy` only while Settings shows the mode). Pinned
+by `tests/test_obliterate_handoff.py`. The rest of the ladder is in `docs/BACKLOG.md`
 ("Obliterate: the cost ladder"): decided, and not built until its item is.
 
 ## Repository layout
@@ -248,38 +252,68 @@ says what will change, the previews show it), and those sentences record each co
 button lives in the chat pane;
 each preview carries a checkmark (filled from the start: it gets its copy) and an X, and Create counts the copies it
 makes (`action.copies`, less the X'd; `action.unpreviewed` have no preview); X'd documents are `hold` on the primary action (`Session.run(only=)` keeps
-every approved pin), wait on `DocumentTask.todo`, and the reply `WORK_TODO` begins a pass over them alone (`focus`, one
-request at a time); `applied` keeps the changes each copy carries, so the history the model hears is per document; `runs` keeps each run
-that delivered copies (its request, the Safe-mode button, the documents it delivered and why the others got none), which
-the window lists under the copies as **What you've done so far** in every mode (`DocumentTask._done_view`, the view's
-`working.done`; a Safe-mode button it names carries a checkmark), Undo taking the newest off.
-**Where each document stands** (`standing.py`, `DocumentTask.standing`, the view's `standing`; the owner's decision of
+every approved pin) and wait out of the batch on `DocumentTask.todo`, each owing that request (the to-do list and the
+pass over it: below); `applied` keeps the changes each copy carries, so the history the model hears is per document;
+`runs` keeps each run that delivered copies (its request, the Safe-mode button, the documents it delivered and why
+the others got none), which the window lists under the copies as **What you've done so far** in every mode
+(`DocumentTask._done_view`, the view's `working.done`; a Safe-mode button it names carries a checkmark; which
+documents lack a run is the grid's to say), Undo taking the newest off.
+**Where each document stands** (`standing.py`, `DocumentTask.standing`, the view's `standing`; the owner's decisions of
 2026-11-11) is the record of what worked on what: an operation per button, request, saved recipe run or Obliterate
 action — one no document could take included — and under it each document's attempts, oldest first: done (the mode,
-the marks its copy carries), failed (the reason, kept however many buttons follow) or not run. `_stands` writes an
-outcome wherever one is decided; a to-do entry keeps the operation it did not get, so the pass that fixes it settles
-that cell (`focus["operations"]`) instead of opening another; Undo rewinds the record to its approval's number, Start
-over clears it, the journal keeps it, and the window draws it as a grid under the copies. **It describes and never
-decides**: no button, plan, gate or model reads it. What follows it (failed documents staying in the batch in every
-mode, the to-do list as the failed cells) is in `docs/BACKLOG.md` and not built.
+the marks its copy carries), failed (the reason, kept however many buttons follow, with what a pass needs: the
+request it failed, `decisions`, the plan the user saw, `seen`, and the engine's case file, `case`), not run, or
+waived. `_stands` writes an outcome wherever one is decided; Undo rewinds the record to its approval's number, Start
+over clears it, the journal keeps it (an earlier version's to-do list is read into it, `_adopt_todo`), and the
+window draws it as a grid under the copies (`WindowState.view` passes `standing` to the page).
+**Its failed cells are the to-do list** (`DocumentTask._owed` → `Standing.owed`), by these rules (numbered in
+`docs/CONVERSATIONAL_DESKTOP.md`, a test per rule in `tests/test_standing.py`, `test_rule_N_…`). **A failed
+document stays in the batch, in every mode**: one the
+engine could not change (the plan, a button or a saved recipe refused it; its preview sample failed; its copy failed
+a check or could not be made; recovery's leftovers) is recorded by `DocumentTask._owe` as a failed cell and nothing
+else, and the next button or request works on it with the others. **Only the user's own set-aside takes a document
+out** (`_set_aside`, `DocumentTask.todo`: below). **The pass** (`start_todo(operation=None, only=None)`; the reply
+`WORK_TODO`, "Work on my to-do list") takes ONE operation — the oldest that is owed, or the one named — and the
+documents that owe it and failed it from the same decisions, or one document; `focus` carries `operations` (document
+→ operation id) and `waiting` (the documents of it the user had set aside, back out of the batch if the pass is
+dropped, `_back_to_waiting`); copies it delivers turn those cells to done in that mode, both attempts kept, and a
+dropped pass leaves them failed. **Work on it** (`work_todo(operation=None, path=None)`, `/api/todo/work`) begins
+the pass on one cell, on every document that owes one operation, or on the list, turning from Safe to Default mode
+first; it replaced `hand_off`, `/api/handoff` and Try these in Default mode, which took the last button's documents
+alone. **Not needed on this one** (`waive(operation, path, on=True)`, `/api/todo/waive`) takes a failed cell off the
+list at the user's word (state `waived`, its failed attempt kept under it) or puts it back: no document changes, no
+AI call. **Obliterate this one** is the cell's (Modes, above). **Nothing is inferred**, with one exception: the same
+Safe-mode button pressed again with the identical form settles its own earlier failed cells on the documents it now
+delivers (`Standing.same_button`, the note `SAME_BUTTON_AGAIN`), the new press still an operation of its own; a pass
+over one of two identical presses' failures is no press and settles its own cell alone. **The
+model hears** the documents the user set aside in the first message (`<todo>`, SET ASIDE BY THE USER) and what the
+documents in scope still owe in the app's note (`<app_note>`, `DocumentTask._owed_note`: context only, never during a
+pass). The record itself plans, orders and changes nothing: a failed cell keeps no document out of a plan.
+`DocumentTask.left_untouched`, the view's `left_untouched` and the page's cards Left untouched by the last button
+and Set aside for more work are removed (Left untouched beside a preview, `plan.set_aside`, stays): after a
+Safe-mode run the chat names what was not done and points to the grid, and the chat's to-do card lists each owed
+line.
 A request ends with copies, with a discarded preview or dropped request, or with a reply that is an answer and nothing pending (words
 alone: no question, choice, suggested reply, plan, refused plan or custom method — `DocumentTask._answered`): the
 decisions are cleared, the conversation ends, and the exchange (the user's words, the answer's first sentence) is kept
 in `DocumentTask.exchanges` (journalled, the last `EXCHANGES_KEPT`) and told to the model with the next request
 (`Session.compile(earlier=)` → `build_messages` `EARLIER IN THIS CONVERSATION`), so a put-back, an attach or a mode
 change revives nothing stale and the next message is a fresh REQUEST; a follow-up while something is pending stays a
-revision (`conversation_matches`). `start_todo` still reuses the to-do entries' decisions.
+revision (`conversation_matches`). `start_todo` still reuses the decisions its failed cells keep.
 Documents the user leaves out of a request (`submit_editspec.leave_out` → `Session.left_out`) are not planned,
 previewed or run (`planned_files`) and wait under Left untouched; a file the plan refuses does too, at any step of a
 chain (`planner.plan_batch_chain` plans every step on every file; `preview.refusals`), and so does a sample that fails
 its check while another passes (`preview.failed_samples`, `Session.failed_samples`: never run, its card kept, the
 others created; a custom method's preview has none), and the preview of the others stands (outcome planning starts,
-and Safe mode's Create is unavailable, only when no file plans or no sample gets through). The to-do list
-(`DocumentTask.todo`, each entry with `why` and `reason`) is where documents wait for later: the red X, the chat's
-`set_aside` tool at the user's word (`Conversation.set_aside` → `DocumentTask._take_set_aside`), a file the plan
-refused or whose sample failed once the others run, a run failure no recovery takes, and recovery's leftovers at `SET_ASIDE_REST`;
-`put_back` takes one off without a pass. An entry the engine put there keeps its case file, and with Obliterate
-shown each entry offers **Obliterate this one** (Modes, above).
+and Safe mode's Create is unavailable, only when no file plans or no sample gets through).
+`DocumentTask.todo` (each entry with `why` and `reason`) holds only the documents the USER set aside, which wait
+out of the batch: the red X (`held`), or the chat's `set_aside` tool at the user's word (`asked`;
+`Conversation.set_aside` → `DocumentTask._take_set_aside`); each also has its failed cell, and `put_back` returns one
+to the batch without a pass, what it owes staying on the to-do list ("That document is not set aside." for any
+other). A file the plan refused or whose sample failed once the others run, a run failure no recovery takes, and
+recovery's leftovers at `SET_ASIDE_REST` ("Leave the rest for later") are never on it: each is a failed cell
+(`_owe`), on the to-do list and still in the batch. A failed cell the engine made keeps its case file, and with
+Obliterate shown offers **Obliterate this one** (Modes, above).
 Delivered copies are the working set the next request builds on. The window
 works in a scratch folder (`scratch.py`: one per window under `data_dir()\scratch`, locked while it runs, holding
 every session folder, dropped file and the journal; deleted at a clean close after one question when a copy is not
@@ -296,13 +330,15 @@ PDF cannot be made gets no file, named with why. Safe mode's Save clean PDFs but
 The assistants point to Export for PDFs (`compiler.SIMPLE_EXPERIENCE`, `exports.PROMPT_NOTE`).
 **Discard preview**
 (`DocumentTask.discard_preview`; what it withdraws is `discard_kind`, the view's `discard`) withdraws a preview: in Safe
-mode it shows again what `_recipe` set aside (`_before_button`); in Default and Obliterate it — or **Drop this
-request**, at a question, a pause or a reply to continue — ends the request (`_discard_request`: decisions cleared, the
-request kept in `exchanges` as withdrawn, a pass's documents back on the to-do list). **Undo the last button** (Safe)
-or **Undo the last change** (`DocumentTask.undo`) pops `undo_points` (one per run that delivered copies, taken at
-approval, kept in the journal) to put the working set back one run, in every mode. Neither writes or deletes a file.
+mode it shows again the copies shown before the button (`_before_button`, kept by `_recipe`); in Default and
+Obliterate it — or **Drop this request**, at a question, a pause or a reply to continue — ends the request
+(`_discard_request`: decisions cleared, the request kept in `exchanges` as withdrawn, a pass's cells still owed and
+its set-aside documents waiting again). **Undo the last button** (Safe) or **Undo the last change**
+(`DocumentTask.undo`) pops `undo_points` (one per run that delivered copies, taken at approval, kept in the journal)
+to put the working set back one run, in every mode: the record rewound to that approval (`Standing.rewind`), the
+documents its ✗ set aside in the batch again. Neither writes or deletes a file.
 A run that saved some copies while recovery checks its other documents is one change: those copies join the working
-set when the check ends (`_advance_generation`), so until Save the ready copies or Set the rest aside ends it, every
+set when the check ends (`_advance_generation`), so until Save the ready copies or Leave the rest for later ends it, every
 action that would drop the check first waits with the reason (`DocumentTask._recovery_blocked`, the view's
 `recovery_blocked`: attach, remove, a mode change across Obliterate or to Safe, Put back, the to-do pass, a Safe-mode
 button, a recipe, Discard, Undo, and words not about the documents it checks, `Session.recovery_takes_words`); a run
@@ -391,7 +427,8 @@ jobs). Details: `docs/CONVERSATIONAL_DESKTOP.md`.
     `stopping.check` between files and steps, `stopping.wait`/`as_completed` over worker pools (`batch.stop_pool`
     terminates their processes), the Word workers' and LibreOffice's polls; `stopping.Stopped` is a `BaseException`
     so no `except Exception` takes it for a file's failure, and `DocumentTask._stopped` says what it left (a preview
-    withdrawn, a Create with no copy and its preview waiting, an export with nothing saved). A new wait on work
+    withdrawn, a Create with no copy, its preview waiting and the record of where each document stands as it was
+    before the press, an export with nothing saved). A new wait on work
     running elsewhere looks at Stop; a new `except BaseException` re-raises.
     Fast mode (`speed="fast"`, Settings → Fast responses, `llm.set_fast_mode`) is the user's choice, off by default:
     it changes speed and price (`FAST_PRICES`), never the model, effort or prompt; a fast call the fast capacity
@@ -453,15 +490,19 @@ jobs). Details: `docs/CONVERSATIONAL_DESKTOP.md`.
     plan per layout of chains) and through the gate again: one preview, one approval, one checked run, `outcome_source`
     `"saved"` (`Session.model_free`: no AI anywhere). A recipe runs in its own mode or one with fewer guardrails
     (`runs_in`): a Default recipe is never offered in Safe mode, an Obliterate one runs only in Obliterate. A document a
-    step cannot take is left untouched in Safe mode and goes on the to-do list in Default and Obliterate (no AI
+    step cannot take stays in the batch and owes the run (a failed cell of `standing`, `_owe`), in every mode (no AI
     re-plans it); a recipe's run is never handed to Claude as a request (`_invalidate`, the journal's `recipe_run`).
     Edited in Manage (`Store.edit`: name, note, steps kept in a new order, removed, or a button's form changed; a
     plan step is moved or removed whole, never rewritten; refused when the recipe's `revision` moved since the editor
     opened) and grown from the save dialog (`Store.append`, **Add to a saved recipe**); the mode is always its steps'.
     No export or import of recipe files (the owner's decision, 2026-10-29). Pinned by `tests/test_saved_recipes.py`.
   - `standing.py` — where each document stands: the record of every operation asked for and each document's attempts
-    under it (`Standing`: `open`, `record`, `rewind`, `forget`, `view`, the journal's `to_json`/`from_json`). Plain
-    data; it imports nothing of the engine and decides nothing. Pinned by `tests/test_standing.py`.
+    under it, done, failed, not run or `waived` (`Standing`: `open`, `record`, `waive`/`unwaive`, `rewind`, `forget`,
+    `view`, the journal's `to_json`/`from_json`). A failed attempt carries what a pass over it needs (`decisions`,
+    `seen`, `case`); `owed` lists the failed cells, the to-do list `DocumentTask._owed` reads; `same_button` names the
+    earlier operations that are the same Safe-mode button with the same form. Plain data; it imports nothing of the
+    engine and by itself plans, orders and changes nothing. Pinned by `tests/test_standing.py` (a test per rule,
+    `test_rule_N_…`; helpers in `tests/standing_helpers.py`).
   - `tutorial.py` — the guided tour's practice workspace (`docs/CONVERSATIONAL_DESKTOP.md`, "The guided tour"):
     `TutorialTask` (a `DocumentTask` without a journal over the bundled showcase in `examples/tutorial/`, which
     `tests/make_tutorial_showcase.py` builds byte-stable; `send`/`choose` refused, `NO_CONVERSATION`) and `Tutorial`

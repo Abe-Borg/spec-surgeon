@@ -162,16 +162,23 @@ it was, and once you have finished it the chip stops inviting. Help → How to u
    conversation offers to work on them: they are planned alone, from the same request, and you say what should be
    different.
 
-**The to-do list.** Documents wait there, each with why, until you come back to them: the ones you marked with the
-red X, the ones you asked the assistant to set aside, a file the plan could not be applied to or whose preview did
-not pass its checks (it goes there when you create the others' copies), and a file whose copy could not be made with
-nothing left to check it again. While files
-are being checked again after a run, **Set the rest aside for later** (offered once the ready copies are saved) puts
-what was not fixed there too and ends the request. Nothing on the list is changed. With Obliterate mode shown in
-Settings, each document on the list also offers **Obliterate this one** (below, under the modes). "Work on the documents I set aside"
-(a reply the app offers) plans them on their own, from the request they were set aside from, with the assistant told
-why each one waited; **Put back** beside one returns it to the other documents as it is. Each new request tells the
-assistant what is on the list, so it can answer "what did I set aside?" without planning those files. The list is
+**The to-do list.** What could not be done on a document is still owed, each with why, until you come back to it:
+the to-do list is every such case, the crosses of **Where each document stands** (below). On it are the documents
+you marked with the red X and the ones you asked the assistant to set aside, and the ones the app could not change:
+a file the plan, a button or a saved recipe could not be applied to or whose preview did not pass its checks (it is
+on the list once you create the others' copies), and a file whose copy could not be made with nothing left to check
+it again. The two kinds differ in one thing. A document you set aside waits: it is out of every button and request
+until you work on it, or until **Put back** beside it returns it to the other documents as it is. A document the app
+could not change stays in the batch, in every mode: your next button or request works on it with the others, and
+what it missed stays on the list. While files are being checked again after a run, **Leave the rest for later**
+(offered once the ready copies are saved) leaves what was not fixed as it is, on the list too, and ends the request.
+Nothing on the list is changed. "Work on my to-do list" (a reply the app offers, and the button of the to-do card
+in the chat) plans one request at a time, the oldest first, for the documents that still owe it, with the assistant
+told why each one failed; in Safe mode the button reads **Work on it in Default mode** and switches modes first. A
+cross in the grid offers the same for that one document, **Not needed on this one** when a later change made it
+moot and, with Obliterate mode shown in Settings, **Obliterate this one** (below, under the modes). Each new request
+tells the assistant which documents you set aside and what the others still owe, so it can answer "what did I set
+aside?" without planning those files, and it plans an earlier request for a document only when you ask. The list is
 kept in the saved conversation; **Start over from the originals** clears it.
 
 **Questions.** A question the assistant answers in words, with no plan and nothing to pick ("which of these carry a
@@ -406,14 +413,15 @@ mode you last used (Safe the first time; never Obliterate).
   said. Your edited copies stay as they are, no AI is used, and Claude can never choose it. Needs Microsoft Word on
   this computer. Obliterate is the last rung of a ladder —
   Safe first, Default for what Safe could not take, Obliterate for the one or two documents neither could — so it
-  also starts from the to-do list: **Obliterate this one**, beside a document there, opens the same warning and then
-  turns the mode on for that one document, the request it was set aside from standing and every other document,
-  copy and to-do entry left as it is. The assistant is then told what the engine recorded of that document (the
-  refusal, or the checks its copy failed) and the plan the other documents got, and may read a document of the same
-  run that took the change as a worked example; where one thing stopped the document, it clears that with a raw XML
-  edit and runs the same plan as the next step. When a copy was made and held back because it failed a check, the chat offers **Use the copy that
-  failed, marked UNVERIFIED**: after the app checks that this copy and the file it was made from are unchanged, it
-  joins your edited copies as it is, with no AI call, and **Undo the last change** takes it off again.
+  also starts from the to-do list: **Obliterate this one**, on a cross of Where each document stands, opens the same
+  warning and then turns the mode on for that one document and that one change, the request it failed standing and
+  every other document, copy and cross left as it is. The assistant is then told what the engine recorded of that
+  document (the refusal, or the checks its copy failed) and the plan the other documents got, and may read a document
+  of the same run that took the change as a worked example; where one thing stopped the document, it clears that
+  with a raw XML edit and runs the same plan as the next step. When a copy was made and held back because it failed
+  a check, the chat offers **Use the copy that failed, marked UNVERIFIED**: after the app checks that this copy and
+  the file it was made from are unchanged, it joins your edited copies as it is, with no AI call, and **Undo the last
+  change** takes it off again.
   **Back to Default** (or any other mode) leaves
   it; the app never opens in it.
 
@@ -422,8 +430,10 @@ the rest untouched, each with the engine's reason — a template's section line 
 setting that differs from the template's, a phrase whose formatting changes partway through, a preview whose page
 layout did not come out as the plan predicts. Nothing is guessed and nothing is half-edited: a copy passes every
 check or is not made, and a document whose preview failed never holds back the copies of the others. After the
-copies are created, **Try these in Default mode** puts the untouched documents on your to-do list in Default mode,
-where the conversation can plan them.
+copies are created, each document the button could not change has a cross under that button in **Where each document
+stands** (below), with the reason, and stays among the documents your next button works on. **Work on it in Default
+mode**, on the cross or on the to-do card in the chat, switches to Default mode and begins a pass over it, where the
+conversation can plan it — for any cross, however many buttons ago.
 
 Changed your mind in Safe mode? While a button's preview waits, **Discard preview** (or **All buttons**) withdraws it
 and nothing is created; each button's form keeps what you typed until **Clear form**. After the copies are created,
@@ -435,7 +445,7 @@ next message starts a new request (the assistant is told the last one was withdr
 back before the last run that made copies, one run at a time. While a run that already saved some copies has its
 other documents checked again, those copies join the ones your next request builds on only when that check ends, so
 adding or removing documents, a change of mode, the to-do list, Discard and Undo wait until you save the ready copies
-or set the rest aside; the greyed button says why.
+or leave the rest for later; the greyed button says why.
 
 Need to stop a button's work part-way, say a preview of sixty documents rendering through Word? **Stop now**, in the
 bar above the buttons while the work runs (and the red **Stop** in the top bar), is Safe mode's kill switch. Safe mode
@@ -447,21 +457,30 @@ and its preview waits again, so you can create the copies later or discard it. A
 originals are never written either way.
 
 Under the copies, **What you've done so far** lists every button you ran since the originals, oldest first, in the
-words of your line in the chat, with how many of the documents attached now carry each one and why any other does not
-(left untouched, set aside on the to-do list, or attached later). **Undo the last button** takes the newest off, Start
+words of your line in the chat, with how many of the documents attached now carry each one (which do not, and why,
+is in the grid above it, per document). **Undo the last button** takes the newest off, Start
 over clears the list, and a button you already ran carries a checkmark, so the steps of a long batch never need
 remembering. In Default and Obliterate mode the list names each request the same way.
 
 Above it, **Where each document stands** answers "what worked on what, and what didn't" for the whole job, in every
 mode: a grid with every button or request across and every document down. A check means that document got it, with the
 mode that did it (Safe, Default or Obliterate, and UNVERIFIED or UNPROVEN where a copy was delivered with that mark); a
-cross means it could not be done; a dash means it was not run on that document (you left it out, it waited on your
-to-do list, or it was attached later). Click a mark for its reason and every attempt made on it. A reason stays there
-however many buttons you press afterwards, a button that no document could take is listed too, and when a document
-that failed in Safe mode is later fixed in Default or Obliterate, its own cell turns to a check and keeps both
-attempts. The line under the grid counts what is still not done, and **Show only these** lists just those documents.
-The grid only describes: it changes nothing and decides nothing, **Undo** takes its newest column off and **Start
-over** clears it.
+cross means it could not be done; a dash means it was not run on that document (you left it out, you had set it
+aside, it was attached later, or you said it is not needed there). Click a mark for its reason and every attempt made
+on it. A reason stays there however many buttons you press afterwards, a button that no document could take is
+listed too, and when a document that failed in Safe mode is later fixed in Default or Obliterate, its own cell turns
+to a check and keeps both attempts. The line under the grid counts what is still not done, and **Show only these**
+lists just those documents. **Undo** takes its newest column off and **Start over** clears it.
+
+**The crosses are your to-do list.** Click one for what you can do about it, from any mode: **Work on it now** begins
+a pass over that document alone, where you tell the assistant what should be different (from Safe mode it reads
+**Work on it in Default mode** and switches modes first), and **All N it was not done on** takes every document that
+button or request failed on; **Obliterate this one**, with Obliterate mode shown in Settings, takes that one document
+to the last rung; **Not needed on this one** takes it off the list when a later change made it moot, and it can be
+put back. Pressing the same Safe-mode button again with the same form settles its own earlier crosses on the
+documents it now changes. A document the app could not change stays in the batch, so your next button or request
+works on it with the others; a document you set aside yourself, with the red X or by asking, waits out of them and
+carries a **set aside** badge with **Put back** beside it. The grid itself changes no document.
 
 **Save as a recipe…**, on that list, keeps the changes you tick under a name, to run again on the next set of
 documents: in Safe mode the buttons and what you filled in their forms, in Default and Obliterate your requests with
@@ -470,8 +489,9 @@ beside the message box (**All recipes**). Open one, change a step's form or skip
 every step is built from the documents attached now and checked by the same gate as any plan, then previewed once,
 with the pages after every step; one **Create edited copies** makes the copies, and **Undo** takes the whole recipe
 off. No AI is called, so a recipe costs nothing to run. A step that needs a template, picture or table uses the one
-attached when it runs; a document a step cannot take is left untouched in Safe mode and waits on your to-do list in
-Default and Obliterate. A recipe runs in the mode it was saved in or one with fewer guardrails: Safe recipes in every
+attached when it runs; a document a step cannot take is left as it is, with a cross in the grid and the reason: it
+is on your to-do list, and stays among the documents your next change works on, in every mode. A recipe runs in the
+mode it was saved in or one with fewer guardrails: Safe recipes in every
 mode, Default ones in Default and Obliterate, Obliterate ones only in Obliterate. A change Claude wrote a custom method
 for, or planned with values read from particular documents, cannot be kept, and the dialog says why. Recipes are kept
 in `recipes.json` beside `settings.json`; **Manage** duplicates and deletes them.
@@ -648,9 +668,9 @@ recorded for the requests that follow.
 - **Nothing here has been proven on your files yet.** The engine, the window and the installer are tested on
   synthetic fixtures (including a family of deliberately dirty files) and in CI; the live Claude path, Word
   rendering and the first real batches are the user's to run. Expect fixes from the first real runs of every operation.
-- Safe mode's buttons do only what each says. A document a button cannot change exactly is left untouched with the
-  reason; no AI looks at it there, and it can be handed to Default mode. Text boxes as objects, shapes and the other
-  objects out of reach stay out of reach in every mode.
+- Safe mode's buttons do only what each says. A document a button cannot change exactly is left as it is, with the
+  reason kept in Where each document stands; no AI looks at it there, and **Work on it in Default mode** takes it to
+  the conversation. Text boxes as objects, shapes and the other objects out of reach stay out of reach in every mode.
 - A PASS is the engine's proof of the predicted change, not acceptance of the result. Look at the before/after
   pages. Claude's visual check is advisory and can be wrong both ways.
 - A clean PDF is checked as a file (it opens, has pages and carries no notes) and is made from a checked clean copy;

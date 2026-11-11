@@ -8,8 +8,8 @@
  * update check and diagnostic bundle, the page's own report of its load,
  * the update banner and the pill it leaves, start over, the button's home
  * in the conversation, the folding documents tray, and the red X on a
- * preview → the to-do list → the pass over it; Safe mode's buttons, a button's form → preview → copies, and the
- * hand-off of what it left untouched to Default mode.
+ * preview → the to-do list → the pass over it; Safe mode's buttons, a button's form → preview → copies, and Work
+ * on it in Default mode for what a button could not do.
  *
  *   npm run build
  *   node tools/flows.mjs
@@ -457,8 +457,8 @@ try {
   await gridAfter.getByText("On your to-do list: 1 operation on 1 document.").waitFor({ timeout: 20000 });
   check("…and it can be put back on the list", (await page.locator("[aria-label='Your to-do list']").count()) === 1);
 
-  // 17. Safe mode: the switch, the buttons in place of the message box, a button's form → preview → copies, and the
-  // hand-off of what it left untouched to Default mode.
+  // 17. Safe mode: the switch, the buttons in place of the message box, a button's form → preview → copies, and
+  // Work on it in Default mode for what a button could not do.
   await scenario("attached");
   await page.reload();
   const modes = page.getByRole("group", { name: "Mode" });

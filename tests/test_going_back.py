@@ -424,11 +424,11 @@ def test_undo_and_a_recipe_wait_with_the_reason_while_a_runs_copies_wait(tmp_pat
 
 
 def test_the_reason_names_the_way_out_the_check_is_at(tmp_path, monkeypatch):
-    # a check still asking about a document: answer it, save what is ready, or set the rest aside
+    # a check still asking about a document: answer it, save what is ready, or leave the rest for later
     task, docs = waiting_copies(tmp_path, monkeypatch)
     task.session.recovery.files[0].status = "UNRESOLVED"
-    assert task._recovery_blocked().endswith("Finish it first: answer its question, save the ready copies, or set "
-                                             "the rest aside for later.")
+    assert task._recovery_blocked().endswith("Finish it first: answer its question, save the ready copies, or "
+                                             "leave the rest for later.")
     task.stage = "resume"                                              # a reopened window: Continue goes on with it
     assert task._recovery_blocked().endswith("Finish it first: continue it.")
 

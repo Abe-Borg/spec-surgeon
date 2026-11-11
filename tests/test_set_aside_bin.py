@@ -6,7 +6,7 @@ beside that preview and then rejoined the next request unnoticed.
 
 Now the assistant sets documents aside at the user's word (``set_aside``), a file the plan refused goes on the list
 when the others' copies are created, a run failure nothing will check again goes there too, recovery's leftovers go
-there at the user's word ("Set the rest aside for later"), every entry says why, and Put back takes one off the list
+there at the user's word ("Leave the rest for later"), every entry says why, and Put back takes one off the list
 without a pass. Nothing on the list is changed, and the model never plans it until the user works on it."""
 from __future__ import annotations
 

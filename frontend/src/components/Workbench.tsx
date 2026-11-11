@@ -291,7 +291,7 @@ function Workbench({
             title="Left untouched"
             subtitle={
               safe
-                ? "These documents are not part of the change; each line says why. Once the copies are created, you can hand them to Default mode."
+                ? "These documents are not part of the change; each line says why. Once the copies are created, each is on your to-do list with its reason, and the next button still works on it."
                 : "These documents are not part of the plan; each line says why."
             }
           >

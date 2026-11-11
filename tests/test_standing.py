@@ -553,6 +553,32 @@ def test_rule_1_a_document_the_user_set_aside_waits_out_of_the_batch_and_what_it
     assert held["owed"] == 1 and held["badges"] == ["set aside"]
 
 
+def test_rule_2_the_to_do_list_is_the_failed_cells_and_nothing_else(tmp_path):
+    """The to-do list is read from the record: one line per failed cell — a document under an operation — oldest
+    operation first. A cell that is done, not run or waived is not on it, nor is a document no longer attached; and
+    the documents that wait out of the batch (``todo``) are a different list, which owing something never joins."""
+    docs = three(tmp_path)
+    task = task_for(tmp_path, FakeClient())
+    task.attach(docs)
+    first = owe(task, docs[1], "Remove the headers.", reason="It has none.")
+    task.standing.record(first, str(docs[0]), DONE, mode="default")
+    task.standing.record(first, str(docs[2]), NOT_RUN, mode="default", why="left out")
+    second = owe(task, docs[0], "Match the template.", reason="No SECTION line.")
+    task.standing.record(second, str(docs[1]), FAILED, mode="default", why="failed", reason="A check failed.",
+                         decisions=["Match the template."])
+    # oldest operation first, and under one operation the documents in the window's order
+    assert task._owed() == [(first, str(docs[1])), (second, str(docs[0])), (second, str(docs[1]))]
+    assert [(e["name"], e["request"]) for e in owed(task)] == [
+        (docs[1].name, "Remove the headers."), (docs[0].name, "Match the template."),
+        (docs[1].name, "Match the template.")]
+    assert grid(task)["owed"] == {"cells": 3, "documents": 2}
+    assert task.todo == {}                                          # owing something sets no document aside
+    task.waive(second, str(docs[0]))                                # not needed on this one: off the list
+    assert task._owed() == [(first, str(docs[1])), (second, str(docs[1]))]
+    task.remove(str(docs[1]))                                       # a document taken out takes its lines with it
+    assert task._owed() == [] and grid(task)["owed"] == {"cells": 0, "documents": 0}
+
+
 def test_rule_3_a_pass_takes_one_operation_at_a_time_the_oldest_first_or_the_one_named(tmp_path):
     docs = three(tmp_path)
     task = task_for(tmp_path, FakeClient())
@@ -646,6 +672,31 @@ def test_rule_6_the_same_button_with_the_same_form_settles_its_own_earlier_failu
     assert [o["id"] for o in grid(task)["operations"]][0] == first and len(grid(task)["operations"]) == 4
     task.undo()                                                      # Undo takes the settling back with its run
     assert states(task, files[1]) == [FAILED, DONE, DONE]
+
+
+def test_rule_6_a_pass_over_one_of_two_identical_presses_settles_that_cell_alone(tmp_path, files, monkeypatch):
+    """The settlement is for the button pressed again, and for nothing else. A pass over one of two identical
+    presses' failures delivers under that press's operation, with other instructions and in another mode: it is no
+    second press of the button, so the other press's cross stays owed and nothing says “pressed again”."""
+    from test_obliterate_handoff import fail_v2
+    task = DocumentTask(Session(client=FakeClient(submit()), out_root=tmp_path / "out", visual_check=False),
+                        render=False, mode="safe")
+    task.attach(files)
+    fail_v2(monkeypatch, files[1].name)
+    press(task, "title_property", TITLE)
+    press(task, "remove_comments")
+    press(task, "title_property", TITLE)                             # the same button, the same form: it fails again
+    monkeypatch.undo()
+    first, between, second = [o["id"] for o in grid(task)["operations"]]
+    assert task.standing.same_button(second) == [first]
+    assert states(task, files[1]) == [FAILED, FAILED, FAILED]        # the check fails whatever the button
+    task.work_todo(operation=second, path=str(files[1]))             # the newer cross, worked on in Default mode
+    view = task.perform("send", text="Make its title bold instead.")
+    task.perform("primary", token=view["token"])
+    older, _, newer = row(task, files[1])["cells"]
+    assert (newer["state"], newer["mode"], newer["note"]) == (DONE, "default", "")
+    assert older["state"] == FAILED and [a["state"] for a in older["attempts"]] == [FAILED]
+    assert [e["operation"] for e in owed(task)] == [first, between]     # the older press is still owed
 
 
 def test_rule_7_the_model_is_told_what_is_owed_only_as_context_and_never_during_a_pass(tmp_path):

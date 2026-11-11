@@ -31,7 +31,7 @@ const recoveryModel = `${MODEL_NAME} (${F.model}) by default, ${F.recoveryEffort
  *  said once here, so every card that names a waiting action says it the same way. */
 const WHILE_CHECKED =
   "while a run that already saved some copies has its other documents checked again: those copies join what the " +
-  "next request builds on when the check ends (save the ready copies, or set the rest aside for later), so nothing " +
+  "next request builds on when the check ends (save the ready copies, or leave the rest for later), so nothing " +
   "ends it first; the page greys the button with the reason";
 const codegenModel = `${MODEL_NAME} (${F.model}) by default, ${F.codegenEffort} effort while it writes the method (the conversation's next call is back at ${F.conversationEffort}), up to ${grouped(F.maxOutputTokens)} output tokens per call.`;
 
@@ -139,8 +139,9 @@ export const RUNTIME_CARDS: RuntimeCard[] = [
     runs:
       "The conversation asks Claude. Claude reads the documents through read-only tools (paragraph text, a part's " +
       "XML, styles, a header or footer, the template, an attached table, rendered pages) and either asks you a question " +
-      "or submits a plan. At your word (“set this one aside for later”) it can also put documents on your to-do list: they " +
-      "leave this request and every later one until you work on them or put them back, and nothing in them changes. " +
+      "or submits a plan. At your word (“set this one aside for later”) it can also set documents aside: they go on " +
+      "your to-do list and leave this request and every later one until you work on them or put them back, and " +
+      "nothing in them changes. " +
       "The app validates the plan: its operations and settings, every file it " +
       "names, every word it would place, and a dry run on representative files. A rejected plan goes back to Claude " +
       `with the reason. An accepted plan is turned into a preview automatically: up to ${F.autoSteps} internal steps ` +
@@ -148,11 +149,17 @@ export const RUNTIME_CARDS: RuntimeCard[] = [
     sent:
       `To the Anthropic API (${F.anthropicHost}, unless ${F.apiAddressEnv} is set): your request and earlier answers, what the copies already carry, ` +
       "the last few requests Claude answered without a plan (your words and the first sentence of each answer), " +
-      "the file names (and the names on your to-do list, with why each waits), the full path of an attached template, " +
-      "picture or table, a profile of each kind of document " +
+      "the file names (and the names of the documents you set aside, with why each waits), the full path of an " +
+      "attached template, picture or table, a profile of each kind of document " +
       "(styles, headings, header and footer text, sample paragraphs), an overview of every document (its section " +
       "number and title, its header and footer lines, its File Properties title), and whatever Claude's tools read: " +
-      "paragraph text, XML, table rows, and page images rendered on your computer.",
+      "paragraph text, XML, table rows, and page images rendered on your computer. When a document in the request " +
+      "still owes an earlier change (a cross in Where each document stands), the first message also says so, as " +
+      "context: its name, that earlier request (your words, or a button's sentence) and why it was not done, which " +
+      "can quote the document. Claude is told to plan what this request asks, and the earlier change only if you " +
+      "ask for it. That list is cut at a fixed length, leaves out a cross you marked as not needed, and is not sent " +
+      "during a pass over your to-do list, which carries its own note: why each of its documents was on the list, " +
+      "and the plan you saw.",
     ai: conversationModel,
     bounds:
       "Your spending check (Settings): an AI step that could take this request past it is not started, and the work " +
@@ -188,8 +195,9 @@ export const RUNTIME_CARDS: RuntimeCard[] = [
     you: "Nothing: it follows a plan the app accepted.",
     runs:
       "Every attached file is planned from its original: the engine works out exactly what will change, or sets the " +
-      "file aside with a reason under Left untouched (when you create the others' copies, it goes on your to-do list " +
-      "with that reason). A document you asked to leave out of the request, by name or by keeping the request to " +
+      "file aside with a reason under Left untouched (when you create the others' copies, that change goes on your " +
+      "to-do list for it with the reason, and the document stays among those your next request works on). A " +
+      "document you asked to leave out of the request, by name or by keeping the request to " +
       `others (“only this one”), is not planned, and is named there too. Representative samples (${F.sampleFiles} files, or every file in a smaller batch; ` +
       "at least one per layout, so more when there are more layouts) are edited in memory and checked by the independent checker, their rendered pages compared as the run compares them (a layout that moved fails the sample; a sample says when that check waits for the run). " +
       "The same comparison counts the words shown on every page of the original and of the copy, less what the plan " +
@@ -306,8 +314,9 @@ export const RUNTIME_CARDS: RuntimeCard[] = [
       "beneath it; nothing is tried until you pick it. A file the plan " +
       "refuses while the others plan does not start it, at whichever step of a plan done in steps, and neither does " +
       "a sample that fails its checks while another passes: that " +
-      "file waits under Left untouched beside the preview of the others, and goes on your to-do list when you " +
-      "create theirs. The documents you left out of the request stay out of the outcomes.",
+      "file waits under Left untouched beside the preview of the others; when you create theirs, the change goes " +
+      "on your to-do list for it and the document stays among those your next request works on. The documents " +
+      "you left out of the request stay out of the outcomes.",
     runs:
       "Claude proposes the outcomes to reach (what should change, where, with what wording). The app checks the " +
       "proposal and shows it; once you pick it, the app tries methods on copies of your files: built-in " +
@@ -494,9 +503,9 @@ export const RUNTIME_CARDS: RuntimeCard[] = [
       "relationships, parts. Those lists, Word's own count of what it did (shown apart, as Word's), and the " +
       "before and after pages are in the chat and under each copy's card before the button. Create runs nothing: " +
       "it delivers the copies you were shown, each marked UNPROVEN, or UNVERIFIED when a copy does not open as a " +
-      "file. A document Word could not finish, or found nothing to do in, gets no copy and goes on the to-do list " +
-      "with Word's reason. In a pass over the to-do list the pass stays open afterwards, so the request the " +
-      "document was set aside from can be planned on the copy Word made.",
+      "file. A document Word could not finish, or found nothing to do in, gets no copy: it is on the to-do list " +
+      "with Word's reason and stays among the documents the next request works on. In a pass over the to-do list " +
+      "the pass stays open afterwards, so the change the document still owes can be planned on the copy Word made.",
     sent:
       "Picked from the menu: nothing. No document, no action and no result goes to Anthropic or anywhere else. " +
       "When Claude names the actions, the conversation's own calls carry what they always carry; Word's work " +
@@ -517,43 +526,48 @@ export const RUNTIME_CARDS: RuntimeCard[] = [
     covers: ["A42", "A43", "B21"],
     title: "Obliterate from the to-do list: one document, and the copy that failed",
     you:
-      "With Obliterate mode shown in Settings: Obliterate this one beside a document on the to-do list, tick the " +
-      "box under its warning and press Turn on Obliterate (no warning when the mode is already on). Then, when the " +
-      "chat shows that the copy that failed is kept, Use the copy that failed (or type Use the copy that failed, " +
-      "marked UNVERIFIED).",
+      "With Obliterate mode shown in Settings: click a cross in Where each document stands, then Obliterate this " +
+      "one, tick the box under its warning and press Turn on Obliterate (no warning when the mode is already on). " +
+      "Then, when the chat shows that the copy that failed is kept, Use the copy that failed (or type Use the copy " +
+      "that failed, marked UNVERIFIED).",
     runs:
-      "Without a click: when a document goes on the to-do list because the engine stopped on it or because its copy " +
-      "failed a check, the entry keeps a case file — the engine's code, reason and details, the failed checks as the " +
-      "independent checker named them, where the copy that failed is kept when it is the whole of the plan (never a " +
-      "chain's, which stopped at the step that failed), and a document of the same run that took the change. " +
-      "Obliterate this one turns the mode on as the top bar's switch does and begins the pass over that one " +
-      "document; every other document, copy and to-do entry stays as it is. Use the copy that failed checks that " +
+      "Without a click: a cross in Where each document stands keeps what working on it again needs — the request " +
+      "it failed and the plan you saw — and, when the engine stopped on the document or its copy failed a check, a " +
+      "case file: the engine's code, reason and details, the failed checks as the independent checker named them, " +
+      "where the copy that failed is kept when it is the whole of the plan (never a chain's, which stopped at the " +
+      "step that failed), a document of the same run that took the change, and the plan the document was stopped " +
+      "under. The case file is the cross's own, one for each document and each change, kept with it in the saved " +
+      "conversation. Obliterate this one turns the mode on as the top bar's switch does and begins the pass over " +
+      "that one document and that one change; every other document, copy and cross stays as it is. Use the copy " +
+      "that failed checks that " +
       "the kept copy is still the bytes the checker read, that the document is still the file it was made from and " +
       "that this file has not changed, then writes those bytes to a new folder in the scratch folder as that " +
       "document's edited copy, marked UNVERIFIED with the checks it failed — what Obliterate's own run of the same " +
       "plan delivers. It is one change: listed under What you've done so far, undone by Undo the last change.",
     sent:
       "Nothing for either click. If you then type a request, the conversation sends what it sends in Obliterate " +
-      "mode and, with it, the case file of that document; its tools — and a custom method's writer after it — may " +
+      "mode and, with it, the case file of that cross; its tools — and a custom method's writer after it — may " +
       "also read the document that took the change, as it was and as its copy, as a worked example.",
     ai: NONE,
     bounds:
       "Offered only while Settings shows Obliterate mode, and turned on only after its warning. The case file " +
-      "changes nothing in Safe or Default mode: their conversation is told the entry's one sentence, as before. " +
+      "changes nothing in Safe or Default mode: their conversation is told why each document was not done, in one " +
+      "sentence, as before. " +
       "The worked example can be read, never planned: no plan, binding or template can name it. A copy that " +
       "changed since it was checked, whose document has moved on (another change, an undo, a start over) or " +
       "whose source changed is refused, and nothing moves. Your originals are never written, and the copy the " +
-      `run or preview held back is left where it was. Obliterate this one waits ${WHILE_CHECKED}.`,
+      `run or preview held back is left where it was. Obliterate this one waits ${WHILE_CHECKED}, and while a ` +
+      "pass over the to-do list is under way.",
   },
   {
-    covers: ["A23", "A24", "A25", "A29", "A30", "A37", "A52", "B23"],
-    title: "Safe mode: choosing a mode, pressing a button, changing your mind (in every mode), handing documents over",
+    covers: ["A23", "A24", "A29", "A30", "A37", "A52", "B23"],
+    title: "Safe mode: choosing a mode, pressing a button, changing your mind (in every mode), where each document stands",
     you:
       "Choose Safe or Default in the top bar; in Safe mode, read or Hide the note above the buttons (What is Safe " +
       "mode? opens it again), and use its Add a Claude API key or Switch to Default mode; pick a button, fill in " +
       "its form and press Preview; " +
-      "Discard preview, All buttons or Clear form; Undo the last button; Try these in Default mode beside what a " +
-      "button left untouched. In Default and Obliterate: Discard preview, Drop this request and Undo the last change. " +
+      "Discard preview, All buttons or Clear form; Undo the last button. " +
+      "In Default and Obliterate: Discard preview, Drop this request and Undo the last change. " +
       "In every mode: click a mark in Where each document stands, or Show only these under it.",
     runs:
       "Choosing a mode keeps it in settings.json for the next start, and so is whether the note above the buttons " +
@@ -566,30 +580,37 @@ export const RUNTIME_CARDS: RuntimeCard[] = [
       "while a preview waits) withdraws it: nothing is created, and the window shows the copies it showed before. " +
       "Each button's form keeps what you typed until Clear form, New conversation or Start over. Undo the last " +
       "button makes the copies from before that button the ones the next button builds on again (your originals, " +
-      "when it was the first), and takes off the to-do list the documents its ✗ put there. Under the copies, What " +
+      "when it was the first), takes back what that button put on your to-do list, and puts the documents its ✗ " +
+      "set aside back among the others. Under the copies, What " +
       "you've done so far lists each run they carry since the originals (the button's sentence or your request, " +
       "and which documents carry it), kept in the saved conversation; Undo takes the newest off, Start over clears " +
       "it, and a button you already ran carries a checkmark. Above it, Where each document stands is a grid of " +
       "every button or request against every document: whether that document got it (and in which mode), could " +
       "not (with the reason, kept however many buttons come after) or was not run. It is written as each outcome " +
       "is decided, without a click, and kept in the saved conversation; a mark you click shows its reason and " +
-      "every attempt made, on the page alone. Undo takes its newest column off and Start over clears it. In Default and " +
+      "every attempt made, on the page alone. Undo takes its newest column off and Start over clears it. A " +
+      "document a button could not change gets a cross there and stays among the documents the next button works " +
+      "on. The crosses are your to-do list, in every mode, and what a cross offers — Work on it, Not needed on " +
+      "this one, Obliterate this one — has its own cards (your to-do list; Obliterate from the to-do list). The " +
+      "same button pressed again with the same form settles its own earlier crosses on the documents it now " +
+      "changes; nothing else is inferred, and two differently worded changes are never taken for one. In Default and " +
       "Obliterate the same two work on a conversation: Discard preview, or Drop this request while a question, a " +
       "pause or a reply to continue is open, ends the request with nothing created (no AI call; the next request is " +
-      "told it was withdrawn, and a pass over the to-do list puts its documents back on the list), and Undo the " +
-      "last change goes back before the last run that delivered copies. Handing over puts " +
-      "documents on your to-do list and switches to Default mode.",
+      "told it was withdrawn, and what a pass over the to-do list was working on is still owed), and Undo the " +
+      "last change goes back before the last run that delivered copies.",
     sent: "Nothing. A button never reaches the network.",
     ai: NONE,
     bounds:
-      "Where each document stands describes and decides nothing: no button, plan or AI reads it, nothing in it " +
-      "is sent anywhere, and what the buttons, the conversation and the to-do list do is the same with it. " +
+      "Where each document stands plans, orders and changes nothing by itself. The app reads it for your to-do " +
+      "list and for a pass over that list, which begins only at your word; no Safe-mode button's plan reads it. " +
+      "With a request in Default or Obliterate mode, Claude is told as context what the documents in it still owe " +
+      "(the card on sending a request says exactly what); nothing else of it is sent anywhere. " +
       "The buttons and what they do are fixed in the app. A document a button cannot change exactly is left " +
       "untouched with the reason; nothing an AI does follows, neither a visual check nor recovery. Discard and Undo " +
       "write and delete no file: the copies an undone run made stay where they were saved. Undo goes back one " +
       "run at a time, never while a preview waits or a request is open, and refuses when a copy it would go back to " +
       "is gone. Discard is not offered while the documents are being checked again after a run: save the ready " +
-      "copies, or set the rest aside for later. Undo, Discard, a recipe and choosing Safe mode also wait " +
+      "copies, or leave the rest for later. Undo, Discard, a recipe and choosing Safe mode also wait " +
       `${WHILE_CHECKED} (Safe mode cannot go on with a check; from Safe mode, Default can always be chosen).`,
   },
   {
@@ -639,8 +660,9 @@ export const RUNTIME_CARDS: RuntimeCard[] = [
       "custom method for, or planned with values read from particular documents, cannot be kept, and says why. A " +
       "recipe runs in its own mode and in any with fewer guardrails, never in one with more: Safe recipes everywhere, " +
       "Default ones in Default and Obliterate, Obliterate ones only in Obliterate. Every word it places passes the " +
-      "gate again, and the chat names them before Create. A document a step cannot take is left untouched (Safe " +
-      "mode) or waits on your to-do list (Default and Obliterate); nothing an AI does follows. Editing never " +
+      "gate again, and the chat names them before Create. A document a step cannot take is left as it is, in every " +
+      "mode: it is on your to-do list with the reason and stays among the documents the next button or request " +
+      "works on; nothing an AI does follows. Editing never " +
       "rewrites a step saved from a request: its words and plan are the ones you approved, so it is moved or " +
       "removed whole, and an edited recipe is previewed and approved like any other.",
   },
@@ -651,6 +673,8 @@ export const RUNTIME_CARDS: RuntimeCard[] = [
     runs:
       "Every preview starts with its ✓: the document gets its copy, with nothing to tick. A ✗ marks it to be set " +
       "aside when you create the copies; it goes on your to-do list instead, and the button counts one copy fewer. " +
+      "A document you set aside this way waits out of every later change until you work on it or put it back: the " +
+      "✗, and asking the assistant to set one aside, are the only things that keep a document out of later changes. " +
       "The ✓, a second ✗, or Include all (every ✗ at once) takes it back.",
     sent: "Nothing.",
     ai: NONE,
@@ -674,7 +698,10 @@ export const RUNTIME_CARDS: RuntimeCard[] = [
       "and never delivered. Then, if any copy failed, the app looks at those files again on its own (recovery) and " +
       "comes back with a question or a new plan — except after a Safe-mode button, whose copies get no recovery. A " +
       "file the preview refused or whose preview failed, or one whose copy failed with nothing to check it again, " +
-      "goes on your to-do list with the reason; a click that is refused moves nothing there. In Obliterate mode a copy that " +
+      "is on your to-do list with the reason — a cross in Where each document stands — and stays among the " +
+      "documents the next button or request works on, in every mode; only a document you marked ✗, or asked the " +
+      "assistant to set aside, waits out of them. A click that is refused moves nothing there. In Obliterate " +
+      "mode a copy that " +
       "fails its check is delivered anyway, marked UNVERIFIED with the checks it failed, and no recovery runs.",
     sent:
       "Nothing to make and check the copies. Recovery, if it runs, sends the failed files' names and full paths, their " +
@@ -833,28 +860,53 @@ export const RUNTIME_CARDS: RuntimeCard[] = [
       "start, and a window that never closed keeps its folder for the next start to restore.",
   },
   {
-    covers: ["A13", "A14", "A15", "A26", "A27"],
+    covers: ["A13", "A14", "A15", "A25", "A26", "A27", "A53"],
     title: "Start over, New conversation, and your to-do list",
     you:
-      "Start over from the originals; New conversation; Work on the documents I set aside; Put back beside a document " +
-      "on the to-do list; Set the rest aside for later (offered while files are checked again, once the ready copies " +
-      "are saved).",
+      "Start over from the originals; New conversation; Work on my to-do list, a reply the chat offers, or the " +
+      "button on its to-do card; on a cross in Where each document stands, Work on it now (in Safe mode, Work on " +
+      "it in Default mode), All N it was not done on, Not needed on this one, and Put it back on my to-do list on " +
+      "a cross you marked so; Put back beside a document you set aside; Leave the rest for later (offered while " +
+      "files are checked again, once the ready copies are saved).",
     runs:
-      "Start over makes your originals the working set again; the plan is void and the to-do list is cleared. New " +
+      "Start over makes your originals the working set again; the plan is void, and Where each document stands " +
+      "and the to-do list are cleared. New " +
       "conversation starts an empty one over the same scratch folder, after one question when a copy is not saved " +
       "as it is now (the old conversation's copies stay in the scratch folder until the window closes). Both clear " +
       "unsent messages and staged forms after the reset succeeds. Start over keeps the attached originals; " +
-      "New conversation clears the attachments. The to-do list " +
-      "holds the documents set aside, each with why: the ✗ on its preview, your word to the assistant, a plan or a " +
-      "Safe-mode button that could not be applied to it, or a copy that could not be made. Working on them makes them " +
-      "the only documents in scope and repeats the request they were set aside from; Claude is told why each one " +
-      "waited. Put back returns one to the other documents as it is. Set the rest aside puts what recovery has not " +
-      "fixed on the list and ends the request; the copies already saved stay as they are.",
-    sent: "Nothing, until you send the next request.",
+      "New conversation clears the attachments. Your to-do list is the crosses of Where each document stands: " +
+      "each change still not done on a document, with why — a plan, a Safe-mode button or a saved recipe that " +
+      "could not be applied to it, a preview that did not pass its checks, a copy that failed a check or could " +
+      "not be made, the ✗ on its preview, or your word to the assistant. A document the app could not change " +
+      "stays among the documents the next button or request works on; only one you set aside yourself, with the " +
+      "✗ or by asking, waits out of them, and Put back returns it as it is, with what it owes still on the list. " +
+      "Working on the list is a pass over one change at a time: the oldest one owed, or the cross you clicked " +
+      "(that one document, or with All N every document the change was not done on). The documents of the pass " +
+      "become the only ones in scope and the request they failed is the request again; " +
+      "Claude is told why each was not done and the plan you saw. From Safe mode, Work on it switches the " +
+      "window to Default mode first, and that choice is kept as the top bar's is. The copies a pass delivers turn " +
+      "its crosses to checks, in the mode that made them, with the earlier attempt kept under each; a pass you " +
+      "drop leaves them owed, and a document you had set aside waits out of the others again. Not needed on this " +
+      "one takes a cross off the list at your word (a later change made it moot, or it never applied to that " +
+      "document) and is recorded in its place; Put it back on my to-do list undoes it. Leave the rest for later " +
+      "ends a request whose documents are being checked again: what recovery has not fixed stays as it is, on " +
+      "your to-do list with the reason and among the documents the next request works on; the copies already " +
+      "saved stay as they are.",
+    sent:
+      "Nothing for any of these. The next request you send carries what a request carries; in a pass, with the " +
+      "app's note of why each of its documents was on the list and the plan you saw.",
     ai: NONE,
     bounds:
-      "No copy and no original is deleted or changed. The to-do list is kept in the saved conversation; Start over " +
-      `clears it. Working on the to-do list and Put back wait ${WHILE_CHECKED}.`,
+      "No copy and no original is deleted or changed, and none of these makes an AI call: Work on it and Work on " +
+      "my to-do list only begin the pass, and nothing is planned until you send a message or continue. The to-do " +
+      "list is kept in the saved conversation with Where each document stands; Start over clears both, Undo takes " +
+      "back what the undone change put there, and a document you remove takes its crosses with it. Nothing on " +
+      "the list is inferred. A cross turns to a check only when that document gets the change's copy: when the " +
+      "app's own second look at a failed copy fixes it, in a pass, from the same Safe-mode button pressed again " +
+      "with the same form, or, in Obliterate mode, as the copy that failed taken as it is (done, with its " +
+      "UNVERIFIED mark). The app never decides that two differently worded changes are the same one. " +
+      `Working on the to-do list and Put back wait ${WHILE_CHECKED}; Work on it also waits while a preview is ` +
+      "open or a pass is under way.",
   },
   {
     covers: ["A17", "A18", "A20"],

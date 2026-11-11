@@ -620,7 +620,7 @@ def test_the_window_applies_the_kept_fast_mode_from_its_start(tmp_path):
 
 # ---- Safe mode ------------------------------------------------------------------
 
-def test_safe_mode_routes_the_buttons_the_mode_and_the_hand_off(tmp_path, monkeypatch):
+def test_safe_mode_routes_the_buttons_the_mode_and_work_on_it(tmp_path, monkeypatch):
     from make_fixtures import build, build_dirty
     monkeypatch.setenv("SPEC_SURGEON_CONFIG_DIR", str(tmp_path / "config"))
     state, client = window(tmp_path)

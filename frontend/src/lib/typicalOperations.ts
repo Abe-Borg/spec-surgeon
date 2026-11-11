@@ -444,14 +444,14 @@ export const OBLITERATE_OPERATIONS: readonly TypicalOperation[] = [
   },
   {
     task:
-      "Finish a document Safe and Default set aside: Obliterate this one, beside it on the to-do list, then take " +
-      "the copy that failed as it is or say what to do instead",
+      "Finish a document Safe and Default could not change: Obliterate this one, on its cross in Where each " +
+      "document stands, then take the copy that failed as it is or say what to do instead",
     can: "Yes",
     note:
-      "The mode turns on for that document alone, after its warning. The assistant is told what the engine " +
-      "recorded of it and may read a document that took the change as a worked example. Use the copy that failed, " +
-      "marked UNVERIFIED takes a copy the checks already read, with no AI call, once the app has checked that " +
-      "the copy and the file it was made from are unchanged.",
+      "The mode turns on for that one document and that one change, after its warning. The assistant is told " +
+      "what the engine recorded of it and may read a document that took the change as a worked example. Use the " +
+      "copy that failed, marked UNVERIFIED takes a copy the checks already read, with no AI call, once the app " +
+      "has checked that the copy and the file it was made from are unchanged.",
   },
 ];
 

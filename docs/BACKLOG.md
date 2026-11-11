@@ -10,57 +10,18 @@ them was built; `git log --all -- 'docs/PLAN-*'` finds them, with their findings
 
 ## Not built
 
-### Where each document stands: the batch rule and the hand-up (P2)
+### Where each document stands: what was left out (each on the owner's word)
 
-The owner's request of 2026-11-10 ("the app needs a way to track what worked on what spec(s) and what didn't … the
-specs, and the operations that failed on those specs, 'bubble' up" from Safe to Default to Obliterate) and decisions
-of 2026-11-11. P1 — the record and the grid (`standing.py`, the view's `standing`, the card **Where each document
-stands**) — is built and changes no behaviour; its real-file run is under "Waiting on the owner's machine". P2
-changes what the window does with what the record holds. A user may start in any mode, so nothing here assumes Safe
-came first: the mode is a label on each attempt, never a stage of the batch.
+The record, its grid and the to-do list as its failed cells are built (`standing.py`; docs/CONVERSATIONAL_DESKTOP.md,
+"Where each document stands"); their real-file run is under "Waiting on the owner's machine". Not built, each on the
+owner's word:
 
-Rules, each approved by the owner:
-
-1. **A failed cell never takes a document out of the batch**, in any mode: the document stays in scope for the next
-   button or request (today Safe mode does this and Default does not — a failed document goes on the to-do list, out
-   of every plan, and misses what runs while it waits). Only the user's own set-aside takes one out: the red X on a
-   preview, or asking the assistant. That document is failed under the operation it was set aside from and not run
-   under those that ran while it waited. The cost, accepted: a document can get the second operation before the first
-   is fixed; the engine plans each document from the state it is in, so nothing is guessed.
-2. **The to-do list is the failed cells.** `DocumentTask.todo` keeps only the documents the user set aside; engine
-   failures (`_bin_failed`, `_refused_now`, `set_rest_aside`, Safe mode's Left untouched) are cells and nothing else.
-   The case file moves from the to-do entry to the cell, one per document per operation (today a document keeps one).
-3. **A pass takes one operation and the documents that owe it**, or one document (`start_todo(operation=, only=)`;
-   the chat's reply works the oldest operation first). Inside it only those documents are in scope, as today. Copies
-   delivered turn the cell to done in that mode; no copy leaves it failed with the new reason added.
-4. **A failed cell can be worked in any mode that can do it**, up, down or the same again: a Safe button's in Safe
-   (the same button pressed again), Default or Obliterate; a request's in Default or Obliterate (in Safe it is shown
-   and says it needs Default mode: no button repeats a worded request); the user's words carry between Default and
-   Obliterate, and the gate of the mode the pass runs in decides. From Safe, any failed cell, a whole column or all
-   of them go to Default at any time (this replaces `hand_off`, which takes the last button's alone).
-   **Obliterate this one** is the cell's, with that cell's case file; work done inside a pass that is not the plan (a
-   Word action, the copy that failed) is recorded in that cell's attempts, not as a column.
-5. **Not needed on this one** clears a failed cell at the user's word (a later operation made it moot), recorded as
-   their decision, and can be put back.
-6. **Nothing is inferred**, with one exception: the same Safe-mode button pressed again with the identical form
-   settles its own earlier failed cells on the documents it now delivers (it is the same operation; the new press is
-   still its own column). The app never decides that two differently worded operations are the same.
-7. **What Claude hears**: for each document in scope, what it still owes and why, as context; it plans what the
-   request asks. The Default prompt's sentence about a failed document going on the to-do list changes with it (a
-   deliberate prompt change). The record itself still decides nothing.
-
-With it: the cards **Left untouched by the last button** and **Set aside for more work** are retired for the grid
-(Left untouched beside a preview stays: it is about the plan on screen); the chat's to-do card becomes the summary of
-what is owed; the reply "Work on the documents I set aside" becomes "Work on my to-do list"; What you've done so far
-keeps its lines and drops the "not A, B (left untouched)" tail, which the grid says per document with the reason. The
-tour's to-do chapter, the capabilities, the trust surfaces (T84 says no model reads the record: that changes with
-rule 7), `docs/WEB_API.md`, Help and the README change in the same pull request, and the tests that pin today's
-to-do list are rewritten to these rules (about 28 files), with a test per rule.
-
-Not in this plan, each on the owner's word: a bundled request split into a cell per step (the engine delivers it
-whole or not at all, so the cell names the step that stopped it); running a not-run cell on demand (catching up a
-document attached later); a **Try again** button for a Safe-mode failure (rule 6 covers pressing the button again);
-the grid saved as a file (with H4's **Save the copies with their records…**).
+- **A bundled request split into a cell per step.** A request's plan is one operation however many changes it
+  carries: the engine delivers it whole or not at all per document, so the cell names the step that stopped it.
+- **Running a not-run cell on demand**: catching up a document attached later.
+- **A Try again button for a Safe-mode failure.** Pressing the same button again with the same form already settles
+  its own earlier failed cells (`Standing.same_button`).
+- **The grid saved as a file**, with H4's **Save the copies with their records…**.
 
 ### Batch consistency: what the owner's live runs of 2026-10-22/23 left open
 
@@ -240,26 +201,50 @@ write-back over the originals unless asked for (T1 is the claim most of the trus
 Everything else is built and tested on fixtures; nothing is done on fixtures alone. These runs need real
 specifications, Windows and Word, and only the owner can do them. Record what a run finds as a new item above.
 
-- **Where each document stands (P1, built 2026-11-11):** the record and its grid; it changes nothing the buttons,
-  the conversation or the to-do list do. Take a batch of about ten real specifications in which a button fails on
-  some (one with no SECTION line, one with editing restricted, a template attached).
-  1. *Safe mode, three buttons.* Press **Remove all headers and footers**, then **Remove watermarks**, then **Match
-     headers and footers to the template**, creating the copies each time. After each: **Where each document stands**
-     has a new numbered column under SAFE; a document the button could not change has a cross, and clicking it gives
-     the same reason Left untouched gave. After the second button the Left untouched card no longer names the first
-     button's documents, and their crosses and reasons are still in the grid. The line underneath counts what is
-     owed; **Show only these** lists those documents alone.
+- **Where each document stands (built 2026-11-11):** the record, its grid and the to-do list, which is the grid's
+  crosses. Take a batch of about ten real specifications in which a button fails on some (one with no SECTION line,
+  one with editing restricted, a template attached); steps 4 and 5 need the API key, step 7 Word and Obliterate shown
+  in Settings.
+  1. *Safe mode, three buttons with failures.* Press **Remove all headers and footers**, then **Remove watermarks**,
+     then **Match headers and footers to the template**, creating the copies each time. After each: **Where each
+     document stands** has a new numbered column under SAFE; a document the button could not change has a cross, the
+     chat names it ("Not done on: …"), and clicking the cross gives the engine's reason (for a document the preview
+     refused, the one **Left untouched** gave beside it). No card **Left untouched by the last button** appears.
+     After the third button the first button's crosses and reasons are still in the grid, and a document the first
+     button failed on got the second and the third with the others: a failed document stays among the documents the
+     next button works on. The line underneath counts what is on the to-do list, **Show only these** lists those
+     documents alone, and the chat's card **On your to-do list** names the same lines.
   2. *A button nothing can take.* Press a button no document can take (the template button with no template that
      fits): no copies, and the grid has its column with a cross on every document.
-  3. *Default mode.* **Try these in Default mode**, work on them, and create the copies: the crosses of that button
-     turn to checks labelled Default, in the same column, and clicking one lists both attempts. Then ask for a change
-     that one document refuses: its column reads DEFAULT, the refused document has a cross and the badge *set aside*.
-  4. *Obliterate.* **Obliterate this one** on that document; take the copy that failed, or run a Word action and then
-     the plan: its cell turns to a check labelled Obliterate, amber, with UNVERIFIED or UNPROVEN on the document's
-     row; a Word action shows as a column of its own with a dash on every other document.
-  5. *Going back.* **Undo** takes the newest column (or the newest fix) off; close the window without saving and
-     reopen it: the restored conversation shows the same grid; **Start over** clears it; a document removed and
-     attached again shows dashes ("attached after this was done") under every earlier column.
+  3. *The same button again.* Where a later button cleared what stopped an earlier one on some document, press the
+     earlier button again with the same form: a new column with a check on that document, and its cross under the
+     first press turned to a check that says "the same button, pressed again", both attempts listed. Press it with
+     another form instead: a new column only, and the old cross stays.
+  4. *A cross, worked on in Default mode.* Click a cross from step 1: **Work on it in Default mode** switches to
+     Default mode and begins the pass over that document alone, the button's sentence as its request. Say what
+     should be different and create the copy: the cross turns to a check labelled Default, in the same column, and
+     clicking it lists both attempts. **All N it was not done on** takes every document of that column in one pass;
+     the chat's card takes the oldest column first. Drop a pass part-way (**Drop this request**): its crosses are as
+     they were.
+  5. *Default mode: a failed document stays in, a set-aside one waits.* Ask for a change that one document refuses
+     and create the others' copies: the column reads DEFAULT, the refused document has a cross with the plan's
+     reason and no *set aside* badge, and the chat says it stays among the documents the next request works on. Ask
+     for a second change: that document gets it with the others. Then mark one preview with the red X and create the
+     copies: that document has a cross and the badge *set aside* with **Put back**, is tagged To do among the
+     documents, and the next request shows a dash on it (not run, not owed). **Put back** returns it to the batch;
+     its cross stays.
+  6. *Not needed on this one.* On a cross a later change made moot, **Not needed on this one**: the cell shows a
+     dash, the count under the grid and the chat's card drop it, the chat says nothing in the document changed, and
+     the spending does not move. Click the cell again: **Put it back on my to-do list** restores the cross.
+  7. *Obliterate.* **Obliterate this one** on a cross — one the plan refused, one whose copy failed a check — opens
+     the warning naming the document; take the copy that failed, or run a Word action and then the plan: the cell
+     turns to a check labelled Obliterate, amber, with UNVERIFIED or UNPROVEN on the document's row; a Word action
+     shows as a column of its own with a dash on every other document. With Obliterate hidden in Settings a cross
+     offers no **Obliterate this one**.
+  8. *Going back.* **Undo** takes the newest column (or the newest fix) off; close the window without saving and
+     reopen it: the restored conversation shows the same grid, the same to-do list, the cell marked not needed and
+     the document set aside; **Start over** clears it; a document removed and attached again shows dashes ("attached
+     after this was done") under every earlier column and owes nothing.
 - **Obliterate's Export anyway (O7, built 2026-11-10):** with Word and Obliterate shown in Settings; no API key is
   needed. No file has been made by a real Word here, so read each one against your copy by eye. You need a document
   whose clean version the checked way cannot make: one with a tracked change inside an equation, a tracked
@@ -352,10 +337,10 @@ specifications, Windows and Word, and only the owner can do them. Record what a 
   4. *Stop and time.* Start a run over several documents and press **Stop**: the job ends, nothing is previewed,
      and the Word the app started is gone from Task Manager while yours stays. A very large document: Word gets
      5 minutes for it, then that document gets no copy and the others go on.
-  5. *From the to-do list.* A document a Default-mode plan set aside for a field or a text box: **Obliterate this
-     one**, run the Word action that clears it, **Create**. Expect the chat to say the document is still in your
-     to-do pass; **Continue** (this needs the API key) has Claude plan the request it was set aside from on the copy
-     Word made, as the plan the others got; after its Create the copy carries "in an earlier copy: UNPROVEN".
+  5. *From the to-do list.* A document a Default-mode plan refused for a field or a text box: **Obliterate this
+     one** on its cross, run the Word action that clears it, **Create**. Expect the chat to say the document is still
+     in your to-do pass; **Continue** (this needs the API key) has Claude plan the request it failed on the copy Word
+     made, as the plan the others got; after its Create the copy carries "in an earlier copy: UNPROVEN".
      **Undo the last change** right after the Word run takes that copy off and leaves the pass open.
   6. *Claude.* In Obliterate ask for something a menu action does ("have Word accept every tracked change in
      these"): a plan of Word actions, previewed as above. Ask for that and a font change in one request: the Word
@@ -412,23 +397,26 @@ specifications, Windows and Word, and only the owner can do them. Record what a 
   and PDF: the note counts the UNPROVEN copies. Last, the same kind of request in Default mode on a formatting-only
   change: the method predicts, its sample shows **Checked**, and nothing says UNPROVEN.
 - **Obliterate from the to-do list (O1, built 2026-11-10):** over a real batch, with Word and with Obliterate shown in
-  Settings. Safe mode first (a button most of the batch takes), **Try these in Default mode** for what it left, a
-  Default request for those, and one or two that still wait on the to-do list — one the plan refused and one whose
-  copy failed a check. Each row reads its reason, and the one with a failed copy says a copy was made and which checks
-  it failed. **Obliterate this one** opens the warning naming the document; after **Turn on Obliterate** the mode is
-  on, the pass is over that document alone, and the other copies and to-do entries are as they were. For the failed
+  Settings. Safe mode first (a button most of the batch takes), **Work on it in Default mode** for what it left, a
+  Default pass over those, and one or two crosses still on the to-do list — one the plan refused and one whose
+  copy failed a check. Each cross reads its reason, and the one with a failed copy says a copy was made and which checks
+  it failed. **Obliterate this one**, on the cross, opens the warning naming the document; after **Turn on
+  Obliterate** the mode is on, the pass is over that document alone, and the other copies and crosses are as they
+  were. For the failed
   one the chat offers **Use the copy that failed, marked UNVERIFIED**: the copy joins Your edited copies with its
   mark, no AI spending shows for it, it opens in Word, Export saves it, and **Undo the last change** takes it off.
   For the refused one, a typed request: the assistant's reply shows it knows the engine's reason without being told,
-  and, asked to match a document that took the change, it reads that document as its example. With Obliterate hidden in Settings the to-do rows look as they
-  did, and a Default pass over the list behaves as before. Close and reopen a window that never closed: the rows and
-  their offers come back.
+  and, asked to match a document that took the change, it reads that document as its example. With Obliterate hidden
+  in Settings a cross offers no **Obliterate this one**, and a Default pass over the list behaves as before. Close
+  and reopen a window that never closed: the crosses and their offers come back.
 - **A removed document attached again is its original (built 2026-10-30):** in Default mode with Word, two real
   specifications: one request over both and **Create edited copies**; the ✕ on the second — its copy leaves **Your
   edited copies** and Export's count drops by one; attach it again — still no copy listed for it, and Export → Word
   (Tracked Changes ON) saves the first one's only. Then a request kept to the first ("only <its name>"), or the second
-  set aside with the ✗ on its preview, and Create: What you've done so far gives the second neither run (attached
-  later, then left untouched or set aside), Export still saves the first one's copy only, and a next request over both
+  set aside with the ✗ on its preview, and Create: What you've done so far counts the second under neither run, Where
+  each document stands shows it with a dash under the first (attached after this was done) and, under the second, a
+  dash (left out) or a cross with the badge *set aside*, Export still saves the first one's copy only, and a next
+  request over both
   previews the second from its original (without the first change). In Obliterate, a copy delivered UNVERIFIED and
   removed takes its mark with it: attached again, it shows none, and its next copy carries none ("in an earlier copy").
 - **Safe mode's kill switch (built 2026-10-29):** in the installed app with Word, over a batch of 20 or more real
@@ -449,7 +437,8 @@ specifications, Windows and Word, and only the owner can do them. Record what a 
   comment went. Read the preview's list of removed notes against the documents for anything that is not a note, and
   the copies for a note the button missed (a note style by another name, an opening it does not know): either is a
   new item here, with the words or the style name. A document a note's field or section break set aside is under Left
-  untouched with the reason, and **Try these in Default mode** removes that note when asked. The copies open in Word
+  untouched with the reason and, once the copies are created, has a cross in Where each document stands; **Work on
+  it in Default mode** removes that note when asked. The copies open in Word
   without a repair prompt. Then, in Default mode on those copies, one request cuts the placeholders and deletes the
   copyright line.
 - **The Specification Formatter's modes in Default mode (N1–N7, built 2026-10-29;
@@ -471,7 +460,8 @@ specifications, Windows and Word, and only the owner can do them. Record what a 
   that is why), the Michigan document the different values it gives, and the ASHRAE, Reliable and AcousticalSolutions
   documents the Different Odd & Even Pages setting in plain words. A line that still reads vaguely is recorded here
   with its document's refusal record (`records\`, the diagnostic bundle). Create the copies: the same
-  reasons under Left untouched by the last button, and on the to-do list after **Try these in Default mode**. With
+  reasons on the crosses of Where each document stands and on the chat's to-do card, and those documents still among
+  the ones the next button works on. With
   the preview open and the documents list folded, **Remove all documents** shows on its title line and, after the
   confirmation, takes all 28 out while the template stays attached.
 - **Saved recipes (built 2026-10-29):** in Safe mode with Word rendering over a real Division 21 batch, Match headers
@@ -483,8 +473,9 @@ specifications, Windows and Word, and only the owner can do them. Record what a 
   with its steps, the three buttons carry their checkmark, and one Undo takes the whole recipe off; without the template
   attached the tile is greyed with the reason. In Default mode, two real requests (a code-cycle replacement and a
   formatting change) saved as a recipe and run on another project's specifications with the API key removed: the
-  spending pill stays at $0.00, a document that does not fit waits on the to-do list with the reason, and the
-  assistant plans it when asked there. A custom-method run is unticked in the save dialog with its reason. Two windows
+  spending pill stays at $0.00, a document that does not fit has a cross with the reason (on the to-do list, and
+  still among the documents the next request works on), and the assistant plans it when asked there. A custom-method
+  run is unticked in the save dialog with its reason. Two windows
   open at once each see the other's saved recipe after reopening its list; `%APPDATA%\Spec Surgeon\recipes.json` holds
   the steps and words and no document text beyond the user's own words. The tiles, the strip and the dialogs read well
   at 1280 px wide.
@@ -511,7 +502,7 @@ specifications, Windows and Word, and only the owner can do them. Record what a 
   checked again and how to finish (create the copies it fixed, or answer its question, save the ready copies or set
   the rest aside); a file dropped on the window is refused with the same words and nothing is added; a typed
   "make it italic instead" at recovery's preview shows in the chat with that reason and no AI step runs. Create on the
-  preview (or Set the rest aside for later): What you've done so far lists the request once with every saved copy,
+  preview (or **Leave the rest for later**): What you've done so far lists the request once with every saved copy,
   the next request builds on all of them (open one in Word: it carries the first change), Undo the last change takes
   the whole run off, and the greyed controls work again. Again with the window closed from Task Manager while the
   preview waits: after the restart the same controls and **Drop this request** wait until Continue brings the
@@ -519,8 +510,10 @@ specifications, Windows and Word, and only the owner can do them. Record what a 
   before (the request is checked again over both).
 - **What you've done so far (built 2026-10-29):** over a real batch in Safe mode, Remove all comments, Accept all
   tracked changes and Match headers and footers to the template, each created in turn; the list under the copies
-  names the three in order, the newest marked LATEST, with "All N documents" or which documents did not get one and
-  why (a document the template button left untouched; one set aside with the ✗; one attached after the first button);
+  names the three in order, the newest marked LATEST, with "All N documents" or "M of N documents" (which documents
+  did not get one, and why, is in Where each document stands: a cross for a document the template button could not
+  change, a cross and the badge *set aside* for one set aside with the ✗, a dash for one attached after the first
+  button);
   the three buttons carry their checkmark and the hover text says how many times; Undo the last button takes the
   header/footer line and its checkmark off; a window ended without closing (Task Manager) shows the list again when
   the next start restores it; Start over clears it. In Default mode, two requests in a row list the words typed, and Undo the last change
@@ -552,11 +545,11 @@ specifications, Windows and Word, and only the owner can do them. Record what a 
   Sleeve Seals for Fire-Suppression Piping* failed its page-layout check (V7) and Create was unavailable for all
   twelve: Create is available; 21 05 17's preview keeps its pages and its V7 line, carries no checkmark or X, and is
   listed under Left untouched with the reason; the chat and the sentence beside the button say it gets no copy; the
-  other eleven copies are created and open in Word, 21 05 17's file is unchanged and is under **Left untouched by the
-  last button**, and **Try these in Default mode** puts it on the to-do list with the same reason. The same batch in
-  Default mode: no outcome planning starts at the preview, Create makes the eleven, and 21 05 17 waits on the to-do
-  list (why: failed); **Work on the documents I set aside** plans it alone. A batch whose every preview fails still
-  says Create is unavailable.
+  other eleven copies are created and open in Word, 21 05 17's file is unchanged and has a cross under that button in
+  Where each document stands with the same reason, and **Work on it in Default mode** begins the pass over it. The
+  same batch in Default mode: no outcome planning starts at the preview, Create makes the eleven, and 21 05 17 is on
+  the to-do list (why: failed) and still among the documents the next request works on; **Work on my to-do list**
+  plans it alone. A batch whose every preview fails still says Create is unavailable.
 - **Safe mode's third set and the note (built 2026-10-28):** a real specification folder with Word rendering through
   each new button: *Change font* (Arial 10 pt, then Keep each document's sizes: headings and notes keep theirs); *Page
   size and margins* over a folder with a landscape schedule (that document waits under Left untouched with the
@@ -632,7 +625,7 @@ specifications, Windows and Word, and only the owner can do them. Record what a 
   request that "the same, but italic" still reads); a question the assistant asks answered with **Drop this
   request**; a request paused at a low spending check dropped from beside the pause card; two runs undone with
   **Undo the last change**, the next request building on the right copies each time and every copy still in the
-  scratch folder; a pass over the to-do list discarded and its documents back on the list; the same in Obliterate
+  scratch folder; a pass over the to-do list dropped and its crosses as they were; the same in Obliterate
   with a copy marked UNVERIFIED undone and its mark gone with it.
 - **Spending with no connection** (built 2026-10-28): the network unplugged (or a proxy that refuses the API) and a
   request sent: the pill and the request's spending stay at what they were, the request does not pause at the

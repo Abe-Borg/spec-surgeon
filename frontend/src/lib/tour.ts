@@ -348,7 +348,7 @@ export const TOUR: readonly TourChapter[] = [
         placement: "left",
         title: "What you've done so far",
         body:
-          "Each button you ran since the originals is listed here, oldest first, in the words of your line in the chat (in Default and Obliterate, each request). Under each, how many of the documents attached now carry it, and why any other does not: left untouched, set aside on your to-do list, or attached later. Undo the last button takes the newest off; Start over clears the list. In Safe mode a button you already ran carries a checkmark, so there is nothing to remember. The list is kept with the conversation and comes back with it if the window closes unexpectedly.",
+          "Each button you ran since the originals is listed here, oldest first, in the words of your line in the chat (in Default and Obliterate, each request). Under each, how many of the documents attached now carry it; which ones do not, and why, is the grid's to say (next). Undo the last button takes the newest off; Start over clears the list. In Safe mode a button you already ran carries a checkmark, so there is nothing to remember. The list is kept with the conversation and comes back with it if the window closes unexpectedly.",
       },
       {
         id: "standing",
@@ -359,7 +359,7 @@ export const TOUR: readonly TourChapter[] = [
         placement: "left",
         title: "Where each document stands",
         body:
-          "One grid for the whole job: every button you ran across (in Default and Obliterate, every request), every document down. A cell says whether that document got it: a check with the mode that did it, a cross where it could not be done, a dash where it was not run on that document. Click a mark for its reason and every attempt made; a reason stays here however many buttons you press after it. When something is not done, the line underneath counts it and Show only these lists just those documents. The grid describes and decides nothing: Undo takes its newest column off, Start over clears it, and it is kept with the conversation.",
+          "One grid for the whole job: every button you ran across (in Default and Obliterate, every request), every document down. A cell says whether that document got it: a check with the mode that did it, a cross where it could not be done, a dash where it was not run on that document. Click a mark for its reason and every attempt made; a reason stays here however many buttons you press after it. When something is not done, the line underneath counts it and Show only these lists just those documents. A cross is also where you act on what is not done (next). Undo takes the newest column off, Start over clears the grid, and it is kept with the conversation.",
       },
       {
         id: "save-recipe",
