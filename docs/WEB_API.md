@@ -8,7 +8,8 @@ page in its address, `?token=…&api=http://127.0.0.1:<port>&theme=<scheme>` (an
 `window.SPEC_SURGEON = {token, version, api}` would win over the address). `theme` is the colour scheme kept in
 `settings.json`; the page's inline script applies it before the first paint. Without the right token
 every `/api` route answers 401. One job runs at a time: a second `send`, `choose`, `primary` or `attach` while
-`busy` is true answers 409 `{"error": "busy"}`. So do `recipe`, `mode` and `handoff` (Safe mode, below).
+`busy` is true answers 409 `{"error": "busy"}`. So do `recipe` and `mode` (Safe mode, below) and `todo/work` and
+`todo/waive` (the to-do list, below).
 
 The page never applies edits or derives state itself: every `done`/`state` event and `GET /api/state` carry the
 FULL view, and the page renders it. Streamed frames (text deltas, status, activity) are presentation only; the view
@@ -59,16 +60,16 @@ that ends a job is authoritative.
   "export": {"folder": "", "unsaved": 2, "copies": 2},
   "action": {"label": "Create edited copies", "token": "…", "kind": "approve | continue | save | none",
              "can_hold": true, "copies": 3, "unpreviewed": 1},
-  "todo": [{"path": "C:/Specs/21 05 00.docx", "name": "21 05 00.docx", "why": "held | asked | refused | failed",
-            "reason": "You marked its preview as needing more work.",
-            "obliterate": "", "failed_copy": ["V2 (Text preservation)"]}],
+  "todo": [{"path": "C:/Specs/21 05 00.docx", "name": "21 05 00.docx", "why": "held | asked",
+            "reason": "You marked its preview as needing more work."}],
   "standing": {"operations": [{"id": "9f2c41d07a3e", "number": 1, "request": "Remove all headers and footers",
                               "mode": "safe | default | obliterate", "recipe": "remove_headers_footers", "name": "",
                               "done": 8, "failed": 2}],
                "documents": [{"path": "C:/Specs/21 05 00.docx", "name": "21 05 00.docx", "owed": 1,
                               "badges": ["SALVAGED", "UNVERIFIED", "UNPROVEN", "set aside"],
-                              "cells": [{"state": "done | failed | not_run", "mode": "safe", "why": "refused",
-                                         "reason": "…", "marks": [], "note": "", "first": "", "attempts": [{"…": "…"}]}]}],
+                              "cells": [{"state": "done | failed | not_run | waived", "mode": "safe", "why": "refused",
+                                         "reason": "…", "marks": [], "note": "", "first": "", "attempts": [{"…": "…"}],
+                                         "obliterate": "", "failed_copy": ["V2 (Text preservation)"]}]}],
                "owed": {"cells": 2, "documents": 2}},
   "focus": [],
   "failed_copies": [{"path": "C:/Specs/21 05 00.docx", "name": "21 05 00.docx", "failed": ["V2 (Text preservation)"]}],
@@ -83,7 +84,6 @@ that ends a job is authoritative.
                "body": {"roles": {"part": "PRT", "article": "ART"}, "styles": [{"id": "PRT", "name": "PRT"}],
                         "labels": {"part": "PART"}, "order": ["section_id", "part"], "page": "8.5 × 11 in portrait, margins 1 in",
                         "font": "Arial 10 pt", "problems": []}},
-  "left_untouched": [{"path": "C:/Specs/21 05 00.docx", "name": "21 05 00.docx", "reason": "…"}],
   "tutorial": {"active": false, "id": "", "scenario": "", "finished_version": 0},
   "safe_note_hidden": false,
   "update": {"state": "none | available | downloading | ready | installing | updated | failed | error",
@@ -117,9 +117,10 @@ Rules the page relies on:
   for, and `slot_roles` the placeholders each document fills itself with its own section number or title
   (`recipes.slot_role`), which the form names; `body` is what *Match body formatting to template* reads from it (`template_roles.detect`: the detected style
   per role, the template's paragraph styles for the form's `roles` field, the page and font in words, and `problems`
-  — non-empty, the button cannot be pressed, the first one says why). `left_untouched` lists what the last Safe-mode button's run gave no copy, with the engine's reason, until the
-  next button or a hand-off; it is empty while a preview waits. `safe_note_hidden` is whether the note above the
-  buttons (what Safe mode is, and Default mode with an API key for more) is folded to its one line
+  — non-empty, the button cannot be pressed, the first one says why). What a Safe-mode button's run gave no copy is
+  a failed cell of `standing` (below), with the engine's reason, and the document stays among those the next button
+  works on; the view carries no `left_untouched` any more (2026-11-11). `safe_note_hidden` is whether the note above
+  the buttons (what Safe mode is, and Default mode with an API key for more) is folded to its one line
   (`settings.json`; `POST /api/settings {"safe_note_hidden"}`); an older server sends none, and the page shows it open.
 - `export.anyway` (Obliterate mode only; absent when there is nothing to offer, in Safe and Default, and from an
   older server) lists Export anyway's choices: `[{"kind": "accepted | pdf", "label": "PDF (Clean), made by Word",
@@ -167,7 +168,8 @@ Rules the page relies on:
   only that) while another sample passed (`Session.failed_samples`): Create makes no copy of it and creates the
   others, it is listed under `plan.set_aside` with a reason that begins "Its preview did not pass its checks", the
   page shows its card without the checkmark and the red X, and the chat says it once before the button. After the
-  run it is under `left_untouched` (Safe mode) or on the `todo` list with `why: "failed"` (Default and Obliterate).
+  run it is a failed cell of `standing` with `why: "failed"`, in every mode: on the to-do list, and still among the
+  documents the next button or request works on.
   Always false for a custom method's samples (one its method fails on makes Create unavailable) and when no sample
   passed (then `action.disabled_reason` says why). Absent from an older server.
 - `samples[].text_changes` is the words a custom method's sample copy adds and removes, as the independent checker
@@ -232,7 +234,7 @@ Rules the page relies on:
   formatting, styles, numbering, settings, relationships, parts, and any changed part it compared by bytes only);
   `[]` when it found none and for every other sample. `samples[].no_copy` is true for a document the method could
   make no copy of: `failures` holds one entry with check `Preview` and the reason, the page shows **No copy** and
-  no marks, `action.copies` does not count it, and it goes on the `todo` list when the others are created. All
+  no marks, `action.copies` does not count it, and it is a failed cell of `standing` once the others are created. All
   three are false, `[]` and false for an ordinary plan's sample and a Default custom method's; absent from an older
   server.
 - `occurrences` is the find-and-replace list of the plan waiting for the user (stages `preview` and `question`; empty
@@ -274,9 +276,9 @@ Rules the page relies on:
   `action.can_hold` is true when the previews can be marked: each preview card then carries a green checkmark
   (it gets its copy: where every preview starts, so nothing needs ticking) and a red X (needs more work); the
   checkmark, a second X, or **Include all** beside the button takes an X back. The page sends the X'd previews'
-  `source` paths as `hold` with the primary action: those documents go on the to-do list and the others get their
-  copies. It is false during a recovery's "Save N ready copies"; the page also shows no marks while
-  `disabled_reason` holds Create back.
+  `source` paths as `hold` with the primary action: those documents are set aside (`todo`, below: out of the batch,
+  owing this request) and the others get their copies. It is false during a recovery's "Save N ready copies"; the
+  page also shows no marks while `disabled_reason` holds Create back.
   `action.copies` (approve only) is how many copies Create makes with nothing set aside: every document it runs
   (`Session.runnable_files`: the plan's documents less those under Left untouched and the samples set aside), the
   documents without a preview of their own included; `action.unpreviewed` is how many of those have no preview card
@@ -285,29 +287,38 @@ Rules the page relies on:
   the documents without a preview beside the button ("22 more documents, not previewed, get the same plan."). Both
   are 0 when nothing is counted (recovery, any other kind); an older server sends neither, and the page keeps the
   label as given.
-- `todo` lists the documents waiting on the to-do list (attached originals), each with `why` and a `reason`
-  sentence the page shows as written: `held` (the red X above), `asked` (the user asked the assistant to set it aside,
-  its `set_aside` tool), `refused` (the plan could not be applied to it; it goes on the list once the others run) or
-  `failed` (its copy could not be made and nothing will check it again, or recovery had not fixed it when the user
-  set the rest aside). An older server sends neither field; the page reads that as the red X. While the list is
-  non-empty and no pass is under way, the page shows a to-do card whose button sends the reply "Work on the
-  documents I set aside" (as a chip), and the workbench lists them with a **Put back** beside each
-  (`POST /api/put-back`). Only while Settings shows Obliterate mode, an entry also carries `obliterate` — the row
-  offers **Obliterate this one** (`POST /api/todo/obliterate`): `""` when it can be pressed now, else why it waits (a
-  pass is under way, or `recovery_blocked`) — and, when the app kept a copy of that document that failed its checks
-  and it can still be taken, `failed_copy`, the checks it failed (`DocumentTask._todo_view`); with Obliterate hidden
-  neither is sent, and an entry reads as before. During an Obliterate pass over a document with such a copy,
-  `failed_copies` names each document of the pass whose failed copy can be taken, with the checks it failed, and
-  `chips` offers the reply "Use the copy that failed, marked UNVERIFIED" (`USE_FAILED_COPY`, sent through
-  `/api/send`): the app's own step, with no model call; a refusal is a chat message and nothing moves. The page shows
-  a card for it while the stage is `done`, `empty` or `resume` (at `question` the reply is among the chips); both are
-  empty outside Obliterate, outside a pass, while a preview waits and while recovery checks files.
-  `focus` lists the documents of that pass while it runs: they are the only documents in
-  scope, the plan is made for them alone, and the pass ends when their copies are created. Documents on the to-do
-  list are out of scope until the pass begins or they are put back; the server also offers the same reply in
-  `chips` outside the question stage.
-- During recovery (stage `question`), once every ready copy is saved, `chips` carries "Set the rest aside for later":
-  sent as a reply, it puts what recovery has not fixed on the to-do list and ends the request (no model call).
+- `todo` lists the documents the user set aside (attached originals; `DocumentTask._todo_view`): they wait out of
+  the batch, in no button's or request's plan, until the user works on them or puts them back. Each has `why` —
+  `held` (the red X above) or `asked` (the user asked the assistant to set it aside, its `set_aside` tool) — and a
+  `reason` sentence the page shows as written; an older server sends neither field, and the page reads that as the
+  red X. Nothing else puts a document there (the owner's decision of 2026-11-11): one the engine could not change —
+  the plan, a button or a saved recipe refused it, its preview sample failed, its copy failed a check or could not
+  be made, recovery had not fixed it — stays in the batch for the next button or request, and what it owes is a
+  failed cell of `standing` and nothing else. The to-do list is the failed cells of `standing` (below;
+  `DocumentTask._owed`), a set-aside document's among them: the cell of the request it was set aside from. The page
+  tags a `todo` document **To do** in the documents section, and its row of the grid carries the `set aside` badge
+  with **Put back** (`POST /api/put-back`). While `standing.owed.cells` is above 0, no pass is under way and the
+  stage is `done`, `empty` or `resume`, the page shows a to-do card in the chat, **On your to-do list**: each owed
+  line (document · request, then the reason; six lines, then a count of the rest) and one button, which sends the
+  reply "Work on my to-do list" (`WORK_TODO`, as a chip) or, in Safe mode, which takes no reply, posts
+  `/api/todo/work` with nothing named. The server offers the same reply in `chips` outside the question stage.
+  `focus` lists the documents of the pass over the to-do list while it runs (`DocumentTask.start_todo`). A pass
+  takes one operation — the oldest that is owed, or the one named — and the documents that owe it and failed it from
+  the same decisions, or one document. They are the only documents in scope, a set-aside one among them, the plan is
+  made for them alone, and the pass ends when their copies are created: each of those cells turns to `done` in the
+  mode of the pass, the failed attempt kept under it. A pass that is dropped leaves its cells failed, and a document
+  of it the user had set aside is in `todo` again; the other failed cells wait for the next pass.
+  During an Obliterate pass over a document whose failed cell kept a copy that failed its checks (the cell's
+  `failed_copy`, under `standing`), `failed_copies` names each document of the pass whose failed copy can be taken,
+  with the checks it failed, and `chips` offers the reply "Use the copy that failed, marked UNVERIFIED"
+  (`USE_FAILED_COPY`, sent through `/api/send`): the app's own step, with no model call; a refusal is a chat message
+  and nothing moves. The page shows a card for it while the stage is `done`, `empty` or `resume` (at `question` the
+  reply is among the chips); both are empty outside Obliterate, outside a pass, while a preview waits and while
+  recovery checks files.
+- During recovery (stage `question`), once every ready copy is saved, `chips` carries "Leave the rest for later"
+  (`SET_ASIDE_REST`): sent as a reply, it leaves what recovery has not fixed as it is — in the batch, each a failed
+  cell of `standing` with the reason "It still needed work when you left it for later: …" — and ends the request
+  (no model call).
 - `results` lists the edited copies of the latest run, each with `saved_to` (where Export saved it, while that file
   is still there; `""` while the copy lives only in the window's scratch folder, or once the saved file is gone) and
   `changed_since_saved` (the copy's bytes are no longer the ones written to `saved_to`: a copy opened from the window
@@ -336,10 +347,12 @@ Rules the page relies on:
   that delivered copies, oldest first, `{"request", "recipe", "documents", "of", "not"}` — the button's sentence or
   the request the user typed; the Safe-mode button pressed (a recipe id, `""` for a request); how many of the
   documents attached now carry it, of how many; and each other document attached now as `{"name", "why"}`, `why`
-  one of `left untouched` (the run left it as it was), `set aside` (it waited on the to-do list then) or `attached
+  one of `left untouched` (the run left it as it was), `set aside` (the user had set it aside then) or `attached
   later` (attached after the run, or removed and attached again). `POST /api/undo` takes the newest off; Start over
   and removing the last working copy clear it; the journal keeps it. The page lists it under the copies, the newest
-  marked LATEST, and gives a Safe-mode button a checkmark while an entry names it (in `buttons`, below).
+  marked LATEST, with how many documents carry each run; it no longer names the documents that do not (`not` is
+  still sent): `standing` says that per document, with the reason. It gives a Safe-mode button a checkmark while an
+  entry names it (in `buttons`, below).
   Each entry also carries what a saved recipe would keep of the run (`DocumentTask.run_steps`, taken at its approval
   by `_steps_now`): `id` (what `POST /api/saved-recipes/save` names), `name` (the saved recipe it ran; `""` for a
   button or a request), `steps` (each `saved_recipes.step_view`: `{"kind": "button" | "plan", "label", "text",
@@ -355,22 +368,40 @@ Rules the page relies on:
   `""` otherwise) and how many of the listed documents it is `done` and `failed` on. An operation is a Safe-mode
   button, a request's plan, a saved recipe's run or one of Obliterate's own actions (Word actions, Replace this
   part); a button or a recipe no document can take is one too, though nothing was approved; a dropped request or a
-  discarded preview is none. A pass over the to-do list adds no operation: what it delivers settles the cell of the
-  operation its documents were set aside from. `documents`, in the window's order: `path`, `name`, `badges` (any of
-  `SALVAGED`, `UNVERIFIED`, `UNPROVEN` — the mark its copy carries — and `set aside`: it waits on the to-do list),
-  `owed` (how many of its cells failed) and `cells`, one per operation in the operations' order. A cell is its last
-  attempt — `state` (`done`, `failed`, `not_run`), `mode` (the mode it happened in), `why` (`refused`, `failed`,
-  `held`, `asked`, `left out`, `set aside`; `""` for done), `reason` (the sentence, as the to-do list or Left
-  untouched words it), `marks` (the failed checks or the UNPROVEN mark its copy was delivered with: a copy delivered
-  marked is `done` with its marks), `note` (how it was done when not by the plan: the copy that failed, taken as it
-  is) and `first` (the reason it failed before a second check fixed it under the same approval) — with every attempt,
-  oldest first, under `attempts`. A document that holds no attempt under an operation reads `not_run` with `why`
-  `attached later` or `not part of it`, its sentence in `reason`, and no attempts. `owed` counts the failed cells and
-  the documents that hold one. `POST /api/undo` takes back what was recorded since the undone run's approval; Start
-  over clears it; removing a document takes its row and any operation that was its alone; the journal keeps it. The
-  page draws it as a grid under the copies (a mark opens its reason and attempts; **Show only these** lists the
-  documents that still owe something) and draws nothing when the record does not line up. It is an account only:
-  no route takes it, and nothing the server plans, runs or tells a model reads it.
+  discarded preview is none. A pass over the to-do list adds no operation: what it delivers settles the cells of
+  the operation it works on. `documents`, in the window's order: `path`, `name`, `badges` (any of `SALVAGED`,
+  `UNVERIFIED`, `UNPROVEN` — the mark its copy carries — and `set aside`: the user set it aside, so it waits out of
+  the batch, in `todo`), `owed` (how many of its cells failed) and `cells`, one per operation in the operations'
+  order. A cell is its last attempt — `state` (`done`, `failed`, `not_run`, or `waived`: the user said it is not
+  needed on this document, the failed attempt kept under it), `mode` (the mode it happened in), `why` (`refused`,
+  `failed`, `held`, `asked`, `left out`, `set aside`, `waived`; `""` for done), `reason` (the sentence the grid and
+  the to-do card show), `marks` (the failed checks or the UNPROVEN mark its copy was delivered with: a copy
+  delivered marked is `done` with its marks), `note` (how it was done when not by the plan: the copy that failed,
+  taken as it is; the same button, pressed again) and `first` (the reason it failed before a second check fixed it
+  under the same approval) — with every attempt, oldest first, under `attempts`. A document that holds no attempt
+  under an operation reads `not_run` with `why` `attached later` or `not part of it`, its sentence in `reason`, and
+  no attempts. Only while Settings shows Obliterate mode, a failed cell also carries `obliterate` — the cell offers
+  **Obliterate this one** (`POST /api/todo/obliterate`): `""` when it can be pressed now, else why it waits (a pass
+  is under way, or `recovery_blocked`) — and, when the app kept a copy for that cell that failed its checks and it
+  can still be taken, `failed_copy`, the checks it failed; with Obliterate hidden neither is sent. `owed` counts the
+  failed cells and the documents that hold one: the to-do list. The same Safe-mode button pressed again with the
+  identical form is an operation of its own, and on the documents it now delivers it also turns that button's
+  earlier failed cells to `done`, `note` `the same button, pressed again` (`Standing.same_button`); nothing else is
+  ever inferred. `POST /api/undo` takes back what was recorded since the undone run's approval; Start over clears
+  it; removing a document takes its row and any operation that was its alone; the journal keeps it, and a to-do list
+  an earlier version journalled is read into it (`DocumentTask._adopt_todo`: an entry the engine made leaves `todo`,
+  its document in the batch again and still owing). The page draws it as a grid under the copies and draws nothing
+  when the record does not line up. A mark opens its reason and attempts; a cross also offers **Work on it now**
+  (Default, Obliterate) or **Work on it in Default mode** (Safe), **All N it was not done on** when the operation
+  failed on more than one document (both `POST /api/todo/work`), **Obliterate this one** and **Not needed on this
+  one** (`POST /api/todo/waive`); a waived cell offers **Put it back on my to-do list**; **Show only these** lists
+  the documents that still owe something. The record is read as well as shown: its failed cells are the to-do list
+  (the to-do card, the `WORK_TODO` chip), a failed attempt keeps what the pass over it works from (the request it
+  failed, the plan the user saw and the engine's case file, none of them in the view), those three routes name a
+  cell by its operation's `id` and its document's `path`, and a request tells the model what the documents in scope
+  still owe, as context in the app's note (`DocumentTask._owed_note`; never during a pass). By itself it still
+  plans, orders and changes nothing: a failed cell keeps no document out of a plan (only `todo` does), and nothing
+  is done about one until the user acts on it.
 - `saved_recipes` lists the saved recipes (`saved_recipes.Store`, `config_dir()/recipes.json`;
   `DocumentTask.recipes_view`): every Safe and Default recipe, and Obliterate's only while Obliterate mode is shown,
   each `{"id", "rev", "name", "note", "mode": "safe" | "default" | "obliterate", "saved", "last_run", "last_documents",
@@ -394,21 +425,21 @@ Rules the page relies on:
 - `recovery_blocked` says why the actions that would end a recovery wait (`DocumentTask._recovery_blocked`): `""`
   unless a run saved some copies while recovery checks its other documents (loaded, paused, or kept by the journal to
   continue). Those copies are in `results` and join the working set when the check ends, so until **Save N ready
-  copies**, **Create edited copies** on the check's preview or **Set the rest aside for later** ends it, `/api/attach`,
+  copies**, **Create edited copies** on the check's preview or **Leave the rest for later** ends it, `/api/attach`,
   `/api/attach-folder`, `/api/upload` (before a byte is written), `/api/remove`, `/api/remove-documents`,
-  `/api/put-back`, `/api/mode` (across Obliterate, or to Safe; Safe to Default stays open), `/api/undo`,
-  `/api/discard` and a saved recipe answer it as their error (and `discard` is `""`, `working.undo_blocked` and
-  `recipe_blocked` say it); a `send` of words that would end the check (any not about the documents
-  it still checks, or **Work on the documents I set aside**) is not taken: the user's words and this sentence are
-  added as messages, no model is called, and the stage and `action.token` stand. Its last clause names the way out
-  where the check is ("continue it", "create the copies it fixed", or "answer its question, save the ready copies, or
-  set the rest aside for later"). The page greys the document tray's buttons and ✕, **Remove all documents**, the
-  mode switch's held modes, **Put back** and the to-do card's **Work on it now** with it as their hover text. An older
-  server leaves it out (read as `""`).
+  `/api/put-back`, `/api/todo/work`, `/api/todo/obliterate`, `/api/mode` (across Obliterate, or to Safe; Safe to
+  Default stays open), `/api/undo`, `/api/discard` and a saved recipe answer it as their error (and `discard` is
+  `""`, `working.undo_blocked` and `recipe_blocked` say it); a `send` of words that would end the check (any not
+  about the documents it still checks, or **Work on my to-do list**) is not taken: the user's words and this
+  sentence are added as messages, no model is called, and the stage and `action.token` stand. Its last clause names
+  the way out where the check is ("continue it", "create the copies it fixed", or "answer its question, save the
+  ready copies, or set the rest aside for later"). The page greys the document tray's buttons and ✕, **Remove all
+  documents**, the mode switch's held modes, **Put back**, the to-do card's and the grid's **Work on it now** and the
+  grid's **Obliterate this one** with it as their hover text. An older server leaves it out (read as `""`).
 - The page keeps the unsent message and staged Safe form across mode switches. Only a conversation mode's draft
   holds its Create action. A successful New conversation or Start over clears both inputs, the last job's failure
   note and a saved recipe's open run form; a failed reset keeps them. Start over retains the attached originals and
-  clears the last button's untouched status; New conversation starts with no attachments.
+  clears `standing`, the to-do list with it; New conversation starts with no attachments.
 - `cost.fast` is true while fast mode is in effect (`llm.fast_for(llm.DEFAULT_MODEL)`: Settings → Fast responses
   is on, the model is served fast, and Anthropic has not refused fast mode for this key): the spending pill then says
   "Fast". An older server leaves it out.
@@ -447,7 +478,7 @@ explicitly injected clients are retained. Both key replacement and removal refus
 | POST | `/api/remove-documents` | | **Remove all documents** (`DocumentTask.remove_documents`): every Word document, a refused one too, taken out as `/api/remove` takes one; the template and the pictures and tables stay; one `app` message says how many; the view. 400 with `{"error"}` naming why while `recovery_blocked` is set (none removed); 409 while work runs |
 | POST | `/api/send` | `{"text": "...", "chip"?: true}` — `chip` marks one of the model's suggested replies the user tapped: their decision, never approved wording | SSE stream (below) |
 | POST | `/api/choose` | `{"choice_id": "c1", "wording": "…"}` — `wording` only for an `editable` choice (one drafted wording): the user's edit, approved instead of the draft (400 when it is not text; an edit that breaks the wording rule ends the job in `error`) | SSE stream |
-| POST | `/api/primary` | `{"token": "...", "hold"?: ["<sample source path>", …]}` — `hold` names the previewed documents marked with the red X: set aside on the to-do list, the others run; a path that is not one of the plan's documents is refused (400 for a malformed list, the job's `error` for an unknown path) | SSE stream |
+| POST | `/api/primary` | `{"token": "...", "hold"?: ["<sample source path>", …]}` — `hold` names the previewed documents marked with the red X: set aside (`todo`: out of the batch, each owing this request), the others run; a path that is not one of the plan's documents is refused (400 for a malformed list, the job's `error` for an unknown path) | SSE stream |
 | GET | `/api/recipes` | | `{"recipes": [{"id", "label", "group", "summary", "needs": ["template" \| "picture"], "fields": [{"name", "kind": "text \| lines \| pairs \| choice \| check \| picture \| table \| slots \| roles", "label", "required", "default"?, "options"?, "help"?, "placeholder"?, "optional_choice"?, "row"?}]}], "groups": [...]}` — Safe mode's buttons (`recipes.catalog()`), the same for the whole session. A `lines` field is sent as a list of one-line strings (the issue stamp's wordings, empty rows dropped); consecutive fields with the same `row` render side by side (the four page margins) |
 | POST | `/api/recipe` | `{"recipe": "<id>", "inputs": {<field name>: value}}` — a Safe-mode button and its form; a form that cannot be used, or a plan the gate refuses, is said in one `app` message and nothing is previewed; 400 for inputs that are not an object | SSE stream |
 | POST | `/api/saved-recipes/save` | `{"name": "…", "note": "…", "runs": ["<working.done id>", …], "into"?: "<recipe id>"}` — **Save as a recipe**: the ticked runs' steps, oldest first, as one recipe (`DocumentTask.save_recipe` → `saved_recipes.Store.add`), and one `app` message; with `into` (**Add to a saved recipe**), added to the end of that recipe instead (`Store.append`; `name` and `note` ignored), the message naming the mode it moves to when a step moves it | the view, `saved_recipes` with it; 400 with `{"error"}` for no name (no `into`), a name over 120 characters, no run, a run not listed or one a recipe cannot keep (its `why_not`), an `into` recipe that is gone or would pass 40 steps; 409 while work runs |
@@ -455,9 +486,10 @@ explicitly injected clients are retained. Both key replacement and removal refus
 | POST | `/api/saved-recipes/run` | `{"id": "<recipe id>", "steps": [{"skip": false, "inputs"?: {…}}, …], "rev"?: "…"}` — one entry per saved step (`steps` left out: every step as saved): whether it is skipped this time and the form a button step runs with; `rev` the recipe's `rev` when the run form opened (the entries are by position, so a recipe whose steps were edited since is refused in one `app` message, "The recipe changed since its form was opened; open it again."); every kept step is built from the documents attached now, each through the gate, composed in order into one plan (a chain, or a plan per layout of chains) and through the gate again (`saved_recipes.build_run`), then previewed with no AI call (`Session.model_free`); a step that cannot be used, or a plan the gate refuses, is said in one `app` message and nothing is previewed | SSE stream; 400 for `steps` that are not a list of objects; the job's `error` for a recipe that does not run in this mode or while `recipe_blocked` is set |
 | POST | `/api/occurrences` | `{"skip": ["<key>", …]}` — every find-and-replace occurrence the user unticked in the preview's list, by its `key` (the whole unticked set: a key left out is an occurrence put back); the previewed plan is made again with those occurrences left as they are (backlog F1: each `replace_table` op's `skip` list is exactly the unticked occurrences of its own, the spec passes the gate again with those keys as the ones recorded from the user's unticks, and the preview is remade on the same documents; the approval token changes, so the page's marks start over); 400 for a body that is not a list of keys; the job's `error` when no preview waits or a key is not in the list; a plan the gate refuses keeps the preview as it was and says so in one `app` message | SSE stream |
 | POST | `/api/mode` | `{"mode": "safe \| default \| obliterate", "acknowledged"?: true, "hands_on"?: true}` — `obliterate` needs `show_obliterate` on and `acknowledged: true` (the user ticked its warning this time); `hands_on: true` (the warning's own box, only the literal `true`) turns the hands-on tools on with it; entering or leaving it voids the plan | the view; Safe or Default is kept in settings.json, Obliterate never is (the next start opens in Default); 400 for another mode, a hidden Obliterate or a missing acknowledgement, and with `{"error"}` naming why for a switch across Obliterate or to Safe while `recovery_blocked` is set |
-| POST | `/api/handoff` | `{"paths": ["<left_untouched path>", …]}` — the documents go on the to-do list with the button's sentence as their request, and the mode becomes `default`; 400 for a path the last button did not leave untouched, or while a preview waits | the view |
-| POST | `/api/stop` | | `{"ok": true}` — the running model call is cut off; the stream then ends with `done`. In Safe mode, which calls no AI, the job itself is ended (`stopping`: worker processes terminated, a private Word instance or LibreOffice ended, nothing it made used — a preview being made withdrawn, stage `done` or `empty` with `results` and `left_untouched` as before the button; a Create with no copy delivered, stage `preview` and the same `action.token`; an export with nothing saved), and the stream ends with `done` carrying `stopped: true` and one `app` message saying what the stop left. `{"ok": false}` when nothing runs |
-| POST | `/api/put-back` | `{"path": "<a todo entry's path>"}` | the view (the document is off the to-do list and back among the documents the next request works on; during a pass it joins them when the pass ends; a plan on screen is void when the documents in scope change); 400 with `{"error"}` for a path not on the list or while `recovery_blocked` is set, 409 while work runs |
+| POST | `/api/todo/work` | `{"operation"?: "<operation id>", "path"?: "<document path>"}` — **Work on it** (`DocumentTask.work_todo`): the pass over the to-do list begins on one failed cell of `standing` (both named), on every document that owes one operation (`operation` alone), or on the list (neither: the oldest operation first; `path` alone: the oldest that document owes). From Safe mode the window turns to Default mode first (kept in settings.json, as the switch's choice is), then the pass begins (`focus`). No model call, nothing planned or created. It replaces `/api/handoff` and **Try these in Default mode** (2026-11-11), which took the last button's documents alone | the view; 400 with `{"error"}` when nothing on the to-do list matches ("That is not on your to-do list."), for an `operation` or `path` that is not text, while a pass is under way, while a preview waits or while `recovery_blocked` is set; 409 while work runs |
+| POST | `/api/todo/waive` | `{"operation": "<operation id>", "path": "<document path>", "on"?: false}` — **Not needed on this one** (`DocumentTask.waive`): that failed cell is off the to-do list at the user's word, its state `waived` with the failed attempt kept under it; `on: false` (**Put it back on my to-do list**) takes the waiver off and the failure stands again. One `app` message; nothing in any document changes; no model call | the view; 400 with `{"error"}` when either is not named, when the cell is not a failed one ("That is not on your to-do list.") or, with `on: false`, not a waived one ("That was not marked as not needed."), or while the pass under way is over that cell; 409 while work runs |
+| POST | `/api/stop` | | `{"ok": true}` — the running model call is cut off; the stream then ends with `done`. In Safe mode, which calls no AI, the job itself is ended (`stopping`: worker processes terminated, a private Word instance or LibreOffice ended, nothing it made used — a preview being made withdrawn, stage `done` or `empty` with `results` as before the button; a Create with no copy delivered, stage `preview` and the same `action.token`; an export with nothing saved), and the stream ends with `done` carrying `stopped: true` and one `app` message saying what the stop left. `{"ok": false}` when nothing runs |
+| POST | `/api/put-back` | `{"path": "<a todo entry's path>"}` | the view (the document is no longer set aside: it is out of `todo` and back among the documents the next request works on, as it is; during a pass it joins them when the pass ends; what it owes stays on the to-do list, its failed cell of `standing`; a plan on screen is void when the documents in scope change); 400 with `{"error"}` for a path that is not set aside ("That document is not set aside.") or while `recovery_blocked` is set, 409 while work runs |
 | POST | `/api/hands-on` | `{"on": bool}` — the hands-on tools' switch (the Obliterate strip's): Obliterate mode only; turning it off withdraws a part replacement that waits for approval. Never kept | the view (`hands_on`); 400 outside Obliterate mode, or while `recovery_blocked` holds the withdrawal; 409 while work runs |
 | POST | `/api/parts` | `{"path": "<an attached document>", "which"?: "current \| original"}` — the parts of that document's file (`current`, the default: the copy the next change is made on; `original`: the attached file). Read-only | `{"path", "document", "which", "has_copy", "parts": [{"name", "size", "type", "xml"}]}`; 400 with `{"error"}` while the hands-on tools are off, or for a path that is not an attached document |
 | POST | `/api/part` | `{"path", "part", "page"?: 1, "which"?}` — one page of one part as text: parsed and indented for reading (a part that does not parse: its own text; a part that is not text, or over 32 MB: no lines and a `note`). Read-only | `{"part", "size", "type", "xml", "lines", "first", "page", "pages", "total", "note"}` (`lines`: 400 at most; `first`: the number of the first, from 1); 400 as above, and for a part the file does not have |
@@ -466,10 +498,10 @@ explicitly injected clients are retained. Both key replacement and removal refus
 | POST | `/api/part/replace` | multipart: `path`, `part`, `file` (the replacing file's bytes, 64 MB at most) — **Replace this part…**: the bytes are kept under the scratch folder's `parts/<time>/`, and the one-operation plan `replace_part` is built by the app (no AI call), passed through the gate and previewed. Nothing changes until `/api/primary` | the job stream (as `/api/recipe`), ending in `done` with the view at `preview` — or at the stage it had, with one app message, when the choice cannot be used (the part is missing, the file is the part as it is, a preview or question is open); 400 while the tools are off, for a part the file lacks or a file too large; 409 while work runs or the tour is active |
 | POST | `/api/rescue` | `{"path": "<a refused document>", "password"?: "<text>"}` — **Try to rescue** (Obliterate mode only; 400 elsewhere, for a file that is not attached, and for one that is not a refused document with something to try). A job stream, as `/api/recipe`, with no AI call. The file is read and never written; a document that comes of it is written under the scratch folder's `rescued/<time>/` and attached in the refused file's place with `salvaged`; a file past the size limits is attached as it is, unmarked, the limits raised for this window. A rescue that makes no document leaves the file refused and says why in the last app message; one that needs a password says so and sets `rescue` to `password`. `password` is handed to Word for this one attempt: it is never stored, journalled or logged, and no response carries it. Stop ends the job and changes nothing else. 409 while a job runs or the tour is active |
 | POST | `/api/word-actions` | `{"path": "<an attached document>", "actions": ["<id>", …], "every"?: true}` — **Word actions** (Obliterate mode only; 400 elsewhere, and for an action that is not on the menu, one listed twice, `repair` not first, or both `accept_changes` and `reject_changes`): Word runs the actions, in that order, on a private copy of the document — of each document in scope with `every` — and the copies are previewed. A job stream, as `/api/recipe`, with no AI call (the plan is the app's: `word_action` ops through the gate); Stop ends it between documents and terminates the private Word it started. The preview's samples carry `made_by: "word"`; a document Word could not finish, or found nothing to do in, is a `no_copy` sample with the reason, and when no document got a copy nothing is previewed and the last app message says why. Create is `/api/primary`: it delivers the copies shown and never runs Word. 409 while a job runs or the tour is active |
-| POST | `/api/todo/obliterate` | `{"path": "<a todo entry's path>", "acknowledged"?: true, "hands_on"?: true}` — **Obliterate this one**: Obliterate mode for that one document (`acknowledged: true` when the mode is not on yet: the user ticked its warning this time; not needed while it is on), then the pass over it alone (`focus`), its request standing; no model call, nothing planned or created | the view; 400 with `{"error"}` for a path not on the list, with Obliterate hidden, without the acknowledgement, while a pass is under way or while `recovery_blocked` is set. The mode is never kept in settings.json |
-| POST | `/api/start-over` | | the view (the working set returns to the originals; the plan is void; the to-do list is cleared; nothing can be undone) |
-| POST | `/api/discard` | | Discard: the view (the waiting preview, or in Default and Obliterate the open request, withdrawn and nothing created; Safe mode: `results` and `left_untouched` as they were before the button was pressed; Default and Obliterate: the request ended, stage `done` or `empty`); 400 with `{"error"}` when `discard` is `""`, 409 while work runs |
-| POST | `/api/undo` | | the view (the working set back to the copies from before the last run that delivered copies; `results`, `left_untouched` and the to-do entries that run's ✗ added as they were; no file written or deleted); 400 with `{"error"}` when there is nothing to undo, a preview waits, a request is open, `recovery_blocked` is set or a copy it would go back to is gone, 409 while work runs |
+| POST | `/api/todo/obliterate` | `{"path": "<document path>", "operation"?: "<operation id>", "acknowledged"?: true, "hands_on"?: true}` — **Obliterate this one**, a failed cell's (`DocumentTask.obliterate_todo`): Obliterate mode for that one document (`acknowledged: true` when the mode is not on yet: the user ticked its warning this time; not needed while it is on; `hands_on: true` turns the hands-on tools on with it), then the pass over it alone (`focus`) on `operation` — without one, the oldest it owes — the request it failed standing; no model call, nothing planned or created | the view; 400 with `{"error"}` for a document, or a cell, that is not on the to-do list ("That document is not on your to-do list."), with Obliterate hidden, without the acknowledgement, while a pass is under way or while `recovery_blocked` is set. The mode is never kept in settings.json |
+| POST | `/api/start-over` | | the view (the working set returns to the originals; the plan is void; `standing`, the to-do list with it, and `todo` are cleared; nothing can be undone) |
+| POST | `/api/discard` | | Discard: the view (the waiting preview, or in Default and Obliterate the open request, withdrawn and nothing created; Safe mode: `results` as they were before the button was pressed; Default and Obliterate: the request ended, stage `done` or `empty`, and a pass over the to-do list with it: its cells still failed, a document of it the user had set aside in `todo` again); 400 with `{"error"}` when `discard` is `""`, 409 while work runs |
+| POST | `/api/undo` | | the view (the working set back to the copies from before the last run that delivered copies; `results` as they were, `standing` without what was recorded since that run's approval, and the documents its ✗ set aside out of `todo` again; no file written or deleted); 400 with `{"error"}` when there is nothing to undo, a preview waits, a request is open, `recovery_blocked` is set or a copy it would go back to is gone, 409 while work runs |
 | POST | `/api/new-conversation` | | the view (starts empty over the same scratch folder; the journal is written over; the page asks first when a copy was never saved with Export); 409 with `{"error"}` while a tour runs (the page ends the tour first) |
 | GET | `/api/tutorial/status` | | the view's `tutorial` block |
 | POST | `/api/tutorial/start` | `{"request_id": "<the page's id for this start>"}` | begins the guided tour: the conversation's task is set aside untouched, a `TutorialTask` over the bundled showcase (`examples/tutorial/`, copied to a fresh practice folder in this window's scratch folder, `<scratch>/tutorial/`, so two windows' tours never share one) takes its place in the `start` state; the view, its `tutorial` block naming the tour. The same `request_id` sent again joins the tour that start began (a retried request starts no second one); 409 while work runs or another tour is running; 500 when the practice folder cannot be made |
@@ -493,8 +525,8 @@ explicitly injected clients are retained. Both key replacement and removal refus
 Every error is JSON `{"error": "one sentence for the user"}` with 400/404/409/500. A route that reads a JSON body
 answers 400 `The request body must be a JSON object.` when the body is not one (`null`, a list, a string, a number, a
 boolean, JSON cut short, no body) — `server.json_object`, used by `/api/attach`, `/api/pick`, `/api/remove`,
-`/api/send`, `/api/choose`, `/api/primary`, `/api/recipe`, `/api/occurrences`, `/api/mode`, `/api/handoff`,
-`/api/put-back`, `/api/todo/obliterate`, `/api/open` and `/api/settings`. The routes whose body is optional read a bad one as `{}`:
+`/api/send`, `/api/choose`, `/api/primary`, `/api/recipe`, `/api/occurrences`, `/api/mode`, `/api/todo/work`,
+`/api/todo/waive`, `/api/put-back`, `/api/todo/obliterate`, `/api/open` and `/api/settings`. The routes whose body is optional read a bad one as `{}`:
 `/api/attach-folder`, `/api/export`, the tour's routes, and `/api/diagnostics` (400 for a body that is not JSON, a
 non-object taken as no reports). No route answers a text/plain 500.
 
