@@ -386,6 +386,28 @@ function tutorialView(kind) {
 const WORK_TODO = "Work on the documents I set aside";
 const HELD_REASON = "You marked its preview as needing more work.";
 
+/** Where each document stands (docs/WEB_API.md, `standing`): a grid from the operations asked for and, per document,
+ *  its badges and one attempt per operation (`ran`, `failed`, `skipped` below). */
+const ran = (mode, extra = {}) => ({ state: "done", mode, why: "", reason: "", marks: [], note: "", first: "", ...extra });
+const failed = (mode, why, reason) => ({ state: "failed", mode, why, reason, marks: [], note: "", first: "" });
+const skipped = (why, reason, mode = "") => ({ state: "not_run", mode, why, reason, marks: [], note: "", first: "" });
+function standingView(operations, rows) {
+  const documents = rows.map(([path, badges, ...cells]) => ({
+    path, name: name(path), badges,
+    cells: cells.map((c) => ({ ...(Array.isArray(c) ? c[c.length - 1] : c), attempts: Array.isArray(c) ? c : c.state === "not_run" && !c.mode ? [] : [c] })),
+  }));
+  for (const d of documents) d.owed = d.cells.filter((c) => c.state === "failed").length;
+  return {
+    operations: operations.map((o, i) => ({
+      id: `op-${i + 1}`, number: i + 1, recipe: "", name: "", ...o,
+      done: documents.filter((d) => d.cells[i].state === "done").length,
+      failed: documents.filter((d) => d.cells[i].state === "failed").length,
+    })),
+    documents,
+    owed: { cells: documents.reduce((n, d) => n + d.owed, 0), documents: documents.filter((d) => d.owed > 0).length },
+  };
+}
+
 const SCENARIOS = {
   empty: () => emptyView(),
   attached: () => {
@@ -418,6 +440,37 @@ const SCENARIOS = {
       done: [{ id: "run-s1", request: "Remove highlighting", recipe: "remove_highlight", documents: 2, of: 3, not: [{ name: name(DOCS[2].path), why: "left untouched" }], name: "", steps: [buttonStep("remove_highlight", {}, "Remove highlighting")], buttons: ["remove_highlight"], why_not: "" }],
     };
     v.left_untouched = [{ path: DOCS[2].path, name: name(DOCS[2].path), reason: "Editing is restricted in this file (Review → Restrict Editing); remove the restriction in Word, then run again." }];
+    v.standing = standingView(
+      [{ request: "Remove highlighting", mode: "safe", recipe: "remove_highlight" }],
+      [
+        [DOCS[0].path, [], ran("safe")],
+        [DOCS[1].path, [], ran("safe")],
+        [DOCS[2].path, [], failed("safe", "refused", v.left_untouched[0].reason)],
+      ],
+    );
+    return v;
+  },
+  /** Where each document stands after three buttons, a pass in Default mode and one document taken to Obliterate:
+   *  what worked on what, in which mode, and what is still owed. */
+  standing: () => {
+    const v = SCENARIOS["safe-done"]();
+    const restricted = v.left_untouched[0].reason;
+    const noSection = "No paragraph of this document starts with SECTION and its section number (like “SECTION 21 13 13”), so the template's section number cannot be read from it.";
+    v.left_untouched = [];
+    v.results = results();
+    v.export = { folder: "", unsaved: v.results.length, copies: v.results.length };
+    v.standing = standingView(
+      [
+        { request: "Remove all headers and footers", mode: "safe", recipe: "remove_headers_footers" },
+        { request: "Remove watermarks", mode: "safe", recipe: "remove_watermarks" },
+        { request: "Match headers and footers to the template", mode: "safe", recipe: "headers_footers_template" },
+      ],
+      [
+        [DOCS[0].path, [], ran("safe"), ran("safe"), ran("safe")],
+        [DOCS[1].path, ["UNPROVEN"], ran("safe"), ran("safe"), [failed("safe", "refused", noSection), failed("default", "failed", "Its copy could not be made: the plan could not be applied to it."), ran("obliterate", { marks: ["UNPROVEN (a custom method made it: what it changed was shown to you, not proven)"] })]],
+        [DOCS[2].path, [], [failed("safe", "refused", restricted), ran("default")], ran("safe"), failed("safe", "refused", noSection)],
+      ],
+    );
     return v;
   },
   question: () => {

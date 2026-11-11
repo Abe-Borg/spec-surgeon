@@ -498,6 +498,66 @@ export interface Working {
   done?: DoneStep[];
 }
 
+/** One attempt on one document under one operation (docs/WEB_API.md, `standing`). */
+export interface StandingAttempt {
+  state: "done" | "failed" | "not_run";
+  /** The mode it happened in; "" for a document that holds no attempt under the operation. */
+  mode: Mode | "";
+  /** The kind of reason: "refused", "failed", "held", "asked", "left out", "set aside", "attached later",
+   *  "not part of it"; "" for done. */
+  why: string;
+  /** One sentence saying why, as the server words it; "" for done. */
+  reason: string;
+  /** The marks the copy was delivered with: a failed check's name (UNVERIFIED) or the UNPROVEN mark. */
+  marks: string[];
+  /** How it was done, when not by the plan ("the copy that failed, taken as it is"). */
+  note: string;
+  /** The reason it failed first, when a second check then fixed it under the same approval. */
+  first: string;
+}
+
+/** One document under one operation: its last attempt, and every attempt oldest first (none: it was not run). */
+export interface StandingCell extends StandingAttempt {
+  attempts: StandingAttempt[];
+}
+
+/** One operation asked for: a Safe-mode button, a request, a saved recipe's run, one of Obliterate's own actions. */
+export interface StandingOperation {
+  id: string;
+  /** Its place in the grid, from 1. */
+  number: number;
+  /** The button's sentence, or the request the user typed. */
+  request: string;
+  /** The mode it was asked in. */
+  mode: Mode;
+  /** The Safe-mode button pressed (a recipe id); "" for a request. */
+  recipe: string;
+  /** The saved recipe run; "" otherwise. */
+  name: string;
+  /** How many of the documents listed it is done on, and failed on. */
+  done: number;
+  failed: number;
+}
+
+/** One document's row: a cell per operation, in the operations' order. */
+export interface StandingRow {
+  path: string;
+  name: string;
+  cells: StandingCell[];
+  /** How many of its cells failed. */
+  owed: number;
+  /** "SALVAGED", "UNVERIFIED", "UNPROVEN" (the mark its copy carries), "set aside" (it waits on the to-do list). */
+  badges: string[];
+}
+
+/** Where each document stands (docs/WEB_API.md, `standing`): every operation asked for and each document's outcome. */
+export interface Standing {
+  operations: StandingOperation[];
+  documents: StandingRow[];
+  /** The cells that failed, and the documents that hold one. */
+  owed: { cells: number; documents: number };
+}
+
 /** One run the copies carry (docs/WEB_API.md, `working.done`). */
 export interface DoneStep {
   /** The run's id: what Save as a recipe names. Absent from an older server. */
@@ -637,6 +697,9 @@ export interface View {
   action: Action;
   /** Documents set aside for more work, waiting on the to-do list (attached originals). */
   todo: TodoItem[];
+  /** Where each document stands: every operation asked for, and each document's outcome under it. Absent from an
+   *  older server. */
+  standing?: Standing;
   /** The documents of the pass over the to-do list, while the user works on them (attached originals); else empty. */
   focus: string[];
   /** Obliterate's free rung: the documents of that pass whose failed copy can be taken as it is; else empty. */

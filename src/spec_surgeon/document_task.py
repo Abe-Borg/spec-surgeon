@@ -42,6 +42,7 @@ from .rescue import FORMATS as RESCUE_FORMATS
 from .recovery_state import atomic_json
 from .resources import DEFAULT_MAX_CALLS, DEFAULT_MAX_OUTPUT_TOKENS
 from .settings import spending_check
+from .standing import DONE, FAILED, NOT_RUN, REQUEST_CHARS, Standing
 
 AUTO_STEPS = 6          # internal steps the coordinator takes on its own after one user action (bounded)
 STAGES = ("empty", "question", "preview", "done", "budget", "resume")
@@ -108,6 +109,10 @@ COPIES_WAIT = ("Some copies from this request are saved while the rest are check
 # why a document is on the to-do list (``todo[...]["why"]``), and the sentence the window and the model are given
 WHY_HELD, WHY_ASKED, WHY_REFUSED, WHY_FAILED = "held", "asked", "refused", "failed"
 HELD_REASON = "You marked its preview as needing more work."
+# Why a document was not run under an operation, in the record of where each document stands (``standing``): the
+# user left it out of the request, or it waited on the to-do list while the others got the change
+WHY_LEFT_OUT, WHY_WAITING = "left out", "set aside"
+WAITING_REASON = "It was waiting on your to-do list, out of every plan."
 ASKED_REASON = "You asked to set it aside for later."
 EARLIER_COPY = "in an earlier copy: "   # an UNVERIFIED mark a later copy builds on (``_mark_unverified``)
 # Obliterate from the to-do list (the owner's decision of 2026-11-10; CLAUDE.md, Modes). A document that goes on the
@@ -630,6 +635,17 @@ class DocumentTask:
         self.recipes = recipes
         self.run_steps: Dict[str, Dict[str, Any]] = {}
         self._pending_steps: Optional[Dict[str, Any]] = None
+        # Where each document stands (``standing``): every operation asked for and each document's outcome under
+        # it, kept in the journal and shown as the window's grid. ``_op``: the operation of the request under way
+        # once the record holds it (the first outcome of the request opens it; None until then). ``_since``: the
+        # record's number at that request's approval — the outcomes recorded after it are one attempt per document
+        # (``Standing.record``). ``_own_op``: the request under way is an action of its own inside a pass over the
+        # to-do list (Obliterate's Word actions), so its outcomes are its own operation's, not the one the pass
+        # works on
+        self.standing = Standing()
+        self._op: Optional[str] = None
+        self._since = 0
+        self._own_op = False
         self._running_recipe: Optional[Dict[str, Any]] = None
         self._template_kind: Optional[tuple] = None    # (the template's path, size, mtime, recipes.template_kind)
         self._binned: List[str] = []        # documents of this request that could not take the change, on the list
@@ -827,6 +843,7 @@ class DocumentTask:
             # nothing to continue without the conversation: a button press, or a saved recipe's run, is planned again
             # when it is pressed — never handed to Claude as a request to plan
             self.decisions = []
+            self._begin_operation()
         self.stage = "resume" if self.decisions else "empty"
         self.problem = ""
 
@@ -964,6 +981,7 @@ class DocumentTask:
         self.unverified.pop(str(path), None)
         self.fresh = [k for k in self.fresh if k != str(path)]
         self.todo.pop(str(path), None)
+        self.standing.forget(str(path))           # attached again it is an original: nothing was done to it
         for run in [*self.runs, *(r for point in self.undo_points for r in point.get("runs", []))]:
             # attached again later, it is an original that carries none of the runs
             run["documents"] = [d for d in run["documents"] if d != str(path)]
@@ -1255,12 +1273,13 @@ class DocumentTask:
         self.exchanges.append({"asked": list(self.decisions), "answered": answer_line(message)})
         del self.exchanges[:-EXCHANGES_KEPT]
         self.decisions = []
+        self._begin_operation()
         self.session._set_outcome()
         self.session.end_conversation()
 
     # ---- continue on the result ----
     def _advance_generation(self, done: Optional[Sequence[str]] = None, request: Optional[str] = None,
-                            keep_pass: bool = False) -> None:
+                            keep_pass: bool = False, note: str = "") -> None:
         """The delivered copies become the working set: the next request builds on them, the originals stay as they
         are, and the model is told what was already done. The conversation that led here is over (its files are
         not the next request's). ``done``: the sentences of the change these copies carry when no plan is open to
@@ -1268,7 +1287,8 @@ class DocumentTask:
         done so far names the run (there: the request, and that the copy was taken as it failed). ``keep_pass``
         (Obliterate's Word actions, run in a pass over the to-do list): the pass does not end with these copies —
         its documents stay the only ones in scope and the request they were set aside from is the request again, to
-        be planned on the copies Word made (``_pass_goes_on``)."""
+        be planned on the copies Word made (``_pass_goes_on``). ``note``: how the record says these copies were
+        made, when not by the plan (``use_failed_copy``)."""
         moved: List[str] = []                                     # the originals whose copy this run delivered
         for original, output in self.results.items():
             if Path(output).is_file():
@@ -1279,6 +1299,9 @@ class DocumentTask:
         if not moved:
             self._pending_undo = self._pending_steps = None       # the run is over with nothing delivered
             return
+        for key in moved:
+            # the record: this document got the operation, in this mode, with the marks its copy carries
+            self._stands(key, DONE, marks=self.unverified.get(key, []), note=note)
         request = request if request is not None else self.decisions[0] if self.decisions else ""
         # a button's run only when the plan that ran is a button's (``Session.model_free``): the same words typed as a
         # request after its preview was discarded are the conversation's plan
@@ -1323,6 +1346,7 @@ class DocumentTask:
         else:
             self.decisions = []
             self.focus = None                                     # a pass over set-aside documents ends with its copies
+        self._begin_operation()                                   # the next outcome is another request's
         self._sync()
         self.session._set_outcome()
         self.session.end_conversation()
@@ -1346,6 +1370,8 @@ class DocumentTask:
         self.applied, self.todo, self.focus, self._binned, self.fresh = {}, {}, None, [], []
         self.left_untouched = []
         self.undo_points, self._pending_undo, self._before_button = [], None, None
+        self.standing.clear()
+        self._begin_operation()
         self._sync()
         self._invalidate()
         self.stage = "empty"
@@ -1366,7 +1392,9 @@ class DocumentTask:
                 "results": dict(shown["results"]),
                 "unverified": {k: list(v) for k, v in shown["unverified"].items()},
                 "left_untouched": [dict(e) for e in shown["left_untouched"]],
-                "todo_before": list(self.todo)}
+                "todo_before": list(self.todo),
+                # the record's number now: Undo takes back what is recorded after it (``Standing.rewind``)
+                "standing": self.standing.seq}
 
     def _steps_now(self) -> Dict[str, Any]:
         """What a recipe would keep of the plan being approved (``saved_recipes``): a saved recipe's run keeps the
@@ -1419,6 +1447,99 @@ class DocumentTask:
                         "buttons": [st["button"] for st in steps if st.get("kind") == "button"],
                         "why_not": "" if steps else str(kept.get("why_not") or saved_recipes.WHY_NOT_KEPT)})
         return out
+
+    # ---- where each document stands (``standing``) ----
+    def _listed(self) -> List[str]:
+        """The documents the window lists: every attached Word document that was not refused, by its original."""
+        return [str(a.path) for a in self.attachments if not a.template and not a.reference and not a.refused]
+
+    def _begin_operation(self, own: bool = False) -> None:
+        """A request begins, or the one under way is over: the outcomes recorded from here on are a new operation's,
+        which the first of them opens (``_op_now``). ``own``: an action of its own inside a pass over the to-do list
+        (``_own_op``)."""
+        self._op, self._since, self._own_op = None, self.standing.seq, own
+
+    def _op_now(self, recipe: Optional[str] = None, name: Optional[str] = None) -> str:
+        """The operation of the request under way, opened in the record when this is its first outcome: the request
+        (a button's sentence, or the user's first words), the mode, the Safe-mode button pressed and the saved recipe
+        run (read from the plan on screen unless given: a button no document can take has no plan)."""
+        request = self.decisions[0] if self.decisions else ""
+        op = self.standing.find(self._op)
+        if op is None or op["request"] != request[:REQUEST_CHARS]:
+            s = self.session
+            if recipe is None:
+                recipe = self._button if s.outcome_source == "recipe" else ""
+            if name is None:
+                name = (self._running_recipe or {}).get("name", "") if s.outcome_source == "saved" else ""
+            self._op = self.standing.open(request, mode=self.mode, recipe=recipe, name=name,
+                                          documents=self._listed())
+        return self._op
+
+    def _op_for(self, key: str) -> str:
+        """The operation a document's outcome belongs to: in a pass over the to-do list, the one it was set aside
+        from, while the record still holds it; otherwise the request's own."""
+        if self.focus and not self._own_op:
+            op = (self.focus.get("operations") or {}).get(key)
+            if self.standing.has(op):
+                return op
+        return self._op_now()
+
+    def _stands(self, key: str, state: str, *, why: str = "", reason: str = "", marks: Sequence[str] = (),
+                note: str = "") -> str:
+        """One document's outcome into the record, by its attached original: done, failed or not run, in the mode the
+        window is in. Returns the id of the operation it was recorded under."""
+        op = self._op_for(key)
+        self.standing.record(op, key, state, mode=self.mode, why=why, reason=reason, marks=marks, note=note,
+                             since=self._since)
+        return op
+
+    def _leave_untouched(self, entries: Sequence[Dict[str, Any]]) -> None:
+        """Safe mode's Left untouched by the last button: the documents the button gave no copy, each with its
+        reason — shown beside the copies until the next button, and kept in the record as failed for as long as the
+        operation is."""
+        self.left_untouched = [dict(e) for e in entries]
+        for entry in self.left_untouched:
+            entry["operation"] = self._stands(entry["path"], FAILED, why=entry.get("why", WHY_REFUSED),
+                                              reason=entry.get("reason", ""))
+
+    def _stand_aside(self) -> None:
+        """At an approval, into the record: the documents the plan being approved does not cover, each with why. A
+        document a button or a saved recipe left out is one it could not take (failed, with its reason); one the
+        user left out of a request, or that waits on the to-do list from an earlier request, was not run. An action
+        for one document alone (Obliterate's Word actions, Replace this part) says nothing of the others, and a pass
+        over the to-do list says nothing of the documents outside it."""
+        s = self.session
+        if (self.focus and not self._own_op) or s.outcome_source in ("word", "hands-on"):
+            return
+        op = self._op_now()
+        reasons = s.left_out_reasons
+        left = {str(Path(p).resolve()) for p in s.left_out}
+        for key in self._listed():
+            if self.standing.state(op, key):
+                continue                                    # set aside from this very request: recorded already
+            current = str(self.current_of(key).resolve())
+            if key in self.todo:
+                self._stands(key, NOT_RUN, why=WHY_WAITING, reason=WAITING_REASON)
+            elif current in left and s.outcome_source in ("recipe", "saved"):
+                self._stands(key, FAILED, why=WHY_REFUSED,
+                             reason=refusal_message({"reason": reasons.get(current, "")}))
+            elif current in left:
+                self._stands(key, NOT_RUN, why=WHY_LEFT_OUT, reason=reasons.get(current) or LEFT_OUT_REASON)
+
+    def _standing_view(self) -> Dict[str, Any]:
+        """Where each document stands, as the window's grid shows it (``Standing.view`` over the documents listed
+        now), each document with its ``badges``: SALVAGED (the app rescued it at attach), UNVERIFIED or UNPROVEN (the
+        mark its copy carries) and ``set aside`` (it waits on the to-do list, out of every plan)."""
+        listed = [a for a in self.attachments if not a.template and not a.reference and not a.refused]
+        view = self.standing.view([(str(a.path), a.path.name) for a in listed])
+        for row in view["documents"]:
+            key = row["path"]
+            marks = self.unverified.get(key) if key in self.working or key in self.results else None
+            row["badges"] = [badge for badge, on in (("SALVAGED", bool(self._salvaged_of(key))),
+                                                     ("UNVERIFIED", bool(failed_marks(marks))),
+                                                     ("UNPROVEN", unproven_only(marks)),
+                                                     ("set aside", key in self.todo)) if on]
+        return view
 
     def _recovery_waits(self) -> bool:
         """Recovery checks documents again: loaded (``Session.recovery``), stopped before it answered
@@ -1544,6 +1665,7 @@ class DocumentTask:
             self.exchanges.append({"asked": asked, "answered": "", "discarded": kind})
             del self.exchanges[:-EXCHANGES_KEPT]
         self.decisions = []
+        self._begin_operation()
         self._request_budget = self._new_request()           # a pause at the spending check ends with the request
         self._budget.exhausted_reason = None
         self._sync()
@@ -1560,9 +1682,11 @@ class DocumentTask:
         why, the sentence, and its case file when it has one."""
         why = focus.get("why", {}).get(key, {})
         case = (focus.get("case") or {}).get(key)
+        operation = (focus.get("operations") or {}).get(key)
         return {"name": Path(key).name, "decisions": list(focus.get("decisions") or asked),
                 "seen": list(focus.get("seen", [])), "why": why.get("why", WHY_HELD),
-                "reason": why.get("reason") or HELD_REASON, **({"case": case} if case else {})}
+                "reason": why.get("reason") or HELD_REASON, **({"case": case} if case else {}),
+                **({"operation": operation} if operation else {})}
 
     def undo(self) -> None:
         """Undo the last change: the working set goes back to what it was before the last run that delivered copies.
@@ -1595,6 +1719,11 @@ class DocumentTask:
             if working else []
         for key in point.get("todo_added", []):
             self.todo.pop(key, None)
+        if type(point.get("standing")) is int:
+            self.standing.rewind(point["standing"])
+        else:
+            self.standing.clear()       # a point from before the record: nothing is shown as done that may not be
+        self._begin_operation()
         if self.focus and int(self.focus.get("after_word") or 0) > self.generation:
             self.focus.pop("after_word", None)   # the copy Word made in this pass is the one undone
         self._shown_again(point)
@@ -1869,6 +1998,8 @@ class DocumentTask:
                 self._pending_undo = self._pending_steps = None
                 self._resume_recovery, self._resume_layouts = None, []
             self.say(text, "user")
+            if not self.decisions and not self.focus:
+                self._begin_operation()             # a new request: its outcomes are a new operation's
             self.decisions.append(text)
             if not chip:
                 self.word_sources.append(text)
@@ -2015,6 +2146,7 @@ class DocumentTask:
         # mark is the working copy's, not the button's: it stays (``_mark_unverified``).
         self.results = {}
         self.say(built.request, "user")
+        self._begin_operation()
         self.decisions = [built.request]
         self._button = recipe.id
         self._button_inputs = json.loads(json.dumps(inputs or {}))
@@ -2023,8 +2155,10 @@ class DocumentTask:
         if outcome is None:
             # no layout of the batch can take the change: nothing to preview; each document's reason beside it
             s._set_outcome()
-            self.left_untouched = [{"path": str(self.origin_of(Path(p))), "name": Path(p).name, "why": WHY_REFUSED,
-                                    "reason": refusal_message({"reason": r}), "request": built.request} for p, r in built.left_out.items()]
+            self._op_now(recipe=recipe.id)          # recorded though nothing can be approved: it was tried
+            self._leave_untouched([{"path": str(self.origin_of(Path(p))), "name": Path(p).name, "why": WHY_REFUSED,
+                                    "reason": refusal_message({"reason": r}), "request": built.request}
+                                   for p, r in built.left_out.items()])
             self.stage = "empty"
             self._revision += 1
             self.say("None of the documents can take this change as they are; each one's reason is under Left "
@@ -2038,6 +2172,7 @@ class DocumentTask:
         if nothing:
             self.say("None of the documents can take this change as they are; each one's reason is under Left "
                      "untouched.")
+            self._record_none_took(built.request, recipe=recipe.id)
 
     # ---- Obliterate's hands-on tools (the owner's decision of 2026-11-10; docs/BACKLOG.md O4) ----
     def set_hands_on(self, on: bool) -> None:
@@ -2243,6 +2378,7 @@ class DocumentTask:
         self.say(f"Planned without AI: {get_op('replace_part').describe({}, params)} The copy is checked byte for "
                  f"byte against your file. What the new part changes in the words is not predicted: it is read from "
                  f"the copy and listed below, before the button.")
+        self._begin_operation(own=True)
         self.decisions = [request]
         self._button, self._button_inputs = "", {}
         self._running_recipe = None
@@ -2446,6 +2582,7 @@ class DocumentTask:
                  "again, so nothing is predicted: Word makes each copy now, on a private copy of the document, and "
                  "what it changes is read from that copy and listed below, before the button. Up to "
                  f"{int(word_actions.TIMEOUT_S // 60)} minutes a document.")
+        self._begin_operation(own=True)
         self.decisions = [request]
         self._button, self._button_inputs = "", {}
         self._running_recipe = None
@@ -2463,6 +2600,7 @@ class DocumentTask:
             # Word made no copy at all (said by ``_settle``): the pick ends here with the window as it was; the pass,
             # if any, waits as it did
             self.decisions = list(focus.get("decisions") or []) if focus else []
+            self._begin_operation()
             self._invalidate()
             self.results = shown_before[0]
             if not self.decisions:
@@ -2534,6 +2672,7 @@ class DocumentTask:
                  (f" Words it places: {', '.join(saved_recipes._quote(w) for w in places)}." if places else "") +
                  (" It was saved in Obliterate mode, so some of them may be Claude's."
                   if places and any(st.get("unguarded") for st in built.steps) else ""))
+        self._begin_operation()
         self.decisions = [built.request]
         self._button, self._button_inputs = "", {}
         # the words a recipe's steps place are the user's own (or, in Obliterate, the ones just said above): the gate
@@ -2545,10 +2684,17 @@ class DocumentTask:
             self.left_untouched = []
         if built.outcome is None:
             s._set_outcome()
-            self.left_untouched = [{"path": str(self.origin_of(Path(p))), "name": Path(p).name, "why": WHY_REFUSED,
-                                    "reason": refusal_message({"reason": r}), "request": built.request}
-                                   for p, r in built.left_out.items()] if self.mode == "safe" else []
+            self._op_now(name=record["name"])       # recorded though nothing can be approved: it was tried
+            untouched = [{"path": str(self.origin_of(Path(p))), "name": Path(p).name, "why": WHY_REFUSED,
+                          "reason": refusal_message({"reason": r}), "request": built.request}
+                         for p, r in built.left_out.items()]
+            if self.mode == "safe":
+                self._leave_untouched(untouched)
+            else:
+                for entry in untouched:
+                    self._stands(entry["path"], FAILED, why=WHY_REFUSED, reason=entry["reason"])
             self.decisions = []
+            self._begin_operation()
             self.stage = "empty" if not (self.results and self.generation) else "done"
             self._revision += 1
             self.say("None of the documents can take this recipe as they are" +
@@ -2564,6 +2710,7 @@ class DocumentTask:
         if built.nothing:
             self.say("None of the documents can take this recipe as they are; each one's reason is under Left "
                      "untouched.")
+            self._record_none_took(built.request, name=record["name"])
 
     def recipes_view(self) -> List[Dict[str, Any]]:
         """The saved recipes the window lists in this mode (``saved_recipes.recipe_view``): every Safe and Default
@@ -2788,7 +2935,9 @@ class DocumentTask:
                 ("The button could not change it" if refused else "Its copy could not be made")
                 + (f": {why}." if why else "."),
                 # what the engine recorded of it, for Obliterate's hand-off (``obliterate_todo``)
-                **({"case": entry["case"]} if entry.get("case") else {})}
+                **({"case": entry["case"]} if entry.get("case") else {}),
+                # and the operation it did not get: the pass that works on it settles that cell of the record
+                **({"operation": entry["operation"]} if entry.get("operation") else {})}
         self.left_untouched = [e for e in self.left_untouched if e["path"] not in wanted]
         self.mode = "default"
         self._sync()
@@ -2819,6 +2968,17 @@ class DocumentTask:
                         "reason": failed_sample_message(sv), "request": request,
                         "case": self._with_plan(_case_of_sample(sv, preview), sv.source)})
         return out
+
+    def _record_none_took(self, request: str, recipe: Optional[str] = None, name: Optional[str] = None) -> None:
+        """A button or a saved recipe whose preview shows that no document can take it: there is nothing to approve,
+        and the record keeps that it was tried — an operation every one of those documents failed, each with the
+        reason its preview gives."""
+        preview = self.session.outcome().preview
+        if preview is None:
+            return
+        self._op_now(recipe=recipe, name=name)
+        for entry in self._refused_by_preview(preview, request):
+            self._stands(entry["path"], FAILED, why=entry["why"], reason=entry["reason"])
 
     def _left_after_run(self, request: str, refused: Sequence[Dict[str, str]] = ()) -> List[Dict[str, str]]:
         """The documents a model-free run did not give a copy, with the reason the engine recorded: those its preview
@@ -2996,6 +3156,8 @@ class DocumentTask:
         origin = str(self.origin_of(current))
         self.todo[origin] = {"name": Path(origin).name, "decisions": list(self.decisions), "seen": list(seen),
                              "why": why, "reason": reason, **({"case": self._with_plan(case, current)} if case else {})}
+        # the record: it did not get this operation, and the pass that works on it later settles that same cell
+        self.todo[origin]["operation"] = self._stands(origin, FAILED, why=why, reason=reason)
         return origin
 
     def _with_plan(self, case: Dict[str, Any], current) -> Dict[str, Any]:
@@ -3157,6 +3319,11 @@ class DocumentTask:
         if cases:
             # what the engine recorded of each (Obliterate's hand-off reads it; Discard puts it back with the entry)
             self.focus["case"] = cases
+        operations = {k: v["operation"] for k, v in group.items() if v.get("operation")}
+        if operations:
+            # the operation each one did not get (``standing``): what this pass delivers settles that cell
+            self.focus["operations"] = operations
+        self._begin_operation()
         self.decisions = decisions
         self.todo = rest
         self._sync()
@@ -3246,6 +3413,7 @@ class DocumentTask:
         asked, seen = list(self.decisions), list(focus.get("seen") or [])
         self._invalidate()                                  # a plan or preview open on the pass is void with it
         point = self._undo_point()
+        self._since = self.standing.seq                     # what is recorded from here is this taking's
         folder = self.session._next_session_dir() / ACCEPTED_FOLDER
         record: List[Dict[str, Any]] = []
         for number, (key, copy) in enumerate(taken.items(), 1):
@@ -3272,7 +3440,8 @@ class DocumentTask:
         point["request"] = named
         self._pending_undo = point
         self._pending_steps = {"steps": [], "name": "", "recipe_id": "", "why_not": WHY_FAILED_COPY}
-        self._advance_generation(done=seen or ([request] if request else []), request=named)
+        self._advance_generation(done=seen or ([request] if request else []), request=named,
+                                 note=FAILED_COPY_TAKEN)
         self.stage = "done"
         self._revision += 1
         self._emit({"type": "results", "results": self._results_view()})
@@ -3354,6 +3523,9 @@ class DocumentTask:
             # recipe repeats; it takes its own only when no run took any (an outcome plan the user picked)
             self._pending_undo = self._undo_point()
             self._pending_steps = self._steps_now()
+            self._since = self.standing.seq     # the outcomes recorded from here are this approval's (``standing``)
+            if self.stage == "preview" and s.recovery is None:
+                self._stand_aside()
         # the files the preview refused, and the samples it set aside because they failed, never run
         # (Session._without_refused): once the others run they go on the to-do list with the reason, to come back to
         # (the session keeps them until the request ends: the approval was taken over them)
@@ -3377,6 +3549,9 @@ class DocumentTask:
                 self._set_aside(path, seen)
             if not remaining and beside:
                 # a Safe-mode button: there is no conversation to plan them again; they wait for Default mode
+                for entry in self._refused_by_preview(outcome.preview, self.decisions[0] if self.decisions else ""):
+                    if not self.standing.state(self._op_now(), entry["path"]):       # the record: it could not
+                        self._stands(entry["path"], FAILED, why=entry["why"], reason=entry["reason"])
                 self._sync()
                 self._invalidate()
                 self.say("You set every document aside, so no copy was created. They wait on your to-do list; "
@@ -3409,9 +3584,20 @@ class DocumentTask:
         self._run_cases = {str(self.origin_of(item.source)): _case_of_result(item)
                            for item in getattr(s.last_batch, "files", None) or []
                            if item.status != "PASS" and not getattr(item, "delivered_to", None)}
+        if not beside:
+            # the record, before anything looks at them again: each result that did not pass got no copy. Whatever
+            # follows in this approval says the rest (a second check that fixes it, the to-do list)
+            for item in getattr(s.last_batch, "files", None) or []:
+                if item.status != "PASS" and not getattr(item, "delivered_to", None):
+                    self._stands(str(self.origin_of(item.source)), FAILED, why=WHY_FAILED,
+                                 reason=self._no_copy_reason(item))
+            for trial in s.last_trials or []:
+                if not trial.passed:
+                    self._stands(str(self.origin_of(Path(trial.source))), FAILED, why=WHY_FAILED,
+                                 reason=self._no_trial_reason(trial))
         if beside:
             # a Safe-mode button: no recovery (an AI call); what it left untouched is offered to Default mode
-            self.left_untouched = self._left_after_run(request, untouched_before)
+            self._leave_untouched(self._left_after_run(request, untouched_before))
         elif no_recovery and s.last_batch is not None:
             self._binned += self._bin_failed(s.last_batch.files)
         elif s.last_batch is not None and any(f.status != "PASS" for f in s.last_batch.files):
@@ -3433,9 +3619,7 @@ class DocumentTask:
             # a custom method's file whose run stopped before any copy (the sandbox refused it, the source moved)
             seen = [c["summary"] for g in self._groups() for c in g["changes"]]
             self._binned += [self._set_aside(Path(t.source), seen, why=WHY_FAILED,
-                                             reason=f"Its copy could not be made: "
-                                                    + ("; ".join(plain_problem(x) for x in t.problems[:2]).rstrip(".")
-                                                       or "the method stopped") + ".",
+                                             reason=self._no_trial_reason(t),
                                              case=_case_of_exception({"code": "generated-failed",
                                                                       "reason": "; ".join(t.problems)}))
                              for t in s.last_trials if not t.passed]
@@ -3539,12 +3723,22 @@ class DocumentTask:
         for item in files:
             if item.status == "PASS" or getattr(item, "delivered_to", None):
                 continue
-            exc = getattr(item, "exception", None) or {}
-            why = exc.get("reason") or getattr(item, "reason", "") or "it did not pass the independent checks"
             out.append(self._set_aside(Path(item.source), seen, why=WHY_FAILED,
-                                       reason=f"Its copy could not be made: {str(why).rstrip('.')}.",
-                                       case=_case_of_result(item)))
+                                       reason=self._no_copy_reason(item), case=_case_of_result(item)))
         return out
+
+    @staticmethod
+    def _no_copy_reason(item) -> str:
+        """Why a run result that did not pass got no copy, in the to-do list's sentence."""
+        exc = getattr(item, "exception", None) or {}
+        why = exc.get("reason") or getattr(item, "reason", "") or "it did not pass the independent checks"
+        return f"Its copy could not be made: {str(why).rstrip('.')}."
+
+    @staticmethod
+    def _no_trial_reason(trial) -> str:
+        """The same for a custom method's document whose run stopped before any copy."""
+        return ("Its copy could not be made: "
+                + ("; ".join(plain_problem(x) for x in trial.problems[:2]).rstrip(".") or "the method stopped") + ".")
 
     def set_rest_aside(self) -> None:
         """During recovery, at the user's word (``SET_ASIDE_REST``): the documents it has not fixed go on the to-do
@@ -3998,6 +4192,7 @@ class DocumentTask:
                             else "",
                             "undo_blocked": self._undo_blocked() if self.undo_points else "",
                             "done": self._done_view()},
+                "standing": self._standing_view(),
                 "todo": [self._todo_view(path, entry, waits) for path, entry in self.todo.items()],
                 "focus": list(self.focus["documents"]) if self.focus else [],
                 "failed_copies": failed_copies,
@@ -4430,6 +4625,7 @@ class DocumentTask:
             "working": dict(self.working), "generation": self.generation, "history": list(self.history),
             "applied": self.applied, "fresh": self.fresh, "todo": self.todo, "focus": self.focus,
             "undo": self.undo_points, "runs": self.runs, "run_steps": self._kept_run_steps(),
+            "standing": self.standing.to_json(), "op": self._op, "since": self._since,
             "pending_undo": self._pending_undo, "pending_steps": self._pending_steps,
             "recipe_run": self.session.outcome_source in OWN_PLANS,
             "exported": self.exported, "export_folder": self.export_folder,
@@ -4512,8 +4708,10 @@ class DocumentTask:
         # a journal from before the to-do list said why holds only documents set aside with the red X; a case file
         # that does not read is dropped (``_restored_case``), and the entry waits with its sentence alone
         kept = lambda v: {"case": c} if (c := _restored_case(v.get("case"))) else {}  # noqa: E731
+        # the operation of the record an entry did not get (a journal from before the record has none)
+        of = lambda v: {"operation": v["operation"]} if text(v.get("operation")) and v["operation"] else {}  # noqa: E731
         self.todo = {k: {"name": v["name"], "decisions": list(v.get("decisions", [])), "seen": list(v.get("seen", [])),
-                         "why": v.get("why", WHY_HELD), "reason": v.get("reason") or HELD_REASON, **kept(v)}
+                         "why": v.get("why", WHY_HELD), "reason": v.get("reason") or HELD_REASON, **kept(v), **of(v)}
                      for k, v in todo.items() if k in known}
         documents = [d for d in (focus or {}).get("documents", []) if d in known]
         self.focus = ({"documents": documents, "seen": list(focus.get("seen", [])),
@@ -4527,6 +4725,10 @@ class DocumentTask:
                 self.focus["case"] = cases
         if self.focus is not None and type(focus.get("after_word")) is int:
             self.focus["after_word"] = focus["after_word"]      # a Word action ran on its copy in this pass
+        if self.focus is not None and isinstance(focus.get("operations"), dict):
+            operations = {k: v for k, v in focus["operations"].items() if k in documents and text(v) and v}
+            if operations:
+                self.focus["operations"] = operations
 
     @staticmethod
     def _restored_undo(points) -> List[Dict[str, Any]]:
@@ -4543,7 +4745,7 @@ class DocumentTask:
                 isinstance(p, dict) and text(p.get("request", "")) and paths(p.get("working"))
                 and type(p.get("generation")) is int and texts(p.get("history")) and lists(p.get("applied"))
                 and paths(p.get("results")) and lists(p.get("unverified")) and texts(p.get("todo_added", []))
-                and texts(p.get("fresh", []))
+                and texts(p.get("fresh", [])) and type(p.get("standing", 0)) is int
                 and paths(p.get("pdfs", {}))           # the PDFs of the retired Save clean PDFs: read, then dropped
                 and isinstance(p.get("left_untouched"), list) and all(map(entry, p["left_untouched"]))
                 and ("runs" not in p or _restored_runs(p["runs"]) is not None)
@@ -4553,6 +4755,7 @@ class DocumentTask:
                  "history": list(p["history"]), "applied": {k: list(v) for k, v in p["applied"].items()},
                  **({"runs": _restored_runs(p["runs"])} if "runs" in p else {}),
                  **({"fresh": list(p["fresh"])} if "fresh" in p else {}),
+                 **({"standing": p["standing"]} if "standing" in p else {}),
                  "results": dict(p["results"]), "unverified": {k: list(v) for k, v in p["unverified"].items()},
                  "left_untouched": [{"path": e["path"], "name": e.get("name") or Path(e["path"]).name,
                                      "why": e.get("why", WHY_REFUSED), "reason": e.get("reason", ""),
@@ -4665,6 +4868,7 @@ class DocumentTask:
                             and isinstance(v, list) and all(isinstance(x, str) for x in v)}
                            if isinstance(unverified, dict) else {})
         history = data.get("history", [])
+        copies_lost = False
         if (isinstance(working, dict) and all(isinstance(k, str) and isinstance(v, str) for k, v in working.items())
                 and isinstance(history, list) and all(isinstance(h, str) for h in history)
                 and all(Path(v).is_file() for v in working.values())):
@@ -4677,6 +4881,7 @@ class DocumentTask:
             self.working, self.history, self.generation = {}, [], 0
             self.results = {k: v for k, v in self.results.items() if Path(v).is_file()}
             self.unverified = {k: v for k, v in self.unverified.items() if k in self.results}
+            copies_lost = lost
             if lost:
                 self.say("The edited copies from your last run could not be found where they were saved, so the next "
                          "change starts from your originals.")
@@ -4686,6 +4891,12 @@ class DocumentTask:
         # what the next request builds on); a journal from before it kept none
         self.runs = (_restored_runs(data.get("runs", [])) or []) if self.working else []
         self.run_steps = self._restored_run_steps(data.get("run_steps", {}))
+        # where each document stands: the record as it was kept — none when it does not read, or when the copies it
+        # describes are gone (the next change starts from the originals, which nothing was done to)
+        self.standing = Standing() if copies_lost else Standing.from_json(data.get("standing"))
+        self._op = data.get("op") if self.standing.has(data.get("op")) else None
+        self._since = min(data["since"], self.standing.seq) if type(data.get("since")) is int else self.standing.seq
+        self._own_op = False
         self.exported = self._restored_exported(data.get("exported", {}))
         self.export_folder = data.get("export_folder") if isinstance(data.get("export_folder"), str) else ""
         self._sync()
