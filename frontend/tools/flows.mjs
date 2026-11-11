@@ -26,6 +26,10 @@ const PORT = Number(process.env.PORT || 8811);
 const TOKEN = "flow-token";
 const results = [];
 const check = (name, ok, extra = "") => results.push(`${ok ? "PASS" : "FAIL"} ${name}${extra ? ` — ${extra}` : ""}`);
+// The page draws what a response says a moment after the response lands, so a check of that state waits for it
+// (a look taken at once is a race): true once the element is there, or gone; false if it never is.
+const shows = (locator, timeout = 5000) => locator.waitFor({ timeout }).then(() => true, () => false);
+const gone = (locator, timeout = 5000) => locator.waitFor({ state: "detached", timeout }).then(() => true, () => false);
 
 const mock = await startMock({ port: PORT, token: TOKEN, delay: "40" });
 const { base: BASE, scenario } = mock;
@@ -67,15 +71,21 @@ try {
   await page.waitForTimeout(800);
   check("after Continue the pause card is gone", (await page.getByText("Paused at your spending check").count()) === 0);
 
-  // 3. Stop now mid-job, with typing ahead.
+  // 3. Stop now mid-job, with typing ahead. Stop lands before the plan or while its preview is made, as fast as this
+  // machine is, and the mock answers each with its own line: a new one of either is the job ended by Stop.
+  const stoppedLines = page.getByText(/^Stopped(?:\. No AI step runs until you continue| before the preview finished); your progress is saved\.$/);
+  const stoppedOnceMore = async (stop) => {
+    const before = await stoppedLines.count();
+    await stop.click();
+    await stoppedLines.nth(before).waitFor({ timeout: 20000 });
+  };
   await box.fill("plan it");
   await box.press("Enter");
   await page.getByRole("button", { name: "Stop now" }).first().waitFor({ timeout: 10000 });
   check("Stop now shows while busy", true);
   await box.fill("typing ahead while busy");
   check("typing ahead is allowed while busy", (await box.inputValue()) === "typing ahead while busy");
-  await page.getByLabel("Stop now").click();
-  await page.getByText("Stopped. No AI step runs until you continue").waitFor({ timeout: 20000 });
+  await stoppedOnceMore(page.getByRole("button", { name: "Stop now", exact: true }));
   await page.waitForTimeout(500);
   check("Stop ends the job and the page is idle", await page.getByRole("button", { name: "Send" }).isVisible());
   await box.fill("");
@@ -87,8 +97,7 @@ try {
   const kill = page.locator("header").getByRole("button", { name: "Stop all AI work" });
   await kill.waitFor({ timeout: 10000 });
   check("the top bar shows the kill switch while busy", await kill.isVisible());
-  await kill.click();
-  await page.getByText("Stopped. No AI step runs until you continue").last().waitFor({ timeout: 20000 });
+  await stoppedOnceMore(kill);
   await page.waitForTimeout(500);
   check("the kill switch ends the job", await page.getByRole("button", { name: "Send" }).isVisible());
   await box.fill("");
@@ -178,7 +187,9 @@ try {
   check("no key: the reason on hover", reasonTip === "Connect your Anthropic API key in Settings to start.", reasonTip ?? "");
   await page.getByRole("button", { name: "Add your API key" }).click();
   await page.getByLabel("Anthropic API key").fill("sk-ant-test");
-  await page.getByRole("button", { name: "Save" }).click();
+  // Settings learns what it may remember when it opens; a Save before that keeps the key for this session only.
+  await page.getByRole("checkbox", { name: "Remember securely on this computer", checked: true }).waitFor({ timeout: 5000 });
+  await page.getByRole("button", { name: "Save", exact: true }).click();
   await page.getByText(/The key is saved for this computer\. It has not been tested with Anthropic\./).waitFor({ timeout: 5000 });
   await page.keyboard.press("Escape");
   await page.waitForTimeout(500);
@@ -227,7 +238,7 @@ try {
   check("the switch asks first, with the price on the button", await confirmFast.isVisible());
   check("…and is not on yet", (await fastSwitch.getAttribute("aria-checked")) === "false");
   await Promise.all([savedTheme(), confirmFast.click()]);
-  check("the second click turns it on", (await fastSwitch.getAttribute("aria-checked")) === "true");
+  check("the second click turns it on", await shows(page.getByRole("switch", { name: "Fast responses", checked: true })));
   const fastKept = await (await fetch(`${BASE}/api/settings`, { headers: { "X-Spec-Surgeon-Token": TOKEN } })).json();
   check("the server keeps it", fastKept.fast_mode === true, String(fastKept.fast_mode));
   await page.keyboard.press("Escape");
@@ -236,7 +247,7 @@ try {
   check("the spending pill says Fast", await page.locator("header").getByText("Fast", { exact: true }).isVisible());
   await page.getByRole("button", { name: "Settings" }).click();
   await Promise.all([savedTheme(), fastSwitch.click()]);
-  check("one click turns it off", (await fastSwitch.getAttribute("aria-checked")) === "false");
+  check("one click turns it off", await shows(page.getByRole("switch", { name: "Fast responses", checked: false })));
 
   // 9d. Settings → Spending check: the amount the user types, kept by the server; Turn off; back to $20.
   check("the check starts at $20 a request", await page.getByText("Now: $20.00 per request.").isVisible());
@@ -617,7 +628,8 @@ try {
   await page.waitForFunction(() => document.querySelector("[role=switch][aria-label='Show Obliterate mode']")?.getAttribute("aria-checked") === "false");
   await page.keyboard.press("Escape");
   await page.getByLabel("Describe a change or answer a question").waitFor({ timeout: 5000 });
-  check("hiding it again leaves the mode", (await modes.getByRole("button", { name: "Obliterate" }).count()) === 0);
+  check("hiding it again leaves the mode",
+    (await gone(obliterate)) && (await modes.getByRole("button", { name: "Default" }).getAttribute("aria-pressed")) === "true");
 
   check("no page errors", errors.length === 0, errors.join(" | ").slice(0, 300));
   await browser.close();
