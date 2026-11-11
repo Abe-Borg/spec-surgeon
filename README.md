@@ -452,6 +452,17 @@ words of your line in the chat, with how many of the documents attached now carr
 over clears the list, and a button you already ran carries a checkmark, so the steps of a long batch never need
 remembering. In Default and Obliterate mode the list names each request the same way.
 
+Above it, **Where each document stands** answers "what worked on what, and what didn't" for the whole job, in every
+mode: a grid with every button or request across and every document down. A check means that document got it, with the
+mode that did it (Safe, Default or Obliterate, and UNVERIFIED or UNPROVEN where a copy was delivered with that mark); a
+cross means it could not be done; a dash means it was not run on that document (you left it out, it waited on your
+to-do list, or it was attached later). Click a mark for its reason and every attempt made on it. A reason stays there
+however many buttons you press afterwards, a button that no document could take is listed too, and when a document
+that failed in Safe mode is later fixed in Default or Obliterate, its own cell turns to a check and keeps both
+attempts. The line under the grid counts what is still not done, and **Show only these** lists just those documents.
+The grid only describes: it changes nothing and decides nothing, **Undo** takes its newest column off and **Start
+over** clears it.
+
 **Save as a recipe…**, on that list, keeps the changes you tick under a name, to run again on the next set of
 documents: in Safe mode the buttons and what you filled in their forms, in Default and Obliterate your requests with
 the plans you approved. Safe mode shows your recipes under **My recipes**, above the buttons; Default and Obliterate

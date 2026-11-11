@@ -463,3 +463,36 @@ def test_a_word_action_inside_a_pass_is_its_own_operation_and_the_plan_then_sett
     settled = row(task, b)["cells"][0]
     assert (settled["state"], settled["mode"]) == (DONE, "obliterate")
     assert [x["state"] for x in settled["attempts"]] == [FAILED, DONE]
+    # a cell carries the marks of its own delivery: the plan's copy was checked, so its cell is a clean check; the
+    # mark Word's copy left is the document's from then on, on its row and on the cell that made it
+    assert settled["marks"] == [] and row(task, b)["badges"] == ["UNPROVEN"]
+    assert row(task, b)["cells"][1]["marks"] and "UNPROVEN" in row(task, b)["cells"][1]["marks"][0]
+
+
+def test_a_safe_buttons_failure_handed_to_default_mode_is_settled_in_its_own_cell(tmp_path, files):
+    """The ladder's first step up: what a button could not change is worked in Default mode, and the copy that pass
+    delivers turns the button's own cell to done — in Default mode, with both attempts — instead of adding a column."""
+    from docx import Document
+    odd = tmp_path / "odd.docx"                          # no SECTION line: the title button cannot read its number
+    doc = Document()
+    doc.add_paragraph("FIRE SUPPRESSION")
+    doc.add_paragraph("Keep this technical wording intact.")
+    doc.save(odd)
+    task = DocumentTask(Session(client=FakeClient(submit()), out_root=tmp_path / "out", visual_check=False),
+                        render=False, mode="safe")
+    task.attach([files[0], odd])
+    press(task, "title_property", TITLE)
+    [operation] = grid(task)["operations"]
+    assert states(task, files[0]) == [DONE] and states(task, odd) == [FAILED]
+    task.hand_off([str(odd)])
+    assert task.mode == "default" and task.todo[str(odd)]["operation"] == operation["id"]
+    assert row(task, odd)["badges"] == ["set aside"]
+    task.perform("send", text=WORK_TODO)
+    view = task.perform("send", text="Make its FIRE SUPPRESSION title bold instead.")
+    task.perform("primary", token=view["token"])
+    [still] = grid(task)["operations"]
+    assert (still["id"], still["mode"], still["recipe"]) == (operation["id"], "safe", "title_property")
+    cell = row(task, odd)["cells"][0]
+    assert (cell["state"], cell["mode"]) == (DONE, "default")
+    assert [(a["state"], a["mode"]) for a in cell["attempts"]] == [(FAILED, "safe"), (DONE, "default")]
+    assert grid(task)["owed"] == {"cells": 0, "documents": 0}

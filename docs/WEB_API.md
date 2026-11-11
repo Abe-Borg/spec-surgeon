@@ -62,6 +62,14 @@ that ends a job is authoritative.
   "todo": [{"path": "C:/Specs/21 05 00.docx", "name": "21 05 00.docx", "why": "held | asked | refused | failed",
             "reason": "You marked its preview as needing more work.",
             "obliterate": "", "failed_copy": ["V2 (Text preservation)"]}],
+  "standing": {"operations": [{"id": "9f2c41d07a3e", "number": 1, "request": "Remove all headers and footers",
+                              "mode": "safe | default | obliterate", "recipe": "remove_headers_footers", "name": "",
+                              "done": 8, "failed": 2}],
+               "documents": [{"path": "C:/Specs/21 05 00.docx", "name": "21 05 00.docx", "owed": 1,
+                              "badges": ["SALVAGED", "UNVERIFIED", "UNPROVEN", "set aside"],
+                              "cells": [{"state": "done | failed | not_run", "mode": "safe", "why": "refused",
+                                         "reason": "…", "marks": [], "note": "", "first": "", "attempts": [{"…": "…"}]}]}],
+               "owed": {"cells": 2, "documents": 2}},
   "focus": [],
   "failed_copies": [{"path": "C:/Specs/21 05 00.docx", "name": "21 05 00.docx", "failed": ["V2 (Text preservation)"]}],
   "working": {"generation": 0, "from_originals": true, "can_start_over": false, "undo": "", "undo_blocked": ""},
@@ -340,6 +348,29 @@ Rules the page relies on:
   its steps), `buttons` (the Safe-mode buttons it carried, its own or its recipe's) and `why_not` (why a recipe cannot
   keep it — a custom method, values read from particular documents, per-occurrence capitalisation, or nothing kept;
   `""` when it can). The page shows a recipe's run as one entry with its steps under it.
+- `standing` is **Where each document stands** (`standing.Standing`, `DocumentTask._standing_view`), in every mode:
+  the record of every operation asked for and each document's outcome under it, over the documents listed now.
+  `operations`, oldest first: `id`, `number` (from 1), `request` (the button's sentence, or the user's first words),
+  `mode` (the mode it was asked in), `recipe` (the Safe-mode button, `""` otherwise), `name` (the saved recipe run,
+  `""` otherwise) and how many of the listed documents it is `done` and `failed` on. An operation is a Safe-mode
+  button, a request's plan, a saved recipe's run or one of Obliterate's own actions (Word actions, Replace this
+  part); a button or a recipe no document can take is one too, though nothing was approved; a dropped request or a
+  discarded preview is none. A pass over the to-do list adds no operation: what it delivers settles the cell of the
+  operation its documents were set aside from. `documents`, in the window's order: `path`, `name`, `badges` (any of
+  `SALVAGED`, `UNVERIFIED`, `UNPROVEN` — the mark its copy carries — and `set aside`: it waits on the to-do list),
+  `owed` (how many of its cells failed) and `cells`, one per operation in the operations' order. A cell is its last
+  attempt — `state` (`done`, `failed`, `not_run`), `mode` (the mode it happened in), `why` (`refused`, `failed`,
+  `held`, `asked`, `left out`, `set aside`; `""` for done), `reason` (the sentence, as the to-do list or Left
+  untouched words it), `marks` (the failed checks or the UNPROVEN mark its copy was delivered with: a copy delivered
+  marked is `done` with its marks), `note` (how it was done when not by the plan: the copy that failed, taken as it
+  is) and `first` (the reason it failed before a second check fixed it under the same approval) — with every attempt,
+  oldest first, under `attempts`. A document that holds no attempt under an operation reads `not_run` with `why`
+  `attached later` or `not part of it`, its sentence in `reason`, and no attempts. `owed` counts the failed cells and
+  the documents that hold one. `POST /api/undo` takes back what was recorded since the undone run's approval; Start
+  over clears it; removing a document takes its row and any operation that was its alone; the journal keeps it. The
+  page draws it as a grid under the copies (a mark opens its reason and attempts; **Show only these** lists the
+  documents that still owe something) and draws nothing when the record does not line up. It is an account only:
+  no route takes it, and nothing the server plans, runs or tells a model reads it.
 - `saved_recipes` lists the saved recipes (`saved_recipes.Store`, `config_dir()/recipes.json`;
   `DocumentTask.recipes_view`): every Safe and Default recipe, and Obliterate's only while Obliterate mode is shown,
   each `{"id", "rev", "name", "note", "mode": "safe" | "default" | "obliterate", "saved", "last_run", "last_documents",

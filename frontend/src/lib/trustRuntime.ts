@@ -546,14 +546,15 @@ export const RUNTIME_CARDS: RuntimeCard[] = [
       `run or preview held back is left where it was. Obliterate this one waits ${WHILE_CHECKED}.`,
   },
   {
-    covers: ["A23", "A24", "A25", "A29", "A30", "A37"],
+    covers: ["A23", "A24", "A25", "A29", "A30", "A37", "A52", "B23"],
     title: "Safe mode: choosing a mode, pressing a button, changing your mind (in every mode), handing documents over",
     you:
       "Choose Safe or Default in the top bar; in Safe mode, read or Hide the note above the buttons (What is Safe " +
       "mode? opens it again), and use its Add a Claude API key or Switch to Default mode; pick a button, fill in " +
       "its form and press Preview; " +
       "Discard preview, All buttons or Clear form; Undo the last button; Try these in Default mode beside what a " +
-      "button left untouched. In Default and Obliterate: Discard preview, Drop this request and Undo the last change.",
+      "button left untouched. In Default and Obliterate: Discard preview, Drop this request and Undo the last change. " +
+      "In every mode: click a mark in Where each document stands, or Show only these under it.",
     runs:
       "Choosing a mode keeps it in settings.json for the next start, and so is whether the note above the buttons " +
       "is folded; the note's Add a Claude API key opens Settings, and its Switch to Default mode is the top bar's " +
@@ -568,7 +569,11 @@ export const RUNTIME_CARDS: RuntimeCard[] = [
       "when it was the first), and takes off the to-do list the documents its ✗ put there. Under the copies, What " +
       "you've done so far lists each run they carry since the originals (the button's sentence or your request, " +
       "and which documents carry it), kept in the saved conversation; Undo takes the newest off, Start over clears " +
-      "it, and a button you already ran carries a checkmark. In Default and " +
+      "it, and a button you already ran carries a checkmark. Above it, Where each document stands is a grid of " +
+      "every button or request against every document: whether that document got it (and in which mode), could " +
+      "not (with the reason, kept however many buttons come after) or was not run. It is written as each outcome " +
+      "is decided, without a click, and kept in the saved conversation; a mark you click shows its reason and " +
+      "every attempt made, on the page alone. Undo takes its newest column off and Start over clears it. In Default and " +
       "Obliterate the same two work on a conversation: Discard preview, or Drop this request while a question, a " +
       "pause or a reply to continue is open, ends the request with nothing created (no AI call; the next request is " +
       "told it was withdrawn, and a pass over the to-do list puts its documents back on the list), and Undo the " +
@@ -577,6 +582,8 @@ export const RUNTIME_CARDS: RuntimeCard[] = [
     sent: "Nothing. A button never reaches the network.",
     ai: NONE,
     bounds:
+      "Where each document stands describes and decides nothing: no button, plan or AI reads it, nothing in it " +
+      "is sent anywhere, and what the buttons, the conversation and the to-do list do is the same with it. " +
       "The buttons and what they do are fixed in the app. A document a button cannot change exactly is left " +
       "untouched with the reason; nothing an AI does follows, neither a visual check nor recovery. Discard and Undo " +
       "write and delete no file: the copies an undone run made stay where they were saved. Undo goes back one " +

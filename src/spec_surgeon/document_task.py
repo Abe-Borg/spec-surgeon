@@ -646,6 +646,9 @@ class DocumentTask:
         self._op: Optional[str] = None
         self._since = 0
         self._own_op = False
+        # the marks each copy of the request under way was delivered with, by attached original: what its cell of
+        # the record carries (a mark from an earlier copy is the document's, shown on its row, not this operation's)
+        self._own_marks: Dict[str, List[str]] = {}
         self._running_recipe: Optional[Dict[str, Any]] = None
         self._template_kind: Optional[tuple] = None    # (the template's path, size, mtime, recipes.template_kind)
         self._binned: List[str] = []        # documents of this request that could not take the change, on the list
@@ -1300,8 +1303,8 @@ class DocumentTask:
             self._pending_undo = self._pending_steps = None       # the run is over with nothing delivered
             return
         for key in moved:
-            # the record: this document got the operation, in this mode, with the marks its copy carries
-            self._stands(key, DONE, marks=self.unverified.get(key, []), note=note)
+            # the record: this document got the operation, in this mode, with the marks this copy was delivered with
+            self._stands(key, DONE, marks=self._own_marks.get(key, []), note=note)
         request = request if request is not None else self.decisions[0] if self.decisions else ""
         # a button's run only when the plan that ran is a button's (``Session.model_free``): the same words typed as a
         # request after its preview was discarded are the conversation's plan
@@ -1458,6 +1461,7 @@ class DocumentTask:
         which the first of them opens (``_op_now``). ``own``: an action of its own inside a pass over the to-do list
         (``_own_op``)."""
         self._op, self._since, self._own_op = None, self.standing.seq, own
+        self._own_marks = {}
 
     def _op_now(self, recipe: Optional[str] = None, name: Optional[str] = None) -> str:
         """The operation of the request under way, opened in the record when this is its first outcome: the request
@@ -3859,6 +3863,7 @@ class DocumentTask:
         then on the mark says "in an earlier copy" and leaves only with Start over, Undo or the document itself."""
         earlier = [x if x.startswith(EARLIER_COPY) else EARLIER_COPY + x for x in self.unverified.get(origin, [])]
         fresh = [str(x) for x in failed or []]
+        self._own_marks[origin] = list(fresh)       # this delivery's own, for its cell of the record (``standing``)
         marks = fresh + [x for x in earlier if x not in fresh and x[len(EARLIER_COPY):] not in fresh]
         if marks:
             self.unverified[origin] = marks
