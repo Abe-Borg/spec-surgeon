@@ -86,7 +86,7 @@ def unproven_only(marks) -> bool:
 
 def failed_sample_message(sample):
     """Why a sample set aside by its failed preview (``preview.failed_samples``) gets no copy, in the words of its
-    failed checks: the sentence under Left untouched and on the to-do list."""
+    failed checks: the sentence under Left untouched and in its failed cell of the to-do list."""
     reasons = [f"{f['reason'].rstrip('.')} ({f['check']})" if f["check"] != "Preview" else f["reason"].rstrip(".")
                for f in failed_preview_checks(sample)]
     return f"{PREVIEW_FAILED}, so no copy of it is made: " + "; ".join(reasons) + "."

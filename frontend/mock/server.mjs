@@ -383,7 +383,7 @@ function tutorialView(kind) {
 }
 
 /** The reply that begins the pass over the to-do list; the real server recognises these exact words. */
-const WORK_TODO = "Work on the documents I set aside";
+const WORK_TODO = "Work on my to-do list";
 const HELD_REASON = "You marked its preview as needing more work.";
 
 /** Where each document stands (docs/WEB_API.md, `standing`): a grid from the operations asked for and, per document,
@@ -440,6 +440,7 @@ const SCENARIOS = {
       done: [{ id: "run-s1", request: "Remove highlighting", recipe: "remove_highlight", documents: 2, of: 3, not: [{ name: name(DOCS[2].path), why: "left untouched" }], name: "", steps: [buttonStep("remove_highlight", {}, "Remove highlighting")], buttons: ["remove_highlight"], why_not: "" }],
     };
     v.left_untouched = [{ path: DOCS[2].path, name: name(DOCS[2].path), reason: "Editing is restricted in this file (Review → Restrict Editing); remove the restriction in Word, then run again." }];
+    v.standing_fixed = true;
     v.standing = standingView(
       [{ request: "Remove highlighting", mode: "safe", recipe: "remove_highlight" }],
       [
@@ -471,6 +472,7 @@ const SCENARIOS = {
         [DOCS[2].path, [], [failed("safe", "refused", restricted), ran("default")], ran("safe"), failed("safe", "refused", noSection)],
       ],
     );
+    for (const d of v.standing.documents) for (const c of d.cells) if (c.state === "failed") c.obliterate = "";
     return v;
   },
   question: () => {
@@ -565,6 +567,7 @@ const SCENARIOS = {
     const aside = DOCS[1];
     v.results = v.results.filter((r) => r.source !== aside.path);
     v.todo = [{ path: aside.path, name: name(aside.path), why: "held", reason: HELD_REASON }];
+    v.working = { ...v.working, done: v.working.done.map((run) => ({ ...run, documents: 2, not: [{ name: name(aside.path), why: "set aside" }] })) };
     v.attachments = v.attachments.map((a) => (a.path === aside.path ? { ...a, current: a.path } : a));
     v.messages = [
       ...v.messages,
@@ -661,6 +664,7 @@ function doneWith(request, delivered, untouched) {
   const not = docs
     .filter((a) => !delivered.some((d) => d.source === a.path))
     .map((a) => ({ name: a.name, why: view.todo.some((t) => t.path === a.path) && !untouched.some((u) => u.path === a.path) ? "set aside" : "left untouched" }));
+  const reasons = Object.fromEntries(untouched.map((u) => [u.name, u.reason]));
   const steps = lastRecipeRun
     ? lastRecipeRun.steps
     : lastRecipe
@@ -668,6 +672,7 @@ function doneWith(request, delivered, untouched) {
       : [{ kind: "plan", label: "Your request", text: request, plan: ["Sets the text of the documents as you asked."], needs: [], places: [], unguarded: view.mode === "obliterate", files: [] }];
   const run = {
     id: `run-${++seq}`, request, recipe: lastRecipe, documents: docs.length - not.length, of: docs.length, not,
+    mode: view.mode, reasons,
     name: lastRecipeRun ? lastRecipeRun.name : "", steps,
     buttons: steps.filter((st) => st.kind === "button").map((st) => st.button), why_not: "",
   };
@@ -751,8 +756,47 @@ let updateFound = true; // what the next check for updates finds; the up-to-date
 
 // --- Helpers --------------------------------------------------------------
 
+/** Where each document stands, from what the mock keeps: each run of What you've done so far is an operation; a
+ *  document its run left untouched or the red X set aside failed it (the to-do list), one attached since was not run.
+ *  A cell the pass later fixed (`fixed`) or the user waived (`waived`) reads so. A scenario that sets `standing`
+ *  itself (`standing_fixed`) keeps it. */
+function standingOf(v) {
+  if (v.standing_fixed) return v.standing;
+  const docs = v.attachments.filter((a) => a.kind === "document" && a.state !== "refused");
+  const runs = v.working?.done ?? [];
+  const waived = v.waived ?? [];
+  const rows = docs.map((a) => [
+    a.path,
+    v.todo.some((t) => t.path === a.path) ? ["set aside"] : [],
+    ...runs.map((run) => {
+      const mode = run.mode ?? (run.recipe || v.mode === "safe" ? "safe" : v.mode);
+      const miss = (run.not ?? []).find((n) => n.name === a.name);
+      const reason = run.reasons?.[a.name];
+      const fail = miss?.why === "set aside" ? failed(mode, "held", HELD_REASON)
+        : miss?.why === "left untouched" ? failed(mode, "refused", reason ?? "It could not be changed exactly, so it was left as it is.")
+        : null;
+      if (run.fixed?.[a.name]) return [fail ?? failed(mode, "refused", reason ?? "It could not be changed."), ran(run.fixed[a.name])];
+      if (fail && waived.includes(`${run.id}\t${a.path}`)) return [fail, { ...skipped("waived", "You said it is not needed on this one.", mode), state: "waived" }];
+      if (fail) return fail;
+      return miss ? skipped("attached later", "It was attached after this was done.") : ran(mode);
+    }),
+  ]);
+  const standing = standingView(runs.map((run) => ({ id: run.id, request: run.request, mode: run.mode ?? (run.recipe ? "safe" : v.mode === "safe" ? "default" : v.mode), recipe: run.recipe ?? "", name: run.name ?? "" })), rows);
+  if (settings.show_obliterate) {
+    for (const d of standing.documents) for (const c of d.cells) if (c.state === "failed") c.obliterate = v.focus.length ? "Finish the pass over your to-do list first, or drop it." : "";
+  }
+  return standing;
+}
+
+/** The to-do list: every failed cell of the record, oldest operation first. */
+function owedOf(v) {
+  const standing = standingOf(v);
+  return standing.operations.flatMap((op, i) => standing.documents.filter((d) => d.cells[i].state === "failed").map((d) => ({ operation: op.id, path: d.path, name: d.name, request: op.request })));
+}
+
 function json(res, status, body) {
   if (body === view) {
+    view.standing = standingOf(view);
     view.discard = discardOf(view);
     view.export = exportOf(view);
     view.saved_recipes = recipesOf(view);
@@ -909,6 +953,7 @@ function startStream(res) {
   const end = () => {
     view.busy = false;
     running = null;
+    view.standing = standingOf(view);
     view.discard = discardOf(view);
     view.export = exportOf(view);
     view.saved_recipes = recipesOf(view);
@@ -1120,9 +1165,11 @@ async function savedRecipeJob(res, record, steps) {
 async function todoJob(res, userText) {
   const s = startStream(res);
   view.messages.push(msg("user", userText));
-  const names = view.todo.map((item) => item.name);
-  view.focus = view.todo.map((item) => item.path);
-  view.todo = [];
+  const owed = owedOf(view);
+  const pass = owed.filter((item) => item.operation === owed[0]?.operation);
+  const names = pass.map((item) => item.name);
+  view.focus = pass.map((item) => item.path);
+  view.todo = view.todo.filter((t) => !view.focus.includes(t.path));
   view.plan = null;
   view.samples = [];
   view.worth_knowing = [];
@@ -1613,16 +1660,41 @@ async function handle(req, res) {
       }
       return json(res, 200, view);
     }
-    case "POST /api/handoff": {
+    case "POST /api/todo/work": {
+      // a failed cell's Work on it: the pass over that cell, over an operation, or over the list; from Safe mode the
+      // window turns to Default mode first
       if (view.busy) return busyRefusal();
       const body = await readJson(req);
-      const paths = Array.isArray(body.paths) ? body.paths : [];
-      const chosen = view.left_untouched.filter((x) => paths.includes(x.path));
-      if (!chosen.length || chosen.length !== paths.length) return json(res, 400, { error: "Those documents are not the ones the last button left untouched." });
-      for (const x of chosen) if (!view.todo.some((t) => t.path === x.path)) view.todo.push({ path: x.path, name: x.name });
-      view.left_untouched = view.left_untouched.filter((x) => !paths.includes(x.path));
-      view.mode = "default";
-      view.messages.push(msg("app", `Handed over to Default mode: ${chosen.map((x) => x.name).join(", ")}. Say “${WORK_TODO}” and tell me what should be different; the conversation plans them with an AI model.`));
+      const owed = owedOf(view).filter((x) => (!body.operation || x.operation === body.operation) && (!body.path || x.path === body.path));
+      if (!owed.length) return json(res, 400, { error: "That is not on your to-do list." });
+      if (view.focus.length) return json(res, 400, { error: "Finish the pass over your to-do list first, or drop it." });
+      if (view.stage === "preview") return json(res, 400, { error: "Create the copies, or discard the preview, first." });
+      if (view.mode === "safe") {
+        view.mode = "default";
+        view.connection = { ready: settings.key_present, origin: settings.origin };
+        view.messages.push(msg("app", "Switched to Default mode, where the conversation plans a change with an AI model."));
+      }
+      const pass = owed.filter((x) => x.operation === owed[0].operation);
+      view.focus = pass.map((x) => x.path);
+      view.todo = view.todo.filter((t) => !view.focus.includes(t.path));
+      view.stage = "resume";
+      view.action = { label: "Continue", token: "tok-pass", kind: "continue", can_hold: false };
+      const names = pass.map((x) => x.name).join(", ");
+      view.messages.push(msg("app", `${pass.length > 1 ? `Working on the ${pass.length} documents from your to-do list: ${names}.` : `Working on ${names}, from your to-do list.`} What ${pass.length > 1 ? "they still owe" : "it still owes"}: “${owed[0].request}”. Tell me what should be different, or continue to plan ${pass.length > 1 ? "them" : "it"} again as before. The other copies stay as they are.`));
+      return json(res, 200, view);
+    }
+    case "POST /api/todo/waive": {
+      // Not needed on this one, or back on the to-do list
+      if (view.busy) return busyRefusal();
+      const body = await readJson(req);
+      const key = `${body.operation}\t${body.path}`;
+      const waived = view.waived ?? [];
+      const on = body.on !== false;
+      if (on && !owedOf(view).some((x) => x.operation === body.operation && x.path === body.path)) return json(res, 400, { error: "That is not on your to-do list." });
+      if (!on && !waived.includes(key)) return json(res, 400, { error: "That was not marked as not needed." });
+      view.waived = on ? [...waived, key] : waived.filter((k) => k !== key);
+      const doc = view.attachments.find((a) => a.path === body.path);
+      view.messages.push(msg("app", on ? `That change is marked as not needed on ${doc?.name ?? "it"} and is off your to-do list. Nothing in the document changed.` : `That change is back on your to-do list for ${doc?.name ?? "it"}.`));
       return json(res, 200, view);
     }
     case "POST /api/send": {
@@ -1639,7 +1711,7 @@ async function handle(req, res) {
         lastRequest = text;   // a new request (Undo names it)
         lastRecipe = "";
       }
-      if (key === WORK_TODO.toLowerCase() && view.todo.length) return todoJob(res, text);
+      if (key === WORK_TODO.toLowerCase() && owedOf(view).length) return todoJob(res, text);
       if (key.includes("question")) return questionJob(res, text);
       if (key.includes("fail")) return failJob(res, text);
       if (key.includes("pause")) return pauseJob(res, text);
@@ -1681,16 +1753,16 @@ async function handle(req, res) {
       if (view.busy) return busyRefusal();
       const body = await readJson(req);
       const entry = view.todo.find((t) => t.path === body.path);
-      if (!entry) return json(res, 400, { error: "That document is not on your to-do list." });
+      if (!entry) return json(res, 400, { error: "That document is not set aside." });
       view.todo = view.todo.filter((t) => t.path !== body.path);
-      view.messages.push(msg("app", `${entry.name} is off your to-do list and back among the documents your next request works on.`));
+      view.messages.push(msg("app", `${entry.name} is no longer set aside: it is back among the documents your next request works on. What it still owes stays on your to-do list.`));
       return json(res, 200, view);
     }
     case "POST /api/todo/obliterate": {
-      // a to-do row's Obliterate this one: the mode for that one document, then the pass over it alone
+      // a failed cell's Obliterate this one: the mode for that one document, then the pass over it alone
       if (view.busy) return busyRefusal();
       const body = await readJson(req);
-      const entry = view.todo.find((t) => t.path === body.path);
+      const entry = owedOf(view).find((x) => x.path === body.path && (!body.operation || x.operation === body.operation));
       if (!entry) return json(res, 400, { error: "That document is not on your to-do list." });
       if (!settings.show_obliterate) return json(res, 400, { error: "Obliterate mode is hidden. Settings → Advanced shows it." });
       if (view.focus.length) return json(res, 400, { error: "Finish the pass over your to-do list first, or drop it." });

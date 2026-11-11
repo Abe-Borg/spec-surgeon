@@ -44,6 +44,8 @@ interface Props {
   /** Default and Obliterate: the saved recipes, above the message box (RecipesStrip; nothing when there are none). */
   recipes?: ReactNode;
   onMode: (mode: Mode) => void;
+  /** The to-do card's button in Safe mode: the window turns to Default mode and the pass begins there. */
+  onWorkTodo: (operation?: string, path?: string) => void;
   /** Obliterate's hands-on tools are on, and their switch in the mode's strip (lib/handsOn.ts). */
   handsOn?: boolean;
   onHandsOn?: (on: boolean) => void;
@@ -79,6 +81,7 @@ export default function Chat({
   panel,
   recipes,
   onMode,
+  onWorkTodo,
   handsOn = false,
   onHandsOn,
   discard,
@@ -305,7 +308,7 @@ export default function Chat({
                         busy={busy}
                         tourActive={tourActive}
                         onSend={onSend}
-                        onDefaultMode={safe ? () => onMode("default") : undefined}
+                        onWorkInDefault={safe ? () => onWorkTodo() : undefined}
                       />
                     );
                   case "failed-copy":

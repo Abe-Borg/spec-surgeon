@@ -23,6 +23,7 @@ from spec_surgeon.ops import lists as tl
 from spec_surgeon.ops.effective import Resolver, theme_fonts
 from spec_surgeon.ops.selectors import StyleSheet
 from spec_surgeon.package import DocxPackage, W
+from standing_helpers import untouched
 
 W_DECL = f'xmlns:w="{W[1:-1]}"'
 MAIN = "word/document.xml"
@@ -325,7 +326,7 @@ def test_the_button_matches_a_mixed_batch_and_leaves_out_what_it_cannot_match(fo
     assert "‘Shop drawings.’" in view["set_aside"][0]["reason"] and "op #" not in view["set_aside"][0]["reason"]
     view = task.perform("primary", token=view["token"])
     assert view["stage"] == "done" and len(task.results) == 3
-    assert [e["name"] for e in view["left_untouched"]] == ["messy.docx"]
+    assert [e["name"] for e in untouched(task)] == ["messy.docx"]
     assert all(f.status == "PASS" for f in task.session.last_batch.files)
     assert hashlib.md5(template(folder).read_bytes()).hexdigest() == tpl_md5
     out = Path(task.results[str((folder / "21 13 13.docx").resolve())]).read_bytes()
@@ -356,8 +357,9 @@ def test_the_button_matches_a_mixed_batch_and_leaves_out_what_it_cannot_match(fo
     typed = outline(Path(task.results[str((folder / "typed.docx").resolve())]).read_bytes())
     assert typed["SUMMARY"][:2] == ("ART", "1.1") and typed["GENERAL"][:2] == ("PRT", "PART 1 -")
     assert any("match the body formatting" in line.lower() or "style" in line.lower() for line in task.history)
-    task.hand_off([str((folder / "messy.docx").resolve())])
-    assert task.mode == "default" and "Shop drawings" in task.todo[str((folder / "messy.docx").resolve())]["reason"]
+    messy = str((folder / "messy.docx").resolve())
+    task.work_todo(path=messy)                          # Work on it in Default mode: the pass, with the button's reason
+    assert task.mode == "default" and "Shop drawings" in task.focus["why"][messy]["reason"]
 
 
 def test_the_layout_plans_each_pass_the_gate_as_ordered_steps(folder):
@@ -406,8 +408,8 @@ def test_a_batch_nothing_can_match_previews_nothing_and_says_why(tmp_path, folde
     task.attach([template(folder)], template=True)
     view = task.perform("recipe", recipe="body_formatting", inputs={})
     assert view["stage"] == "empty" and task.session.spec is None
-    assert [e["name"] for e in view["left_untouched"]] == ["letter.docx"]
-    assert "no outline" in view["left_untouched"][0]["reason"] and "None of the documents" in task.messages[-1]["text"]
+    assert [e["name"] for e in untouched(task)] == ["letter.docx"]
+    assert "no outline" in untouched(task)[0]["reason"] and "None of the documents" in task.messages[-1]["text"]
 
 
 def test_a_wrong_role_choice_is_said_and_nothing_is_previewed(folder):

@@ -128,7 +128,9 @@ def test_every_chapter_state_builds_without_a_model_call(tmp_path, kind):
         copies = {Path(k).name for k in view["results"]}
         assert copies == {tutorial.DOCUMENTS[0], tutorial.DOCUMENTS[2]}
         assert [(t["name"], t["why"], t["reason"]) for t in view["todo"]] == [(tutorial.HELD, "held", HELD_REASON)]
-        assert names(view["left_untouched"]) == [tutorial.OTHER_FIRM]
+        # the grid: what the button could not change, and what the red X set aside, are both on the to-do list
+        failed = {r["name"]: c["why"] for r in view["standing"]["documents"] for c in r["cells"] if c["state"] == "failed"}
+        assert failed == {tutorial.HELD: "held", tutorial.OTHER_FIRM: "refused"}
         assert view["working"]["undo"] and view["working"]["generation"] == 1
         for output in view["results"].values():
             assert Path(output).is_relative_to(folder)

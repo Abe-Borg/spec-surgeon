@@ -15,6 +15,7 @@ from spec_surgeon.package import W
 from spec_surgeon.ui_feedback import failed_preview_checks, refusal_message
 from spec_surgeon.web.server import WindowState
 from test_ui_preview_regressions import fail_checks, task_for
+from standing_helpers import untouched
 
 
 def test_naming_refusal_is_readable_before_and_after_create_without_changing_evidence(tmp_path):
@@ -33,7 +34,7 @@ def test_naming_refusal_is_readable_before_and_after_create_without_changing_evi
                       "13”), so its own section number cannot be read for the file name. The document has no text.")
     assert "op #" not in reason and "pattern" not in reason
     view = task.perform("primary", token=view["token"])
-    assert view["left_untouched"][0]["reason"] == reason
+    assert untouched(task)[0]["reason"] == reason
     assert exception == saved
 
 
@@ -151,7 +152,7 @@ def test_a_step_of_a_saved_recipe_is_named_on_the_line(tmp_path):
     assert reasons["even odd.docx"].startswith("Step 1 of 2 (Match headers and footers to template): This document "
                                                "has different headers and footers on odd and even pages")
     view = task.perform("primary", token=view["token"])
-    after = {item["name"]: item["reason"] for item in view["left_untouched"]}
+    after = {item["name"]: item["reason"] for item in untouched(task)}
     assert after["other layout.docx"] == reasons["other layout.docx"]          # the same line once the copies exist
 
 

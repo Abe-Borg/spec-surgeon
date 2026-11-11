@@ -14,6 +14,7 @@ import pytest
 from make_fixtures import build, build_dirty
 from spec_surgeon.document_task import RUN_SET_ASIDE, RUN_UNTOUCHED, WORK_TODO, DocumentTask
 from spec_surgeon.gui import Session
+from standing_helpers import owed, untouched
 
 TITLE = {"pattern": "SECTION {number} - {title}"}
 
@@ -86,18 +87,18 @@ def test_a_button_pressed_over_a_preview_discards_back_to_what_came_before_both(
     assert task.results == copies
 
 
-def test_discard_restores_what_the_last_button_left_untouched(tmp_path, files):
+def test_discard_leaves_what_an_earlier_button_could_not_do_on_the_to_do_list(tmp_path, files):
     empty = tmp_path / "empty.docx"
     empty.write_bytes(build_dirty("empty_body"))
     task = safe_task(tmp_path)
     task.attach([files[0], empty])
     press(task, "title_property", TITLE)
-    left = task.view()["left_untouched"]
+    left = owed(task)
     assert [e["name"] for e in left] == ["empty.docx"]
     task.perform("recipe", recipe="remove_highlight", inputs={})
-    assert task.view()["left_untouched"] == []                         # hidden while the preview waits
+    assert owed(task) == left                                          # the record keeps it while a preview waits
     task.discard_preview()
-    assert task.view()["left_untouched"] == left
+    assert owed(task) == left
 
 
 def test_discard_needs_something_to_withdraw(tmp_path, files):
@@ -423,11 +424,11 @@ def test_undo_and_a_recipe_wait_with_the_reason_while_a_runs_copies_wait(tmp_pat
 
 
 def test_the_reason_names_the_way_out_the_check_is_at(tmp_path, monkeypatch):
-    # a check still asking about a document: answer it, save what is ready, or set the rest aside
+    # a check still asking about a document: answer it, save what is ready, or leave the rest for later
     task, docs = waiting_copies(tmp_path, monkeypatch)
     task.session.recovery.files[0].status = "UNRESOLVED"
-    assert task._recovery_blocked().endswith("Finish it first: answer its question, save the ready copies, or set "
-                                             "the rest aside for later.")
+    assert task._recovery_blocked().endswith("Finish it first: answer its question, save the ready copies, or "
+                                             "leave the rest for later.")
     task.stage = "resume"                                              # a reopened window: Continue goes on with it
     assert task._recovery_blocked().endswith("Finish it first: continue it.")
 
@@ -566,11 +567,13 @@ def test_discard_during_a_pass_puts_its_documents_back_on_the_to_do_list(tmp_pat
     view = task.perform("send", text=REQUEST)
     task.perform("primary", token=view["token"], hold=[str(docs[1])])
     entry = dict(task.todo[str(docs[1])])
-    task.perform("send", text="Work on the documents I set aside")
-    assert task.focus and task.view()["discard"] == "request"
+    task.perform("send", text=WORK_TODO)
+    assert task.focus and task.view()["discard"] == "request" and task.todo == {}
     task.discard_preview()
+    # the document the user had set aside waits out of the batch again, and what it owes never left the list
     assert task.focus is None and task.todo == {str(docs[1]): entry} and task.decisions == []
-    assert task.messages[-1]["text"].endswith("The documents you were working on are back on your to-do list.")
+    assert [e["name"] for e in owed(task)] == [docs[1].name]
+    assert task.messages[-1]["text"].endswith("What you were working on is still on your to-do list.")
 
 
 def test_a_withdrawn_request_and_a_pass_s_own_request_survive_a_restart(tmp_path):
@@ -583,7 +586,7 @@ def test_a_withdrawn_request_and_a_pass_s_own_request_survive_a_restart(tmp_path
     task.perform("primary", token=view["token"], hold=[str(docs[1])])
     task.perform("send", text=AGAIN)
     task.discard_preview()
-    task.perform("send", text="Work on the documents I set aside")
+    task.perform("send", text=WORK_TODO)
     restored = DocumentTask(Session(out_root=tmp_path / "out", visual_check=False), render=False, journal=journal)
     assert restored.restore()
     assert restored.exchanges == task.exchanges and restored.exchanges[-1]["discarded"] == "preview"
@@ -654,18 +657,16 @@ def test_undo_takes_the_documents_its_x_set_aside_off_the_to_do_list(tmp_path, f
     assert task.todo == {} and task.working == {}
 
 
-def test_undo_keeps_the_to_do_entries_added_after_the_run(tmp_path, files):
+def test_undo_takes_back_what_the_undone_button_could_not_do(tmp_path, files):
     empty = tmp_path / "empty.docx"
     empty.write_bytes(build_dirty("empty_body"))
     task = safe_task(tmp_path)
     task.attach([*files, empty])
     press(task, "remove_highlight")
     press(task, "title_property", TITLE)
-    task.hand_off([task.view()["left_untouched"][0]["path"]])          # put on the list after that run, by the user
-    task.mode = "safe"
+    assert [e["name"] for e in owed(task)] == ["empty.docx"] and task.todo == {}
     task.undo()
-    assert [e["name"] for e in task.todo.values()] == ["empty.docx"]
-    assert task.view()["left_untouched"] == []                         # the run before left nothing untouched
+    assert owed(task) == [] and task.todo == {}                        # the run before could change every document
 
 
 def test_undo_restores_what_the_run_before_left_untouched(tmp_path, files):
@@ -674,11 +675,12 @@ def test_undo_restores_what_the_run_before_left_untouched(tmp_path, files):
     task = safe_task(tmp_path)
     task.attach([files[0], empty])
     press(task, "title_property", TITLE)
-    left = task.view()["left_untouched"]
+    left = untouched(task)
+    assert [e["name"] for e in left] == ["empty.docx"]
     press(task, "remove_highlight")
-    assert task.view()["left_untouched"] != left
+    assert untouched(task) == [] and owed(task)[0]["name"] == "empty.docx"   # the newest button changed every one
     task.undo()
-    assert task.view()["left_untouched"] == left
+    assert untouched(task) == left
 
 
 def test_undo_keeps_which_documents_arrived_after_the_changes(tmp_path, files):

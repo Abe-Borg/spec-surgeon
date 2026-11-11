@@ -379,7 +379,6 @@ class WindowState:
                 # Obliterate's menu of named Word actions (None in Safe and Default: nothing of it reaches them)
                 "word": raw.get("word") if isinstance(raw.get("word"), dict) else None,
                 "modes": task.available_modes(), "template": task.template_info(),
-                "left_untouched": [dict(e) for e in raw.get("left_untouched", [])],
                 "connection": {"ready": task.session.claude_ready(), "origin": self.key_origin},
                 "cost": task._cost(), "attachments": attachments, "messages": messages, "plan": plan,
                 "questions": list(raw["questions"]), "choices": list(raw["choices"]), "chips": list(raw["chips"]),
@@ -398,6 +397,10 @@ class WindowState:
                            "copies": int(raw.get("copies_to_create") or 0) if kind == "approve" else 0,
                            "unpreviewed": int(raw.get("unpreviewed") or 0) if kind == "approve" else 0},
                 "todo": [dict(item) for item in raw.get("todo", [])], "focus": list(raw.get("focus", [])),
+                # where each document stands: the record of every operation and each document's outcome under it, as
+                # the grid draws it (its failed cells are the to-do list)
+                "standing": raw.get("standing") or {"operations": [], "documents": [],
+                                                    "owed": {"cells": 0, "documents": 0}},
                 # Obliterate's free rung: the documents of the pass whose failed copy can be taken as it is
                 "failed_copies": [dict(item) for item in raw.get("failed_copies") or []],
                 "working": raw["working"], "budget": {"paused": bool(raw["budget_paused"]),
@@ -1071,22 +1074,44 @@ def create_app(state: WindowState, *, dev: bool = False) -> FastAPI:
             return error(str(e))
         return stream("word_actions", path=path, actions=list(actions), every=body.get("every") is True)
 
-    @app.post("/api/handoff")
-    async def hand_off(request: Request):
+    @app.post("/api/todo/work")
+    async def work_todo(request: Request):
+        """**Work on it**: the pass over the to-do list begins on one failed cell (``operation`` and ``path``), on
+        every document that owes one operation (``operation``), or on the list (neither: the oldest operation
+        first). From Safe mode the window turns to Default mode first. No model call."""
         if state.busy:
             return busy_error()
         try:
             body = await json_object(request)
         except ValueError as e:
             return error(str(e))
-        paths = body.get("paths")
-        if not isinstance(paths, list) or not paths or not all(isinstance(p, str) for p in paths):
-            return error("Name the documents to hand over, by path.")
+        operation, path = body.get("operation"), body.get("path")
+        if not all(v is None or isinstance(v, str) for v in (operation, path)):
+            return error("Name the operation by its id and the document by its path.")
         try:
-            state.task.hand_off(paths)
+            state.task.work_todo(operation=operation or None, path=path or None)
         except ValueError as e:
             return error(str(e))
-        state.save_settings()
+        state.save_settings()          # the mode it turned to is the user's choice from here on
+        return state.view()
+
+    @app.post("/api/todo/waive")
+    async def waive_todo(request: Request):
+        """**Not needed on this one** (``on`` true, the default) or its undoing: one failed cell off the to-do list
+        at the user's word, or back on it. Nothing in any document changes. No model call."""
+        if state.busy:
+            return busy_error()
+        try:
+            body = await json_object(request)
+        except ValueError as e:
+            return error(str(e))
+        operation, path = body.get("operation"), body.get("path")
+        if not (isinstance(operation, str) and operation and isinstance(path, str) and path):
+            return error("Name the operation by its id and the document by its path.")
+        try:
+            state.task.waive(operation, path, on=body.get("on") is not False)
+        except ValueError as e:
+            return error(str(e))
         return state.view()
 
     @app.post("/api/stop")
@@ -1136,8 +1161,9 @@ def create_app(state: WindowState, *, dev: bool = False) -> FastAPI:
 
     @app.post("/api/todo/obliterate")
     async def obliterate_todo(request: Request):
-        """**Obliterate this one**, on a to-do entry: Obliterate mode for that one document (its warning acknowledged
-        this time, unless the mode is already on), and the pass over it alone. No model call."""
+        """**Obliterate this one**, on a failed cell of the to-do list: Obliterate mode for that one document (its
+        warning acknowledged this time, unless the mode is already on), and the pass over it alone on ``operation``
+        (or the oldest it owes). No model call."""
         if state.busy:
             return busy_error()
         try:
@@ -1145,8 +1171,10 @@ def create_app(state: WindowState, *, dev: bool = False) -> FastAPI:
         except ValueError as e:
             return error(str(e))
         try:
+            operation = body.get("operation")
             state.task.obliterate_todo(str(body.get("path") or ""), acknowledged=body.get("acknowledged") is True,
-                                       hands_on=body.get("hands_on") is True)
+                                       hands_on=body.get("hands_on") is True,
+                                       operation=operation if isinstance(operation, str) and operation else None)
         except ValueError as exc:
             return error(str(exc))
         state.save_settings()          # the mode it turned on is never kept: the next launch opens as before

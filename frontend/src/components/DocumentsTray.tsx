@@ -18,7 +18,9 @@ import Tip from "./Tip";
 
 interface Props {
   attachments: Attachment[];
-  /** Documents waiting on the to-do list, and the documents of the pass over it (attached originals). */
+  /** The documents the user set aside (the red X, or asking): they wait out of every plan and carry the To do tag.
+   *  A document the app could not change is not among them; what it owes is a cross of Where each document stands.
+   *  `focus`: the documents of the pass over the to-do list (attached originals). */
   todo: TodoItem[];
   focus: string[];
   busy: boolean;

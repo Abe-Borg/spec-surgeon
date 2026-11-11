@@ -223,37 +223,49 @@ test("the three starters are requests in the user's own words, each with a title
   }
 });
 
-test("the to-do card closes the transcript once copies are saved and documents wait, never during a pass or a job", () => {
-  const done: Partial<View> = {
+test("the to-do card closes the transcript once copies are saved and something is owed, never during a pass or a job", () => {
+  // the to-do list is the failed cells of Where each document stands, whoever could not do it
+  const failed = (why: string, reason: string) => ({ state: "failed", mode: "default", why, reason, marks: [], note: "", first: "", attempts: [] });
+  const ran = { state: "done", mode: "default", why: "", reason: "", marks: [], note: "", first: "", attempts: [] };
+  const standing = {
+    operations: [{ id: "o1", number: 1, request: "Make the title bold.", mode: "default", recipe: "", name: "", done: 1, failed: 2 }],
+    documents: [
+      { path: "/a", name: "A.docx", owed: 0, badges: [], cells: [ran] },
+      { path: "/b", name: "B.docx", owed: 1, badges: ["set aside"], cells: [failed("held", "You marked its preview as needing more work.")] },
+      { path: "/c", name: "C.docx", owed: 1, badges: [], cells: [failed("refused", "The plan could not be applied to it: no Heading 2.")] },
+    ],
+    owed: { cells: 2, documents: 2 },
+  };
+  const done = {
     stage: "done",
     messages: [message("u1", "user", "go"), message("a1", "app", "1 copy is ready.")],
-    todo: [
-      { path: "/b", name: "B.docx", why: "held", reason: "You marked its preview as needing more work." },
-      { path: "/c", name: "C.docx", why: "refused", reason: "The plan could not be applied to it: no Heading 2." },
-    ],
-  };
+    standing,
+    // only the document the user set aside waits out of the batch
+    todo: [{ path: "/b", name: "B.docx", why: "held", reason: "You marked its preview as needing more work." }],
+  } as unknown as Partial<View>;
   const items = transcript(state(done));
   assert.deepEqual(items.map((i) => i.kind), ["message", "message", "todo"]);
   const card = items[2];
   assert.ok(card.kind === "todo");
-  // every waiting document with why it waits, as the server words it
-  if (card.kind === "todo") assert.deepEqual(card.items.map((i) => [i.name, i.reason]), [
-    ["B.docx", "You marked its preview as needing more work."],
-    ["C.docx", "The plan could not be applied to it: no Heading 2."],
+  // every document that still owes something, with what and why, as the server words it
+  if (card.kind === "todo") assert.deepEqual(card.items.map((i) => [i.name, i.request, i.reason, i.operation]), [
+    ["B.docx", "Make the title bold.", "You marked its preview as needing more work.", "o1"],
+    ["C.docx", "Make the title bold.", "The plan could not be applied to it: no Heading 2.", "o1"],
   ]);
   assert.equal(todoFor(state({ ...done, focus: ["/b"] })), null);             // the pass is under way
   assert.equal(todoFor(state({ ...done, busy: true })), null);
   assert.equal(todoFor(state({ ...done, stage: "preview" })), null);
   assert.equal(todoFor(state({ ...done, stage: "question" })), null);
   assert.ok(todoFor(state({ ...done, stage: "resume" })));
-  assert.equal(todoFor(state({ ...done, todo: [] })), null);
+  assert.ok(todoFor(state({ ...done, todo: [] })));                           // owed, though nobody set it aside
+  assert.equal(todoFor(state({ ...done, standing: undefined })), null);      // nothing owed: no card
   // a reopened window whose recovery waits to continue rests too: the card says why its pass waits
   const waiting = todoFor(state({ ...done, stage: "resume", recovery_blocked: "Finish it first: continue it." }));
   assert.equal(waiting?.kind === "todo" && waiting.blocked, "Finish it first: continue it.");
   const free = todoFor(state(done));
   assert.equal(free?.kind === "todo" && free.blocked, "");
-  assert.equal(WORK_TODO, "Work on the documents I set aside");               // the server's exact words
-  assert.equal(SET_ASIDE_REST, "Set the rest aside for later");
+  assert.equal(WORK_TODO, "Work on my to-do list");                           // the server's exact words
+  assert.equal(SET_ASIDE_REST, "Leave the rest for later");
 });
 
 test("the failed-copy card shows during an Obliterate pass whose failed copy is kept, and only while nothing is open", () => {

@@ -342,7 +342,7 @@ def test_a_job_is_over_once_its_last_frame_is_out(tmp_path, monkeypatch, ending)
         assert client.get("/api/state").json()["busy"] is False
         assert client.post("/api/stop").json() == {"ok": False}
         refused = client.post("/api/put-back", json={"path": "nowhere.docx"})
-        assert refused.status_code == 400 and "not on your to-do list" in refused.json()["error"]
+        assert refused.status_code == 400 and "not set aside" in refused.json()["error"]
         assert client.post("/api/mode", json={"mode": "default"}).status_code == 200
         # the next job starts over a thread that has not returned, and is over at its own last event the same way
         with client.stream("POST", "/api/send", json={"text": REQUEST}) as response:
@@ -620,7 +620,7 @@ def test_the_window_applies_the_kept_fast_mode_from_its_start(tmp_path):
 
 # ---- Safe mode ------------------------------------------------------------------
 
-def test_safe_mode_routes_the_buttons_the_mode_and_the_hand_off(tmp_path, monkeypatch):
+def test_safe_mode_routes_the_buttons_the_mode_and_work_on_it(tmp_path, monkeypatch):
     from make_fixtures import build, build_dirty
     monkeypatch.setenv("SPEC_SURGEON_CONFIG_DIR", str(tmp_path / "config"))
     state, client = window(tmp_path)
@@ -628,7 +628,8 @@ def test_safe_mode_routes_the_buttons_the_mode_and_the_hand_off(tmp_path, monkey
     assert [r["id"] for r in catalog["recipes"]][:1] == ["headers_footers_template"] and catalog["groups"]
     view = client.get("/api/state").json()
     assert view["mode"] == "default" and view["modes"] == ["safe", "default"]
-    assert view["template"]["kind"] == "none" and view["left_untouched"] == []
+    assert view["template"]["kind"] == "none"
+    assert view["standing"] == {"operations": [], "documents": [], "owed": {"cells": 0, "documents": 0}}
     assert client.post("/api/mode", json={"mode": "obliterate"}).status_code == 400
     view = client.post("/api/mode", json={"mode": "safe"}).json()
     assert view["mode"] == "safe" and load_settings().mode == "safe"          # kept for the next start
@@ -648,10 +649,25 @@ def test_safe_mode_routes_the_buttons_the_mode_and_the_hand_off(tmp_path, monkey
     assert [i["name"] for i in done["state"]["plan"]["set_aside"]] == ["empty.docx"]
     with client.stream("POST", "/api/primary", json={"token": done["state"]["action"]["token"]}) as r:
         view = frames(r)[-1]["state"]
-    assert view["stage"] == "done" and [e["name"] for e in view["left_untouched"]] == ["empty.docx"]
-    assert client.post("/api/handoff", json={"paths": []}).status_code == 400
-    view = client.post("/api/handoff", json={"paths": [view["left_untouched"][0]["path"]]}).json()
-    assert view["mode"] == "default" and [t["name"] for t in view["todo"]] == ["empty.docx"]
+    # the page gets the record: the grid's rows and cells, and its failed cells are the to-do list
+    standing = view["standing"]
+    [operation] = standing["operations"]
+    assert (operation["recipe"], operation["mode"], operation["done"], operation["failed"]) == ("title_property", "safe", 1, 1)
+    assert [(r["name"], [c["state"] for c in r["cells"]]) for r in standing["documents"]] == [
+        ("21 13 13.docx", ["done"]), ("empty.docx", ["failed"])]
+    assert view["stage"] == "done" and standing["owed"] == {"cells": 1, "documents": 1} and view["todo"] == []
+    assert "left_untouched" not in view                      # the grid carries each reason, for every button
+    # Not needed on this one, and back; then Work on it, which turns Safe mode to Default and begins the pass
+    assert client.post("/api/todo/waive", json={"operation": operation["id"]}).status_code == 400
+    view = client.post("/api/todo/waive", json={"operation": operation["id"], "path": str(empty)}).json()
+    assert view["standing"]["owed"] == {"cells": 0, "documents": 0}
+    assert view["standing"]["documents"][1]["cells"][0]["state"] == "waived"
+    view = client.post("/api/todo/waive", json={"operation": operation["id"], "path": str(empty), "on": False}).json()
+    assert view["standing"]["owed"] == {"cells": 1, "documents": 1}
+    assert client.post("/api/todo/work", json={"path": str(good)}).status_code == 400      # it owes nothing
+    assert client.post("/api/todo/work", json={"operation": 7}).status_code == 400
+    view = client.post("/api/todo/work", json={"operation": operation["id"], "path": str(empty)}).json()
+    assert view["mode"] == "default" and view["focus"] == [str(empty)] and view["todo"] == []
     assert load_settings().mode == "default"
     bad = client.post("/api/recipe", json={"recipe": "remove_highlight", "inputs": ["not", "a", "form"]})
     assert bad.status_code == 400
@@ -878,7 +894,8 @@ def test_a_docx_without_its_content_types_manifest_is_refused_at_intake(tmp_path
 
 
 JSON_ROUTES = ["/api/attach", "/api/pick", "/api/remove", "/api/send", "/api/choose", "/api/primary", "/api/recipe",
-               "/api/occurrences", "/api/mode", "/api/handoff", "/api/put-back", "/api/open", "/api/settings"]
+               "/api/occurrences", "/api/mode", "/api/todo/work", "/api/todo/waive", "/api/put-back", "/api/open",
+               "/api/settings"]
 BAD_BODIES = ["null", "[]", "[1]", '"hello"', "42", "true", '{"x":', ""]
 
 

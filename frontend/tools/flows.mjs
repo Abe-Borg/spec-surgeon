@@ -8,8 +8,8 @@
  * update check and diagnostic bundle, the page's own report of its load,
  * the update banner and the pill it leaves, start over, the button's home
  * in the conversation, the folding documents tray, and the red X on a
- * preview → the to-do list → the pass over it; Safe mode's buttons, a button's form → preview → copies, and the
- * hand-off of what it left untouched to Default mode.
+ * preview → the to-do list → the pass over it; Safe mode's buttons, a button's form → preview → copies, and Work
+ * on it in Default mode for what a button could not do.
  *
  *   npm run build
  *   node tools/flows.mjs
@@ -421,33 +421,44 @@ try {
   await page.getByText("Your edited copies").waitFor({ timeout: 20000 });
   await page.getByRole("button", { name: "Work on it now" }).waitFor({ timeout: 20000 });   // the job's final view
   const todoCard = page.locator("[aria-label='Your to-do list']");
-  check("the set-aside document is on the to-do card", (await todoCard.getByText("21 05 00 Common Work Results for Fire Suppression.docx", { exact: true }).count()) === 1);
-  check("…and under the copies", (await page.locator("section[aria-label='Set aside for more work']").getByText("21 05 00", { exact: false }).count()) === 1);
+  check("the set-aside document is on the to-do card", (await todoCard.getByText("21 05 00 Common Work Results for Fire Suppression.docx", { exact: false }).count()) === 1);
+  const grid = page.locator("section[aria-label='Where each document stands']");
+  check("…and in the grid, with a cross and its badge", (await grid.getByRole("button", { name: /21 05 00.*not done/ }).count()) === 1 && (await grid.getByText("set aside", { exact: true }).count()) === 1);
   check("the to-do card says why it waits", (await todoCard.getByText("You marked its preview as needing more work.", { exact: true }).count()) === 1);
-  check("…and so does the card under the copies", (await page.locator("section[aria-label='Set aside for more work']").getByText("You marked its preview as needing more work.", { exact: true }).count()) === 1);
-  check("each waiting document can be put back", await page.getByRole("button", { name: /Put back 21 05 00/ }).isVisible());
+  await grid.getByRole("button", { name: /21 05 00.*not done/ }).click();
+  check("…and so does the cross in the grid", (await grid.getByText(/You marked its preview as needing more work\./).count()) === 1);
+  check("a cross offers Work on it and Not needed", (await grid.getByRole("button", { name: "Work on it now" }).isVisible()) && (await grid.getByRole("button", { name: "Not needed on this one" }).isVisible()));
+  check("each document set aside can be put back", await page.getByRole("button", { name: /Put 21 05 00.* back/ }).isVisible());
   check("the copy that looked right is listed", (await page.locator("section[aria-label='Your edited copies']").getByText("21 13 13", { exact: false }).count()) === 1);
   check("the set-aside document got no copy", (await page.locator("section[aria-label='Your edited copies']").getByText("21 05 00", { exact: false }).count()) === 0);
   if ((await trayToggle.getAttribute("aria-expanded")) === "false") await trayToggle.click();
   check("the tray tags it", await page.getByText("To do", { exact: true }).first().isVisible());
-  await page.getByRole("button", { name: "Work on it now" }).click();
+  await todoCard.getByRole("button", { name: "Work on it now" }).click();
   await page.getByText(/Working on 21 05 00/).waitFor({ timeout: 20000 });
   await page.waitForTimeout(300);
   check("the pass over the set-aside document begins with Continue", await page.getByRole("button", { name: "Continue" }).first().isVisible());
-  check("the to-do card is gone during the pass", (await page.getByRole("button", { name: "Work on it now" }).count()) === 0);
+  check("the to-do card is gone during the pass", (await page.locator("[aria-label='Your to-do list']").count()) === 0);
 
   // 16. Put back takes a document off the to-do list without a pass; it is in scope again.
   await scenario("todo");
   await page.reload();
-  const putBack = page.getByRole("button", { name: /Put back / });
+  const putBack = page.getByRole("button", { name: /Put .* back/ });
   await putBack.waitFor({ timeout: 20000 });
   await putBack.click();
-  await page.getByText(/is off your to-do list and back among the documents/).waitFor({ timeout: 20000 });
-  check("Put back empties the to-do list", (await page.locator("section[aria-label='Set aside for more work']").count()) === 0);
-  check("…and the chat's to-do card with it", (await page.getByRole("button", { name: "Work on it now" }).count()) === 0);
+  await page.getByText(/is no longer set aside: it is back among the documents/).waitFor({ timeout: 20000 });
+  const gridAfter = page.locator("section[aria-label='Where each document stands']");
+  check("Put back takes the document out of the set-aside ones", (await gridAfter.getByText("set aside", { exact: true }).count()) === 0);
+  check("…and what it owes stays on the to-do list", (await gridAfter.getByText("On your to-do list: 1 operation on 1 document.").count()) === 1);
+  await gridAfter.getByRole("button", { name: /21 05 00.*not done/ }).click();
+  await gridAfter.getByRole("button", { name: "Not needed on this one" }).click();
+  await gridAfter.getByText(/Your to-do list is empty/).waitFor({ timeout: 20000 });
+  check("Not needed on this one empties the to-do list, and the chat's card with it", (await page.locator("[aria-label='Your to-do list']").count()) === 0);
+  await gridAfter.getByRole("button", { name: "Put it back on my to-do list" }).click();
+  await gridAfter.getByText("On your to-do list: 1 operation on 1 document.").waitFor({ timeout: 20000 });
+  check("…and it can be put back on the list", (await page.locator("[aria-label='Your to-do list']").count()) === 1);
 
-  // 17. Safe mode: the switch, the buttons in place of the message box, a button's form → preview → copies, and the
-  // hand-off of what it left untouched to Default mode.
+  // 17. Safe mode: the switch, the buttons in place of the message box, a button's form → preview → copies, and
+  // Work on it in Default mode for what a button could not do.
   await scenario("attached");
   await page.reload();
   const modes = page.getByRole("group", { name: "Mode" });
@@ -474,7 +485,7 @@ try {
   check("…says what it read from the template", await page.getByText("From your template: pages 8.5 × 11 in portrait").isVisible());
   check("…and can be previewed as it is", await page.getByRole("button", { name: "Preview", exact: true }).isEnabled());
   await page.getByRole("button", { name: "All buttons" }).click();
-  await page.getByRole("button", { name: "Find and replace" }).click();
+  await page.getByRole("region", { name: "Safe mode" }).getByRole("button", { name: "Find and replace" }).click();
   const previewBtn = page.getByRole("button", { name: "Preview", exact: true });
   check("an empty form cannot be previewed", await previewBtn.isDisabled());
   await page.getByLabel("Find, row 1").fill("ACME");
@@ -496,7 +507,7 @@ try {
   await page.getByRole("button", { name: "All buttons" }).click();
   await discarded.nth(1).waitFor({ timeout: 5000 });
   check("All buttons discards a waiting preview", (await createCopies.count()) === 0);
-  await page.getByRole("button", { name: "Find and replace" }).click();
+  await page.getByRole("region", { name: "Safe mode" }).getByRole("button", { name: "Find and replace" }).click();
   check("going back to a button finds what was typed",
     (await page.getByLabel("Find, row 1").inputValue()) === "ACME" &&
       (await page.getByLabel("Replace with, row 1").inputValue()) === "Contoso");
@@ -504,20 +515,21 @@ try {
   await createCopies.waitFor({ timeout: 20000 });
   check("a button previews with no conversation", (await page.locator("section[aria-label='Left untouched']").count()) === 1);
   await createCopies.click();
-  const handOff = page.getByRole("button", { name: "Try these in Default mode" });
-  await handOff.waitFor({ timeout: 20000 });
-  check("what the button left untouched waits beside the copies", await page.getByText("Your edited copies").isVisible());
+  const safeGrid = page.locator("section[aria-label='Where each document stands']");
+  const cross = safeGrid.getByRole("button", { name: /: not done$/ }).first();
+  await cross.waitFor({ timeout: 20000 });
+  check("what the button could not change has a cross in the grid, beside the copies", await page.getByText("Your edited copies").isVisible());
   const undoBtn = page.getByRole("button", { name: "Undo the last button" });
   check("Undo the last button sits beside Start over", await undoBtn.isEnabled());
   await undoBtn.click();
   await page.getByText("Undid “Find and replace”.").waitFor({ timeout: 5000 });
   check("Undo goes back before the button: no copies, nothing left untouched",
-    (await page.getByText("Your edited copies").count()) === 0 && (await handOff.count()) === 0);
+    (await page.getByText("Your edited copies").count()) === 0 && (await cross.count()) === 0);
   check("…and nothing is left to undo", (await undoBtn.count()) === 0);
   // Safe mode's kill switch: Stop now in the bar above the buttons (and Stop in the top bar) while a button's work runs;
   // a stopped preview is withdrawn and nothing is created.
   await page.getByRole("button", { name: "All buttons" }).click();
-  await page.getByRole("button", { name: "Find and replace" }).click();
+  await page.getByRole("region", { name: "Safe mode" }).getByRole("button", { name: "Find and replace" }).click();
   await previewBtn.click();
   const safeStop = page.getByRole("region", { name: "Work running" }).getByRole("button", { name: "Stop now" });
   await safeStop.waitFor({ timeout: 10000 });
@@ -531,11 +543,11 @@ try {
   const exportBtn = page.getByRole("button", { name: /^Export/ });
   check("Export waits for copies", await exportBtn.isDisabled());
   await page.getByRole("button", { name: "All buttons" }).click();
-  await page.getByRole("button", { name: "Find and replace" }).click();
+  await page.getByRole("region", { name: "Safe mode" }).getByRole("button", { name: "Find and replace" }).click();
   await previewBtn.click();
   await createCopies.waitFor({ timeout: 20000 });
   await createCopies.click();
-  await handOff.waitFor({ timeout: 20000 });
+  await cross.waitFor({ timeout: 20000 });
   await exportBtn.click();
   const exportMenu = page.getByRole("menu", { name: "Export the edited copies as" });
   check("Export offers its three choices",
@@ -549,15 +561,16 @@ try {
   check("…and PDF (Clean) leaves the edited copies as they were",
     (await page.getByRole("heading", { name: "Your edited copies" }).isVisible()) && undoBack);
   await page.getByRole("button", { name: "All buttons" }).click();
-  await page.getByRole("button", { name: "Find and replace" }).click();
+  await page.getByRole("region", { name: "Safe mode" }).getByRole("button", { name: "Find and replace" }).click();
   await previewBtn.click();
   await createCopies.waitFor({ timeout: 20000 });
   await createCopies.click();
-  await handOff.waitFor({ timeout: 20000 });
-  await handOff.click();
+  await cross.waitFor({ timeout: 20000 });
+  await cross.click();
+  await safeGrid.getByRole("button", { name: "Work on it in Default mode" }).click();
   await page.getByLabel("Describe a change or answer a question").waitFor({ timeout: 5000 });
-  check("the hand-off switches to Default mode", (await modes.getByRole("button", { name: "Default" }).getAttribute("aria-pressed")) === "true");
-  check("…with the document on the to-do list", await page.getByRole("button", { name: "Work on it now" }).isVisible());
+  check("Work on it switches to Default mode", (await modes.getByRole("button", { name: "Default" }).getAttribute("aria-pressed")) === "true");
+  check("…and begins the pass over that document", (await page.getByText(/Working on .*, from your to-do list/).count()) >= 1);
 
   // 17. Obliterate mode: hidden until Settings → Advanced shows it (a second click), its warning every time it is
   // chosen (the box ticked before the button works), the top bar and the message box say so, Back to Default leaves

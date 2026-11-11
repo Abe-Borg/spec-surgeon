@@ -14,6 +14,7 @@ from spec_surgeon import llm, vision
 from spec_surgeon.document_task import DocumentTask
 from spec_surgeon.gui import Session
 from spec_surgeon.package import DocxPackage, W
+from standing_helpers import untouched
 
 
 def accepted_text(data: bytes, starts: str) -> str:
@@ -149,7 +150,7 @@ def test_a_refused_document_lists_its_occurrences_and_unticking_the_named_one_le
     assert a["status"] == "planned" and [i["paragraph"] for i in a["items"]] == [4, 10, 11, 12, 13, 14, 15]
     assert [i["paragraph"] for i in a["items"] if i["skipped"]] == [11]
     view = task.perform("primary", token=view["token"])
-    assert view["stage"] == "done" and len(task.results) == 2 and view["left_untouched"] == []
+    assert view["stage"] == "done" and len(task.results) == 2 and untouched(task) == []
 
 
 def test_the_record_and_the_journal_carry_the_unticks(folder, tmp_path):

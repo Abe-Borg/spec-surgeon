@@ -213,12 +213,11 @@ test("the buttons keep the server's order in their groups", () => {
   assert.deepEqual(g.map((x) => [x.group, x.recipes.length]), [["Headers & footers", 1], ["Clean up", 2]]);
 });
 
-test("the view carries the mode, the template and what a button left untouched", () => {
-  const v = normalizeView({ mode: "safe", modes: ["safe", "default", "nope"], left_untouched: [{ path: "p", name: "n", reason: "r" }] });
+test("the view carries the mode and the template", () => {
+  const v = normalizeView({ mode: "safe", modes: ["safe", "default", "nope"] });
   assert.equal(v.mode, "safe");
   assert.deepEqual(v.modes, ["safe", "default"]);
   assert.equal(v.template.kind, "none");
-  assert.equal(v.left_untouched.length, 1);
   assert.equal(normalizeView({}).mode, "default");
 });
 

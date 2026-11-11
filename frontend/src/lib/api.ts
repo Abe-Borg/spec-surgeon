@@ -132,12 +132,12 @@ export async function putBack(path: string): Promise<View> {
   return normalizeView(await post<unknown>("/api/put-back", { path }));
 }
 
-/** A to-do entry's **Obliterate this one** (docs/WEB_API.md, `POST /api/todo/obliterate`): Obliterate mode for that
+/** A failed cell's **Obliterate this one** (docs/WEB_API.md, `POST /api/todo/obliterate`): Obliterate mode for that
  *  one document and the pass over it alone. `acknowledged`: the user confirmed the warning this time (not asked
  *  again when the mode is already on). No AI call. */
-export async function obliterateTodo(path: string, acknowledged = false, handsOn = false): Promise<View> {
+export async function obliterateTodo(path: string, operation: string, acknowledged = false, handsOn = false): Promise<View> {
   return normalizeView(
-    await post<unknown>("/api/todo/obliterate", acknowledged ? { path, acknowledged, ...(handsOn ? { hands_on: true } : {}) } : { path }),
+    await post<unknown>("/api/todo/obliterate", acknowledged ? { path, operation, acknowledged, ...(handsOn ? { hands_on: true } : {}) } : { path, operation }),
   );
 }
 
@@ -227,9 +227,17 @@ export const wordActions = (path: string, actions: string[], every = false) =>
 export const rescue = (path: string, password?: string) =>
   streamJob("/api/rescue", password ? { path, password } : { path });
 
-/** Safe mode's "Try these in Default mode": the documents the last button left untouched go on the to-do list. */
-export async function handOff(paths: string[]): Promise<View> {
-  return normalizeView(await post<unknown>("/api/handoff", { paths }));
+/** A failed cell's **Work on it** (docs/WEB_API.md, `POST /api/todo/work`): the pass over the to-do list begins on
+ *  that cell (`operation` and `path`), on every document that owes one operation, or on the list (neither). From Safe
+ *  mode the window turns to Default mode first. No AI call. */
+export async function workTodo(operation?: string, path?: string): Promise<View> {
+  return normalizeView(await post<unknown>("/api/todo/work", { ...(operation ? { operation } : {}), ...(path ? { path } : {}) }));
+}
+
+/** **Not needed on this one** (`on`) or its undoing (docs/WEB_API.md, `POST /api/todo/waive`): one failed cell off the
+ *  to-do list at the user's word, or back on it. Nothing in any document changes; no AI call. */
+export async function waiveTodo(operation: string, path: string, on: boolean): Promise<View> {
+  return normalizeView(await post<unknown>("/api/todo/waive", { operation, path, on }));
 }
 
 /** The Safe-mode buttons (GET /api/recipes), fetched once. */

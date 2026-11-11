@@ -67,10 +67,13 @@ def test_the_pass_over_the_set_aside_documents_plans_them_alone_from_the_request
     first_copy = Path(task.results[str(first)])
     view = task.perform("send", text=WORK_TODO)
     [operation] = task.standing.operations                          # the request it did not get, in the record
+    held = {"name": "B.docx", "decisions": [REQUEST], "seen": task.history, "why": "held",
+            "reason": "You marked its preview as needing more work.", "operation": operation["id"]}
     assert task.focus == {"documents": [str(second)], "seen": task.history,
                           "why": {str(second): {"why": "held", "reason": "You marked its preview as needing more work."}},
-                          "decisions": [REQUEST],                   # what a Discard puts back on the list with it
-                          "operations": {str(second): operation["id"]}}     # the cell this pass's copy settles
+                          "decisions": [REQUEST],                   # the request it failed, the request again
+                          "operations": {str(second): operation["id"]},     # the cell this pass's copy settles
+                          "waiting": {str(second): held}}           # the user set it aside: a Discard puts it back out
     assert task.todo == {} and task.documents() == [second]        # the set-aside document alone, as it is
     assert task.decisions == [REQUEST]                              # the request it was set aside from stands
     assert view["stage"] == "resume" and view["focus"] == [str(second)] and WORK_TODO not in view["chips"]
@@ -99,6 +102,40 @@ def test_the_pass_over_the_set_aside_documents_plans_them_alone_from_the_request
     block = sent.split("CHANGES ALREADY MADE")[1].split("\n\n")[0]
     assert "(not in B.docx)" in block and "(not in A.docx)" in block
     assert block.index("Apply bold") < block.index("Apply italic")
+
+
+def test_the_to_do_reply_typed_during_a_pass_keeps_the_pass_and_its_set_aside_documents(tmp_path):
+    """Typing the reply again while a pass is under way begins no second pass: the one under way stays as it is, with
+    the documents of it that wait out of the batch if it is dropped, and no AI is called."""
+    fake = FakeClient(resp(tool("submit_editspec", {"spec": SPEC})))
+    task, (first, second), view = previewed(tmp_path, fake)
+    task.perform("primary", token=view["token"], hold=[str(second)])
+    task.perform("send", text=WORK_TODO)
+    focus = copy.deepcopy(task.focus)
+    assert list(focus["waiting"]) == [str(second)]
+    view = task.perform("send", text=WORK_TODO)                     # typed again
+    assert task.focus == focus and task.todo == {} and view["focus"] == [str(second)]
+    assert "already working on B.docx" in task.messages[-1]["text"] and len(fake.requests) == 1
+    task.discard_preview()                                          # the pass dropped: it waits out of the batch again
+    assert task.focus is None and list(task.todo) == [str(second)] and task.documents() == [Path(task.results[str(first)])]
+
+
+def test_marking_every_preview_of_a_pass_begins_it_again_over_the_same_cell(tmp_path):
+    """Inside a pass, the ✗ on every preview creates nothing and the pass begins again over the same documents and
+    the same operation — no new one is opened — and they still wait out of the batch if it is dropped."""
+    fake = FakeClient(resp(tool("submit_editspec", {"spec": SPEC})), resp(tool("submit_editspec", {"spec": ITALIC})))
+    task, (first, second), view = previewed(tmp_path, fake)
+    task.perform("primary", token=view["token"], hold=[str(second)])
+    task.perform("send", text=WORK_TODO)
+    [operation] = task.standing.operations
+    view = task.perform("send", text="Italic, not bold, for this one.")
+    task.perform("primary", token=view["token"], hold=[str(second)])            # the ✗ again: nothing is created
+    assert str(second) not in task.results and task.decisions[0] == REQUEST
+    assert task.focus["documents"] == [str(second)] and task.focus["operations"] == {str(second): operation["id"]}
+    assert list(task.focus["waiting"]) == [str(second)] and task.todo == {}
+    assert [op["id"] for op in task.standing.operations] == [operation["id"]]   # the same cell, no new operation
+    task.discard_preview()
+    assert task.focus is None and list(task.todo) == [str(second)]
 
 
 def test_setting_every_document_aside_creates_nothing_and_begins_the_pass_at_once(tmp_path):
@@ -150,10 +187,13 @@ def test_the_journal_keeps_the_to_do_list_and_the_pass(tmp_path):
     again.perform("send", text=WORK_TODO)
     once_more = task_for(tmp_path, FakeClient(), journal=journal)
     assert once_more.restore()
+    operation = task.standing.operations[0]["id"]
     assert once_more.focus == {"documents": [str(second)], "seen": task.history,
                                "why": {str(second): {"why": "held", "reason": "You marked its preview as needing more work."}},
-                               "decisions": [REQUEST],
-                               "operations": {str(second): task.standing.operations[0]["id"]}}
+                               "decisions": [REQUEST], "operations": {str(second): operation},
+                               "waiting": {str(second): {"name": "B.docx", "decisions": [REQUEST], "seen": task.history,
+                                                         "why": "held", "operation": operation,
+                                                         "reason": "You marked its preview as needing more work."}}}
     assert once_more.documents() == [second] and once_more.decisions == [REQUEST] and once_more.stage == "resume"
     assert once_more.applied == {str(first): task.history}
     # a journal from before per-copy histories: every copy carried every change
@@ -191,7 +231,7 @@ def test_the_to_do_reply_with_nothing_set_aside_is_answered_not_acted_on(tmp_pat
     task = task_for(tmp_path, FakeClient())
     task.attach([document(tmp_path / "A.docx")])
     task.perform("send", text=WORK_TODO)
-    assert task.messages[-1]["role"] == "app" and "Nothing is set aside" in task.messages[-1]["text"]
+    assert task.messages[-1]["role"] == "app" and "Nothing is on your to-do list" in task.messages[-1]["text"]
     assert task.focus is None
 
 
@@ -224,7 +264,7 @@ def test_documents_set_aside_from_different_requests_are_worked_on_one_request_a
     task.perform("send", text=WORK_TODO)
     assert task.focus["documents"] == [str(second)] and task.decisions == [REQUEST]    # B first, with its own request
     assert list(task.todo) == [str(first)]                                             # A waits for the next pass
-    assert any("A.docx: set aside from a different request" in m["text"] for m in task.messages)
+    assert any("1 more on your to-do list waits for the next pass." in m["text"] for m in task.messages)
     view = task.perform("send", text="Keep it as it is, just bold.")
     sent = fake.requests[2]["messages"][0]["content"]
     assert "CHANGES ALREADY MADE" not in sent and "Apply bold" in sent.split("THE PLAN THEY SAW")[1][:200]

@@ -22,7 +22,7 @@ beside it alike.
 The top bar's **Safe | Default** switch chooses how a change is asked for; the window opens in the mode last used
 (Safe the first time, `Settings.mode`). Documents, copies, the to-do list and any preview stay as they are when the
 mode changes. A Default-mode preview approved after switching to Safe mode is created as a button's is, with no AI
-step: what it leaves untouched waits beside the copies instead of going to recovery.
+step: what it could not change stays in the batch, owed on the to-do list, instead of going to recovery.
 
 In Safe mode the box you type in gives way to buttons, in groups: headers and footers (match to template, remove, a
 watermark, swap the logo), fonts and formatting (match body formatting to template, match font to template, change
@@ -59,12 +59,17 @@ What happens then is what happens to a plan in Default mode, with no model anywh
   failed its page-layout check and Create was unavailable for all twelve). Only a preview none of whose samples
   passed makes Create unavailable, with the reason beside it.
 - **Create edited copies** makes and checks every copy as always. A document the button could not change exactly is
-  not handed to recovery (an AI step): it is listed under **Left untouched by the last button** beside the copies,
-  with the engine's reason, and **Try these in Default mode** puts it on the to-do list and switches to Default
-  mode, where "Work on the documents I set aside" plans it with the button's sentence as its request. Unlike a
-  Default-mode plan's refusals, which go on the to-do list by themselves, a button's stay among the documents the
-  next button works on until you hand them over. A preview's document you mark with the X goes on the to-do list as
-  in Default mode; with every document marked, nothing is created and no conversation starts.
+  not handed to recovery (an AI step): it gets a cross under that button in **Where each document stands**, with the
+  engine's reason, and the chat names it ("Not done on: … — each one's reason is in Where each document stands, and
+  it stays among the documents the next button works on."). The cross is on the to-do list and the document stays
+  in the batch, as in every mode (`DocumentTask._owe`; "Where each document stands", below). **Work on it in Default
+  mode**, on the cross or on the to-do card in the chat, switches to Default mode and begins the pass over it, with
+  the button's sentence as its request (`DocumentTask.work_todo`). It works on any cross, however many buttons ago:
+  it replaces **Try these in Default mode** (`hand_off`) and the card **Left untouched by the last button**, which
+  held the last button's documents alone and are removed. The same button pressed again with the same form settles
+  its own earlier crosses on the documents it now changes. A preview's document you mark with the X is set aside as
+  in Default mode, out of the batch and on the to-do list; with every document marked, nothing is created and no
+  conversation starts.
 - The button's sentence (what you pressed and what you typed) is your line in the chat, and the change sentences of
   its plan join the history the next request in either mode hears.
 - **Stop now**, while a button's work runs — in the bar above the buttons, and as the red **Stop** beside the
@@ -73,9 +78,9 @@ What happens then is what happens to a plan in Default mode, with no model anywh
   steps the engine stops at once; work running elsewhere is looked at every 0.25 s (`stopping.POLL_SECONDS`) and
   ended — the worker processes terminated, a Word worker ended with the private Word instance it started, LibreOffice's
   process tree killed. Nothing the work made is used (`DocumentTask._stopped`): a preview being made (a button, a
-  saved recipe, an untick) is withdrawn as Discard withdraws one, the window showing the copies and Left untouched
-  list it showed before the button; a stopped **Create** delivers no copy — copies reach your documents only once the
-  run has checked them all — and its preview waits again for the same approval, the marks on it standing; a stopped
+  saved recipe, an untick) is withdrawn as Discard withdraws one, the window showing the copies it showed before the
+  button; a stopped **Create** delivers no copy — copies reach your documents only once the run has checked them
+  all — and its preview waits again for the same approval, the marks on it standing; a stopped
   clean export saves nothing. A file already in hand in the app's own process finishes its step first, and once the
   copies are being handed over the run finishes, so a copy is delivered whole or not at all. The chat says which of
   these happened. In Default and Obliterate, Stop is the AI kill switch described under "Connection and resource
@@ -85,14 +90,15 @@ Changing your mind (`DocumentTask.discard_preview`, `DocumentTask.undo`; the sam
 Obliterate, below under "The conversation"):
 
 - **Discard preview**, beside Create while a button's preview waits, withdraws it: nothing is created, and the window
-  shows again the copies and the Left untouched list it showed before the button was pressed (`_before_button`).
+  shows again the copies it showed before the button was pressed (`_before_button`).
   **All buttons** while a preview waits does the same. The form stays as you filled it; each button's form keeps what
   you typed when you go back to all the buttons, until **Clear form**, New conversation or Start over (the page's
   memory only).
 - **Undo the last button**, beside Start over, takes the working set back one run: each document builds on the copy
   it had before that run (its original, when it was the first), the history and each copy's changes are as they were,
-  the copies and Left untouched list that run replaced show again, and the documents its ✗ put on the to-do list come
-  off it. A point is taken at each approval (`_undo_point`) and kept once the run delivers copies
+  the copies that run replaced show again, the record of where each document stands loses what that run recorded
+  (its column, or its fix of an earlier cross; `Standing.rewind`), and the documents its ✗ set aside are in the
+  batch again. A point is taken at each approval (`_undo_point`) and kept once the run delivers copies
   (`_advance_generation`); the points are kept in the saved conversation (`undo`), so they survive a restart. Undo
   waits while a preview is open ("Discard the preview first") and refuses when a copy it would go back to is no longer
   where it was saved. No file is written or deleted: the copies an undone button made stay in the scratch folder until the window closes. Start
@@ -108,14 +114,16 @@ Obliterate, below under "The conversation"):
 
 **What you've done so far** (`DocumentTask.runs`, `_done_view`; the view's `working.done`), under the copies, lists
 every run that delivered copies since the originals, oldest first, in every mode: the button's sentence (your line in
-the chat), the newest marked LATEST, and under each how many of the documents attached now carry it and why any other
-does not — **left untouched** (the run left it as it was: a button could not change it, or it was outside the run),
-**set aside** (it waited on the to-do list then), **attached later** (attached after the run, or removed and attached
-again, which makes it an original). A button whose run the list names carries a checkmark on its tile, its hover text
-saying how many times, so a batch of buttons pressed one after another never has to be remembered and a button is not
-pressed twice by mistake. Undo the last button takes the newest off (each undo point keeps the list as it was before
-its run), Start over and removing the last working copy clear it, and the journal keeps it (`runs`); a journal from
-before it, or one whose list cannot be read, shows none rather than refusing the conversation.
+the chat), the newest marked LATEST, and under each how many of the documents attached now carry it. Which documents
+do not, and why, is no longer named here: Where each document stands (below) says it per document, with the reason.
+The view still keeps each one's kind — **left untouched** (the run left it as it was: a button could not change it,
+or it was outside the run), **set aside** (you had set it aside then), **attached later** (attached after the run,
+or removed and attached again, which makes it an original). A button whose run the list names carries a checkmark on
+its tile, its hover text saying how many times, so a batch of buttons pressed one after another never has to be
+remembered and a button is not pressed twice by mistake. Undo the last button takes the newest off (each undo point
+keeps the list as it was before its run), Start over and removing the last working copy clear it, and the journal
+keeps it (`runs`); a journal from before it, or one whose list cannot be read, shows none rather than refusing the
+conversation.
 
 ### Saved recipes
 
@@ -163,9 +171,10 @@ still traced to its own: `_gate_step`), then composed in the user's order into O
 a chain, a structure pattern a layout step does not cover left out with why) that passes the gate again. One preview
 shows the pages after every step; one Create runs it as one checked run (`Session.model_free`: no visual check, no
 outcome planning, no recovery); What you've done so far lists it as one entry with its steps under it, and Undo takes
-the whole recipe off. The chat says the steps and every word they place before Create. A document a step cannot take is
-left untouched in Safe mode (offered to Default mode as after a button) and waits on the to-do list in Default and
-Obliterate (the owner's decision: no AI re-plans a recipe's step by itself; the user can ask the assistant there). In
+the whole recipe off. The chat says the steps and every word they place before Create. A document a step cannot take
+stays in the batch, as it is, and owes the recipe's run on the to-do list, in every mode (the owner's decision: no AI
+re-plans a recipe's step by itself; the user works on it in Default or Obliterate, from Safe mode with **Work on it
+in Default mode** as after a button). In
 Default and Obliterate a recipe is a request of its own: it waits while another is open (`_recipe_blocked`), Discard
 ends it, and a recipe's preview voided by a change to the attachments, or waiting at a restart, is run again by the user,
 never handed to Claude as a request to plan.
@@ -210,7 +219,8 @@ spacing (all on). For each document, `body_match.plan_file` reads its own struct
 Documents of one structure pattern whose plans agree run as one layout (the largest agreeing group; each other one
 is left out with why), and each layout's spec passes `compiler.compose_submission` on its own documents, which puts
 the overlapping operations in ordered steps. A document left out is listed beside the preview with its reason
-(`Session.left_out_reasons`) and, after the run, under **Left untouched by the last button**, ready for Default mode.
+(`Session.left_out_reasons`) and, after the run, has a cross in Where each document stands with the same reason, to
+work on in Default mode.
 Every change is plain and no word is placed.
 
 **Match font to template** (`recipes._font_template`) sets the template's body font and size (the font most of its
@@ -318,7 +328,8 @@ What it lifts (`Session.unguarded`; CLAUDE.md, "Modes"):
   - **You approve results.** The method's copy of every document is made before the button (`Session._every_copy`:
     the samples the writer tried, and every other document), each with its own preview card: **Not proven** (never
     Checked), or **Did not pass** with the checks its file failed; a document the method could make no copy of says
-    why, is counted out of the button's number, and goes on the to-do list when the others are created. The approval
+    why, is counted out of the button's number, and owes the request on the to-do list (a failed cell; it stays in
+    the batch) when the others are created. The approval
     names each copy's bytes (`preview.generated_key`'s `results`), and Create delivers those copies without running
     the method again (`codegen._kept_trial`). A copy that is no longer the bytes that were checked (changed, or
     gone) voids the approval for every document: Create is refused, and Preview makes each copy again
@@ -503,8 +514,8 @@ What it lifts (`Session.unguarded`; CLAUDE.md, "Modes"):
     requests. In a pass over the to-do list the pass stays open after the Word run (`_pass_goes_on`,
     `_advance_generation(keep_pass=)`): its document is still the only one in scope, the request it was set aside
     from is the request again, the stage is `resume`, and the conversation that Continue starts hears the case file
-    with `WORD_THEN_SAME`. Undo takes the copy Word just made off without ending the pass; Drop this request puts
-    the document back on the list with its copy.
+    with `WORD_THEN_SAME`. Undo takes the copy Word just made off without ending the pass; Drop this request ends
+    the pass with the document's cell still on the list and its copy kept.
   - **Stop.** A job of the menu calls no AI, so Stop ends the job itself (`web.server.MODEL_FREE_JOBS` arms
     `stopping`): between documents, and inside one by ending the worker and the private Word it owns. When Claude
     planned the actions, Stop is asked between documents (`llm.cancel_requested`).
@@ -561,8 +572,9 @@ What it lifts (`Session.unguarded`; CLAUDE.md, "Modes"):
   pass** and the plan stands (no outcome investigation; a chain's sample goes on through every step, as the run will),
   and a custom method's copy shows the checks it failed, or **Not proven**, never a pass. The copies list marks a
   copy **UNVERIFIED** with the checks it failed, or **UNPROVEN** when a custom method made it and none failed, and
-  the done message counts both. No recovery runs after a run in this mode; a document whose copy could not be made at all
-  goes on the to-do list as in Default. The mark stays with the document: a later copy that builds on an unverified
+  the done message counts both. No recovery runs after a run in this mode; a document whose copy could not be made at
+  all owes the request on the to-do list, and stays in the batch, as in Default. The mark stays with the document: a
+  later copy that builds on an unverified
   one was checked against it, not against the original, so in every mode it is marked *in an earlier copy* with the
   checks that failed (`DocumentTask._mark_unverified`) until Start over, Undo or removing the document, and the next
   request's history tells the assistant so.
@@ -570,22 +582,25 @@ What it lifts (`Session.unguarded`; CLAUDE.md, "Modes"):
 **From the to-do list** (the owner's decision of 2026-11-10). Obliterate is the top rung of a ladder: Safe, then
 Default for what Safe could not take, then Obliterate for the one or two documents neither could. By then the request
 is known, the reason is on record and the other documents show what done looks like, so the mode can start from one
-document on the list instead of from an empty conversation:
+cross on the list — one document under one operation — instead of from an empty conversation:
 
-- **The case file.** A document that goes on the to-do list because the engine stopped on it, or because its copy
-  failed a check, keeps a case file with its entry (`document_task._case_of_exception`, `_case_of_result`,
-  `_case_of_sample`; journalled with the entry, a malformed one dropped by `_restored_case`): the engine's code,
-  reason, operation and details; the failed checks as the checker named and summarised them; the copy that failed,
-  when it is the whole of the plan — a batch's result (moved to `failed/`) or a plan's own preview sample, with the
-  md5 of the bytes the checks read and the identity of the file it was made from, never a chain's (it stopped at the
-  step that failed); and a document of the same run that got a verified copy (`_run_sibling`). A Safe-mode button's
-  Left untouched entries keep one too, and **Try these in Default mode** carries it to the list. Safe and Default
-  never read it: their pass over the list tells the model the entry's one sentence, as before.
-- **Obliterate this one** (`DocumentTask.obliterate_todo`, `POST /api/todo/obliterate`), beside a document on the
-  list while Settings shows the mode. It opens the same warning, naming the document (none when the mode is already
-  on), turns the mode on as the switch does (`set_mode`: never kept for the next launch) and begins the pass over
-  that one document (`start_todo(only=)`), the request it was set aside from standing. Nothing is planned or created
-  by the click. The conversation that follows hears the case file in the app's note (`_case_note`), and its tools —
+- **The case file.** A failed cell of the record that the engine made — it stopped on the document, or the
+  document's copy failed a check — keeps a case file (`DocumentTask._owe` → `Standing.record(case=)`; built by
+  `document_task._case_of_exception`, `_case_of_result`, `_case_of_sample`; journalled with the cell, a malformed
+  one dropped by `_restored_case`): the engine's code, reason, operation and details; the failed checks as the
+  checker named and summarised them; the copy that failed, when it is the whole of the plan — a batch's result
+  (moved to `failed/`) or a plan's own preview sample, with the md5 of the bytes the checks read and the identity of
+  the file it was made from, never a chain's (it stopped at the step that failed); a document of the same run that
+  got a verified copy (`_run_sibling`); and the plan the document was stopped under (`_with_plan`). It is the
+  cell's, one per document per operation (the owner's decision of 2026-11-11; before it a to-do entry kept one per
+  document), so a document that failed two buttons keeps both. A Safe-mode button's failed cells keep one too. Safe
+  and Default never read it: their pass over the list tells the model the cell's one sentence, as before.
+- **Obliterate this one** (`DocumentTask.obliterate_todo`, `POST /api/todo/obliterate`), on a cross of Where each
+  document stands while Settings shows the mode. It opens the same warning, naming the document (none when the mode
+  is already on), turns the mode on as the switch does (`set_mode`: never kept for the next launch) and begins the
+  pass over that one document on that one operation (`start_todo(operation=, only=)`), the request it failed
+  standing, with that cell's own case file. Nothing is planned or created by the click. The conversation that
+  follows hears the case file in the app's note (`_case_note`), and its tools —
   and a custom method's writer after it, whose brief carries the note — may read the worked example by label
   (`_focus_examples` → `compiler._Batch.add_examples`): pinned like every source, and never among the batch's files,
   so no plan, binding, template or leave-out can name it.
@@ -598,8 +613,9 @@ document on the list instead of from an empty conversation:
   (`_failed_copy_problem`: the source guard's identity); otherwise it is refused in the chat and nothing moves. Its
   bytes are written to a new session folder (`accepted\outputs\`, beside `accepted.json`); the held-back copy stays
   where it was. It is one change: an undo point, a line under What you've done so far (never a recipe step), the
-  plan's sentences in the copy's history, and the UNVERIFIED mark with the checks it failed. A document of the pass
-  with no such copy goes back on the list as it was.
+  plan's sentences in the copy's history, and the UNVERIFIED mark with the checks it failed; its cell reads done,
+  with the note "the copy that failed, taken as it is". A document of the pass with no such copy still owes the
+  operation, as it did.
 
 What holds, in every mode: copies only (the window never writes in place, and an unverified copy is never written
 back); the source guard (a source that moved is never delivered over); the sandbox, its import whitelist and its time
@@ -696,10 +712,12 @@ touched:
   in order: your practice workspace (the top bar, the modes, spending and the context gauge, Settings), the documents
   (a folder at once, the template, pictures and tables, removing them), Safe mode's note, buttons, recipes and form,
   the preview (the pages and the layout check, Worth knowing, checkmarks and the red X, Left untouched, the one
-  button), the copies (What you've done so far, Where each document stands, Save as a recipe, Export, the working set, the hand-off to Default
-  mode, the to-do list), find and replace occurrence by occurrence, the conversation (an answer that ends a request,
-  a request kept to some documents), questions and suggested replies, a plan in Default mode (a document left out, a
-  custom method's word changes, Create with some set aside), the to-do list's pass, Help and About, and the finish.
+  button), the copies (What you've done so far, Where each document stands, Save as a recipe, Export, the working
+  set, what a button could not do and **Work on it in Default mode**, the to-do list), find and replace occurrence
+  by occurrence, the conversation (an answer that ends a request, a request kept to some documents), questions and
+  suggested replies, a plan in Default mode (a document left out, a custom method's word changes, Create with some
+  set aside), the to-do list (the pass, the same list in the grid with **Not needed on this one** and **Put back**,
+  **Obliterate this one**), Help and About, and the finish.
   Steps whose subject would spend money (a real message, an answer, a custom method, the pause, an update) are marked
   optional.
 - **Picked back up, and remembered.** The page keeps its place (chapter and step, with the tour's id, in the
@@ -804,7 +822,7 @@ that asks nothing (an answer, an apology, a list of findings) stays in the chat 
 discarded or the request dropped (below), or when the assistant's reply ends the exchange with an answer and nothing pending: no plan, no question, no
 suggested reply, no custom method being prepared ("Which of these carry a Subject property? Do not make an edit."
 answered in words). The answer stays in the chat as it is, no button follows it, and your next message is a new
-request, whatever happened in between — a document put back from the to-do list, one attached, a mode change — never
+request, whatever happened in between — a set-aside document put back, one attached, a mode change — never
 a revision of the question it answered. The assistant is told the last five such exchanges with each new request (what
 you asked, and the first sentence of its answer), so it can refer back without answering them again
 (`DocumentTask.exchanges`, kept in the saved conversation). While a question or a preview is pending, a follow-up is
@@ -820,17 +838,19 @@ refused its plan, which is still to be made.
   called. The request ends: the decisions are cleared, the window rests on the copies it had, and your next message
   is a new request. The assistant is told with it that the last one was withdrawn ("a plan was previewed and the user
   discarded it", "the user dropped the request", among the exchanges above), so "the same, but italic" still reads.
-  A pass over the to-do list ends with its request, and its documents wait on the list again as they did. Discard is
+  A pass over the to-do list ends with its request: what it worked on is still owed, as it was (the record never
+  changed), and a document of it you had set aside waits out of the batch again (`_back_to_waiting`). Discard is
   not offered while recovery checks the documents again after a run: there the ready copies are saved and
-  **Set the rest aside for later** ends it. Undo waits for that too while the run's saved copies wait on the check,
+  **Leave the rest for later** ends it. Undo waits for that too while the run's saved copies wait on the check,
   and so does Discard on a reopened window whose check waits to continue.
 - **Undo the last change**, beside Start over, takes the working set back before the last run that delivered copies,
   exactly as Undo the last button does in Safe mode (the copies each document builds on, the history the assistant
-  hears, the copies and Left untouched list shown, the ✗ entries that run added); it waits while a preview is open
-  ("Discard the preview first") or a request is ("Drop the request that is open first, or finish it"). In
-  Obliterate mode a copy's UNVERIFIED mark goes back with the copy it belongs to. No file is written or deleted.
+  hears, the copies shown, what that run recorded of where each document stands, the documents its ✗ set aside); it
+  waits while a preview is open ("Discard the preview first") or a request is ("Drop the request that is open first,
+  or finish it"). In Obliterate mode a copy's UNVERIFIED mark goes back with the copy it belongs to. No file is
+  written or deleted.
 - **What you've done so far**, under the copies, lists each request the copies carry, as in Safe mode (above): the
-  request's first words as you typed them, how many documents carry it and why any other does not. Undo the last
+  request's first words as you typed them and how many documents carry it. Undo the last
   change takes the newest off. **Save as a recipe…** keeps requests with the plans you approved, to run again from
   **Recipes** beside the message box with no AI (Saved recipes, above).
 
@@ -961,48 +981,88 @@ back, and **Include all**, after the sentence beside the button, takes every X b
 copies it makes: every document the plan runs, the ones without a preview of their own too (the previews are a
 sample, at least one per layout), and the sentence beside it says how many have no preview ("Create 30 edited
 copies" · "22 more documents, not previewed, get the same plan."). When you create the edited copies, the
-documents you set aside get no copy; they go on a to-do list, and the button says so ("Create 28 edited copies (2
-set aside)"). Every other document is created and verified as usual, each one still held to the exact file the
+documents you set aside get no copy: they wait out of the batch, in no later button's or request's plan, and what
+they still owe is on your to-do list; the button says so ("Create 28 edited copies (2 set aside)"). Every other
+document is created and verified as usual, each one still held to the exact file the
 preview was made from; a document that is not part of the displayed plan can never be set aside or run. The marks
 show only while Create is available.
 
-Once the other copies are saved, the conversation shows **Set aside for more work** with the documents'
-names, why each one waits, and one button, **Work on them now** (the same as typing “Work on the documents I set
-aside”); the same list sits under the copies, with **Put back** beside each document. The pass
-over them begins: they are the only documents in the plan, tagged **Working on** in the documents section; the
-request they were set aside from stands; the assistant is told that you looked at the preview of that plan and
-set these documents aside, and is shown the plan you saw. Tell it what should be different for them, or
-**Continue** to plan them again as before. The pass ends when their copies are created; the other copies stay
-as they are and the whole set is the working set again. A document you set aside once more goes back on the
-list. Documents set aside from different requests are worked on one request at a time, the oldest first; the
-others wait and are offered again. The assistant always hears what each document carries: a change that some
-documents got and others did not (left out, set aside or refused) is named per document, never claimed for all, and
-only a document attached beside the copies since the last run is named as one that arrived after the changes. Documents on the to-do list are tagged **To do** and are out of every plan until you work on them;
-removing one drops it from the list, and **Start over from the originals** clears the list. Setting every
-document aside creates nothing and begins the pass at once. The list and the pass are kept in the saved
-conversation.
+**The to-do list is the crosses of Where each document stands** (below; the owner's decisions of 2026-11-11): each
+document under each button or request that could not be done on it, whoever could not do it — your red X or your
+word, a plan, a button or a saved recipe that refused the document, a preview that did not pass, a copy that failed
+a check or could not be made. While something is owed and nothing is open, the conversation shows **On your to-do
+list**: each owed line (the document · the request, then the reason) and one button, **Work on them now** (the same
+as typing “Work on my to-do list”; in Safe mode it reads **Work on them in Default mode** and switches modes
+first). The same list is the grid under the copies, where a cross opens its reason and its own actions.
+
+**Only your own set-aside takes a document out of the batch**: the red X, or asking the assistant. A document the
+app could not change stays among the documents the next button or request works on, in every mode, and gets that
+change with the others (`DocumentTask._owe`); it can get a second change before the first is fixed, and the engine
+plans each document from the state it is in. A document you set aside (`_set_aside`, `DocumentTask.todo`) is tagged
+**To do** in the documents section and carries the **set aside** badge in the grid, with **Put back** beside it; it
+is out of every plan until you work on it or put it back, and a change the others get meanwhile reads *not run* on
+it, not owed.
+
+The pass (`start_todo`) takes one request at a time — the oldest that is owed, or the one whose cross you clicked —
+and the documents that owe it, or one document. They are the only documents in the plan, tagged **Working on** in
+the documents section; the request they failed stands; the assistant is told why each one is on the list (for
+documents you marked with the red X: that you looked at the preview of that plan and set them aside) and is shown
+the plan you saw. Tell it what should be different for them, or **Continue** to plan them again as before. The pass
+ends when their copies are created: each cross turns to a check labelled with the mode of the pass, both attempts
+kept; the other copies stay as they are and the whole set is the working set again. A pass you drop leaves its
+crosses as they were, and a document of it that you had set aside waits out of the batch again; so does one you set
+aside once more during the pass. What else is owed waits for the next pass and is offered again. The assistant
+always hears what each document carries: a change that some documents got and others did not (left out, set aside
+or refused) is named per document, never claimed for all, and only a document attached beside the copies since the
+last run is named as one that arrived after the changes. Removing a document takes what it owes off the list, and
+**Start over from the originals** clears the list. Setting every previewed document aside creates nothing and
+begins the pass over them at once (in Safe mode, which has no conversation, they wait for Default mode). The list
+and the pass are kept in the saved conversation; a to-do list an earlier version saved is read into the record
+(`_adopt_todo`: a document the engine had put there is in the batch again, still owing what it owed).
 
 The red X is one way onto the list. The others:
 
-- **You ask for it.** "Set 20 aside for later", "park the Michigan one", "I'll come back to 23": the assistant puts
-  those documents on the list at once, with your reason when you give one, and the conversation goes on about the
-  others (a plan it submits afterwards covers only them). "Leave out" is different: it keeps a document out of this
-  one request, and the next request covers it again. Setting aside every document ends the request; setting aside
-  the documents of a pass over the list again ends that pass, and the others come back.
+- **You ask for it.** "Set 20 aside for later", "park the Michigan one", "I'll come back to 23": the assistant sets
+  those documents aside at once, with your reason when you give one — out of the batch, as the red X's are — and
+  the conversation goes on about the others (a plan it submits afterwards covers only them). "Leave out" is
+  different: it keeps a document out of this one request, and the next request covers it again. Setting aside every
+  document ends the request; setting aside the documents of a pass over the list again ends that pass, and the
+  others come back.
 - **The plan could not be applied to it.** A file listed under **Left untouched** because its result cannot be
-  predicted goes on the list, with that reason, when you create the others' copies. So does a document whose
+  predicted owes the request, with that reason, when you create the others' copies. So does a document whose
   preview did not pass its checks while another's did ("Its preview did not pass its checks, so no copy of it is
-  made: …", why `failed`): it was never run. A click that is refused (a file changed since the preview) moves
-  nothing.
-- **Its copy could not be made.** A file whose copy failed and that nothing will check again goes on the list. While
-  files are being checked again (below), **Set the rest aside for later** is offered as a reply once the ready copies
-  are saved: what was not fixed, and the documents of layouts still waiting their turn, go on the list and the
+  made: …", why `failed`): it was never run. Both stay in the batch. A click that is refused (a file changed since
+  the preview) moves nothing.
+- **A button or a saved recipe could not change it.** The same, with no AI step after it: the document owes that
+  button or recipe, with the engine's reason, and the next button works on it with the others. A button or a recipe
+  that no document can take is on the list for every one of them.
+- **Its copy could not be made.** A file whose copy failed and that nothing will check again owes the request. While
+  files are being checked again (below), **Leave the rest for later** is offered as a reply once the ready copies
+  are saved: what was not fixed, and the documents of layouts still waiting their turn, stay as they are, in the
+  batch, each owing the request with the reason ("It still needed work when you left it for later: …"), and the
   request ends; the copies already saved are the working set.
 
-Each entry says why it is there, in the window and to the assistant: every new request tells it which documents
-wait on the list and why (it cannot read, plan or bring them back), and a pass over them tells it why each one
-waited. **Put back** takes a document off the list without a pass: it is among the documents the next request
-works on, as it is (during a pass it joins them when the pass ends). Nothing on the list is ever changed.
+And two ways off it, besides a pass:
+
+- **Not needed on this one**, on a cross (`DocumentTask.waive`): the cell is taken off the list at your word — a
+  later change made it moot, or it never applied to this document. The grid shows a dash there, the failed attempt
+  stays under it, and **Put it back on my to-do list** undoes it. Nothing in any document changes and no AI is
+  called.
+- **The same Safe-mode button pressed again with the same form** settles its own earlier crosses on the documents
+  it now changes (the record says "the same button, pressed again"); the new press is still a column of its own.
+  Nothing else is ever inferred: two requests worded alike are never taken for the same one.
+
+With Obliterate mode shown in Settings, a cross also offers **Obliterate this one**: the pass over that one
+document, on that one request, in Obliterate mode (Obliterate mode, "From the to-do list").
+
+Each cross says why it is there, in the window and to the assistant. Every new request tells it which documents you
+set aside and why (SET ASIDE BY THE USER: it cannot read, plan or bring them back) and, in the app's note, what the
+documents in the batch still owe (STILL ON THE USER'S TO-DO LIST, FOR CONTEXT: each with what was asked and why it
+was not done; `DocumentTask._owed_note`, at most `OWED_LINES` lines) — as context only: it plans what the request
+asks, and an earlier request for such a document only when you ask for it. A pass tells it why each of its
+documents is on the list instead. **Put back** returns a document you set aside to the batch without a pass: it is
+among the documents the next request works on, as it is (during a pass it joins them when the pass ends), and what
+it owes stays on the list. Nothing on the list is ever changed.
 
 Claude's visual check of the rendered pages is advisory. Its findings, and the other advisory notes of the checks
 (the renderer used, page counts that changed, the words the copy's pages do not show), are not listed in the window
@@ -1037,9 +1097,8 @@ what it does. Its label says what it does:
   every document you did not set aside with the red X, verifies each one independently, and delivers only the
   files that pass every check. The label counts the copies it makes ("Create 30 edited copies"), the documents
   without a preview of their own included, and the sentence beside it says how many those are; "(N set aside)" on
-  the label counts the documents that go on the to-do list. A
-  document whose preview did not pass while another's did is not run (its card carries no marks); the sentence
-  beside the button says it gets no copy.
+  the label counts the documents you marked with the red X. A document whose preview did not pass while another's
+  did is not run (its card carries no marks); the sentence beside the button says it gets no copy.
 - **Continue**: the documents or the plan changed while a request was open; the documents are checked against the
   request again before anything can be approved. A request the assistant answered without a plan is not open (above),
   so no Continue follows the answer.
@@ -1062,9 +1121,10 @@ belong to the displayed plan too: a new plan or preview starts the review over.
 The owner's request of 2026-11-10: "the app needs a way to track what worked on what spec(s) and what didn't" — over
 a batch worked through several buttons, then Default mode, then Obliterate for the last one or two. Before it, the
 window kept runs (What you've done so far) and a to-do list, and nothing tied an operation that failed to its document
-for longer than one step: Safe mode's **Left untouched by the last button** is the last button's alone, so the reason
+for longer than one step: Safe mode's **Left untouched by the last button** was the last button's alone, so the reason
 a document missed the first button was gone at the second press; a button or request that delivered no copy left no
-line; and a later fix was a new line beside the old one, which still said "not A, B".
+line; and a later fix was a new line beside the old one, which still said "not A, B". The record came first, as an
+account only; the owner's decisions of 2026-11-11 then made its failed cells the to-do list (below).
 
 `standing.py` keeps one record across modes (`DocumentTask.standing`, journalled; the view's `standing`):
 
@@ -1072,41 +1132,98 @@ line; and a later fix was a new line beside the old one, which still said "not A
   carries: the engine delivers it whole or not at all per document, so it is one operation), a saved recipe's run, or
   one of Obliterate's own actions (Word actions, Replace this part). A button or a recipe that no document can take
   is recorded too, every document failed, though nothing could be approved. A request dropped or a preview discarded
-  is not an operation. It keeps the mode it was asked in.
+  is not an operation. It keeps the mode it was asked in, and a Safe-mode button its form (`inputs`): the same
+  button pressed again is an operation of its own.
 - **A cell** is one document under one operation: **done** (with the mode that did it, and the marks its copy was
   delivered with — in Obliterate a copy delivered UNVERIFIED or UNPROVEN is done with its mark, never a clean check
   and never owed; the mark is that delivery's own, and the one a document carries on from an earlier copy shows on
-  its row, `_own_marks`), **failed** (why — refused, failed, the red X, set aside at the user's word — and the reason in the
-  words Left untouched or the to-do list gives it) or **not run** (the user left it out of the request, it waited on
-  the to-do list, it was attached later, or the action was another document's alone).
+  its row, `_own_marks`), **failed** (why — refused, failed, the red X, set aside at the user's word — and the
+  reason, in the sentence the window shows), **waived** (the user said it is not needed on this document; the
+  failed attempt stays under it) or **not run** (the user left it out of the request, the user had set it aside and
+  it waited out of the batch, it was attached later, or the action was another document's alone). A failed attempt
+  keeps what a pass over it needs: the request it failed (`decisions`), the plan the user saw (`seen`) and, where
+  the engine stopped on it, its case file (`case`), one per document per operation.
 - **A cell keeps every attempt**, oldest first, and its state is the last one's. Within one approval a later word on
   the same document replaces the earlier (a result that failed and that recovery then fixed is one attempt, done,
   that remembers the reason it failed first); across approvals attempts add up. A pass over the to-do list opens no
-  operation: each to-do entry keeps the id of the operation it did not get (`operation`), the pass carries them
-  (`focus["operations"]`), and what the pass delivers is recorded under that operation — so the cell that read
-  failed in Safe mode reads done in Default mode, with both attempts. An action of its own inside a pass
-  (Obliterate's Word actions, before the plan is run again) is its own operation (`_own_op`).
+  operation: it works on one, carries it for each of its documents (`focus["operations"]`), and what it delivers is
+  recorded under that operation — so the cell that read failed in Safe mode reads done in Default mode, with both
+  attempts. An action of its own inside a pass (Obliterate's Word actions, before the plan is run again) is its own
+  operation (`_own_op`); the copy that failed, taken as it is, settles the cell with a note saying so.
 
 `DocumentTask` writes to it wherever an outcome is decided (`_stands`): at an approval, the documents the plan does
-not cover (`_stand_aside`); every to-do entry as it is made (`_set_aside`); Safe mode's Left untouched
-(`_leave_untouched`, `_record_none_took`); each result that did not pass, straight after the run; each copy that
-joins the working set (`_advance_generation`), the copy that failed taken as it is among them. Every operation and
+not cover (`_stand_aside`); a document the user sets aside, as it is set aside (`_set_aside`); a document the engine
+could not change (`_owe`: one a preview refused or whose sample failed, once the others run, `_owe_refused`; a
+button or a recipe no document can take, `_record_none_took`; each result that did not pass, straight after the
+run; recovery's leftovers, `set_rest_aside`); each copy that joins the working set (`_advance_generation`), the
+copy that failed taken as it is among them. Every operation and
 attempt carries the number it was recorded at, and an undo point keeps the number at its approval: **Undo** takes
 back exactly what was recorded since (`Standing.rewind`), **Start over** clears the record, and a document removed
 takes its cells with it (attached again it reads as attached later). A journal whose record does not read restores
 the conversation without one, and an undo point from before the record clears it rather than show as done something
-that may not be.
+that may not be. A to-do list an earlier version journalled is read into the record (`_adopt_todo`): each entry gets
+its failed cell where the record holds none, and an entry the engine made (a refusal, a failed copy) leaves the
+waiting set, its document in the batch again and still owing what it owed.
 
-The window shows it under the copies as **Where each document stands**: operations across (numbered, each under its
-mode), documents down (each with its badges: SALVAGED, UNVERIFIED, UNPROVEN, set aside), a check, a cross or a dash
-in each cell. A mark opens that cell's reason and every attempt made; the line underneath counts what is still owed
-and **Show only these** lists just those documents. The grid is read-only.
+**The failed cells are the to-do list.** The rules, each the owner's decision of 2026-11-11, numbered as their tests
+are (`tests/test_standing.py`, `test_rule_N_…`):
 
-**It describes and never decides.** No button, plan, gate or model reads the record, and what the buttons, the
-conversation, the to-do list and Left untouched do is unchanged by it. What comes next — a failed document staying
-in the batch for the next request in every mode, the to-do list becoming the failed cells, and working one from any
-mode — is designed in `docs/BACKLOG.md` ("Where each document stands: the batch rule and the hand-up") and not built.
-Pinned by `tests/test_standing.py` and `frontend/tests/standing.test.ts`.
+1. **A failed cell never takes a document out of the batch**, in any mode. A document the engine could not change
+   is recorded by `_owe` as a failed cell and nothing else, and stays among the documents the next button or request
+   works on. Only the user's own set-aside takes one out — the red X (`why` `held`) or asking the assistant (`asked`)
+   — and `DocumentTask.todo` holds only those (`_set_aside`), each with its failed cell too. **Put back**
+   (`put_back`) returns one to the batch; what it owes stays on the list.
+2. **The to-do list is the failed cells and nothing else** (`DocumentTask._owed` → `Standing.owed`): every cell
+   whose last attempt failed, over the documents listed now, oldest operation first. A cell that is done, not run or
+   waived is not on it, a document that is removed takes its lines with it, and owing something sets no document
+   aside.
+3. **A pass takes one operation** (`start_todo(operation=None, only=None)`): the oldest that is owed, or the one
+   named, and the documents that owe it and failed it from the same decisions, or one document. Those decisions are
+   the request again. `focus` carries `operations` (document → operation id) and `waiting` (the documents of the
+   pass the user had set aside). Copies the pass delivers turn those cells to done in that mode, both attempts
+   kept; a pass that is dropped leaves them failed, and its `waiting` documents go back out of the batch
+   (`_back_to_waiting`). **Work on it** (`work_todo(operation=None, path=None)`, `POST /api/todo/work`) begins the
+   pass from the window: on one failed cell, on every document that owes one operation, or on the list. From Safe
+   mode the window turns to Default mode first. It replaces `hand_off` and **Try these in Default mode**, which
+   took the last button's documents alone. One pass at a time: Work on it is refused while one is under way, the
+   reply typed again is answered and changes nothing, and where a pass does begin over one (every preview of a pass
+   marked ✗) the earlier one ends as a dropped pass does, its `waiting` documents out of the batch again.
+4. **Obliterate this one** (`obliterate_todo(path, …, operation=None)`) is a failed cell's, with that cell's case
+   file (Obliterate mode, "From the to-do list").
+5. **Not needed on this one** (`waive(operation, path, on=True)`, `POST /api/todo/waive`) takes a failed cell off
+   the list at the user's word, and puts it back (`on=False`). Nothing in any document changes; no AI call.
+6. **Nothing is inferred**, with one exception: the same Safe-mode button pressed again with the identical form
+   settles its own earlier failed cells on the documents it now delivers (`Standing.same_button`, the note
+   `SAME_BUTTON_AGAIN`). Only a button's own run settles them (`_advance_generation`: the plan that ran is a
+   button's and no pass is under way): a pass that works on one of two identical presses' failures settles the cell
+   it works on and leaves the other owed. Two differently worded operations are never taken for the same one.
+7. **What the model hears.** The documents the user set aside are listed in the first message (`<todo>`, "SET ASIDE
+   BY THE USER"); what the documents in scope still owe is told in the app's note (`<app_note>`, `_owed_note`:
+   "STILL ON THE USER'S TO-DO LIST, FOR CONTEXT"), as context only and never during a pass, which says what it is
+   itself (`_focus_context`). The chat's system prompt says the same of a refused document: the app puts what it
+   still owes on the to-do list, and the document stays in THE BATCH (`compiler.py`).
+
+A Safe-mode Create that Stop ends made nothing, so it leaves nothing in the record either: `_stopped` rewinds it to
+where it stood before the press, and the document its ✗ marked is in the batch again with no cross.
+
+The record itself still plans, orders and changes nothing: a failed cell keeps no document out of a plan, and
+nothing is done about one until the user acts on it.
+
+The window shows it under the copies as **Where each document stands** (`components/StandingCard.tsx`): operations
+across (numbered, each under its mode), documents down (each with its badges: SALVAGED, UNVERIFIED, UNPROVEN, set
+aside — the last with **Put back**), a check, a cross or a dash in each cell. A mark opens that cell's reason and
+every attempt made. A cross also carries its actions: **Work on it now** (Default, Obliterate) or **Work on it in
+Default mode** (Safe), **All N it was not done on** when the operation failed on several documents, **Obliterate
+this one** while Settings shows that mode, and **Not needed on this one**; a waived cell offers **Put it back on my
+to-do list**. The line underneath counts what is still owed and **Show only these** lists just those documents. In
+the chat, the to-do card (**On your to-do list**, `components/TodoCard.tsx`) lists each owed line: the document ·
+the request, then the reason. The cards **Left untouched by the last button** and **Set aside for more work** are
+removed, with `DocumentTask.left_untouched` and the view's `left_untouched`; **Left untouched** beside a preview
+(`plan.set_aside`) stays: it is about the plan on screen.
+
+Pinned by `tests/test_standing.py` (a test per rule above, `test_rule_N_…`; helpers in `tests/standing_helpers.py`),
+`tests/test_safe_stop.py` (the stopped Create) and
+`frontend/tests/standing.test.ts`.
 
 ## What is left untouched, and why
 
@@ -1123,7 +1240,7 @@ A file can be left out at five points, each time with one sentence that names th
   request keeps; the ones left out are not planned or changed, are listed under **Left untouched** ("You asked to
   leave it out of this request"), and come back with the next request unless you leave them out again (a follow-up
   plainly about the same documents, "now make its title bold too", keeps to them again). "Set 20 aside for later"
-  puts it on the to-do list instead (above), out of every request until you come back to it.
+  sets it aside instead (above): on the to-do list, and out of every request until you come back to it.
 - At plan time, when the operation cannot predict its result on that file, or when no layout covers its
   structure; in a plan done in steps, at whichever step cannot predict its result (every step is planned on every
   document, each later step on what the step before it would make). These appear under **Left untouched** before
@@ -1133,19 +1250,21 @@ A file can be left out at five points, each time with one sentence that names th
   from, a setting such as Different Odd & Even Pages) and what the document holds instead (its first line, or the
   different values it gives); no paid investigation
   precedes them. The preview of the other documents stands, and the assistant names each one with its reason in its
-  next reply; **Create edited copies** leaves them as they are (they are not run, so no recovery follows for them)
-  and puts them on the to-do list with their reason. Only a plan that covers no file at all, or a preview none of
-  whose samples gets through (each fails its check or is refused), sends the request on to outcome planning.
+  next reply; **Create edited copies** leaves them as they are (they are not run, so no recovery follows for them):
+  each then owes the request on the to-do list, with its reason, and stays among the documents the next request
+  works on. Only a plan that covers no file at all, or a preview none of whose samples gets through (each fails its
+  check or is refused), sends the request on to outcome planning.
 - At preview time, when a document's sample fails a check (or the engine fails on it) while another sample passes.
   Its card stays, with its failed checks and its pages, so you see what went wrong; it is listed under **Left
   untouched** and the chat says it before the button. **Create edited copies** makes no copy of it and creates the
-  others: it is not run, so no recovery follows for it; after a Safe-mode button it is under **Left untouched by
-  the last button**, and in Default and Obliterate it goes on the to-do list with its failed checks. The other documents of its layout are not set aside on its account: each runs and is checked
-  on its own. In Obliterate a sample whose copy was made but failed its checks is not set aside: it is delivered
-  marked UNVERIFIED. A custom method's samples are never set aside: one its method fails on makes Create unavailable
-  for the method.
+  others: it is not run, so no recovery follows for it; in every mode it then owes the button or the request on the
+  to-do list, with its failed checks, and stays in the batch. The other documents of its layout are not set aside
+  on its account: each runs and is checked on its own. In Obliterate a sample whose copy was made but failed its
+  checks is not set aside: it is delivered marked UNVERIFIED. A custom method's samples are never set aside: one its
+  method fails on makes Create unavailable for the method.
 - At delivery, when a file fails a verification check. It is never delivered. Spec Surgeon then checks it
-  again internally (below); a file nothing can check again goes on the to-do list.
+  again internally (below); a file nothing can check again owes the request on the to-do list and stays in the
+  batch as it is.
 
 ## Recovery and custom methods run internally
 
@@ -1153,9 +1272,10 @@ After **Create edited copies**, a file that did not pass goes straight into reco
 still need work…"). Recovery works on copies, within the same conversation, and ends where everything else ends:
 a question in the chat (for example "Which passage(s) in Spec.docx should change? Reply with the number, or
 numbers separated by commas.") or the same button. While a question is open, the copies that are already
-verified can be saved; once they are, **Set the rest aside for later** puts the documents recovery has not fixed on
-the to-do list and ends the request. The independent checks and the source-change guards are the same as for a
-first run.
+verified can be saved; once they are, **Leave the rest for later** (`SET_ASIDE_REST`, `set_rest_aside`) leaves the
+documents recovery has not fixed as they are — in the batch, each owing the request on the to-do list with the
+reason "It still needed work when you left it for later: …" — and ends the request. The independent checks and the
+source-change guards are the same as for a first run.
 
 A run that saved some copies while recovery checks its other documents is one change: those copies are listed at
 once (Export saves them), and they join the working set — what the next request builds on, What you've done so far
@@ -1165,9 +1285,10 @@ picture or a table, Remove all documents, turning Obliterate on or off, choosing
 check; Safe to Default stays open, for a window reopened in Safe mode), Put back, working on the to-do list, a
 Safe-mode button, a saved recipe, Discard and Undo each wait, and the page greys them with the reason, which names
 the way out where the check is: continue it (a reopened window, a pause), create the copies it fixed (its preview),
-or answer its question, save the ready copies or set the rest aside. Words about the documents it still checks go on
-with it (`Session.recovery_takes_words`); words that would end it — at its preview, where everything it checks is
-fixed, or beside a question only a number answers — are not taken: the chat shows them with the reason, no model is
+or answer its question, save the ready copies or leave the rest for later (the reply **Leave the rest for later**). Words
+about the documents it still checks go on with it (`Session.recovery_takes_words`); words that would end it — at its
+preview, where everything it checks is fixed, or beside a question only a number answers — are not taken: the chat
+shows them with the reason, no model is
 called, and the preview and its button stand. Before 2026-10-29 those actions dropped the check, and the copies the
 run had saved stayed listed while the next request built on the originals, What you've done so far did not name
 them and Undo could not reach them. A run that saved nothing loses nothing by it: those actions go on as before (an
@@ -1384,9 +1505,10 @@ The window works in a scratch folder of its own, `%LOCALAPPDATA%\Spec Surgeon\sc
 window (`attachments\`) and the conversation's journal, `conversation.json`, go under it. The journal is written as
 the conversation goes: the attachments with their triage state, the messages, your decisions and approved wording,
 the result locations, the working set (which copy stands for each original, and the changes already made to it),
-what Export saved where, the to-do list and the pass over it, the spending ledger and the location of a recovery
-checkpoint. It can contain document text. It never contains the API key, an approval to deliver, or an
-acknowledgement of a visual finding; those belong to one displayed preview only.
+what Export saved where, where each document stands (the to-do list is its failed cells), the documents you set
+aside and the pass over the list, the spending ledger and the location of a recovery checkpoint. It can contain
+document text. It never contains the API key, an approval to deliver, or an acknowledgement of a visual finding;
+those belong to one displayed preview only.
 
 Every start of the app is a clean one: an empty conversation, nothing attached, in a new scratch folder. A clean
 close deletes the scratch folder whole — after one native question when an edited copy is not saved as it is now:

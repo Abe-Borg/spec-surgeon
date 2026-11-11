@@ -17,7 +17,7 @@ import { TRUST_FACTS as F } from "./trustFacts.ts";
  * Bump whenever chapter or step ORDER changes: the resume record (lib/tourStorage.ts) keeps numeric indexes, and a
  * stale one would land a reload on another chapter than the one it was left at. A bump discards it.
  */
-export const TOUR_VERSION = 12;
+export const TOUR_VERSION = 13;
 
 /** The version a finished tour is recorded as (settings.json `tutorial_version`); bump it when the tour changes
  *  enough that someone who finished the old one should be invited again. */
@@ -66,7 +66,7 @@ export type TourMode = "optional" | "explanatory";
 
 /** What the view must hold for a step's control to be on screen; unmet, the step keeps its words beside the
  *  workbench and says the control is not available, never a pretend one. */
-export type TourNeeds = "samples" | "set-aside" | "action" | "results" | "done" | "standing" | "left-untouched" | "todo" | "question" | "occurrences";
+export type TourNeeds = "samples" | "set-aside" | "action" | "results" | "done" | "standing" | "todo" | "question" | "occurrences";
 
 export interface TourStep {
   id: string;
@@ -348,7 +348,7 @@ export const TOUR: readonly TourChapter[] = [
         placement: "left",
         title: "What you've done so far",
         body:
-          "Each button you ran since the originals is listed here, oldest first, in the words of your line in the chat (in Default and Obliterate, each request). Under each, how many of the documents attached now carry it, and why any other does not: left untouched, set aside on your to-do list, or attached later. Undo the last button takes the newest off; Start over clears the list. In Safe mode a button you already ran carries a checkmark, so there is nothing to remember. The list is kept with the conversation and comes back with it if the window closes unexpectedly.",
+          "Each button you ran since the originals is listed here, oldest first, in the words of your line in the chat (in Default and Obliterate, each request). Under each, how many of the documents attached now carry it; which ones do not, and why, is the grid's to say (next). Undo the last button takes the newest off; Start over clears the list. In Safe mode a button you already ran carries a checkmark, so there is nothing to remember. The list is kept with the conversation and comes back with it if the window closes unexpectedly.",
       },
       {
         id: "standing",
@@ -359,7 +359,7 @@ export const TOUR: readonly TourChapter[] = [
         placement: "left",
         title: "Where each document stands",
         body:
-          "One grid for the whole job: every button you ran across (in Default and Obliterate, every request), every document down. A cell says whether that document got it: a check with the mode that did it, a cross where it could not be done, a dash where it was not run on that document. Click a mark for its reason and every attempt made; a reason stays here however many buttons you press after it. When something is not done, the line underneath counts it and Show only these lists just those documents. The grid describes and decides nothing: Undo takes its newest column off, Start over clears it, and it is kept with the conversation.",
+          "One grid for the whole job: every button you ran across (in Default and Obliterate, every request), every document down. A cell says whether that document got it: a check with the mode that did it, a cross where it could not be done, a dash where it was not run on that document. Click a mark for its reason and every attempt made; a reason stays here however many buttons you press after it. When something is not done, the line underneath counts it and Show only these lists just those documents. A cross is also where you act on what is not done (next). Undo takes the newest column off, Start over clears the grid, and it is kept with the conversation.",
       },
       {
         id: "save-recipe",
@@ -395,15 +395,15 @@ export const TOUR: readonly TourChapter[] = [
           "After a run the copies are the working set: the next button or request is made on them, and your originals stay as they are. Start over from the originals goes back to your files; Undo the last button (Undo the last change in Default and Obliterate) goes back one run at a time, so the next button or request builds on the copies from before it. Neither writes or deletes a file: an undone run's copies stay in the scratch folder until the window closes, and any you exported stay where you saved them.",
       },
       {
-        id: "hand-off",
-        capabilities: ["results.hand-off"],
+        id: "todo-safe-work",
+        capabilities: ["todo.work"],
         mode: "explanatory",
-        anchor: "left-untouched-button",
-        needs: "left-untouched",
+        anchor: "standing-grid",
+        needs: "standing",
         placement: "left",
-        title: "Left untouched by the last button",
+        title: "What a button could not do stays on record",
         body:
-          "The document the button could not change exactly waits here with the engine's reason, beside the copies, until the next button or a hand-off. Try these in Default mode puts it on your to-do list and switches to Default mode, where you describe what should be different and an AI model plans it.",
+          "A document a button cannot change exactly gets a cross in the grid, with the engine's reason, and stays among the documents the next button works on. Click the cross: Work on it in Default mode switches modes and begins a pass over that document alone, where you say what should be different and an AI model plans it. That works for any cross, however many buttons ago it was, and pressing the same button again with the same form settles its own earlier crosses on the documents it now changes.",
       },
       {
         id: "todo-safe",
@@ -412,9 +412,9 @@ export const TOUR: readonly TourChapter[] = [
         anchor: "todo-card",
         needs: "todo",
         placement: "right",
-        title: "Set aside for more work",
+        title: "Your to-do list",
         body:
-          "The document marked with the red X is on your to-do list, with why. In Safe mode there is no conversation to plan it again, so the card offers Default mode. Documents on the list are tagged To do among your documents and stay out of every plan until you work on them or put one back. Nothing on the list is changed.",
+          "The crosses of the grid are your to-do list, and this card lists them: each document, the change it still owes, and why. The document marked with the red X is on it. In Safe mode there is no conversation to plan it again, so the button turns to Default mode and begins the pass there. Only a document you set aside yourself, with the red X or by asking, waits out of the next change; one a button could not change stays in.",
       },
     ],
   },
@@ -582,29 +582,29 @@ export const TOUR: readonly TourChapter[] = [
         placement: "right",
         title: "Work on them when you are ready",
         body:
-          "The copies were created for every document but the one marked with the red X, which waits here with why. Work on it now sends 'Work on the documents I set aside': a pass over those documents alone, from the request they were set aside from, with the assistant told why each one waited. Tell it what should be different, or continue to plan them again as before. The pass ends when their copies are created.",
+          "The copies were created for every document but the one marked with the red X, which is on your to-do list with why. Work on it now sends 'Work on my to-do list': a pass over one change at a time, the oldest first, on the documents that still owe it, with the assistant told why each one failed. Tell it what should be different, or continue to plan them again as before. The pass ends when their copies are created, and each one's cross in the grid turns to a check.",
       },
       {
         id: "todo-list",
-        capabilities: ["todo.put-back"],
+        capabilities: ["todo.put-back", "todo.waive"],
         mode: "explanatory",
-        anchor: "todo-list",
-        needs: "todo",
+        anchor: "standing-grid",
+        needs: "standing",
         placement: "left",
-        title: "The same list beside the copies",
+        title: "The same list in the grid",
         body:
-          "Every document on the list says why it is there: the red X, your word to the assistant, a plan that could not be applied to it, a preview that did not pass its checks while the others did, or a copy that could not be made. Put back takes one off without a pass: it is among the documents the next request works on, as it is. Start over from the originals clears the list. The list is kept with the conversation and comes back with it if the window closes unexpectedly.",
+          "Every cross says why it is there: the red X, your word to the assistant, a plan or a button that could not be applied, a preview that did not pass its checks, or a copy that could not be made. Click one for its actions. Not needed on this one takes it off your to-do list when a later change made it moot, and it can be put back. A document you set aside carries a Set aside badge with Put back: it joins the next request as it is, and what it owes stays on the list. Start over clears the grid; it is kept with the conversation.",
       },
       {
         id: "todo-obliterate",
         capabilities: ["todo.obliterate", "todo.failed-copy"],
         mode: "explanatory",
-        anchor: "todo-list",
-        needs: "todo",
+        anchor: "standing-grid",
+        needs: "standing",
         placement: "left",
         title: "When neither mode could take it",
         body:
-          "With Obliterate mode shown in Settings, each document here also carries Obliterate this one: its warning, then Obliterate mode for that one document, with the assistant told what the engine recorded (the refusal, or the checks its copy failed) and able to read a document that took the change as a worked example. When a copy was made and held back because it failed a check, the chat offers Use the copy that failed, marked UNVERIFIED: that copy joins your edited copies as it is, with no AI call, and Undo takes it off again.",
+          "With Obliterate mode shown in Settings, a cross also offers Obliterate this one: its warning, then Obliterate mode for that one document and that one change, with the assistant told what the engine recorded (the refusal, or the checks its copy failed) and able to read a document that took the change as a worked example. When a copy was made and held back because it failed a check, the chat offers Use the copy that failed, marked UNVERIFIED: that copy joins your edited copies as it is, with no AI call, and Undo takes it off again.",
       },
       {
         id: "building-on",
@@ -734,10 +734,8 @@ export function stepNeedsMet(step: Pick<TourStep, "needs">, view: View): boolean
       return (view.working?.done ?? []).length > 0;
     case "standing":
       return (view.standing?.operations ?? []).length > 0;
-    case "left-untouched":
-      return (view.left_untouched ?? []).length > 0;
     case "todo":
-      return (view.todo ?? []).length > 0;
+      return (view.standing?.owed.cells ?? 0) > 0;
     case "occurrences":
       return (view.occurrences ?? []).length > 0;
     case "question":

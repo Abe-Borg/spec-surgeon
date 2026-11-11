@@ -16,6 +16,7 @@ import pytest
 from lxml import etree
 
 from fake_claude import FakeClient, resp, text, tool
+from standing_helpers import case_of, owing
 from spec_surgeon.document_task import CASE_PLAN, CLEAR_THEN_SAME, DocumentTask, _restored_case
 from spec_surgeon.gui import Session
 from spec_surgeon.package import DocxPackage, W
@@ -214,13 +215,14 @@ def straggler(tmp_path, *more):
     view = task.perform("send", text=REQUEST)
     assert view["stage"] == "preview" and [item["name"] for item in view["set_aside"]] == ["bad.docx"]
     task.perform("primary", token=view["token"])
-    assert task.stage == "done" and list(task.results) == [str(good)] and list(task.todo) == [str(bad)]
+    assert task.stage == "done" and list(task.results) == [str(good)]
+    assert owing(task) == ["bad.docx"] and task.todo == {}           # owed, and still in the batch
     return task, fake, good, bad
 
 
 def test_the_case_file_keeps_the_plan_the_other_documents_got(tmp_path):
     task, _fake, good, bad = straggler(tmp_path)
-    case = task.todo[str(bad)]["case"]
+    case = case_of(task, bad)
     assert case["code"] == "textbox" and case["copy"] is None and case["sibling"]["name"] == "good.docx"
     assert json.loads(case["plan"]) == DELETE
     # journalled with the entry; a plan too long to keep, or not text, is dropped and the rest of the case stays
@@ -231,7 +233,7 @@ def test_the_case_file_keeps_the_plan_the_other_documents_got(tmp_path):
     task.journal = journal
     task.save()
     again = task_for(tmp_path, FakeClient(), journal=journal)
-    assert again.restore() and again.todo[str(bad)]["case"]["plan"] == case["plan"]
+    assert again.restore() and case_of(again, bad)["plan"] == case["plan"]
     # Default's own pass over the list hears what it always did: the entry's sentence, no case file, no plan
     task.start_todo()
     assert "CASE FILE" not in task._focus_context() and "edit_xml" not in task._focus_context()

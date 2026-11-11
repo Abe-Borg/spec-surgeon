@@ -22,6 +22,7 @@ from spec_surgeon.render import libreoffice, word_worker
 from spec_surgeon.settings import Settings
 from spec_surgeon.web.server import WindowState
 from test_export_clean import edited, no_ai, renderer  # noqa: F401
+from standing_helpers import row, states
 from test_going_back import TITLE, files, on_disk, press, safe_task  # noqa: F401
 
 
@@ -179,8 +180,30 @@ def test_a_stopped_create_delivers_no_copy_and_its_preview_waits_for_the_same_ap
     assert task.results == {} and task.working == {} and task.runs == [] and task.generation == 0
     assert task.todo == {}                                           # the ✗'d document is not set aside yet
     assert task.messages[-1]["text"] == STOPPED["create"]
+    # nor does the record keep a cross for a Create that made nothing: it is as it stood before the press
+    assert task.standing.operations == [] and view["standing"]["owed"] == {"cells": 0, "documents": 0}
     view = task.perform("primary", token=token, hold=[str(files[1])])
     assert view["stage"] == "done" and len(task.results) == 1 and list(task.todo) == [str(files[1])]
+    assert len(task.standing.operations) == 1
+    assert [states(task, f) for f in files[:2]] == [["done"], ["failed"]]
+
+
+def test_a_stopped_creates_cross_is_gone_when_the_copies_are_then_created_without_it(tmp_path, files):
+    # the press was stopped, so its ✗ set nothing aside: Create again without the ✗ and every document is done, with
+    # no cross left over from the stopped press on the to-do list
+    task = safe_task(tmp_path)
+    task.attach(files)
+    token = task.perform("recipe", recipe="remove_highlight", inputs={})["token"]
+    event = threading.Event()
+    with stopping.scope(event), pytest.raises(stopping.Stopped):
+        task.perform("primary", token=token, hold=[str(files[1])],
+                     log=stop_when(event, "Creating and checking your edited copies"))
+    view = task.perform("primary", token=token)
+    assert view["stage"] == "done" and len(task.results) == 2 and task.todo == {}
+    assert [states(task, f) for f in files[:2]] == [["done"], ["done"]]
+    assert view["standing"]["owed"] == {"cells": 0, "documents": 0}
+    # and the cell holds the one attempt that happened: no failure from the press that made nothing
+    assert [a["state"] for a in row(task, files[1])["cells"][0]["attempts"]] == ["done"]
 
 
 def test_a_create_stopped_between_files_still_delivers_nothing(tmp_path, files):

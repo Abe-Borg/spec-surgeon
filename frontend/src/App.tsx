@@ -1,7 +1,7 @@
 // Adapted from Build-a-Spec's frontend/src/App.tsx (copy-based reuse): the
 // layout and the one place the job stream's events dispatch.
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
-import type { Attachment, Choice, ExportKind, JobEvent, Mode, Recipe, RecipeInputs, SavedRecipe, TodoItem, Update, View } from "./types";
+import type { Attachment, Choice, ExportKind, JobEvent, Mode, ObliterateTarget, Recipe, RecipeInputs, SavedRecipe, Update, View } from "./types";
 import * as api from "./lib/api";
 import { actionButton, discardButton } from "./lib/action";
 import { composerState, transcript } from "./lib/chat";
@@ -453,19 +453,27 @@ export default function App() {
     setPasswordOf(null);
     void runJob(api.rescue(doc.path, password), null, "rescue");
   }, [passwordOf, runJob]);
-  const onHandOff = useCallback((paths: string[]) => applyView(api.handOff(paths)), [applyView]);
-  // A to-do row's Obliterate this one: the same warning, naming the document, unless the mode is already on (its
+  // The to-do list is the crosses of Where each document stands. Work on it begins the pass over one of them, over
+  // every document that owes one operation, or over the list (from Safe mode the server turns to Default first);
+  // Not needed takes one off the list at the user's word, or puts it back.
+  const onWorkTodo = useCallback((operation?: string, path?: string) => {
+    if (!busyRef.current) applyView(api.workTodo(operation, path));
+  }, [applyView]);
+  const onWaiveTodo = useCallback((operation: string, path: string, on: boolean) => {
+    if (!busyRef.current) applyView(api.waiveTodo(operation, path, on));
+  }, [applyView]);
+  // A failed cell's Obliterate this one: the same warning, naming the document, unless the mode is already on (its
   // warning was confirmed when it was turned on); then the pass begins over that one document.
-  const [todoWarning, setTodoWarning] = useState<TodoItem | null>(null);
-  const onObliterateTodo = useCallback((item: TodoItem) => {
+  const [todoWarning, setTodoWarning] = useState<ObliterateTarget | null>(null);
+  const onObliterateTodo = useCallback((item: ObliterateTarget) => {
     if (busyRef.current) return;
-    if (view.mode === "obliterate") applyView(api.obliterateTodo(item.path));
+    if (view.mode === "obliterate") applyView(api.obliterateTodo(item.path, item.operation));
     else setTodoWarning(item);
   }, [applyView, view.mode]);
   const onConfirmTodoWarning = useCallback((handsOn: boolean) => {
     const item = todoWarning;
     setTodoWarning(null);
-    if (item && !busyRef.current) applyView(api.obliterateTodo(item.path, true, handsOn));
+    if (item && !busyRef.current) applyView(api.obliterateTodo(item.path, item.operation, true, handsOn));
   }, [applyView, todoWarning]);
 
   // Safe mode's buttons: the same list for the whole session, fetched once.
@@ -817,6 +825,7 @@ export default function App() {
           panel={panel}
           recipes={composerRecipes(view).length > 0 ? recipesStrip : undefined}
           onMode={onMode}
+          onWorkTodo={onWorkTodo}
           handsOn={view.hands_on}
           onHandsOn={view.mode === "obliterate" ? onHandsOn : undefined}
           discard={discardWhat}
@@ -848,7 +857,8 @@ export default function App() {
           onPutBack={onPutBack}
           onObliterateTodo={onObliterateTodo}
           onZoom={onZoom}
-          onHandOff={onHandOff}
+          onWorkTodo={onWorkTodo}
+          onWaiveTodo={onWaiveTodo}
           onSaveRecipe={onOpenSaveRecipe}
           tourActive={tourActive}
           onParts={setPartsOf}

@@ -5,7 +5,8 @@
  *
  * Pure, so `node --test` can pin every rule.
  */
-import type { Choice, FailedCopy, Message, PauseReason, TodoItem, View } from "../types.ts";
+import type { Choice, FailedCopy, Message, PauseReason, View } from "../types.ts";
+import { owedItems, standingOf, type OwedItem } from "./standing.ts";
 import type { Aside, LiveReply, Step, UiState } from "./view.ts";
 
 /** Every item carries the key the chat renders it under. Messages are keyed by their place in the conversation,
@@ -27,7 +28,7 @@ export type ChatItem =
       limitText: string;
       canContinue: boolean;
     }
-  | { kind: "todo"; key: string; items: TodoItem[]; blocked: string }
+  | { kind: "todo"; key: string; items: OwedItem[]; blocked: string }
   | { kind: "failed-copy"; key: string; items: FailedCopy[] };
 
 /** The key of the conversation's entry at `index` (a message, or the live bubble after the last one). */
@@ -47,26 +48,28 @@ export function noteShape(text: string): "pill" | "block" {
 
 /** The reply that begins the pass over the to-do list; the server recognises these exact words
  *  (`document_task.WORK_TODO`). Sent as a chip: the user's decision, never their wording. */
-export const WORK_TODO = "Work on the documents I set aside";
+export const WORK_TODO = "Work on my to-do list";
 
 /** Obliterate's free rung: the reply that takes the copy the app kept of a document — made by a run or a preview and
  *  held back because it failed a check — as it is, marked UNVERIFIED; the server recognises these exact words
  *  (`document_task.USE_FAILED_COPY`). Sent as a chip: the user's decision, with no AI call behind it. */
 export const USE_FAILED_COPY = "Use the copy that failed, marked UNVERIFIED";
 
-/** The reply that ends a recovery by putting what it has not fixed on the to-do list (`document_task.SET_ASIDE_REST`);
- *  the server offers it as a chip once the ready copies are saved. */
-export const SET_ASIDE_REST = "Set the rest aside for later";
+/** The reply that ends a recovery by leaving what it has not fixed as it is, owed on the to-do list
+ *  (`document_task.SET_ASIDE_REST`); the server offers it as a chip once the ready copies are saved. */
+export const SET_ASIDE_REST = "Leave the rest for later";
 
-/** The to-do card: documents set aside (the red X, at the user's word, or because the plan refused them or their copy
- *  could not be made) wait; whenever nothing runs and no pass is under way the card offers to begin the pass. */
+/** The to-do card: what could not be done on a document is owed (the failed cells of Where each document stands:
+ *  the red X, the user's word, a plan or a button that refused it, a copy that could not be made); whenever nothing
+ *  runs and no pass is under way the card offers to begin the pass. */
 export function todoFor(state: UiState): ChatItem | null {
   const { view } = state;
   if (view.busy || state.live) return null;
-  if ((view.todo ?? []).length === 0 || (view.focus ?? []).length > 0) return null;
+  const items = owedItems(standingOf(view));
+  if (items.length === 0 || (view.focus ?? []).length > 0) return null;
   if (view.stage !== "done" && view.stage !== "empty" && view.stage !== "resume") return null;
   // a reopened window whose recovery waits to continue rests too: the pass waits on that check (`recovery_blocked`)
-  return { kind: "todo", key: "todo", items: view.todo, blocked: view.recovery_blocked ?? "" };
+  return { kind: "todo", key: "todo", items, blocked: view.recovery_blocked ?? "" };
 }
 
 /** The failed-copy card: during an Obliterate pass over a document whose failed copy the app kept, whenever nothing

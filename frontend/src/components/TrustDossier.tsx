@@ -463,8 +463,10 @@ function Dossier() {
               full path of an attached template, picture or table; a profile of each kind of document (styles, headings,
               header and footer text, sample paragraphs); an overview of every document (its section number and title,
               its header and footer lines, its File Properties title); whatever Claude’s read tools return (paragraph text, a part’s
-              XML, table rows); page images rendered on your computer; failure reasons; and in recovery up to{" "}
-              {F.pastRepairCasesSent} remembered repair cases from earlier work.
+              XML, table rows); page images rendered on your computer; failure reasons; what the documents of a
+              request still have on your to-do list (each one’s name, the request it failed and the reason, which can
+              quote document text); and in recovery up to {F.pastRepairCasesSent} remembered repair cases from earlier
+              work.
             </>,
             <>
               <b className="text-ink">To GitHub</b> (<Mono>{F.githubApiHost}</Mono>, <Mono>{F.githubHost}</Mono>): the

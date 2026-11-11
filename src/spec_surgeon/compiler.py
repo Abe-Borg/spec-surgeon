@@ -570,12 +570,15 @@ results, not a procedure: get them exactly what they asked for with as little of
 - "Set 20 aside for later", "park these two", "I'll come back to 23", "put it on my to-do list": call set_aside with
   those documents (and the user's reason, if they gave one). They go on the user's to-do list and stay out of this
   request and every later one until the user works on them or puts them back; then go on with whatever else the user
-  asked, for the others. Leave out is for this request only; set aside is for later. Documents on the to-do list are
-  not in THE BATCH: you cannot read, plan or bring them back. The user brings them back by saying "Work on the
-  documents I set aside" (the app offers it as a reply) or with Put back beside the to-do list in the window.
+  asked, for the others. Leave out is for this request only; set aside is for later. Documents the user set aside are
+  not in THE BATCH: you cannot read, plan or bring them back. The user brings them back by saying
+  "Work on my to-do list" (the app offers it as a reply) or with Put back beside the document in the window.
 - A document the plan refuses (the preview's LEFT UNTOUCHED, with the reason) is not part of the plan. Name it in your
   next reply with its reason in plain words and what would let it take part, or offer to leave it out. If the user
-  creates the copies without it, the app puts it on the to-do list with its reason, to come back to later.
+  creates the copies without it, the app puts what it still owes on the to-do list with the reason. The document
+  itself stays in THE BATCH as it is, and later requests cover it like the others: a note may name what documents of
+  THE BATCH still owe (STILL ON THE USER'S TO-DO LIST), for context only. Plan what the request asks; plan an earlier
+  request for such a document only when the user asks for it.
 - A template does not authorize copying unrelated project identity or technical content. Distinguish appearance,
   structure and wording when the request is ambiguous. If requirements conflict, say so and offer achievable
   alternatives. An unsupported capability is a limitation of the app, not a reason to ask the user to rephrase an
@@ -658,7 +661,7 @@ READ_OUTLINE_TOOL = {
 SET_ASIDE_TOOL = {
     "name": "set_aside", "description": "Put documents on the user's to-do list at their word (\"set 20 aside for "
     "later\", \"park the Michigan one\", \"I'll come back to 23\"): they leave this request at once, and every later "
-    "plan, until the user works on them (the reply \"Work on the documents I set aside\") or puts them back from the "
+    "plan, until the user works on them (the reply \"Work on my to-do list\") or puts them back from the "
     "window. Nothing in them changes. Only documents the user named. To keep a document out of this one request "
     "only, use submit_editspec's leave_out instead.",
     "input_schema": {"type": "object", "properties": {
@@ -1932,9 +1935,9 @@ def build_messages(request: str, batch: _Batch, answers: Sequence[str],
                               + json.dumps(list(prior_failures)[:20], ensure_ascii=False)))
     if todo:
         parts.append(_section("todo",
-                              "ON THE USER'S TO-DO LIST (set aside for later: not in THE BATCH and out of every plan "
-                              "until the user works on them, with the reply \"Work on the documents I set aside\", or "
-                              "puts one back from the window; you cannot read, plan or bring them back):\n"
+                              "SET ASIDE BY THE USER (on their to-do list for later: not in THE BATCH and out of every "
+                              "plan until the user works on them, with the reply \"Work on my to-do list\", or puts "
+                              "one back from the window; you cannot read, plan or bring them back):\n"
                               + "\n".join(f"- {t}" for t in todo)))
     if history:
         block = ("CHANGES ALREADY MADE TO THESE COPIES (the documents you see carry them already; do not redo them, "

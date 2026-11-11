@@ -78,7 +78,7 @@ function HowToUse({ onStartTourAt }: { onStartTourAt: (chapter: string) => void 
           items={[
             {
               t: "Safe — buttons, no AI",
-              d: "What you control: the common changes, one button each — headers and footers from your template, the body formatting from your template (its outline styles and numbering, page, font and paragraph spacing), the font from your template or one you name, the page size and margins, find and replace, the issue stamp, END OF SECTION, numbers kept with their units, accepting or rejecting tracked changes, removing comments, highlighting, hidden text, blank lines, hyperlinks or unused styles, tidying spaces, quotes and dashes, freezing fields, removing headers and footers, a watermark, a logo, file names, the title, author and company properties, the proofing language and the Track Changes setting. What it costs: only what the buttons do. A document a button cannot change exactly is left untouched with the reason, and can be handed to Default mode. No AI is used, so it needs no API key and spends nothing.",
+              d: "What you control: the common changes, one button each — headers and footers from your template, the body formatting from your template (its outline styles and numbering, page, font and paragraph spacing), the font from your template or one you name, the page size and margins, find and replace, the issue stamp, END OF SECTION, numbers kept with their units, accepting or rejecting tracked changes, removing comments, highlighting, hidden text, blank lines, hyperlinks or unused styles, tidying spaces, quotes and dashes, freezing fields, removing headers and footers, a watermark, a logo, file names, the title, author and company properties, the proofing language and the Track Changes setting. What it costs: only what the buttons do. A document a button cannot change exactly is left untouched with the reason and stays among the documents the next button works on; its cross in Where each document stands can hand it to Default mode. No AI is used, so it needs no API key and spends nothing.",
             },
             {
               t: "Default — a conversation",
@@ -92,9 +92,10 @@ function HowToUse({ onStartTourAt }: { onStartTourAt: (chapter: string) => void 
                   warning, every time; the app never opens in it. What you control: {OBLITERATE_GRANTS.join(" ")} What
                   it costs: {OBLITERATE_COSTS.join(" ")} What still holds: {OBLITERATE_KEPT.join(" ")} It is the last
                   rung: Safe first, Default for what Safe could not take, Obliterate for the one or two documents
-                  neither could. <Tag>Obliterate this one</Tag>, beside a document on your to-do list, turns it on for
-                  that document alone after the same warning; when a copy of it was made and held back because it
-                  failed a check, the chat offers <Tag>Use the copy that failed, marked UNVERIFIED</Tag>, which takes
+                  neither could. <Tag>Obliterate this one</Tag>, on a cross in Where each document stands, turns it on
+                  for that one document and that one change after the same warning; when a copy of it was made and
+                  held back because it failed a check, the chat offers{" "}
+                  <Tag>Use the copy that failed, marked UNVERIFIED</Tag>, which takes
                   that copy as it is with no AI call. The warning also carries one box, empty every time:{" "}
                   <Tag>Also turn on the hands-on tools</Tag>. {HANDS_ON_SAYS.join(" ")} While the mode is on, each
                   document also carries <Tag>Word actions</Tag>: {WORD_SAYS.join(" ")} A document Word cannot
@@ -138,13 +139,16 @@ function HowToUse({ onStartTourAt }: { onStartTourAt: (chapter: string) => void 
             d: (
               <>
                 <Tag>Left untouched</Tag> names any document the change cannot be made on, and why. Not what you
-                wanted? <Tag>Discard preview</Tag> withdraws it and nothing is created. After the copies are created,{" "}
-                <Tag>Try these in Default mode</Tag> puts those documents on your to-do list in Default mode. Press
+                wanted? <Tag>Discard preview</Tag> withdraws it and nothing is created. Press
                 another button to change the copies further, or <Tag>Undo the last button</Tag> to go back to the
-                copies from before it; nothing is deleted. <Tag>What you've done so far</Tag>, under the copies, lists
+                copies from before it; nothing is deleted. A document a button could not change stays among the
+                documents the next button works on. <Tag>What you've done so far</Tag>, under the copies, lists
                 every button you ran, oldest first, and a button you already ran carries a checkmark.{" "}
                 <Tag>Where each document stands</Tag>, above it, shows for every button which documents got it and,
-                for any that did not, why: the reason stays there however many buttons you press after it.
+                for any that did not, why: the reason stays there however many buttons you press after it. Its
+                crosses are your to-do list. Click one: <Tag>Work on it in Default mode</Tag> switches modes and
+                hands that document to the conversation, and <Tag>Not needed on this one</Tag> takes the cross off
+                the list.
               </>
             ),
           },
@@ -387,7 +391,8 @@ function Workflows() {
         <ModeHeading>Safe mode</ModeHeading>
         <p className="mt-1 text-xs leading-relaxed text-ink-dim">
           No model call, no key. A document a button cannot change exactly is listed under <Tag>Left untouched</Tag>{" "}
-          with the reason, and one click hands it to Default.
+          with the reason and stays among the documents the next button works on; its cross in{" "}
+          <Tag>Where each document stands</Tag> hands it to Default mode.
         </p>
         <OperationsTable rows={SAFE_OPERATIONS} withButtons />
         <p className="mt-3 text-xs leading-relaxed text-ink-dim">{SAFE_LIMITS}</p>
@@ -413,7 +418,7 @@ function Workflows() {
           "Match body formatting to template (its outline styles and numbering, page and font), then Match headers and footers to template.",
           "Name files by section number and title last, so the copies carry their names.",
           "Save the issue with Export, in the top bar: PDF (Clean) writes a PDF of each copy with its comments removed and its tracked changes accepted, made by Word (or LibreOffice) from a checked clean copy; Word (Tracked Changes ON) and Word (Tracked Changes OFF) save the Word copies with their tracked changes, or with every one accepted. The copies in the window keep their comments and tracked changes.",
-          "A document a button left untouched keeps its reason beside the copies; Try these in Default mode hands it to the conversation.",
+          "A document a button could not change keeps its reason as a cross in Where each document stands, however many buttons you press after it, and the next button still works on it. Click the cross: Work on it in Default mode hands it to the conversation.",
         ]}
       />
       <Recipe
@@ -446,8 +451,8 @@ function Workflows() {
           "The copies live in the window’s scratch folder until you save them: Export, in the top bar, writes them to a folder you choose.",
           "Start over from the originals — a reply you can tap, or the link under the copies — goes back to your files.",
           "Undo the last button (Safe mode) or Undo the last change (Default and Obliterate) goes back one run at a time: the next button or request builds on the copies from before it, and the copies the undone run made stay in the scratch folder until the window closes.",
-          "What you've done so far, under the copies, lists each button or request the copies carry since the originals, oldest first, with how many of the documents carry it and why any other does not. Undo takes the newest off and Start over clears it; in Safe mode a button you already ran carries a checkmark.",
-          "Where each document stands, above that list, is one grid for the whole job in every mode: every button or request across, every document down. A check means that document got it, with the mode that did it; a cross means it could not be done; a dash means it was not run on that document. Click a mark for its reason and every attempt made. A reason stays there however many changes come after, and the line under the grid counts what is still not done.",
+          "What you've done so far, under the copies, lists each button or request the copies carry since the originals, oldest first, with how many of the documents carry it; which ones do not, and why, is in Where each document stands. Undo takes the newest off and Start over clears it; in Safe mode a button you already ran carries a checkmark.",
+          "Where each document stands, above that list, is one grid for the whole job in every mode: every button or request across, every document down. A check means that document got it, with the mode that did it; a cross means it could not be done; a dash means it was not run on that document. Click a mark for its reason and every attempt made. A reason stays there however many changes come after, and the line under the grid counts what is still not done. The crosses are your to-do list. From one you can work on it (Work on it now; in Safe mode, Work on it in Default mode, which switches modes first), work on every document that change was not done on, mark it Not needed on this one, which takes it off the list and can be put back, or, with Obliterate mode shown in Settings, Obliterate this one. A document you set aside carries a “set aside” badge with Put back.",
           "Changed your mind before the copies exist? Discard preview withdraws a waiting preview in every mode, and in Default and Obliterate Drop this request ends a request that is still open (the assistant's question, a pause at the spending check, a reply waiting to continue). Nothing is created, and your next message starts a new request; the assistant is told the last one was withdrawn.",
           "A document attached after a run is an original beside the copies, and gets only the next change.",
         ]}
@@ -459,7 +464,7 @@ function Workflows() {
           "Save as a recipe, on What you've done so far, keeps the changes you tick under a name, oldest first: in Safe mode each button with what you filled in its form; in Default and Obliterate each request in your words with the plan you approved and the words it places.",
           "Safe mode lists your recipes under My recipes, above the buttons; Default and Obliterate beside the message box (All recipes lists every one). Opening one shows its steps: change a button's form or skip a step for this run, then Preview.",
           "A recipe runs as one plan: every step is built from the documents attached now, checked by the same gate as any plan, and previewed once, with the pages after every step; one Create makes the copies, and Undo takes the whole recipe off. No AI is called.",
-          "A step that needs a template, picture or table uses the one attached when it runs. A document a step cannot take is left untouched in Safe mode, and waits on your to-do list in Default and Obliterate, where you can ask the assistant about it.",
+          "A step that needs a template, picture or table uses the one attached when it runs. A document a step cannot take is left as it is, in every mode: it is on your to-do list with the reason, and still among the documents your next button or request works on.",
           "A recipe runs in its own mode and in any with fewer guardrails: Safe recipes everywhere, Default ones in Default and Obliterate, Obliterate ones only in Obliterate. A change Claude wrote a custom method for, or planned with values read from particular documents, cannot be kept, and the dialog says why.",
           "Recipes are kept on this computer beside your settings, never with a document; Manage duplicates or deletes them, and Edit changes one's name, what it is for and its steps (moved up or down, removed, or for a button given another form). A step saved from a request runs as you approved it: it is moved or removed whole, never rewritten.",
           "Save as a recipe can also add the changes you tick to the end of a recipe you already have (Add to a saved recipe).",
@@ -471,13 +476,14 @@ function Workflows() {
         steps={[
           "When it arrives: a refused file is greyed out with the reason and the fix.",
           "When you ask: a document you leave out of a request (“leave out 20”), or every other one when you keep a request to one (“only 23”), is not planned or changed, and is listed under Left untouched; the next request covers it again.",
-          "For later: a document you set aside (“set 20 aside for later”) goes on your to-do list at once, with your reason, and stays out of every request until you work on it or put it back.",
-          "At plan time: a file whose result cannot be predicted is listed under Left untouched before anything runs, and the preview of the others stands; the assistant says why in its next reply. When you create the others’ copies, it goes on your to-do list with that reason.",
-          "At preview time: a document whose preview did not pass its checks while another’s did keeps its pages, marked Did not pass with the failed checks, and is listed under Left untouched; it gets no copy and never holds back the others. Only when no preview passes is Create unavailable.",
-          "At delivery: a copy that fails a check is never delivered. Spec Surgeon looks at it again on its own and comes back with a question or a new plan, never a method for you to choose. A failed copy nothing will check again goes on your to-do list.",
-          "While that question is open, Save N ready copies keeps the copies that already passed; then Set the rest aside for later puts the others on your to-do list and ends the request. Until the check ends, the copies it already saved wait to join the ones your next request builds on, so adding or removing documents, a change of mode, Put back and working on your to-do list wait too: the greyed button says why.",
-          "Your to-do list says why each document is there. Work on the documents I set aside plans them on their own; Put back returns one to the others as it is. Nothing on the list is changed.",
-          "With Obliterate mode shown in Settings, a document on the list also offers Obliterate this one: the mode for that one document, with the assistant told what the engine recorded of it. If a copy of it was made and failed a check, Use the copy that failed, marked UNVERIFIED takes that copy as it is, with no AI call, and Undo the last change takes it off again.",
+          "For later: a document you set aside (“set 20 aside for later” to the assistant, or the red X on its preview when you create the others’ copies) goes on your to-do list with the reason, and stays out of every request until you work on it or put it back. Only your own set-aside does that: a document the app could not change stays among the documents your next button or request works on.",
+          "At plan time: a file whose result cannot be predicted is listed under Left untouched before anything runs, and the preview of the others stands; the assistant says why in its next reply. When you create the others’ copies, that change goes on your to-do list for it with the reason; the document itself stays in your next request, as it is.",
+          "At preview time: a document whose preview did not pass its checks while another’s did keeps its pages, marked Did not pass with the failed checks, and is listed under Left untouched; it gets no copy and never holds back the others. Once theirs are created, the change is on your to-do list for it with those checks. Only when no preview passes is Create unavailable.",
+          "At delivery: a copy that fails a check is never delivered. Spec Surgeon looks at it again on its own and comes back with a question or a new plan, never a method for you to choose. A failed copy nothing will check again goes on your to-do list, and its document stays in your next request as it was.",
+          "While that question is open, Save N ready copies keeps the copies that already passed; then Leave the rest for later ends the request, and the others stay as they are: on your to-do list, and among the documents your next request works on. Until the check ends, the copies it already saved wait to join the ones your next request builds on, so adding or removing documents, a change of mode, Put back and working on your to-do list wait too: the greyed button says why.",
+          "Your to-do list is the crosses in Where each document stands: each change still not done on a document, with why. Work on my to-do list plans one change at a time, the oldest first, on the documents that still owe it; Work on it now, on a cross, takes that one document and that one change. When their copies are created, the crosses turn to checks. Not needed on this one takes a cross off the list at your word, and Put it back on my to-do list undoes that. Put back returns a document you set aside to the others as it is; what it owes stays on the list. Nothing on the list changes a document until you work on it.",
+          "The same Safe-mode button pressed again with the same form settles its own earlier crosses on the documents it now changes. Nothing else is inferred: the app never decides that two differently worded changes are the same one.",
+          "With Obliterate mode shown in Settings, a cross also offers Obliterate this one: the mode for that one document and that one change, with the assistant told what the engine recorded of it. If a copy of it was made and failed a check, Use the copy that failed, marked UNVERIFIED takes that copy as it is, with no AI call, and Undo the last change takes it off again.",
         ]}
       />
       <Recipe

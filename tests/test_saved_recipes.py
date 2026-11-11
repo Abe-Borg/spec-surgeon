@@ -22,6 +22,7 @@ from spec_surgeon.document_task import DocumentTask
 from spec_surgeon.gui import Session
 from spec_surgeon.recovery_state import session_lock
 from spec_surgeon.saved_recipes import RecipeRunError, Store
+from standing_helpers import owing
 
 TITLE = {"pattern": "SECTION {number} - {title}"}
 WORDS = "Replace “Keep this” with “Retain this”"
@@ -435,8 +436,7 @@ def test_requests_saved_as_a_recipe_run_again_with_no_ai_call_and_a_document_tha
     assert task.messages[-1]["text"].endswith("Words it places: “Retain this”.")
     view = task.perform("primary", token=view["token"])
     assert view["stage"] == "done" and list(task.results) == [str(fits)] and task._budget.calls == 0
-    assert list(task.todo) == [str(other)]                              # Default mode: the to-do list, not beside
-    assert task.left_untouched == []
+    assert owing(task) == [other.name] and task.todo == {}             # Default mode: owed, and still in the batch
     [run] = done(task)
     assert run["name"] == "Bold and retain" and [s["text"] for s in run["steps"]] == [REQUEST, WORDS]
 

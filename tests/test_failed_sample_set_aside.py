@@ -17,6 +17,7 @@ from spec_surgeon.settings import Settings
 from spec_surgeon.ui_feedback import PREVIEW_FAILED
 from spec_surgeon.verify import CheckResult
 from spec_surgeon.web.server import WindowState
+from standing_helpers import owed, owes, untouched
 
 REMOVE_HIGHLIGHT = {"request": "Remove the highlighting", "summary": "Remove highlight.", "mode": "formatting",
                     "ops": [{"op": "remove_highlight", "select": {"scope": ["document"]}}]}
@@ -85,13 +86,12 @@ def test_in_safe_mode_one_failed_sample_is_left_untouched_and_create_makes_the_o
     assert sorted(Path(k).name for k in task.results) == ["good.docx", "other.docx"]
     # never run: nothing of it is made again, nothing goes to recovery (Safe mode has none)
     assert sorted(f.source.name for f in task.session.last_batch.files) == ["good.docx", "other.docx"]
-    [left] = task.left_untouched
+    [left] = owed(task)
     assert left["name"] == "bad.docx" and left["why"] == "failed" and left["reason"] == item["reason"]
     assert task.todo == {} and bad.read_bytes() == before
-    # handed to Default mode, it waits on the to-do list with its reason as it reads
-    task.hand_off([left["path"]])
-    entry = task.todo[left["path"]]
-    assert entry["why"] == "failed" and entry["reason"] == item["reason"]
+    # worked on in Default mode, the pass carries its reason as it reads
+    task.work_todo(path=left["path"])
+    assert task.mode == "default" and task.focus["why"][left["path"]] == {"why": "failed", "reason": item["reason"]}
 
 
 def test_a_file_of_the_failed_samples_layout_that_was_not_sampled_still_runs_and_is_checked(tmp_path, monkeypatch):
@@ -161,7 +161,7 @@ def test_a_button_that_leaves_a_document_out_keeps_create_beside_a_failed_sample
     assert view["action"] == "Create edited copies" and view["blocked_reason"] == ""
     task.perform("primary", token=view["token"])
     assert [Path(k).name for k in task.results] == ["good.docx"]
-    assert sorted(e["name"] for e in task.left_untouched) == ["bad.docx", "out.docx"]
+    assert sorted(e["name"] for e in untouched(task)) == ["bad.docx", "out.docx"]
 
 
 def test_in_default_mode_a_failed_sample_waits_on_the_to_do_list_and_no_outcome_planning_starts(tmp_path,
@@ -185,8 +185,9 @@ def test_in_default_mode_a_failed_sample_waits_on_the_to_do_list_and_no_outcome_
     assert task.stage == "done" and list(task.results) == [str(good)]
     assert task.session.recovery is None and len(client.requests) == 1     # never run, so never recovered
     assert [f.source.name for f in task.session.last_batch.files] == ["good.docx"]
-    entry = task.todo[str(bad)]
+    entry = owes(task, bad)
     assert entry["why"] == "failed" and entry["reason"].startswith(PREVIEW_FAILED) and "(V2)" in entry["reason"]
+    assert task.todo == {} and bad in task.documents()               # owed, and still in the batch
     assert bad.read_bytes() == before
 
 

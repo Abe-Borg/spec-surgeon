@@ -115,7 +115,7 @@ try {
   // 8. The to-do list: a document set aside with the red X, after the other copies were created.
   await scenario("todo");
   await page.reload();
-  await page.getByText("Set aside for more work").first().waitFor();
+  await page.getByText("Where each document stands").first().waitFor();
   await page.waitForTimeout(800);
   await shot(page, "todo");
 
@@ -134,7 +134,7 @@ try {
   await shot(page, "safe-body-form");
   await scenario("safe-done");
   await page.reload();
-  await page.getByText("Left untouched by the last button").waitFor();
+  await page.getByText("Where each document stands").waitFor();
   await page.waitForTimeout(800);
   await shot(page, "safe-done");
 
