@@ -920,9 +920,10 @@ function discardOf(v) {
 // --- Obliterate's own tools: what the mock keeps for them, and the view's fields (docs/WEB_API.md) ---------------
 
 let wordAvailable = true;          // whether Word can be reached; the obliterate-no-word scenario turns it off
-/** The plan the app built itself that waits for approval — Word actions, or Replace this part: `{ source: "word" |
- *  "hands-on", deliver: [{path, marks}], failed: [{path, name, reason, why}], apart: {name: reason}, sentences,
- *  why_not, replace?: {key, part} }`. Create delivers the copies it shows; no model is ever asked about it. */
+/** The plan the app built itself — Word actions, or Replace this part: `{ token, source: "word" | "hands-on",
+ *  deliver: [{path, marks}], failed: [{path, name, reason, why}], apart: {name: reason}, sentences, why_not,
+ *  replace?: {key, part} }`. Create delivers the copies it shows; no model is ever asked about it. It is read through
+ *  `waitingOwn()` alone: it counts only while the approval it was shown with (`token`) is the one on screen. */
 let ownPlan = null;
 const replacedParts = new Map();   // `${document path}\t${part}` → the file a created Replace this part put there
 const savedParts = new Map();      // where Save this part wrote → what it wrote there
@@ -1276,6 +1277,11 @@ function documentsInScope() {
   return view.attachments.filter(
     (a) => a.kind === "document" && a.state !== "refused" && (view.focus.length ? view.focus.includes(a.path) : !view.todo.some((t) => t.path === a.path)),
   );
+}
+/** The own plan whose approval is on screen, the one Create would deliver; null when there is none, and once
+ *  anything has put another plan in its place (a request sent over its preview, a choice, the tour's own view). */
+function waitingOwn() {
+  return ownPlan && view.stage === "preview" && view.action.token === ownPlan.token ? ownPlan : null;
 }
 /** Where the window rests with nothing waiting: on its copies, else empty. */
 const restingStage = () => (view.results.length && view.working.generation ? "done" : "empty");
@@ -1855,6 +1861,7 @@ async function showOwnPlan(s, { source, request, title, summary, shown, apart, h
   lastRecipeRun = null;
   view.stage = "preview";
   view.action = approveAction(view, `tok-approve-${++seq}`);
+  ownPlan.token = view.action.token;   // the approval this plan was shown with: another one on screen is another plan
   view.working = { ...view.working, ...undoFields() };
 }
 
@@ -2070,7 +2077,7 @@ async function primaryJob(res, token, hold = []) {
   // The documents marked with the red X: on the to-do list, no copy; the others run. The pass over the to-do list
   // (`focus`) ends with its copies. A plan of the app's own (Word actions, Replace this part) runs on the documents
   // it showed a copy of, and Create delivers those copies.
-  const own = tutorial ? null : ownPlan;
+  const own = waitingOwn();
   const inScope = documentsInScope();
   const held = inScope.filter((a) => hold.includes(a.current) || hold.includes(a.path));
   const running = inScope.filter((a) => !held.includes(a) && (!own || own.deliver.some((d) => d.path === a.path)));
@@ -2230,7 +2237,7 @@ const notDocx = (path) => `${name(path)} is not a .docx file: .docm and .doc fil
 /** Adding or removing a document after a plan exists voids that plan: the
  *  button reads Continue until the documents are checked again. */
 function voidPlan() {
-  if (ownPlan && !tutorial) return withdrawOwn();
+  if (waitingOwn()) return withdrawOwn();
   if (!view.plan) return;
   view.action = { label: "Continue", token: `tok-continue-${++seq}`, kind: "continue", can_hold: false };
   view.messages.push(msg("app", "The documents changed. Review the updated plan first."));
@@ -2538,7 +2545,7 @@ async function handle(req, res) {
       if (view.mode !== "obliterate") return json(res, 400, { error: HANDS_ON_OBLITERATE_ONLY });
       const on = body.on === true;
       if (on !== (view.hands_on === true)) {
-        if (!on && ownPlan?.source === "hands-on") withdrawOwn();   // a part replacement that waits is withdrawn
+        if (!on && waitingOwn()?.source === "hands-on") withdrawOwn();   // a part replacement that waits is withdrawn
         view.hands_on = on;
         view.messages.push(msg("app", on ? HANDS_ON_ON : HANDS_ON_OFF));
       }
@@ -2957,7 +2964,7 @@ async function handle(req, res) {
         if (!body.show_obliterate && view.mode === "obliterate") {
           view.mode = "default";
           view.hands_on = false;
-          if (ownPlan) withdrawOwn();
+          if (waitingOwn()) withdrawOwn();
           view.messages.push(msg("app", OBLITERATE_OFF));
         }
         if (!("api_key" in body)) return json(res, 200, keySettings());

@@ -842,6 +842,21 @@ try {
     (await shows(copies.getByText("UNPROVEN", { exact: true }))) && (await copies.getByRole("button", { name: new RegExp(`^${PUMPS.replace(/\./g, "\\.")}`) }).count()) === 1);
   check("the grid carries its mark, and a cross for each document Word made no copy of",
     (await standingGrid.getByText("UNPROVEN", { exact: true }).count()) === 1 && (await standingGrid.getByRole("button", { name: /: not done$/ }).count()) === 2);
+  // A request sent while a Word preview waits takes its place: Create then makes that request's copies, not Word's.
+  await openTray();
+  await row(SPRINKLERS).getByRole("button", { name: "Word actions", exact: true }).click();
+  const repairOnly = page.getByRole("dialog", { name: `Word actions — ${SPRINKLERS}`, exact: true });
+  await repairOnly.getByRole("checkbox", { name: /^Open and repair, then save/ }).check();
+  await job(() => repairOnly.getByRole("button", { name: "Run in Word", exact: true }).click());
+  await createOne.waitFor({ timeout: 20000 });
+  await box.fill("change the footer");
+  await job(() => box.press("Enter"));
+  const createThree = page.getByRole("button", { name: "Create 3 edited copies", exact: true });
+  await createThree.waitFor({ timeout: 20000 });
+  await job(() => createThree.click());
+  const plainCopies = await Promise.all([SPRINKLERS, COMMON, PUMPS].map((name) => copies.getByRole("button", { name, exact: true }).count()));
+  check("a request sent over a Word preview is what Create then makes: three copies, none of them Word's",
+    plainCopies.join() === "1,1,1" && (await copies.getByText("UNPROVEN", { exact: true }).count()) === 0, plainCopies.join());
   // A cross's Obliterate this one, with the mode off: the same warning, naming the document; its box turns the tools on.
   await backToDefault.click();
   await page.getByText(/^Obliterate mode is off/).waitFor({ timeout: 5000 });
