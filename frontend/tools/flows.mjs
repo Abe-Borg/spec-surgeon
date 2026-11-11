@@ -576,18 +576,28 @@ try {
   await obliterate.waitFor({ timeout: 5000 });
   check("the top bar offers it once shown", await obliterate.isVisible());
   await obliterate.click();
-  const warning = page.getByRole("dialog").filter({ hasText: "What it grants" });
+  // The warning has two boxes, each addressed by its own name: the one to tick before the button works, and the
+  // hands-on tools' toggle, which is empty every time the warning opens and is never needed to turn the mode on.
+  const warning = page.getByRole("dialog", { name: "Obliterate mode", exact: true });
   await warning.waitFor({ timeout: 5000 });
-  const turnOn = warning.getByRole("button", { name: "Turn on Obliterate" });
+  const turnOn = warning.getByRole("button", { name: "Turn on Obliterate", exact: true });
+  const understood = warning.getByRole("checkbox", { name: /^I understand: in Obliterate mode / });
+  const handsOnBox = warning.getByRole("checkbox", { name: "Also turn on the hands-on tools", exact: true });
   check("its warning names what it grants, costs and keeps",
-    (await warning.getByText("What it costs").isVisible()) && (await warning.getByText("What still holds").isVisible()));
-  check("…and the button waits for the box", await turnOn.isDisabled());
-  await warning.getByRole("button", { name: "Stay in this mode" }).click();
+    (await warning.getByRole("heading", { name: "What it grants", exact: true }).isVisible()) &&
+      (await warning.getByRole("heading", { name: "What it costs", exact: true }).isVisible()) &&
+      (await warning.getByRole("heading", { name: "What still holds", exact: true }).isVisible()));
+  check("…and the button waits for the box", (await turnOn.isDisabled()) && !(await understood.isChecked()));
+  check("the hands-on tools' box is empty by default", !(await handsOnBox.isChecked()));
+  await handsOnBox.check();
+  check("…and ticking it alone does not turn the button on", await turnOn.isDisabled());
+  await warning.getByRole("button", { name: "Stay in this mode", exact: true }).click();
   check("Stay keeps the mode", (await modes.getByRole("button", { name: "Default" }).getAttribute("aria-pressed")) === "true");
   await obliterate.click();
   await warning.waitFor({ timeout: 5000 });
-  check("the warning shows again, unticked", (await turnOn.isDisabled()) && !(await warning.getByRole("checkbox").isChecked()));
-  await warning.getByRole("checkbox").check();
+  check("the warning shows again, unticked", (await turnOn.isDisabled()) && !(await understood.isChecked()));
+  check("…with the hands-on tools' box empty again", !(await handsOnBox.isChecked()));
+  await understood.check();
   await turnOn.click();
   const strip = page.getByRole("note", { name: "Obliterate mode" });
   await strip.waitFor({ timeout: 5000 });
