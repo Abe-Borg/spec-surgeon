@@ -624,7 +624,7 @@ def test_a_choice_that_cannot_be_used_is_said_once_and_nothing_is_previewed(tmp_
     task.todo[str(b)] = {"name": "b.docx", "why": "set aside", "reason": "You set it aside."}
     task._sync()
     task.perform("replace_part", path=str(b), part=DOC, file=str(new))
-    assert "waits on your to-do list" in said(task)[-1] and task.session.spec is None
+    assert "is set aside, out of every plan" in said(task)[-1] and task.session.spec is None
     # turning the tools off withdraws a replacement that waits: the gate takes it only while they are on
     view = task.perform("replace_part", path=str(a), part=DOC, file=str(new))
     assert view["stage"] == "preview"

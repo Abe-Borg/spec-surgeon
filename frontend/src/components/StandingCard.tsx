@@ -41,8 +41,8 @@ const BADGE_TIP: Record<string, string> = {
 };
 
 const linkBtn =
-  "text-xs text-accent underline decoration-accent/40 underline-offset-2 transition-colors hover:decoration-accent " +
-  "disabled:pointer-events-none disabled:opacity-50";
+  "text-xs text-paper-ink underline decoration-paper-faint underline-offset-2 transition-colors " +
+  "hover:decoration-paper-ink disabled:pointer-events-none disabled:opacity-50";
 
 interface Props {
   standing: Standing;

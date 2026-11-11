@@ -20,7 +20,7 @@ from spec_surgeon.standing import ATTACHED_LATER, DONE, FAILED, NOT_PART, NOT_RU
 from test_document_task import REQUEST, SPEC, document
 from test_going_back import TITLE, files, press, safe_task  # noqa: F401
 from test_set_aside_bin import _refusing, park, submit, task_for, three
-from standing_helpers import owed, untouched
+from standing_helpers import case_of, owe, owed, untouched
 from test_word_actions import word  # noqa: F401
 
 
@@ -514,3 +514,209 @@ def test_after_a_restart_and_an_undo_a_failure_is_still_worked_on_in_its_own_cel
     assert [e["name"] for e in untouched(again)] == ["empty.docx"]
     again.work_todo(path=str(empty))
     assert again.mode == "default" and again.focus["operations"] == {str(empty): operation}
+
+
+# ---- the batch rule and the hand-up (the owner's decisions of 2026-11-11) ----------------------------------------------
+
+def test_rule_1_a_document_the_engine_could_not_change_gets_the_next_request_with_the_others(tmp_path):
+    """Only the user's own set-aside takes a document out of the batch. One the plan refused stays in it: the next
+    request is planned on it too, and the model is told what it still owes, as context."""
+    task, source, easy = _refusing(tmp_path, submit(tid="s2"))
+    view = task.perform("send", text="Make the title bold")
+    task.perform("primary", token=view["token"])
+    assert states(task, source) == [FAILED] and task.todo == {}
+    view = task.perform("send", text="Now make the FIRE SUPPRESSION title bold.")
+    assert sorted(Path(p).name for p in task.session.planned_files()) == ["easy.docx", "source.docx"]
+    told = task.session.client.requests[1]["messages"][0]["content"]
+    assert "STILL ON THE USER'S TO-DO LIST, FOR CONTEXT" in told and "<app_note>" in told
+    assert "- source.docx: “Make the title bold” — The plan could not be applied to it" in told
+    assert "SET ASIDE BY THE USER" not in told                      # nobody set anything aside
+    task.perform("primary", token=view["token"])
+    # it got the second request; the first is still owed, in its own cell
+    assert states(task, source) == [FAILED, DONE] and states(task, easy) == [DONE, DONE]
+    assert [(e["name"], e["request"]) for e in owed(task)] == [("source.docx", "Make the title bold")]
+
+
+def test_rule_1_a_document_the_user_set_aside_waits_out_of_the_batch_and_what_it_missed_is_not_owed(tmp_path):
+    docs = three(tmp_path)[:2]
+    task = task_for(tmp_path, FakeClient(submit(), submit(tid="s2")))
+    task.attach(docs)
+    view = task.perform("send", text=REQUEST)
+    task.perform("primary", token=view["token"], hold=[str(docs[1])])       # the red X
+    view = task.perform("send", text="And once more.")
+    assert [Path(p).name for p in task.session.planned_files()] == [docs[0].name]
+    told = task.session.client.requests[1]["messages"][0]["content"]
+    assert "SET ASIDE BY THE USER" in told and "STILL ON THE USER'S TO-DO LIST" not in told
+    task.perform("primary", token=view["token"])
+    held = row(task, docs[1])
+    assert [(c["state"], c["why"]) for c in held["cells"]] == [(FAILED, "held"), (NOT_RUN, "set aside")]
+    assert held["owed"] == 1 and held["badges"] == ["set aside"]
+
+
+def test_rule_3_a_pass_takes_one_operation_at_a_time_the_oldest_first_or_the_one_named(tmp_path):
+    docs = three(tmp_path)
+    task = task_for(tmp_path, FakeClient())
+    task.attach(docs)
+    first = owe(task, docs[0], "Remove the headers.", reason="It has none.")
+    task.standing.record(first, str(docs[1]), FAILED, mode="default", why="refused", reason="It has none either.",
+                         decisions=["Remove the headers."])
+    second = owe(task, docs[2], "Match the template.", reason="No SECTION line.")
+    assert task.view()["chips"][0] == WORK_TODO
+    task.perform("send", text=WORK_TODO)
+    assert task.focus["documents"] == [str(docs[0]), str(docs[1])] and task.decisions == ["Remove the headers."]
+    assert task.focus["operations"] == {str(docs[0]): first, str(docs[1]): first}
+    assert any("1 more on your to-do list waits for the next pass." in m["text"] for m in task.messages)
+    with pytest.raises(ValueError, match="Finish the pass"):
+        task.work_todo(operation=second)
+    task.discard_preview()                                          # the pass dropped: nothing changed, all still owed
+    assert len(owed(task)) == 3 and task.focus is None
+    task.work_todo(operation=second)                                # the one named
+    assert task.focus["documents"] == [str(docs[2])] and task.decisions == ["Match the template."]
+    task.discard_preview()
+    task.work_todo(operation=first, path=str(docs[1]))              # one cell alone
+    assert task.focus["documents"] == [str(docs[1])]
+    task.discard_preview()
+    with pytest.raises(ValueError, match="not on your to-do list"):
+        task.work_todo(operation=second, path=str(docs[0]))         # it does not owe that one
+
+
+def test_rule_4_obliterate_this_one_is_the_cells_with_that_cells_own_case_file(tmp_path):
+    a, b = document(tmp_path / "a.docx"), document(tmp_path / "b.docx")
+    task = DocumentTask(Session(client=FakeClient(), out_root=tmp_path / "out", visual_check=False), render=False,
+                        obliterate_allowed=True)
+    task.attach([a, b])
+    first = owe(task, b, "Remove the headers.", reason="A field stopped it.", case={"code": "field", "reason": "one"})
+    second = owe(task, b, "Match the template.", reason="A text box stopped it.",
+                 case={"code": "textbox", "reason": "two"})
+    assert [c["obliterate"] for c in row(task, b)["cells"]] == ["", ""]     # each failed cell offers it
+    task.obliterate_todo(str(b), acknowledged=True, operation=second)
+    assert task.mode == "obliterate" and task.focus["operations"] == {str(b): second}
+    assert task.decisions == ["Match the template."] and task.focus["case"][str(b)]["code"] == "textbox"
+    assert "textbox" in task._focus_context() and "A field stopped it." not in task._focus_context()
+    task.discard_preview()
+    task.obliterate_todo(str(b))                                    # none named: the oldest it owes
+    assert task.focus["operations"] == {str(b): first} and task.focus["case"][str(b)]["code"] == "field"
+
+
+def test_rule_5_not_needed_on_this_one_takes_a_cell_off_the_to_do_list_and_puts_it_back(tmp_path, files, empty):
+    journal = tmp_path / "journal.json"
+    task = safe_task(tmp_path, journal=journal)
+    task.attach([files[0], empty])
+    press(task, "title_property", TITLE)
+    [item] = owed(task)
+    with pytest.raises(ValueError, match="not on your to-do list"):
+        task.waive(item["operation"], files[0])                     # that one is done: nothing to waive
+    task.waive(item["operation"], empty)
+    cell = row(task, empty)["cells"][0]
+    assert cell["state"] == "waived" and [a["state"] for a in cell["attempts"]] == [FAILED, "waived"]
+    assert owed(task) == [] and grid(task)["owed"] == {"cells": 0, "documents": 0}
+    assert WORK_TODO not in task.view()["chips"] and "Nothing in the document changed" in task.messages[-1]["text"]
+    with pytest.raises(ValueError, match="not on your to-do list"):
+        task.work_todo(path=str(empty))
+    again = safe_task(tmp_path, journal=journal)                    # the journal keeps the decision
+    assert again.restore() and again.view()["standing"]["documents"][1]["cells"][0]["state"] == "waived"
+    with pytest.raises(ValueError, match="not marked as not needed"):
+        task.waive(item["operation"], files[0], on=False)
+    task.waive(item["operation"], empty, on=False)
+    assert owed(task) == [item] and "back on your to-do list" in task.messages[-1]["text"]
+    task.work_todo(path=str(empty))
+    with pytest.raises(ValueError, match="Finish the pass"):
+        task.waive(item["operation"], empty)                        # not while the pass works on it
+
+
+def test_rule_6_the_same_button_with_the_same_form_settles_its_own_earlier_failure_and_nothing_else_does(
+        tmp_path, files, monkeypatch):
+    from spec_surgeon.document_task import SAME_BUTTON_AGAIN
+    from test_obliterate_handoff import fail_v2
+    task = safe_task(tmp_path)
+    task.attach(files)
+    fail_v2(monkeypatch, files[1].name)
+    press(task, "title_property", TITLE)                             # could not be done on the second document
+    first = grid(task)["operations"][0]["id"]
+    assert states(task, files[1]) == [FAILED] and files[1] in task.documents()
+    monkeypatch.undo()
+    press(task, "title_property", {"pattern": "{number} {title}"})   # the same button, another form: another thing
+    assert states(task, files[1]) == [FAILED, DONE]
+    press(task, "remove_comments")                                   # another button
+    assert states(task, files[1]) == [FAILED, DONE, DONE] and len(owed(task)) == 1
+    press(task, "title_property", TITLE)                             # the same button, the same form
+    assert states(task, files[1]) == [DONE, DONE, DONE, DONE] and owed(task) == []
+    settled = row(task, files[1])["cells"][0]
+    assert settled["note"] == SAME_BUTTON_AGAIN and [a["state"] for a in settled["attempts"]] == [FAILED, DONE]
+    assert [o["id"] for o in grid(task)["operations"]][0] == first and len(grid(task)["operations"]) == 4
+    task.undo()                                                      # Undo takes the settling back with its run
+    assert states(task, files[1]) == [FAILED, DONE, DONE]
+
+
+def test_rule_7_the_model_is_told_what_is_owed_only_as_context_and_never_during_a_pass(tmp_path):
+    docs = three(tmp_path)
+    task = task_for(tmp_path, FakeClient(submit(), submit(tid="s2")))
+    task.attach(docs)
+    assert task._owed_note() == ""
+    op = owe(task, docs[0], "Remove the headers.", reason="It has none.")
+    note = task._owed_note()
+    assert note.startswith("STILL ON THE USER'S TO-DO LIST, FOR CONTEXT:")
+    assert "do not plan the earlier request for them unless the user asks for it" in note
+    assert note.endswith("- 20 Port.docx: “Remove the headers.” — It has none.")
+    task.waive(op, docs[0])
+    assert task._owed_note() == ""                                   # not needed: nothing to tell
+    task.waive(op, docs[0], on=False)
+    task.perform("send", text=WORK_TODO)
+    assert task._owed_note() == "" and "FROM THE USER'S TO-DO LIST" in task._focus_context()
+
+
+def test_a_to_do_list_an_earlier_version_kept_is_read_into_the_record(tmp_path):
+    """Then every entry was a document out of the batch. Now one the engine put there is back in the batch, owing
+    what it owed, and one the user set aside still waits; each has its failed cell, with the request to work from."""
+    docs = three(tmp_path)
+    journal = tmp_path / "journal.json"
+    task = task_for(tmp_path, FakeClient(), journal=journal)
+    task.attach(docs)
+    task.save()
+    data = json.loads(journal.read_text(encoding="utf-8"))
+    del data["standing"], data["op"], data["since"]
+    data["todo"] = {
+        str(docs[0]): {"name": docs[0].name, "decisions": ["Remove the headers."], "seen": ["Removes them."],
+                       "why": "refused", "reason": "The plan could not be applied to it: no header.",
+                       "case": {"code": "none", "reason": "no header", "op": "", "details": "", "checks": []}},
+        str(docs[1]): {"name": docs[1].name, "decisions": ["Remove the headers."], "seen": [], "why": "held",
+                       "reason": "You marked its preview as needing more work."}}
+    journal.write_text(json.dumps(data), encoding="utf-8")
+    again = task_for(tmp_path, FakeClient(), journal=journal)
+    assert again.restore()
+    assert list(again.todo) == [str(docs[1])] and docs[0] in again.documents() and docs[1] not in again.documents()
+    listed = owed(again)
+    assert [(e["name"], e["request"], e["why"]) for e in listed] == [
+        (docs[0].name, "Remove the headers.", "refused"), (docs[1].name, "Remove the headers.", "held")]
+    assert case_of(again, docs[0])["code"] == "none" and "case" not in again.todo[str(docs[1])]
+    again.perform("send", text=WORK_TODO)                            # and the pass works from it
+    assert again.decisions == ["Remove the headers."] and again.focus["documents"] == [str(docs[0])]
+
+
+def test_a_restart_keeps_a_waived_cell_waived_for_a_document_still_set_aside(tmp_path):
+    """The journal's to-do entries are read against the record: a cell the user waived while its document stayed set
+    aside is not owed again after a restart."""
+    docs = three(tmp_path)[:2]
+    journal = tmp_path / "journal.json"
+    task = task_for(tmp_path, FakeClient(submit()), journal=journal)
+    task.attach(docs)
+    view = task.perform("send", text=REQUEST)
+    task.perform("primary", token=view["token"], hold=[str(docs[1])])       # the red X
+    [item] = owed(task)
+    task.waive(item["operation"], docs[1])
+    assert owed(task) == [] and list(task.todo) == [str(docs[1])]            # not needed, and still set aside
+    again = task_for(tmp_path, FakeClient(), journal=journal)
+    assert again.restore()
+    assert owed(again) == [] and list(again.todo) == [str(docs[1])]
+    assert [o["id"] for o in again.view()["standing"]["operations"]] == [item["operation"]]
+
+
+def test_setting_every_previewed_document_aside_begins_the_pass_over_them_not_an_older_operation(tmp_path):
+    docs = three(tmp_path)[:2]
+    task = task_for(tmp_path, FakeClient(submit(), submit(tid="s2")))
+    task.attach(docs)
+    older = owe(task, docs[0], "Remove the headers.", reason="It has none.")
+    view = task.perform("send", text=REQUEST)
+    task.perform("primary", token=view["token"], hold=[str(d) for d in docs])
+    assert task.focus["documents"] == [str(d) for d in docs] and task.decisions == [REQUEST]
+    assert older not in task.focus["operations"].values()

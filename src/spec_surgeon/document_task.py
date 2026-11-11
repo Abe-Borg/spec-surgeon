@@ -100,17 +100,18 @@ OWN_PLANS = ("saved", "hands-on", "word")
 START_OVER = "Start over from the originals"   # the reply (a chip, a button) that drops the working copies
 LEFT_OUT_REASON = "You asked to leave it out of this request; it stays as it is."
 WORK_TODO = "Work on my to-do list"  # the reply (a chip, typed) that begins the pass over the to-do list
-# the reply (a chip, typed) that ends a recovery by putting the documents it could not fix on the to-do list
+# the reply (a chip, typed) that ends a recovery by leaving the documents it could not fix as they are, in the batch
 SET_ASIDE_REST = "Leave the rest for later"     # recovery's leftovers stay as they are, owed on the to-do list
 # why an action that would end the recovery waits while a run's saved copies wait on it (``_recovery_blocked``): those
 # copies join the working set when the check ends, the way out given by the stage the check is at
 COPIES_WAIT = ("Some copies from this request are saved while the rest are checked again; they join your edited copies "
                "when that check ends. Finish it first: {how}.")
-# why a document is on the to-do list (``todo[...]["why"]``), and the sentence the window and the model are given
+# why a document owes an operation (a failed cell's ``why``; for one the user set aside, ``todo[...]["why"]`` too),
+# and the sentence the window and the model are given
 WHY_HELD, WHY_ASKED, WHY_REFUSED, WHY_FAILED = "held", "asked", "refused", "failed"
 HELD_REASON = "You marked its preview as needing more work."
 # Why a document was not run under an operation, in the record of where each document stands (``standing``): the
-# user left it out of the request, or it waited on the to-do list while the others got the change
+# user left it out of the request, or the user had set it aside and it waited while the others got the change
 WHY_LEFT_OUT, WHY_WAITING = "left out", "set aside"
 WAITING_REASON = "You had set it aside: it was waiting out of every plan."
 OWED_LINES = 40                         # failed cells the model is told of with a request (``_owed_note``)
@@ -174,7 +175,7 @@ RECOVERY_ATTEMPTS = 8            # candidate attempts per problem group (docs/RE
 EXCHANGES_KEPT = 5
 ANSWER_LINE = 240
 # What you've done so far (``runs``, the view's ``working.done``): why a document attached now got no copy from a run —
-# the run left it as it was, it waited on the to-do list then, or it was attached after the run
+# the run left it as it was, the user had set it aside then, or it was attached after the run
 RUN_UNTOUCHED, RUN_SET_ASIDE, RUN_ATTACHED_LATER = "left untouched", "set aside", "attached later"
 
 # What the window says while the model uses a tool: one plain sentence per tool, never the tool's name.
@@ -730,7 +731,8 @@ class DocumentTask:
     # ---- attachments ----
     def documents(self) -> List[Path]:
         """The documents the next request works on: each attached document, or the copy the last run made of it —
-        without the documents on the to-do list, or only the set-aside documents while the user works on them."""
+        without the documents the user set aside (``todo``), or only a pass's documents while the user works on
+        them. A document the engine could not change is in it: what it owes is on the to-do list, and it stays."""
         return [self.current_of(a.path) for a in self.attachments if self._in_scope(a)]
 
     def _in_scope(self, attachment) -> bool:
@@ -1812,7 +1814,8 @@ class DocumentTask:
         """Worker entry point. One ledger covers every nested model call and every turn. ``events`` is the window's
         live channel (docs/WEB_API.md: status, activity, text_delta, thinking_delta, message, plan, samples, results,
         question, cost); without one the job runs silently and the view says everything at the end. ``hold`` (the
-        primary action) names the previewed documents the user set aside: they go on the to-do list, the others run.
+        primary action) names the previewed documents the user set aside: they wait out of the batch, owing this
+        request, and the others run.
         ``recipe`` and ``inputs`` (the ``recipe`` action) are a Safe-mode button and its form; ``recipe`` and ``steps``
         (the ``saved_recipe`` action) a saved recipe and, per step, whether it is skipped and the form a button step
         runs with this time (``saved_recipes.choose_steps``; ``rev``, the recipe as its run form opened). ``skip`` (the
@@ -2382,7 +2385,7 @@ class DocumentTask:
         target = next((p for p in files if _same_file_key(p) == _same_file_key(current)), None)
         if target is None:
             self._revision += 1
-            self.say(f"{label}: {attachment.path.name} waits on your to-do list, out of every plan. Put it back, or use "
+            self.say(f"{label}: {attachment.path.name} is set aside, out of every plan. Put it back, or use "
                      f"Obliterate this one, first.")
             return
         part, chosen = str(part or "").strip(), Path(str(file))
@@ -2597,7 +2600,7 @@ class DocumentTask:
                 self.say(f"{WORD_LABEL}: a pass over your to-do list is open on {names}, and {attachment.path.name} "
                          f"is not part of it. Finish the pass or drop it first.")
             else:
-                self.say(f"{WORD_LABEL}: {attachment.path.name} waits on your to-do list, out of every plan. Put it "
+                self.say(f"{WORD_LABEL}: {attachment.path.name} is set aside, out of every plan. Put it "
                          f"back, or use Obliterate this one, first.")
             return
         labels = [word_actions.ACTIONS[a].label for a in chosen]
@@ -3595,9 +3598,10 @@ class DocumentTask:
             self._pending_steps = self._steps_now()
             self._since = self.standing.seq     # the outcomes recorded from here are this approval's (``standing``)
             if self.stage == "preview" and s.recovery is None:
+                self._binned = []               # what could not take an earlier request is not this approval's
                 self._stand_aside()
         # the files the preview refused, and the samples it set aside because they failed, never run
-        # (Session._without_refused): once the others run they go on the to-do list with the reason, to come back to
+        # (Session._without_refused): once the others run they owe it, on the to-do list with the reason
         # (the session keeps them until the request ends: the approval was taken over them)
         refused = self._refused_now(held) if s.recovery is None else []
         # a Safe-mode button's, a saved recipe's, or any plan approved in Safe mode (a Default-mode preview still
@@ -3607,7 +3611,7 @@ class DocumentTask:
         model_free = s.model_free or self.mode == "safe"
         beside = self.mode == "safe" or s.outcome_source == "recipe"
         # Obliterate: no automatic recovery either — a copy whose checks fail is delivered marked unverified, a
-        # refused document goes on the to-do list as in Default mode
+        # refused document owes the request as in Default mode
         no_recovery = model_free or self.mode == "obliterate"
         remaining = None
         if held:
@@ -3629,10 +3633,10 @@ class DocumentTask:
                 self.save()
                 return
             if not remaining:
-                # the pass over them begins at once
+                # the pass over them begins at once: over this request's documents, whatever older one is owed
                 self.say("You set every document aside, so no copy was created. Tell me what should be different, "
                          "and I’ll plan them again.")
-                self.start_todo()
+                self.start_todo(operation=self._op_now())
                 return
         if outcome.blocking:
             # A blocking visual finding is a separate, explicitly labelled decision on the displayed preview.
@@ -3648,7 +3652,7 @@ class DocumentTask:
         self._collect_results()
         self._emit({"type": "results", "results": self._results_view()})
         # what the engine recorded of each result that did not pass, before anything looks at them again: recovery's
-        # leftovers keep it when they go on the to-do list later (``set_rest_aside``)
+        # leftovers keep it when they are left for later (``set_rest_aside``)
         self._run_cases = {str(self.origin_of(item.source)): _case_of_result(item)
                            for item in getattr(s.last_batch, "files", None) or []
                            if item.status != "PASS" and not getattr(item, "delivered_to", None)}
@@ -3764,7 +3768,7 @@ class DocumentTask:
     def _refused_now(self, held: Sequence[Path] = ()) -> List[tuple]:
         """At Create: the documents of the displayed plan its preview refused, or set aside because their sample
         failed its checks (``Session.failed_samples``), while another planned, each with the plan the user saw, why
-        and the reason, ``(path, seen, why, reason)``: they go on the to-do list once the others run. The ones the
+        and the reason, ``(path, seen, why, reason)``: they owe the request once the others run. The ones the
         user set aside with the red X are theirs already. Each carries its case file: the refusal's record, or the
         failed sample's checks and copy."""
         s = self.session
@@ -4223,7 +4227,7 @@ class DocumentTask:
         r = s.recovery
         if (self.stage == "question" and r is not None and any(f.status != "READY" for f in r.files)
                 and all(f.delivered_to for f in r.ready) and SET_ASIDE_REST not in chips):
-            chips.append(SET_ASIDE_REST)        # what recovery has not fixed can wait on the to-do list
+            chips.append(SET_ASIDE_REST)        # what recovery has not fixed can be left for later, still owed
         resting = self.stage in {"done", "empty", "resume"}
         if self._owed() and not self.focus and resting and WORK_TODO not in chips:
             chips.insert(0, WORK_TODO)
@@ -4733,8 +4737,10 @@ class DocumentTask:
         for entries in (self.todo, (self.focus or {}).get("waiting") or {}):
             for key, entry in list(entries.items()):
                 attempt = self.standing.last(entry.get("operation"), key)
-                if attempt is None or attempt["state"] != FAILED or "decisions" not in attempt:
-                    op = entry.get("operation") if attempt is not None and attempt["state"] == FAILED else None
+                # only what the record does not already say: an entry with no cell at all, or a failed cell from
+                # before cells kept the request. A cell that reads otherwise (done since, waived) stands as it is
+                if attempt is None or (attempt["state"] == FAILED and "decisions" not in attempt):
+                    op = entry.get("operation") if attempt is not None else None
                     if op is None:
                         decisions = list(entry.get("decisions") or [])
                         op = self.standing.open(decisions[0] if decisions else "", mode="default",
