@@ -496,3 +496,23 @@ def test_a_safe_buttons_failure_handed_to_default_mode_is_settled_in_its_own_cel
     assert (cell["state"], cell["mode"]) == (DONE, "default")
     assert [(a["state"], a["mode"]) for a in cell["attempts"]] == [(FAILED, "safe"), (DONE, "default")]
     assert grid(task)["owed"] == {"cells": 0, "documents": 0}
+
+
+def test_a_restart_keeps_the_operation_a_left_untouched_document_did_not_get(tmp_path, files, empty):
+    """An undo point shows again what an earlier button left untouched, and the journal must keep each entry's
+    operation with it: handed to Default mode after a restart and an Undo, the document's fix still settles the cell
+    it failed in rather than opening a column of its own."""
+    journal = tmp_path / "journal.json"
+    task = safe_task(tmp_path, journal=journal)
+    task.attach([files[0], empty])
+    press(task, "title_property", TITLE)
+    operation = grid(task)["operations"][0]["id"]
+    press(task, "remove_comments")
+    again = safe_task(tmp_path, journal=journal)
+    assert again.restore()
+    again.undo()                                                    # back to what the first button left untouched
+    assert [e["name"] for e in again.view()["left_untouched"]] == ["empty.docx"]
+    again.hand_off([str(empty)])
+    assert again.todo[str(empty)]["operation"] == operation
+    again.perform("send", text=WORK_TODO)
+    assert again.focus["operations"] == {str(empty): operation}

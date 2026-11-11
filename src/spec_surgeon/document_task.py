@@ -4745,7 +4745,7 @@ class DocumentTask:
         paths = lambda value: isinstance(value, dict) and all(text(k) and text(v) for k, v in value.items())  # noqa: E731
         lists = lambda value: isinstance(value, dict) and all(text(k) and texts(v) for k, v in value.items())  # noqa: E731
         entry = lambda e: isinstance(e, dict) and all(text(e.get(k, "")) for k in  # noqa: E731
-                                                      ("path", "name", "why", "reason", "request")) and text(e.get("path"))
+                                                      ("path", "name", "why", "reason", "request", "operation")) and text(e.get("path"))
         if not isinstance(points, list) or not all(
                 isinstance(p, dict) and text(p.get("request", "")) and paths(p.get("working"))
                 and type(p.get("generation")) is int and texts(p.get("history")) and lists(p.get("applied"))
@@ -4764,7 +4764,11 @@ class DocumentTask:
                  "results": dict(p["results"]), "unverified": {k: list(v) for k, v in p["unverified"].items()},
                  "left_untouched": [{"path": e["path"], "name": e.get("name") or Path(e["path"]).name,
                                      "why": e.get("why", WHY_REFUSED), "reason": e.get("reason", ""),
-                                     "request": e.get("request", "")} for e in p["left_untouched"]],
+                                     "request": e.get("request", ""),
+                                     # the operation of the record it did not get: handed to Default mode after
+                                     # this point is gone back to, its fix settles that cell (``hand_off``)
+                                     **({"operation": e["operation"]} if e.get("operation") else {})}
+                                    for e in p["left_untouched"]],
                  "todo_added": list(p.get("todo_added", []))} for p in points]
 
     @staticmethod
