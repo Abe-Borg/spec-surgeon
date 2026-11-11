@@ -292,21 +292,14 @@ export function doneSubtitle(view: Pick<View, "mode">, undo: UndoLink | null): s
   );
 }
 
-/** The line under a run: how many of the documents attached now carry it and, by why, the others (three names each,
- *  then a count). */
+/** The line under a run: how many of the documents attached now carry it. Which ones do not, and why, is Where each
+ *  document stands: the grid says it per document, with the reason. */
 export function doneCoverage(step: DoneStep): string {
-  const head =
-    step.of > 0 && step.documents === step.of
-      ? step.of === 1 ? "1 document" : `All ${step.of} documents`
-      : step.documents === 0
-        ? "None of the documents attached now"
-        : `${step.documents} of ${step.of} documents`;
-  const byWhy = new Map<string, string[]>();
-  for (const other of step.not ?? []) byWhy.set(other.why, [...(byWhy.get(other.why) ?? []), other.name]);
-  const others = [...byWhy].map(([why, names]) =>
-    `${names.length > 3 ? `${names.slice(0, 3).join(", ")} and ${names.length - 3} more` : names.join(", ")} (${why})`,
-  );
-  return others.length ? `${head} · not ${others.join("; ")}` : head;
+  return step.of > 0 && step.documents === step.of
+    ? step.of === 1 ? "1 document" : `All ${step.of} documents`
+    : step.documents === 0
+      ? "None of the documents attached now"
+      : `${step.documents} of ${step.of} documents`;
 }
 
 /** How many runs of the working set carried a Safe-mode button, pressed or in a saved recipe's run: its tile carries a

@@ -23,6 +23,7 @@ from spec_surgeon.ops import hidden as hidden_ops
 from spec_surgeon.ops.selectors import StyleSheet
 from spec_surgeon.package import FOOTER_REL, DocxPackage, W
 from spec_surgeon.settings import MODES, Settings, load_settings, save_settings
+from standing_helpers import owed, untouched
 
 
 @pytest.fixture(scope="module")
@@ -234,8 +235,8 @@ def test_each_button_previews_and_runs_to_verified_copies_without_any_ai_call(re
     assert task.session.model_free and view["action"] == "Create edited copies"
     assert view["messages"][-1]["role"] == "user"           # the button's sentence, as what the user asked
     view = task.perform("primary", token=view["token"])
-    assert view["stage"] == "done" and len(task.results) == 2, view["left_untouched"]
-    assert view["left_untouched"] == []
+    assert view["stage"] == "done" and len(task.results) == 2, untouched(task)
+    assert untouched(task) == []
     assert {p: p.read_bytes() for p in before} == before     # originals untouched
     for record in task.session.last_batch.files:
         assert record.status == "PASS"
@@ -261,11 +262,11 @@ def test_dirty_documents_plan_or_are_left_untouched_with_a_reason_never_half_edi
     task.attach(files)
     view = task.perform("recipe", recipe="title_property", inputs={"pattern": "SECTION {number} - {title}"})
     assert view["stage"] == "preview"
-    untouched = {i["name"] for i in view["set_aside"]}
-    assert "dirty-empty_body.docx" in untouched                # no SECTION line to read: set aside, with its reason
+    refused = {i["name"] for i in view["set_aside"]}
+    assert "dirty-empty_body.docx" in refused                  # no SECTION line to read: set aside, with its reason
     assert all(i["reason"] for i in view["set_aside"])
     task.perform("primary", token=view["token"])
-    left = {e["name"]: e["reason"] for e in task.view()["left_untouched"]}
+    left = {e["name"]: e["reason"] for e in untouched(task)}
     assert "dirty-empty_body.docx" in left and left["dirty-empty_body.docx"]
     for record in task.session.last_batch.files:
         assert record.status in {"PASS", "EXCEPTION"}            # a copy passes every check, or none is made
@@ -461,7 +462,7 @@ def test_a_mixed_batch_runs_each_document_at_its_own_size_and_the_other_sizes_ke
     labels = [g["label"] for g in task._plan_view()["groups"]]
     assert labels[0].startswith("body text 9 pt") and labels[1].startswith("body text 11 pt")
     view = task.perform("primary", token=view["token"])
-    assert view["stage"] == "done" and view["left_untouched"] == [] and len(task.results) == 2
+    assert view["stage"] == "done" and untouched(task) == [] and len(task.results) == 2
     for record in task.session.last_batch.files:
         assert record.status == "PASS"
     assert {p: p.read_bytes() for p in before} == before
@@ -514,7 +515,7 @@ def test_documents_built_alike_at_two_body_sizes_take_the_size_most_of_them_have
     task.perform("primary", token=view["token"])
     view = task.view()
     assert list(task.results) == [str(a)] and b.read_bytes() == before
-    assert [(e["name"], e["reason"]) for e in view["left_untouched"]] == [("b.docx", reason)]
+    assert [(e["name"], e["reason"]) for e in untouched(task)] == [("b.docx", reason)]
     for record in task.session.last_batch.files:
         assert record.status == "PASS"
 
@@ -581,7 +582,7 @@ def test_changed_attachments_void_a_button_preview_and_say_so(folder, tmp_path):
     assert task.view()["action"] == ""                       # nothing to continue without the conversation
 
 
-def test_what_a_button_left_untouched_can_be_handed_to_default_mode(tmp_path):
+def test_what_a_button_could_not_do_stays_in_the_batch_and_can_be_worked_on_in_default_mode(tmp_path):
     good = tmp_path / "21 13 13.docx"
     good.write_bytes(build("21 13 13", "WET-PIPE SPRINKLER SYSTEMS"))
     empty = tmp_path / "empty.docx"
@@ -589,23 +590,25 @@ def test_what_a_button_left_untouched_can_be_handed_to_default_mode(tmp_path):
     task = DocumentTask(Session(out_root=tmp_path / "out", visual_check=False), render=False, mode="safe")
     task.attach([good, empty])
     view = task.perform("recipe", recipe="title_property", inputs={"pattern": "SECTION {number} - {title}"})
-    with pytest.raises(ValueError, match="before handing"):
-        task.hand_off([str(empty)])                          # a preview waits: create the copies first
+    with pytest.raises(ValueError, match="not on your to-do list"):
+        task.work_todo(path=str(empty))                      # a preview waits: nothing is owed until it is created
     task.perform("primary", token=view["token"])
     view = task.view()
-    assert [e["name"] for e in view["left_untouched"]] == ["empty.docx"]
-    assert view["todo"] == []                                # a button's refusals stay in scope until handed over
-    with pytest.raises(ValueError, match="not the ones"):
-        task.hand_off([str(good)])
-    task.hand_off([str(empty.resolve())])
+    [missed] = untouched(task)
+    assert missed["name"] == "empty.docx" and "Not done on: empty.docx" in task.messages[-1]["text"]
+    assert view["todo"] == []                                # nobody set it aside: the next button works on it too
+    assert task.documents() == [Path(task.results[str(good)]), empty]
+    with pytest.raises(ValueError, match="not on your to-do list"):
+        task.work_todo(path=str(good))
+    task.work_todo(path=str(empty))
     view = task.view()
-    assert task.mode == "default" and view["mode"] == "default" and view["left_untouched"] == []
-    assert [t["name"] for t in view["todo"]] == ["empty.docx"]
-    entry = task.todo[str(empty.resolve())]
-    assert entry["decisions"] == ["Set the document title property to “SECTION {number} - {title}”"]
-    assert entry["why"] == "refused" and entry["reason"].startswith("The button could not change it: ")
-    assert view["todo"][0]["reason"] == entry["reason"]      # the to-do card says why, as it does for a conversation's
-    assert WORK_TODO in task.messages[-1]["text"]
+    assert task.mode == "default" and view["mode"] == "default"
+    # the pass over that one document, from the button's own sentence, with the reason the button gave
+    assert task.focus["documents"] == [str(empty)] and view["focus"] == [str(empty)]
+    assert task.decisions == ["Set the document title property to “SECTION {number} - {title}”"]
+    assert task.focus["why"][str(empty)] == {"why": "refused", "reason": missed["reason"]}
+    assert "Working on empty.docx, from your to-do list" in task.messages[-1]["text"]
+    assert "Switched to Default mode" in task.messages[-2]["text"]
 
 
 def test_setting_every_document_aside_in_safe_mode_creates_nothing_and_starts_no_conversation(folder, tmp_path):
@@ -620,7 +623,7 @@ def test_setting_every_document_aside_in_safe_mode_creates_nothing_and_starts_no
     assert not task.results and "no copy was created" in task.messages[-1]["text"]
 
 
-def test_a_removed_document_leaves_the_untouched_list_and_cannot_be_handed_over(tmp_path):
+def test_a_removed_document_leaves_the_to_do_list_and_cannot_be_worked_on(tmp_path):
     good = tmp_path / "21 13 13.docx"
     good.write_bytes(build("21 13 13", "WET-PIPE SPRINKLER SYSTEMS"))
     empty = tmp_path / "empty.docx"
@@ -629,13 +632,12 @@ def test_a_removed_document_leaves_the_untouched_list_and_cannot_be_handed_over(
     task.attach([good, empty])
     view = task.perform("recipe", recipe="title_property", inputs={"pattern": "SECTION {number} - {title}"})
     task.perform("primary", token=view["token"])
-    assert [e["name"] for e in task.view()["left_untouched"]] == ["empty.docx"]
-    stale = task.view()["left_untouched"][0]["path"]
+    [missed] = untouched(task)
+    assert missed["name"] == "empty.docx"
     task.remove(empty)
-    assert task.view()["left_untouched"] == []
-    task.left_untouched = [{"path": stale, "name": "empty.docx", "why": "refused", "reason": "x", "request": "r"}]
-    with pytest.raises(ValueError, match="not the ones"):    # a page out of date names a document no longer attached
-        task.hand_off([stale])
+    assert untouched(task) == [] and owed(task) == []
+    with pytest.raises(ValueError, match="not on your to-do list"):   # a page out of date names a document no longer attached
+        task.work_todo(path=missed["path"])
     assert task.todo == {} and task.mode == "safe"
 
 
@@ -664,7 +666,7 @@ def test_a_default_plan_approved_in_safe_mode_takes_no_ai_step(folder, tmp_path,
     task.perform("primary", token=task.view()["token"])
     view = task.view()
     assert task.stage == "done" and task.todo == {}
-    assert [(e["name"], e["reason"]) for e in view["left_untouched"]] == [(Path(s.last_batch.files[0].source).name,
+    assert [(e["name"], e["reason"]) for e in untouched(task)] == [(Path(s.last_batch.files[0].source).name,
                                                                            "a planted failure")]
 
 
@@ -737,7 +739,7 @@ def test_a_sample_a_later_step_refused_is_left_untouched_beside_a_buttons_copies
     task.perform("primary", token=view["token"])
     view = task.view()
     assert list(task.results) == [str(a)] and b.read_bytes() == before
-    assert [(e["name"], e["reason"]) for e in view["left_untouched"]] == [
+    assert [(e["name"], e["reason"]) for e in untouched(task)] == [
         (b.name, "a list defined through a numbering style")]
 
 
@@ -873,7 +875,7 @@ def test_page_size_and_margins_leave_a_landscape_document_untouched_unless_only_
     view = task.perform("recipe", recipe="page_setup", inputs=inputs)
     view = task.perform("primary", token=view["token"])
     assert view["stage"] == "done" and len(task.results) == 2
-    assert [e["name"] for e in view["left_untouched"]] == [wide.name]
+    assert [e["name"] for e in untouched(task)] == [wide.name]
     for out in task.results.values():
         pkg = DocxPackage.from_path(out)
         for sp in DocxPackage.sect_prs(pkg.xml(pkg.main_part())):
@@ -1116,7 +1118,7 @@ def test_a_hidden_note_holding_a_field_goes_and_a_visible_one_sets_only_its_docu
     view = task.perform("primary", token=view["token"])
     assert view["stage"] == "done"
     assert [Path(src).name for src in task.results] == [files[0].name]
-    assert [(e["name"], "holds a field" in e["reason"]) for e in view["left_untouched"]] == [(files[1].name, True)]
+    assert [(e["name"], "holds a field" in e["reason"]) for e in untouched(task)] == [(files[1].name, True)]
     for record in task.session.last_batch.files:
         assert record.status == "PASS"
     body = body_texts(DocxPackage.from_path(next(iter(task.results.values()))))

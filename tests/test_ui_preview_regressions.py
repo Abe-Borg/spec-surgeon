@@ -12,6 +12,7 @@ from spec_surgeon.settings import Settings
 from spec_surgeon.verify import CheckResult
 from spec_surgeon.web.server import WindowState
 from test_naming import CONVENTION, build_batch1
+from standing_helpers import untouched
 
 
 def task_for(tmp_path):
@@ -110,7 +111,7 @@ def test_a_failed_later_button_does_not_claim_previous_copies_are_its_results(tm
     assert task.results == {} and task.view()["results"] == {}
     fail_checks(monkeypatch, batch)  # preview passed; the actual run fails independently
     view = task.perform("primary", token=view["token"])
-    assert view["left_untouched"] and view["results"] == {}
+    assert untouched(task) and view["results"] == {}
     assert "No copies were created" in task.messages[-1]["text"]
     assert "copies are ready" not in task.messages[-1]["text"]
     assert task.working[str(source)] == previous and Path(previous).is_file()
@@ -137,11 +138,11 @@ def test_start_over_keeps_the_originals_and_clears_the_last_buttons_untouched_st
     task.attach([empty])
     view = task.perform("recipe", recipe="title_property", inputs={"pattern": "SECTION {number} - {title}"})
     task.perform("primary", token=view["token"])
-    assert task.left_untouched and task.results
+    assert untouched(task) and task.results
     saved_copy = task.results[str(source)]
     task.start_over()
     view = task.view()
-    assert view["stage"] == "empty" and view["results"] == {} and view["left_untouched"] == []
+    assert view["stage"] == "empty" and view["results"] == {} and untouched(task) == []
     assert view["working"]["from_originals"] is True
     assert set(task.documents()) == {source, empty}
     assert "Pick a button to start" in task.messages[-1]["text"]

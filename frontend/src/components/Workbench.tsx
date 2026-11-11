@@ -1,11 +1,11 @@
 import { memo, useEffect, useRef } from "react";
-import type { Attachment, TodoItem, View } from "../types";
+import type { Attachment, ObliterateTarget, View } from "../types";
 import type { Mark, Reviews } from "../lib/review";
 import type { Unticks } from "../lib/occurrences";
 import { changedTip, copiesNote, copyTip, doneCoverage, doneSteps, doneSubtitle, isSaved, notSavedTip, openTarget, planHasContent, runFolder, saveRecipeBlocked, saveRecipeTip, undoLink } from "../lib/workbench";
 import { standingOf } from "../lib/standing";
 import { TOUR_HOLD } from "../lib/tour";
-import { copyMark, failedCopyLine, resultsLead, unverifiedLine } from "../lib/modes";
+import { copyMark, resultsLead, unverifiedLine } from "../lib/modes";
 import DocumentsTray from "./DocumentsTray";
 import Markdown from "./Markdown";
 import PaperCard from "./PaperCard";
@@ -13,7 +13,6 @@ import OccurrencesCard from "./OccurrencesCard";
 import PreviewCard from "./PreviewCard";
 import StandingCard from "./StandingCard";
 import Tip from "./Tip";
-import { paperBtn } from "./ModalShell";
 
 interface Props {
   view: View;
@@ -44,14 +43,17 @@ interface Props {
   onStartOver: () => void;
   /** Undo the last button (Safe) or change (Default, Obliterate): the working set back to the copies from before it. */
   onUndo: () => void;
-  /** Takes a document off the to-do list, back among the documents the next request works on. */
+  /** A document the user set aside, back among the documents the next request works on. */
   onPutBack: (path: string) => void;
-  /** A to-do row's **Obliterate this one** (shown only while Settings shows Obliterate mode): the warning, then
+  /** A failed cell's **Obliterate this one** (shown only while Settings shows Obliterate mode): the warning, then
    *  Obliterate mode for that one document. */
-  onObliterateTodo: (item: TodoItem) => void;
+  onObliterateTodo: (target: ObliterateTarget) => void;
+  /** A failed cell's **Work on it**: the pass over that cell, or over every document that owes the operation; from
+   *  Safe mode the window turns to Default mode first. */
+  onWorkTodo: (operation?: string, path?: string) => void;
+  /** **Not needed on this one** (`on`), or back on the to-do list. */
+  onWaiveTodo: (operation: string, path: string, on: boolean) => void;
   onZoom: (src: string, title: string) => void;
-  /** Safe mode's "Try these in Default mode" for what the last button left untouched. */
-  onHandOff: (paths: string[]) => void;
   /** Save as a recipe: the dialog over What you've done so far (absent: the server keeps no recipes). */
   onSaveRecipe?: () => void;
   /** The guided tour runs: Save as a recipe is held still (the practice runs are not yours to keep). */
@@ -141,7 +143,8 @@ function Workbench({
   onPutBack,
   onObliterateTodo,
   onZoom,
-  onHandOff,
+  onWorkTodo,
+  onWaiveTodo,
   onSaveRecipe,
   tourActive = false,
   onParts,
@@ -151,11 +154,9 @@ function Workbench({
   const occurrences = view.occurrences ?? [];
   const safe = view.mode === "safe";
   const undo = undoLink(view, busy);
-  const untouched = view.left_untouched ?? [];
   const hasPlan = planHasContent(view.plan);
   const folder = runFolder(view);
   const setAside = view.plan?.set_aside ?? [];
-  const todo = view.todo ?? [];
   const done = doneSteps(view);
   const standing = standingOf(view);
   const scrollRef = useRef<HTMLElement>(null);
@@ -184,7 +185,7 @@ function Workbench({
       <div className="mx-auto flex w-full max-w-4xl flex-col gap-5 px-6 py-6">
         <DocumentsTray
           attachments={view.attachments}
-          todo={todo}
+          todo={view.todo ?? []}
           focus={view.focus ?? []}
           busy={busy}
           uploading={uploading}
@@ -308,45 +309,6 @@ function Workbench({
           </div>
         )}
 
-        {untouched.length > 0 && (
-          <div data-tour="left-untouched-button">
-          <PaperCard
-            title="Left untouched by the last button"
-            subtitle="These documents got no copy from it; each line says why. Default mode can plan them with an AI model."
-            aside={
-              <Tip
-                tip={
-                  busy
-                    ? "Finish the current work first"
-                    : "Puts these documents on your to-do list and switches to Default mode, where you describe what should be different"
-                }
-              >
-                <button
-                  type="button"
-                  className={paperBtn}
-                  disabled={busy}
-                  onClick={() => onHandOff(untouched.map((u) => u.path))}
-                  data-capability="results.hand-off"
-                >
-                  Try these in Default mode
-                </button>
-              </Tip>
-            }
-          >
-            <ul className="divide-y divide-paper-edge">
-              {untouched.map((item) => (
-                <li key={item.path} className="py-2 first:pt-0 last:pb-0" title={item.path}>
-                  <p className="text-sm font-medium text-paper-ink">{item.name}</p>
-                  <p className="text-[12px] leading-relaxed text-paper-dim">
-                    <Markdown text={item.reason} paper inline />
-                  </p>
-                </li>
-              ))}
-            </ul>
-          </PaperCard>
-          </div>
-        )}
-
         {view.results.length > 0 && (
           <div ref={resultsRef} className="scroll-mt-6" data-tour="results">
           <PaperCard
@@ -440,7 +402,15 @@ function Workbench({
 
         {standing.operations.length > 0 && (
           <div data-tour="standing-grid">
-            <StandingCard standing={standing} safe={safe} />
+            <StandingCard
+              standing={standing}
+              view={view}
+              tourActive={tourActive}
+              onWork={onWorkTodo}
+              onWaive={onWaiveTodo}
+              onObliterate={onObliterateTodo}
+              onPutBack={onPutBack}
+            />
           </div>
         )}
 
@@ -512,77 +482,6 @@ function Workbench({
                 </li>
               ))}
             </ol>
-          </PaperCard>
-          </div>
-        )}
-
-        {todo.length > 0 && (
-          <div data-tour="todo-list">
-          <PaperCard
-            title="Set aside for more work"
-            subtitle={
-              (view.focus ?? []).length > 0
-                ? "These wait for a pass of their own, out of the plan you are working on now. Put one back to have it join the other documents when this pass ends."
-                : "These documents wait here, out of every plan, until you work on them (the conversation offers it) or put one back. Nothing in them is changed."
-            }
-            tone="muted"
-          >
-            <ul className="divide-y divide-paper-edge">
-              {todo.map((item) => (
-                <li key={item.path} className="flex items-start gap-3 py-2 first:pt-0 last:pb-0">
-                  <div className="min-w-0 flex-1" title={item.path}>
-                    <p className="truncate text-sm text-paper-ink">{item.name}</p>
-                    {item.reason && <p className="mt-0.5 text-xs leading-snug text-paper-dim">{item.reason}</p>}
-                    {item.obliterate !== undefined && failedCopyLine(item.failed_copy) && (
-                      <p className="mt-0.5 text-xs leading-snug text-paper-dim">{failedCopyLine(item.failed_copy)}</p>
-                    )}
-                  </div>
-                  {item.obliterate !== undefined && (
-                    <Tip
-                      tip={
-                        tourActive
-                          ? TOUR_HOLD
-                          : busy
-                            ? "Finish or stop the current work first"
-                            : item.obliterate ||
-                              (view.mode === "obliterate"
-                                ? "Begins the pass over this one document, in Obliterate mode"
-                                : "Opens Obliterate mode's warning; then the pass begins over this one document")
-                      }
-                    >
-                      <button
-                        type="button"
-                        onClick={() => onObliterateTodo(item)}
-                        disabled={busy || tourActive || !!item.obliterate}
-                        aria-label={`Obliterate ${item.name}`}
-                        data-capability="todo.obliterate"
-                        className="shrink-0 text-xs text-err underline decoration-err/40 underline-offset-2 transition-colors hover:decoration-err disabled:pointer-events-none disabled:opacity-50"
-                      >
-                        Obliterate this one
-                      </button>
-                    </Tip>
-                  )}
-                  <Tip
-                    tip={
-                      busy
-                        ? "Finish or stop the current work first"
-                        : view.recovery_blocked || "Back among the documents your next request works on, as it is"
-                    }
-                  >
-                    <button
-                      type="button"
-                      onClick={() => onPutBack(item.path)}
-                      disabled={busy || !!view.recovery_blocked}
-                      aria-label={`Put back ${item.name}`}
-                      data-capability="todo.put-back"
-                      className="shrink-0 text-xs text-accent underline decoration-accent/40 underline-offset-2 transition-colors hover:decoration-accent disabled:pointer-events-none disabled:opacity-50"
-                    >
-                      Put back
-                    </button>
-                  </Tip>
-                </li>
-              ))}
-            </ul>
           </PaperCard>
           </div>
         )}

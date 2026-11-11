@@ -35,6 +35,7 @@ from spec_surgeon.settings import Settings
 from spec_surgeon.verify import CheckResult
 from spec_surgeon.web.server import TOKEN_HEADER, WindowState, create_app
 from test_document_task import REQUEST, SPEC, document
+from standing_helpers import case_of, failed_cell, owed, owes, owing
 from test_web_server import TOKEN, FakeUpdates
 
 V2 = "V2 (Text preservation)"
@@ -83,7 +84,9 @@ def straggler(tmp_path, monkeypatch, *more, **kwargs):
     view = task.perform("send", text=REQUEST)
     assert view["stage"] == "preview" and [item["name"] for item in view["set_aside"]] == ["bad.docx"]
     task.perform("primary", token=view["token"])
-    assert task.stage == "done" and list(task.results) == [str(good)] and list(task.todo) == [str(bad)]
+    assert task.stage == "done" and list(task.results) == [str(good)]
+    # bad.docx owes the request and stays in the batch: nobody set it aside
+    assert owing(task) == ["bad.docx"] and task.todo == {} and bad in task.documents()
     return task, fake, good, bad
 
 
@@ -91,7 +94,7 @@ def straggler(tmp_path, monkeypatch, *more, **kwargs):
 
 def test_a_failed_preview_sample_keeps_its_checks_its_copy_and_a_worked_example(tmp_path, monkeypatch):
     task, _fake, good, bad = straggler(tmp_path, monkeypatch)
-    case = task.todo[str(bad)]["case"]
+    case = case_of(task, bad)
     assert case["checks"] == [{"id": "V2", "name": "Text preservation", "summary": "planted verification failure"}]
     copy = case["copy"]
     assert copy["marks"] == [V2] and Path(copy["path"]).is_file() and copy["source"] == str(bad)
@@ -106,12 +109,13 @@ def test_a_failed_preview_sample_keeps_its_checks_its_copy_and_a_worked_example(
     task.journal = journal
     task.save()
     again = task_for(tmp_path, FakeClient(), journal=journal)
-    assert again.restore() and again.todo[str(bad)]["case"] == case
+    assert again.restore() and case_of(again, bad) == case
     data = json.loads(journal.read_text(encoding="utf-8"))
-    data["todo"][str(bad)]["case"]["checks"] = "not a list"
+    [operation] = data["standing"]["operations"]
+    operation["cells"][str(bad)][-1]["case"]["checks"] = "not a list"
     journal.write_text(json.dumps(data), encoding="utf-8")
     broken = task_for(tmp_path, FakeClient(), journal=journal)
-    assert broken.restore() and "case" not in broken.todo[str(bad)] and broken.todo[str(bad)]["why"] == "failed"
+    assert broken.restore() and "case" not in owes(broken, bad) and owes(broken, bad)["why"] == "failed"
 
 
 def test_a_refused_document_keeps_the_engines_record_and_no_copy(tmp_path):
@@ -121,11 +125,11 @@ def test_a_refused_document_keeps_the_engines_record_and_no_copy(tmp_path):
     task.attach([easy, source])
     view = task.perform("send", text="Make the title bold")
     task.perform("primary", token=view["token"])
-    case = task.todo[str(source)]["case"]
+    case = case_of(task, source)
     assert case["code"] and "MissingStyle" in case["reason"] and case["checks"] == [] and case["copy"] is None
     assert case["sibling"]["name"] == "easy.docx"
-    view = task.view()
-    assert view["todo"][0]["obliterate"] == "" and "failed_copy" not in view["todo"][0]
+    cell = failed_cell(task, source)
+    assert cell["obliterate"] == "" and "failed_copy" not in cell
 
 
 def test_a_run_result_that_failed_keeps_the_copy_the_run_held_back(tmp_path, monkeypatch):
@@ -145,15 +149,14 @@ def test_a_run_result_that_failed_keeps_the_copy_the_run_held_back(tmp_path, mon
     task.attach([good, bad])
     task.perform("recipe", recipe="remove_highlight", inputs={})
     task.perform("primary", token=task.action_token())
-    [left] = task.left_untouched
-    copy = left["case"]["copy"]
+    [left] = owed(task)
+    copy = case_of(task, bad)["copy"]
     assert left["name"] == "bad.docx" and copy["marks"] == [V2]
     assert Path(copy["path"]).parent.name == "failed" and Path(copy["path"]).is_file()
-    assert left["case"]["sibling"]["name"] == "good.docx"
-    # handed to Default mode, the entry carries it; straight to Obliterate from there, the copy can be taken
-    task.hand_off([left["path"]])
-    assert task.mode == "default" and task.todo[str(bad)]["case"]["copy"] == copy
-    task.obliterate_todo(str(bad), acknowledged=True)
+    assert case_of(task, bad)["sibling"]["name"] == "good.docx"
+    # the cell carries it whatever mode works on it next; straight to Obliterate from Safe, the copy can be taken
+    assert failed_cell(task, bad)["failed_copy"] == [V2]
+    task.obliterate_todo(str(bad), acknowledged=True, operation=left["operation"])
     assert task.mode == "obliterate" and USE_FAILED_COPY in task.view()["chips"]
     view = task.perform("send", text=USE_FAILED_COPY, chip=True)
     assert view["unverified"][str(bad)] == [V2] and Path(task.results[str(bad)]).read_bytes() == \
@@ -204,24 +207,26 @@ def test_obliterate_this_one_needs_the_setting_and_the_warning_and_scopes_the_pa
     task.attach([good, bad, worse])
     view = task.perform("send", text=REQUEST)
     task.perform("primary", token=view["token"])
-    assert sorted(Path(k).name for k in task.todo) == ["bad.docx", "worse.docx"]
-    # hidden: the entries read as they always did, and the action is refused
-    assert all(set(item) == {"path", "name", "why", "reason"} for item in task.view()["todo"])
+    assert owing(task) == ["bad.docx", "worse.docx"] and task.todo == {}
+    # hidden: the cells read as they always did, and the action is refused
+    assert all("obliterate" not in failed_cell(task, p) and "failed_copy" not in failed_cell(task, p)
+               for p in (bad, worse))
     with pytest.raises(ValueError, match="hidden"):
         task.obliterate_todo(str(bad), acknowledged=True)
     task.obliterate_allowed = True
-    assert all(item["obliterate"] == "" and item["failed_copy"] == [V2] for item in task.view()["todo"])
+    assert all(failed_cell(task, p)["obliterate"] == "" and failed_cell(task, p)["failed_copy"] == [V2]
+               for p in (bad, worse))
     with pytest.raises(ValueError, match="not on your to-do list"):
         task.obliterate_todo(str(good), acknowledged=True)
     for ack in (False, None, "yes", 1):
         with pytest.raises(ValueError, match="warning"):
             task.obliterate_todo(str(bad), acknowledged=ack)
-        assert task.mode == "default" and task.focus is None and len(task.todo) == 2     # nothing moved
+        assert task.mode == "default" and task.focus is None and len(owed(task)) == 2    # nothing moved
     calls = len(fake.requests)
     task.obliterate_todo(str(bad), acknowledged=True)
     assert len(fake.requests) == calls                               # the app's own step: no model call
     assert task.mode == "obliterate" and task.session.unguarded
-    assert task.focus["documents"] == [str(bad)] and list(task.todo) == [str(worse)]   # the other one still waits
+    assert task.focus["documents"] == [str(bad)] and owing(task) == ["bad.docx", "worse.docx"]   # the other still owes it
     assert task.documents() == [bad] and task.decisions == [REQUEST] and task.stage == "resume"
     texts = said(task)
     assert OBLITERATE_ON in texts and any(t.startswith("Working on bad.docx, from your to-do list.") for t in texts)
@@ -230,12 +235,12 @@ def test_obliterate_this_one_needs_the_setting_and_the_warning_and_scopes_the_pa
     view = task.view()
     assert view["chips"][0] == USE_FAILED_COPY
     assert view["failed_copies"] == [{"path": str(bad), "name": "bad.docx", "failed": [V2]}]
-    assert view["todo"][0]["name"] == "worse.docx" and "Finish the pass" in view["todo"][0]["obliterate"]
+    assert "Finish the pass" in failed_cell(task, worse)["obliterate"]
     with pytest.raises(ValueError, match="Finish the pass"):
         task.obliterate_todo(str(worse))
     # already in Obliterate, no second warning is asked: drop the pass, then the other document
     task.discard_preview()
-    assert task.focus is None and task.todo[str(bad)]["case"]["copy"]["marks"] == [V2]   # back as it was, case kept
+    assert task.focus is None and case_of(task, bad)["copy"]["marks"] == [V2]            # still owed, case kept
     task.obliterate_todo(str(worse))
     assert task.focus["documents"] == [str(worse)] and task.mode == "obliterate"
 
@@ -293,7 +298,7 @@ def test_a_worked_example_is_read_only_no_spec_can_name_it(tmp_path):
 def test_taking_the_copy_that_failed_is_one_change_with_no_ai_call(tmp_path, monkeypatch):
     task, fake, good, bad = straggler(tmp_path, monkeypatch)
     before = bad.read_bytes()
-    kept = task.todo[str(bad)]["case"]["copy"]
+    kept = case_of(task, bad)["copy"]
     failed_bytes = Path(kept["path"]).read_bytes()
     task.obliterate_todo(str(bad), acknowledged=True)
     calls, generation = len(fake.requests), task.generation
@@ -328,7 +333,7 @@ def test_taking_the_copy_that_failed_is_one_change_with_no_ai_call(tmp_path, mon
 
 def test_the_copy_is_refused_when_anything_it_stands_on_moved(tmp_path, monkeypatch):
     task, fake, good, bad = straggler(tmp_path, monkeypatch)
-    kept = dict(task.todo[str(bad)]["case"]["copy"])
+    kept = dict(case_of(task, bad)["copy"])
     # outside Obliterate, and outside a pass, it is not offered and not taken
     with pytest.raises(ValueError, match="Obliterate mode's"):
         task.use_failed_copy()
@@ -360,10 +365,10 @@ def test_the_copy_is_refused_when_anything_it_stands_on_moved(tmp_path, monkeypa
 
 def test_a_document_that_moved_on_since_no_longer_fits_its_failed_copy(tmp_path, monkeypatch):
     task, fake, good, bad = straggler(tmp_path, monkeypatch)
-    # the document gets another copy first (put back, then a run that passes): the kept copy was made from the original
+    # the document gets another copy first (it stayed in the batch, so the next request, which passes, covers it): the
+    # kept copy was made from the original
     monkeypatch.undo()
     task.session.client = FakeClient(submit(tid="s2"))
-    task.put_back(bad)
     view = task.perform("send", text="Remove the highlighting again")
     task.perform("primary", token=view["token"])
     assert str(bad) in task.working
@@ -380,17 +385,17 @@ def test_a_pass_of_several_takes_the_copies_it_has_and_puts_the_rest_back(tmp_pa
     task.attach([good, bad, worse])
     view = task.perform("send", text=REQUEST)
     task.perform("primary", token=view["token"])
-    task.todo[str(worse)]["case"]["copy"] = None                      # worse.docx: no copy was kept
+    case_of(task, worse)["copy"] = None                               # worse.docx: no copy was kept
     task.set_mode("obliterate", acknowledged=True)
     task.perform("send", text=WORK_TODO)
     assert task.focus["documents"] == [str(bad), str(worse)] and USE_FAILED_COPY in task.view()["chips"]
     task.perform("send", text=USE_FAILED_COPY, chip=True)
     assert str(bad) in task.working and task.unverified[str(bad)] == [V2]
-    assert list(task.todo) == [str(worse)] and task.todo[str(worse)]["why"] == "failed"   # back as it was
+    assert owing(task) == ["worse.docx"] and owes(task, worse)["why"] == "failed"         # still owed, as it was
     assert "Not taken: No copy of worse.docx was kept" in said(task)[-2]
-    assert task.runs[-1]["not"][str(worse)] == "set aside"
+    assert task.runs[-1]["not"][str(worse)] == "left untouched" and task.todo == {}
     task.undo()
-    assert str(bad) not in task.working and list(task.todo) == [str(worse)]   # Undo leaves the other one waiting
+    assert str(bad) not in task.working and owing(task) == ["bad.docx", "worse.docx"]     # Undo: both owe it again
 
 
 def test_default_mode_never_takes_a_failed_copy_and_shows_no_chip(tmp_path, monkeypatch):
@@ -417,8 +422,11 @@ def test_the_window_routes_obliterate_this_one_and_never_keeps_the_mode(tmp_path
     task, fake, good, bad = straggler(tmp_path, monkeypatch)
     state = WindowState(task, Settings(show_obliterate=True), token=TOKEN, updates=FakeUpdates(), version="1.18.0")
     client = TestClient(create_app(state), headers={TOKEN_HEADER: TOKEN})
-    item = client.get("/api/state").json()["todo"][0]
-    assert item["name"] == "bad.docx" and item["obliterate"] == "" and item["failed_copy"] == [V2]
+    shown = client.get("/api/state").json()
+    [document] = [r for r in shown["standing"]["documents"] if r["owed"]]
+    [item] = [c for c in document["cells"] if c["state"] == "failed"]
+    assert document["name"] == "bad.docx" and item["obliterate"] == "" and item["failed_copy"] == [V2]
+    assert shown["todo"] == []                                        # owed, not set aside: it stays in the batch
     refused = client.post("/api/todo/obliterate", json={"path": str(bad)})
     assert refused.status_code == 400 and "warning" in refused.json()["error"]
     assert client.post("/api/todo/obliterate", json={"path": str(good), "acknowledged": True}).status_code == 400

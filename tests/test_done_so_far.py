@@ -12,6 +12,7 @@ import pytest
 from make_fixtures import build, build_dirty
 from test_going_back import AGAIN, ITALIC, TITLE, chat_task, files, plan, press, safe_task  # noqa: F401
 from test_document_task import REQUEST, document
+from standing_helpers import untouched
 
 
 def done(task) -> list:
@@ -62,7 +63,7 @@ def test_a_document_the_button_left_untouched_is_named_so(tmp_path, files):
     task = safe_task(tmp_path)
     task.attach([files[0], empty])
     press(task, "title_property", TITLE)
-    assert task.view()["left_untouched"]                               # the button could not change it
+    assert untouched(task)                               # the button could not change it
     [step] = done(task)
     assert (step["documents"], step["of"]) == (1, 2)
     assert step["not"] == [{"name": "empty.docx", "why": "left untouched"}]

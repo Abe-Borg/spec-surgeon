@@ -131,11 +131,13 @@ export interface SetAside {
   reason: string;
 }
 
-/** A document the last Safe-mode button left without a copy, and why; offered to Default mode. */
-export interface Untouched {
+/** What a failed cell's **Obliterate this one** is pressed on: the document, the operation it still owes, and the
+ *  checks a copy the app kept for it failed (Obliterate can take that copy as it is). */
+export interface ObliterateTarget {
   path: string;
   name: string;
-  reason: string;
+  operation: string;
+  failed_copy?: string[];
 }
 
 /** Safe: the buttons, no AI call. Default: the conversation. Obliterate: the conversation without the guardrails that
@@ -414,12 +416,6 @@ export interface TodoItem {
   why?: TodoWhy;
   /** One sentence saying why, as the server words it. */
   reason?: string;
-  /** Present only while Settings shows Obliterate mode: the row offers **Obliterate this one** — "" when it can be
-   *  pressed now, else why it waits (a pass is under way, a run's copies wait on their check). */
-  obliterate?: string;
-  /** The checks a copy the app kept for this document failed (a run or a preview made it and held it back): Obliterate
-   *  can take it as it is, marked UNVERIFIED. Absent when no such copy is kept, or Obliterate is hidden. */
-  failed_copy?: string[];
 }
 
 /** A document of the Obliterate pass under way whose failed copy the app kept and can still take as it is (the
@@ -500,7 +496,8 @@ export interface Working {
 
 /** One attempt on one document under one operation (docs/WEB_API.md, `standing`). */
 export interface StandingAttempt {
-  state: "done" | "failed" | "not_run";
+  /** "waived": the user said it is not needed on this document (off the to-do list; can be put back). */
+  state: "done" | "failed" | "not_run" | "waived";
   /** The mode it happened in; "" for a document that holds no attempt under the operation. */
   mode: Mode | "";
   /** The kind of reason: "refused", "failed", "held", "asked", "left out", "set aside", "attached later",
@@ -519,6 +516,12 @@ export interface StandingAttempt {
 /** One document under one operation: its last attempt, and every attempt oldest first (none: it was not run). */
 export interface StandingCell extends StandingAttempt {
   attempts: StandingAttempt[];
+  /** On a failed cell, only while Settings shows Obliterate mode: the cell offers **Obliterate this one** — "" when
+   *  it can be pressed now, else why it waits (a pass is under way, a run's copies wait on their check). */
+  obliterate?: string;
+  /** The checks a copy the app kept for this cell failed (a run or a preview made it and held it back): Obliterate
+   *  can take it as it is, marked UNVERIFIED. Absent when no such copy is kept, or Obliterate is hidden. */
+  failed_copy?: string[];
 }
 
 /** One operation asked for: a Safe-mode button, a request, a saved recipe's run, one of Obliterate's own actions. */
@@ -720,8 +723,6 @@ export interface View {
   word: WordMenu | null;
   /** The attached template, as a header/footer template. */
   template: TemplateInfo;
-  /** What the last Safe-mode button left untouched (after its copies were created). */
-  left_untouched: Untouched[];
   /** The guided tour's state; absent from an older server. */
   tutorial: Tutorial;
   /** The note about Safe mode above its buttons is folded to its one line (settings.json); false from an older

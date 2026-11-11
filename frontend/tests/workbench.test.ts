@@ -279,30 +279,17 @@ test("a copy's link opens the saved file while it holds the copy's bytes, else t
 
 
 
-test("What you've done so far: each run with how many documents carry it, and why the others do not", () => {
+test("What you've done so far: each run with how many documents carry it (who does not, and why, is the grid's)", () => {
   const all = { request: "Remove all comments", recipe: "remove_comments", documents: 3, of: 3, not: [] };
   assert.equal(doneCoverage(all), "All 3 documents");
   assert.equal(doneCoverage({ ...all, documents: 1, of: 1 }), "1 document");
+  // the names and whys the server still sends are not repeated here: Where each document stands says them per
+  // document, with the reason
   assert.equal(
-    doneCoverage({
-      ...all,
-      documents: 1,
-      not: [
-        { name: "21 31 13.docx", why: "left untouched" },
-        { name: "21 13 19.docx", why: "attached later" },
-      ],
-    }),
-    "1 of 3 documents · not 21 31 13.docx (left untouched); 21 13 19.docx (attached later)",
+    doneCoverage({ ...all, documents: 1, not: [{ name: "21 31 13.docx", why: "left untouched" }, { name: "21 13 19.docx", why: "attached later" }] }),
+    "1 of 3 documents",
   );
-  const many = ["a", "b", "c", "d", "e"].map((n) => ({ name: `${n}.docx`, why: "set aside" }));
-  assert.equal(
-    doneCoverage({ ...all, documents: 1, of: 6, not: many }),
-    "1 of 6 documents · not a.docx, b.docx, c.docx and 2 more (set aside)",
-  );
-  assert.equal(
-    doneCoverage({ ...all, documents: 0, of: 1, not: [{ name: "a.docx", why: "attached later" }] }),
-    "None of the documents attached now · not a.docx (attached later)",
-  );
+  assert.equal(doneCoverage({ ...all, documents: 0, of: 1, not: [{ name: "a.docx", why: "attached later" }] }), "None of the documents attached now");
 });
 
 test("the list's subtitle names Undo only while there is one, in the mode's words", () => {

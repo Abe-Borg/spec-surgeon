@@ -46,6 +46,7 @@ from spec_surgeon.ui_feedback import UNPROVEN_MARK, unproven_only
 from spec_surgeon.verify import difference_lines, run_difference
 from spec_surgeon.verify.difference import SAVED_AGAIN
 from spec_surgeon.web.server import TOKEN_HEADER, WindowState, create_app
+from standing_helpers import owe, owes, owing
 from test_document_task import SPEC, document
 from test_web_server import TOKEN, FakeUpdates, frames
 
@@ -560,8 +561,8 @@ def test_every_document_can_get_the_actions_and_one_word_cannot_finish_gets_no_c
     assert any("b.docx: Word could not finish in “Accept all tracked changes” [word-com]: Word stopped." in t
                for t in said(task))
     task.perform("primary", token=view["token"])
-    assert list(task.results) == [str(a)] and str(b) in task.todo
-    assert "Word could not finish" in task.todo[str(b)]["reason"]
+    assert list(task.results) == [str(a)] and owing(task) == ["b.docx"] and task.todo == {}
+    assert "Word could not finish" in owes(task, b)["reason"]
     assert len(fake_word.calls) == 2                                           # nothing ran again at Create
 
 
@@ -658,11 +659,8 @@ def test_a_pass_over_the_to_do_list_goes_on_after_word_and_then_takes_the_plan(t
     a, b = document(tmp_path / "a.docx"), document(tmp_path / "b.docx")
     task = task_for(tmp_path, fake)
     task.attach([a, b])
-    task.todo[str(b)] = {"name": "b.docx", "why": "refused", "reason": "A field stopped the plan.",
-                         "decisions": [REQUEST], "seen": ["Make the title bold."],
-                         "case": {"code": "field", "reason": "a field the op would not guess about",
-                                  "plan": json.dumps(SPEC)}}
-    task._sync()
+    owe(task, b, REQUEST, reason="A field stopped the plan.", seen=["Make the title bold."],
+        case={"code": "field", "reason": "a field the op would not guess about", "plan": json.dumps(SPEC)})
     task.obliterate_todo(str(b), acknowledged=True)
     assert task.focus["documents"] == [str(b)] and "word_action" in task._focus_context()
     view = task.perform("word_actions", path=str(b), actions=["repair"])
@@ -688,9 +686,7 @@ def test_dropping_the_pass_after_word_puts_the_document_back_and_undo_takes_the_
     a, b = document(tmp_path / "a.docx"), document(tmp_path / "b.docx")
     task = task_for(tmp_path)
     task.attach([a, b])
-    task.todo[str(b)] = {"name": "b.docx", "why": "refused", "reason": "A field stopped the plan.",
-                         "decisions": [REQUEST], "seen": []}
-    task._sync()
+    owe(task, b, REQUEST, reason="A field stopped the plan.")
     task.obliterate_todo(str(b), acknowledged=True)
     view = task.perform("word_actions", path=str(b), actions=["repair"])
     task.perform("primary", token=view["token"])
@@ -702,7 +698,8 @@ def test_dropping_the_pass_after_word_puts_the_document_back_and_undo_takes_the_
     task.perform("primary", token=view["token"])
     assert task.discard_kind() == "request"
     task.discard_preview()
-    assert task.focus is None and str(b) in task.todo and str(b) in task.working      # its copy stays its copy
+    assert task.focus is None and str(b) in task.working                              # its copy stays its copy
+    assert owing(task) == ["b.docx"] and task.todo == {}             # and it still owes the request, in the batch
 
 
 # ---- the server ------------------------------------------------------------------------------------------------------

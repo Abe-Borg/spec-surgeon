@@ -20,6 +20,7 @@ from spec_surgeon import compiler
 from spec_surgeon.document_task import (ASKED_REASON, HELD_REASON, SET_ASIDE_REST, START_OVER, WORK_TODO,
                                         DocumentTask)
 from spec_surgeon.gui import Session
+from standing_helpers import owed, owes, owing
 from test_document_task import REQUEST, SPEC, document
 
 
@@ -70,7 +71,7 @@ def test_the_assistant_sets_a_document_aside_and_it_waits_on_the_to_do_list_acro
     # the next request leaves it on the list, and the model is told what waits there and why
     view = task.perform("send", text="Now make the title italic.")
     sent = fake.requests[2]["messages"][0]["content"]
-    assert "ON THE USER'S TO-DO LIST" in sent
+    assert "SET ASIDE BY THE USER" in sent
     assert "- 20 Port.docx: You asked to set it aside for later: waiting on the owner's comments." in sent
     assert "20 Port.docx" not in sent.split("<batch>")[1].split("</batch>")[0]   # not among the documents it may plan
     assert [Path(p).name for p in task.session.planned_files()] == ["21 Keep.docx", "22 Michigan.docx"]
@@ -139,7 +140,7 @@ def test_setting_every_document_aside_ends_the_request_and_nothing_is_asked_of_t
     assert task.session.conversation is None and list(task.todo) == [str(d) for d in docs]
     assert view["chips"][0] == WORK_TODO
     task.perform("send", text="Make the title bold.")                # no model call: there is nothing to plan
-    assert len(fake.requests) == 2 and app_says(task, "Every document is on your to-do list")
+    assert len(fake.requests) == 2 and app_says(task, "Every document is set aside.")
     task.perform("send", text=WORK_TODO)
     assert task.focus["documents"] == [str(d) for d in docs]
 
@@ -170,12 +171,15 @@ def test_put_back_takes_a_document_off_the_list_without_a_pass(tmp_path):
     view = task.perform("send", text=REQUEST)
     task.perform("primary", token=view["token"], hold=[str(docs[1])])
     first_copy = Path(task.results[str(docs[0])])
-    with pytest.raises(ValueError, match="not on your to-do list"):
+    with pytest.raises(ValueError, match="not set aside"):
         task.put_back(docs[0])
     task.put_back(docs[1])
     assert task.todo == {} and task.documents() == [first_copy, docs[1]]
-    assert app_says(task, "is off your to-do list and back among the documents")
-    assert WORK_TODO not in task.view()["chips"]
+    assert app_says(task, "is no longer set aside: it is back among the documents your next request works on.")
+    # back in the batch, and what it was set aside from is still owed until it is worked on or marked as not needed
+    assert owing(task) == [docs[1].name] and WORK_TODO in task.view()["chips"]
+    task.waive(owed(task)[0]["operation"], docs[1])
+    assert owing(task) == [] and WORK_TODO not in task.view()["chips"]
     view = task.perform("send", text="Now the same for the other one.")
     assert task.session.planned_files() == [first_copy.resolve(), docs[1]]
 
@@ -193,7 +197,7 @@ def test_put_back_during_a_pass_waits_for_the_pass_to_end(tmp_path):
     assert task.focus["documents"] == [str(docs[1])] and list(task.todo) == [str(docs[2])]
     task.put_back(docs[2])
     assert task.todo == {} and task.documents() == [docs[1]]        # in scope once B's pass ends
-    assert app_says(task, "C.docx is off your to-do list; it joins the other documents when this pass ends.")
+    assert app_says(task, "C.docx is no longer set aside; it joins the other documents when this pass ends.")
 
 
 def _refusing(tmp_path, *more):
@@ -205,22 +209,24 @@ def _refusing(tmp_path, *more):
     return task, source, easy
 
 
-def test_a_file_the_plan_refuses_goes_on_the_to_do_list_when_the_others_are_created(tmp_path):
+def test_a_file_the_plan_refuses_goes_on_the_to_do_list_and_stays_in_the_batch(tmp_path):
     task, source, easy = _refusing(tmp_path, submit(tid="s2"))
     before = source.read_bytes()
     view = task.perform("send", text="Make the title bold")
     assert [item["name"] for item in view["set_aside"]] == ["source.docx"]   # beside the preview, as before
-    assert task.todo == {}                                          # nothing moves before the click
+    assert task.todo == {} and owed(task) == []                     # nothing is recorded before the click
     task.perform("primary", token=view["token"])
     assert task.stage == "done" and list(task.results) == [str(easy)]
-    entry = task.todo[str(source)]
+    entry = owes(task, source)                                      # what it still owes: the to-do list's line
     assert entry["why"] == "refused" and entry["reason"].startswith("The plan could not be applied to it: ")
     assert "MissingStyle" in entry["reason"] and entry["decisions"] == ["Make the title bold"]
     assert source.read_bytes() == before
-    assert app_says(task, "source.docx could not take this change, so it waits on your to-do list with the reason.")
-    assert task.documents() == [Path(task.results[str(easy)])]
+    assert app_says(task, "source.docx could not take this change. It is on your to-do list with the reason, and "
+                          "stays among the documents your next request works on.")
+    # the engine could not change it, so nothing takes it out of the batch: only the user's own set-aside does
+    assert task.todo == {} and task.documents() == [Path(task.results[str(easy)]), source]
     view = task.view()
-    assert view["chips"][0] == WORK_TODO and view["todo"][0]["why"] == "refused"
+    assert view["chips"][0] == WORK_TODO and view["todo"] == [] and owed(task)[0]["why"] == "refused"
     # working on it later: the model hears the plan's reason
     task.perform("send", text=WORK_TODO)
     task.perform("send", text="Use Heading 1 instead.")
@@ -263,13 +269,13 @@ def test_recoverys_leftovers_go_on_the_to_do_list_at_the_users_word(tmp_path):
     view = task.perform("send", text=SET_ASIDE_REST, chip=True)
     assert len(fake.requests) == calls                               # the app's own step: no model call
     assert view["stage"] == "done" and task.session.recovery is None and task.decisions == []
-    assert list(task.todo) == [str(paths[1])] and task.todo[str(paths[1])]["why"] == "failed"
-    assert task.todo[str(paths[1])]["reason"].startswith("It still needed work when you set it aside: ")
-    assert task.documents() == [first_copy] and task.generation == 1
+    assert owing(task) == [paths[1].name] and owes(task, paths[1])["why"] == "failed" and task.todo == {}
+    assert owes(task, paths[1])["reason"].startswith("It still needed work when you left it for later: ")
+    assert task.documents() == [first_copy, paths[1]] and task.generation == 1     # it stays in the batch
     assert [p.read_bytes() for p in paths] == original
     assert view["chips"][0] == WORK_TODO
     again = task_for(tmp_path, FakeClient(), journal=task.journal)
-    assert again.restore() and again.todo[str(paths[1])]["why"] == "failed"
+    assert again.restore() and owes(again, paths[1])["why"] == "failed" and again.todo == {}
 
 
 def test_the_journal_keeps_why_and_an_older_one_reads_as_the_red_x(tmp_path):
@@ -308,7 +314,9 @@ def test_only_the_conversation_can_set_aside_and_the_prompt_says_when():
     assert "set_aside" not in {t["name"] for t in compiler.TOOLS}   # a one-shot compile has no to-do list
     prompt = compiler.system_prompt(chat=True)
     assert "call set_aside" in prompt and "Leave out is for this request only; set aside is for later." in prompt
-    assert "puts it on the to-do list with its reason" in prompt
+    assert "puts what it still owes on the to-do list with the reason" in prompt
+    assert "stays in THE BATCH as it is, and later requests cover it like the others" in prompt
+    assert "Work on my to-do list" in prompt and "Work on the documents I set aside" not in prompt
     assert compiler.resolve_set_aside([], None)[1]                  # an empty call is refused
 
 
@@ -323,7 +331,8 @@ def test_the_put_back_route_takes_a_document_off_the_list_and_refuses_what_is_no
         done = frames(response)[-1]["state"]
     assert [item["path"] for item in done["todo"]] == [str(second)]
     refused = client.post("/api/put-back", json={"path": str(first)})
-    assert refused.status_code == 400 and "not on your to-do list" in refused.json()["error"]
+    assert refused.status_code == 400 and "not set aside" in refused.json()["error"]
     view = client.post("/api/put-back", json={"path": str(second)}).json()
-    assert view["todo"] == [] and WORK_TODO not in view["chips"]
-    assert "back among the documents" in view["messages"][-1]["text"]
+    assert view["todo"] == [] and "back among the documents" in view["messages"][-1]["text"]
+    # what it was set aside from is still on the to-do list: the grid's cross, and the reply that works on it
+    assert view["standing"]["owed"] == {"cells": 1, "documents": 1} and WORK_TODO in view["chips"]

@@ -20,6 +20,7 @@ from spec_surgeon.standing import ATTACHED_LATER, DONE, FAILED, NOT_PART, NOT_RU
 from test_document_task import REQUEST, SPEC, document
 from test_going_back import TITLE, files, press, safe_task  # noqa: F401
 from test_set_aside_bin import _refusing, park, submit, task_for, three
+from standing_helpers import owed, untouched
 from test_word_actions import word  # noqa: F401
 
 
@@ -155,9 +156,9 @@ def test_a_button_that_fails_on_one_document_is_still_recorded_after_the_next_bu
     task = safe_task(tmp_path)
     task.attach([*files, empty])
     press(task, "title_property", TITLE)
-    reason = task.view()["left_untouched"][0]["reason"]
+    reason = untouched(task)[0]["reason"]
     press(task, "remove_comments")
-    assert task.view()["left_untouched"] == []                      # the card is the last button's alone
+    assert untouched(task) == []                                    # the newest button changed every document
     view = grid(task)
     assert [(o["number"], o["recipe"], o["mode"], o["done"], o["failed"]) for o in view["operations"]] == [
         (1, "title_property", "safe", 2, 1), (2, "remove_comments", "safe", 3, 0)]
@@ -305,8 +306,9 @@ def test_a_document_the_plan_refuses_fails_and_the_pass_that_fixes_it_settles_th
         "Make the title bold", "default", 1, 1)
     refused = row(task, source)["cells"][0]
     assert (refused["state"], refused["why"]) == (FAILED, "refused") and "MissingStyle" in refused["reason"]
-    assert row(task, source)["badges"] == ["set aside"] and states(task, easy) == [DONE]
-    assert task.todo[str(source)]["operation"] == operation["id"]
+    # the engine could not change it, so it stays in the batch: only the user's own set-aside takes a document out
+    assert row(task, source)["badges"] == [] and task.todo == {} and states(task, easy) == [DONE]
+    assert source in task.documents() and owed(task)[0]["operation"] == operation["id"]
     # the pass over the to-do list: its copy settles the cell of the operation it was set aside from
     task.perform("send", text=WORK_TODO)
     assert task.focus["operations"] == {str(source): operation["id"]}
@@ -330,7 +332,7 @@ def test_dropping_a_pass_leaves_the_cell_as_it_was(tmp_path):
     before = grid(task)
     task.perform("send", text=WORK_TODO)
     task.discard_preview()
-    assert task.todo[str(source)]["operation"] == before["operations"][0]["id"]
+    assert task.todo == {} and task.focus is None and owed(task)[0]["operation"] == before["operations"][0]["id"]
     assert grid(task) == before
 
 
@@ -390,7 +392,7 @@ def test_recoverys_leftover_is_recorded_with_the_reason_it_was_set_aside_for(tmp
     assert (operation["request"], operation["done"], operation["failed"]) == (goal["request"], 1, 1)
     assert states(task, paths[0]) == [DONE]
     leftover = row(task, paths[1])["cells"][0]
-    assert leftover["state"] == FAILED and leftover["reason"].startswith("It still needed work when you set it aside")
+    assert leftover["state"] == FAILED and leftover["reason"].startswith("It still needed work when you left it for later")
     assert len(leftover["attempts"]) == 1
 
 
@@ -421,7 +423,7 @@ def test_a_copy_delivered_unverified_is_done_with_its_mark_not_owed(tmp_path, mo
 def test_taking_the_copy_that_failed_settles_the_cell_and_says_how(tmp_path, monkeypatch):
     from test_obliterate_handoff import straggler
     task, _fake, good, source = straggler(tmp_path, monkeypatch, obliterate_allowed=True)
-    operation = task.todo[str(source)]["operation"]
+    operation = owed(task)[0]["operation"]
     assert states(task, good) == [DONE]
     assert task.standing.state(operation, str(source)) == FAILED
     task.obliterate_todo(str(source), acknowledged=True)
@@ -484,10 +486,9 @@ def test_a_safe_buttons_failure_handed_to_default_mode_is_settled_in_its_own_cel
     press(task, "title_property", TITLE)
     [operation] = grid(task)["operations"]
     assert states(task, files[0]) == [DONE] and states(task, odd) == [FAILED]
-    task.hand_off([str(odd)])
-    assert task.mode == "default" and task.todo[str(odd)]["operation"] == operation["id"]
-    assert row(task, odd)["badges"] == ["set aside"]
-    task.perform("send", text=WORK_TODO)
+    task.work_todo(operation=operation["id"], path=str(odd))        # Work on it in Default mode: the pass begins
+    assert task.mode == "default" and task.focus["operations"] == {str(odd): operation["id"]}
+    assert row(task, odd)["badges"] == [] and task.todo == {}
     view = task.perform("send", text="Make its FIRE SUPPRESSION title bold instead.")
     task.perform("primary", token=view["token"])
     [still] = grid(task)["operations"]
@@ -498,10 +499,9 @@ def test_a_safe_buttons_failure_handed_to_default_mode_is_settled_in_its_own_cel
     assert grid(task)["owed"] == {"cells": 0, "documents": 0}
 
 
-def test_a_restart_keeps_the_operation_a_left_untouched_document_did_not_get(tmp_path, files, empty):
-    """An undo point shows again what an earlier button left untouched, and the journal must keep each entry's
-    operation with it: handed to Default mode after a restart and an Undo, the document's fix still settles the cell
-    it failed in rather than opening a column of its own."""
+def test_after_a_restart_and_an_undo_a_failure_is_still_worked_on_in_its_own_cell(tmp_path, files, empty):
+    """What an earlier button could not do is in the journal's record, so it is still on the to-do list after a
+    restart and an Undo of a later button, and working on it then settles the cell it failed in."""
     journal = tmp_path / "journal.json"
     task = safe_task(tmp_path, journal=journal)
     task.attach([files[0], empty])
@@ -510,9 +510,7 @@ def test_a_restart_keeps_the_operation_a_left_untouched_document_did_not_get(tmp
     press(task, "remove_comments")
     again = safe_task(tmp_path, journal=journal)
     assert again.restore()
-    again.undo()                                                    # back to what the first button left untouched
-    assert [e["name"] for e in again.view()["left_untouched"]] == ["empty.docx"]
-    again.hand_off([str(empty)])
-    assert again.todo[str(empty)]["operation"] == operation
-    again.perform("send", text=WORK_TODO)
-    assert again.focus["operations"] == {str(empty): operation}
+    again.undo()                                                    # back to before the second button
+    assert [e["name"] for e in untouched(again)] == ["empty.docx"]
+    again.work_todo(path=str(empty))
+    assert again.mode == "default" and again.focus["operations"] == {str(empty): operation}

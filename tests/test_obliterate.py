@@ -32,6 +32,7 @@ from spec_surgeon.web.server import TOKEN_HEADER, WindowState, create_app, launc
 from test_codegen import GOOD_OP, TEXT_OP, UNASSERTED_OP
 from test_document_task import REQUEST, SPEC, document
 from test_web_server import TOKEN, FakeUpdates, frames
+from standing_helpers import owes
 
 STAMP = "ISSUED FOR PERMIT 2026-11-02"
 PLACES_STAMP = {"request": "r", "summary": "s", "mode": "content", "ops": [{
@@ -951,7 +952,7 @@ def test_the_window_says_which_document_gets_no_copy_before_the_button_and_puts_
     view = task.perform("primary", token=view["token"])
     assert view["stage"] == "done" and len(fake.requests) == 3 and len(task.results) == len(files)
     assert str(odd) not in task.results and all(task.unverified[str(f)] == [UNPROVEN_MARK] for f in files)
-    entry = task.todo[str(odd)]
+    entry = owes(task, odd)
     assert entry["why"] == "failed" and entry["reason"] == "Its copy could not be made: the body does not say SPEC."
     assert "Traceback" in entry["case"]["reason"]                     # the engine's record keeps the whole of it
 

@@ -27,6 +27,7 @@ from fastapi.testclient import TestClient
 from lxml import etree
 
 from fake_claude import FakeClient, resp, tool
+from standing_helpers import owe
 from make_fixtures import build
 from spec_surgeon import catalog, codegen, compiler, hands_on, saved_recipes
 from spec_surgeon.compiler import _Batch, compose_submission
@@ -653,8 +654,7 @@ def test_a_document_the_engine_stopped_on_is_what_the_tool_is_for(tmp_path):
     fake = FakeClient(resp(tool("submit_editspec", {"spec": SPEC})))
     task = task_for(tmp_path, fake)
     task.attach([a, b])
-    task.todo[str(b)] = {"name": "b.docx", "why": "refused", "reason": "The plan could not be applied to it."}
-    task._sync()
+    owe(task, b, "", reason="The plan could not be applied to it.")
     task.obliterate_todo(str(b), acknowledged=True, hands_on=True)
     assert task.mode == "obliterate" and task.hands_on and task.focus["documents"] == [str(b)]
     new = tmp_path / "new.xml"
@@ -741,8 +741,7 @@ def test_obliterate_this_one_carries_the_toggle_too(tmp_path):
     state, client = window(tmp_path)
     a = document(tmp_path / "a.docx")
     client.post("/api/attach", json={"paths": [str(a)], "template": False})
-    state.task.todo[str(a)] = {"name": "a.docx", "why": "set aside", "reason": "You set it aside."}
-    state.task._sync()
+    owe(state.task, a, "", reason="The plan could not be applied to it.")
     view = client.post("/api/todo/obliterate", json={"path": str(a), "acknowledged": True, "hands_on": True}).json()
     assert view["mode"] == "obliterate" and view["hands_on"] is True and view["focus"] == [str(a)]
     assert client.post("/api/parts", json={"path": str(a)}).status_code == 200

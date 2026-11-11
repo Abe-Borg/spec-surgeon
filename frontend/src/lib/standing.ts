@@ -7,7 +7,7 @@ import type { Mode, Standing, StandingAttempt, StandingCell, StandingOperation, 
 
 export const EMPTY_STANDING: Standing = { operations: [], documents: [], owed: { cells: 0, documents: 0 } };
 
-const STATES = ["done", "failed", "not_run"] as const;
+const STATES = ["done", "failed", "not_run", "waived"] as const;
 const MODES = ["safe", "default", "obliterate"] as const;
 
 function attemptOf(raw: unknown): StandingAttempt | null {
@@ -57,7 +57,16 @@ export function normalizeStanding(raw: unknown): Standing {
       const cell = attemptOf(raw);
       if (!cell) return EMPTY_STANDING;
       const attempts = Array.isArray((raw as Record<string, unknown>).attempts) ? ((raw as Record<string, unknown>).attempts as unknown[]) : [];
-      cells.push({ ...cell, attempts: attempts.map(attemptOf).filter((a): a is StandingAttempt => a !== null) });
+      const extra = raw as Record<string, unknown>;
+      cells.push({
+        ...cell,
+        attempts: attempts.map(attemptOf).filter((a): a is StandingAttempt => a !== null),
+        // Obliterate's hand-off, on a failed cell and only while Settings shows the mode
+        ...(cell.state === "failed" && typeof extra.obliterate === "string" ? { obliterate: extra.obliterate } : {}),
+        ...(cell.state === "failed" && Array.isArray(extra.failed_copy)
+          ? { failed_copy: extra.failed_copy.filter((m): m is string => typeof m === "string") }
+          : {}),
+      });
     }
     documents.push({
       path: row.path,
@@ -122,20 +131,65 @@ export function attemptLine(attempt: StandingAttempt): string {
     );
   }
   if (attempt.state === "failed") return `Not done${where}. ${attempt.reason}`.trim();
+  if (attempt.state === "waived") return "Not needed on this one: your decision. It is off your to-do list.";
   return `Not run${where}. ${attempt.reason}`.trim();
 }
 
 /** What a cell's button says to a screen reader and on hover: the document, the operation, and how it stands. */
 export function cellLabel(row: Pick<StandingRow, "name">, operation: Pick<StandingOperation, "number" | "request">, cell: StandingCell): string {
-  const state = cell.state === "done" ? (cell.marks.length ? `done, ${markName(cell.marks)}` : "done") : cell.state === "failed" ? "not done" : "not run";
+  const state =
+    cell.state === "done" ? (cell.marks.length ? `done, ${markName(cell.marks)}` : "done")
+    : cell.state === "failed" ? "not done"
+    : cell.state === "waived" ? "not needed"
+    : "not run";
   return `${row.name}, ${operation.number}. ${operation.request}: ${state}`;
 }
 
-/** The line under the grid: what is still owed. */
+/** The line under the grid: the to-do list, counted. */
 export function owedLine(standing: Pick<Standing, "owed" | "operations">): string {
   const { cells, documents } = standing.owed;
-  if (cells === 0) return "Nothing is owed: nothing that was run on a document failed.";
-  return `Still owed: ${cells} ${cells === 1 ? "operation" : "operations"} on ${documents} ${documents === 1 ? "document" : "documents"}.`;
+  if (cells === 0) return "Your to-do list is empty: nothing that was run on a document is still not done.";
+  return `On your to-do list: ${cells} ${cells === 1 ? "operation" : "operations"} on ${documents} ${documents === 1 ? "document" : "documents"}.`;
+}
+
+/** One line of the to-do list: a document, the operation it still owes, and why. */
+export interface OwedItem {
+  path: string;
+  name: string;
+  /** The operation's id and its number in the grid. */
+  operation: string;
+  number: number;
+  request: string;
+  reason: string;
+}
+
+/** The to-do list: every failed cell, oldest operation first, documents in the grid's order. */
+export function owedItems(standing: Pick<Standing, "operations" | "documents">): OwedItem[] {
+  const items: OwedItem[] = [];
+  standing.operations.forEach((op, i) => {
+    for (const row of standing.documents) {
+      const cell = row.cells[i];
+      if (cell?.state === "failed") {
+        items.push({ path: row.path, name: row.name, operation: op.id, number: op.number, request: op.name || op.request, reason: cell.reason });
+      }
+    }
+  });
+  return items;
+}
+
+/** What working on a failed cell is called: Safe mode has no conversation, so the window turns to Default first. */
+export function workLabel(mode: Mode, several = false): string {
+  const what = several ? "them" : "it";
+  return mode === "safe" ? `Work on ${what} in Default mode` : `Work on ${what} now`;
+}
+
+/** Why a failed cell cannot be worked on now ("" when it can): work runs, a pass is under way, a preview waits, or a
+ *  run's saved copies wait on their check. */
+export function workBlocked(view: Pick<View, "busy" | "focus" | "stage" | "recovery_blocked">): string {
+  if (view.busy) return "Finish or stop the current work first";
+  if ((view.focus ?? []).length > 0) return "Finish the pass over your to-do list first, or drop it";
+  if (view.stage === "preview") return "Create the copies, or discard the preview, first";
+  return view.recovery_blocked ?? "";
 }
 
 /** The rows the grid lists: every document, or only those that still owe something. */
