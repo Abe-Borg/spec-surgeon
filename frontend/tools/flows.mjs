@@ -9,7 +9,9 @@
  * the update banner and the pill it leaves, start over, the button's home
  * in the conversation, the folding documents tray, and the red X on a
  * preview → the to-do list → the pass over it; Safe mode's buttons, a button's form → preview → copies, and Work
- * on it in Default mode for what a button could not do.
+ * on it in Default mode for what a button could not do; Obliterate mode's warning, and its own tools against the
+ * mock's canned answers: the hands-on tools (the warning's box, the strip's switch, the part browser, Save and
+ * Replace this part), Word actions, Try to rescue and Export anyway.
  *
  *   npm run build
  *   node tools/flows.mjs
@@ -40,6 +42,16 @@ try {
   const errors = [];
   page.on("pageerror", (e) => errors.push(String(e)));
   const userBubbles = () => page.locator("main section[aria-label='Conversation'] .rounded-br-md");
+  // A job is over for the page only once its stream has closed, a moment after its last frame is drawn; until then
+  // the page takes no new action, and a click made in between is dropped. When the stream closes the page asks for
+  // the view once more (App.tsx, runJob): that answer is what says the next click will be taken. `job` starts one and
+  // waits for it; `jobEnds` is the wait alone, for a job something else ends (Stop).
+  const jobEnds = () => page.waitForResponse((r) => r.request().method() === "GET" && new URL(r.url()).pathname === "/api/state", { timeout: 60000 });
+  const job = async (start) => {
+    const ended = jobEnds();
+    await start();
+    await ended;
+  };
 
   // 1. A failed job: the error bubble, the page idle, the user bubble rolled back with the view.
   await scenario("attached");
@@ -505,7 +517,7 @@ try {
   // Changing your mind: Discard beside Create, All buttons while a preview waits, the form kept, Undo after Create.
   const createCopies = page.getByRole("button", { name: /^Create \d+ edited cop(?:y|ies)$/ });
   const discarded = page.getByText("Preview discarded; nothing was created.");
-  await previewBtn.click();
+  await job(() => previewBtn.click());
   await createCopies.waitFor({ timeout: 20000 });
   const discardBtn = page.getByRole("button", { name: "Discard preview" });
   check("a button's preview can be discarded beside Create", await discardBtn.isVisible());
@@ -513,7 +525,7 @@ try {
   await discarded.first().waitFor({ timeout: 5000 });
   check("Discard withdraws the preview and Create with it", (await createCopies.count()) === 0 && (await discardBtn.count()) === 0);
   check("…and the form keeps what was typed", (await page.getByLabel("Find, row 1").inputValue()) === "ACME");
-  await previewBtn.click();
+  await job(() => previewBtn.click());
   await createCopies.waitFor({ timeout: 20000 });
   await page.getByRole("button", { name: "All buttons" }).click();
   await discarded.nth(1).waitFor({ timeout: 5000 });
@@ -522,10 +534,10 @@ try {
   check("going back to a button finds what was typed",
     (await page.getByLabel("Find, row 1").inputValue()) === "ACME" &&
       (await page.getByLabel("Replace with, row 1").inputValue()) === "Contoso");
-  await previewBtn.click();
+  await job(() => previewBtn.click());
   await createCopies.waitFor({ timeout: 20000 });
   check("a button previews with no conversation", (await page.locator("section[aria-label='Left untouched']").count()) === 1);
-  await createCopies.click();
+  await job(() => createCopies.click());
   const safeGrid = page.locator("section[aria-label='Where each document stands']");
   const cross = safeGrid.getByRole("button", { name: /: not done$/ }).first();
   await cross.waitFor({ timeout: 20000 });
@@ -541,6 +553,7 @@ try {
   // a stopped preview is withdrawn and nothing is created.
   await page.getByRole("button", { name: "All buttons" }).click();
   await page.getByRole("region", { name: "Safe mode" }).getByRole("button", { name: "Find and replace" }).click();
+  const stoppedPreview = jobEnds();
   await previewBtn.click();
   const safeStop = page.getByRole("region", { name: "Work running" }).getByRole("button", { name: "Stop now" });
   await safeStop.waitFor({ timeout: 10000 });
@@ -548,6 +561,7 @@ try {
   check("…and the kill switch in the top bar", await page.locator("header").getByRole("button", { name: "Stop the work" }).isVisible());
   await safeStop.click();
   await page.getByText("Stopped. The preview was not finished, so it is withdrawn").waitFor({ timeout: 10000 });
+  await stoppedPreview;
   check("a stopped preview is withdrawn and nothing is created",
     (await createCopies.count()) === 0 && (await page.locator("header").getByRole("button", { name: "Stop the work" }).count()) === 0);
   // Export: its three choices once copies exist; PDF (Clean) runs as a job and leaves the edited copies as they were.
@@ -555,16 +569,16 @@ try {
   check("Export waits for copies", await exportBtn.isDisabled());
   await page.getByRole("button", { name: "All buttons" }).click();
   await page.getByRole("region", { name: "Safe mode" }).getByRole("button", { name: "Find and replace" }).click();
-  await previewBtn.click();
+  await job(() => previewBtn.click());
   await createCopies.waitFor({ timeout: 20000 });
-  await createCopies.click();
+  await job(() => createCopies.click());
   await cross.waitFor({ timeout: 20000 });
   await exportBtn.click();
   const exportMenu = page.getByRole("menu", { name: "Export the edited copies as" });
   check("Export offers its three choices",
     (await exportMenu.getByRole("menuitem").allInnerTexts()).map((t) => t.split("\n")[0]).join(" | ") ===
       "Word (Tracked Changes ON) | Word (Tracked Changes OFF) | PDF (Clean)");
-  await exportMenu.getByRole("menuitem", { name: /PDF \(Clean\)/ }).click();
+  await job(() => exportMenu.getByRole("menuitem", { name: /PDF \(Clean\)/ }).click());
   await page.getByText(/clean PDFs? to C:/).first().waitFor({ timeout: 20000 });
   // the message comes before the job's final view; Undo waits for it
   const undoBack = await page.getByRole("button", { name: "Undo the last button", disabled: false })
@@ -573,10 +587,12 @@ try {
     (await page.getByRole("heading", { name: "Your edited copies" }).isVisible()) && undoBack);
   await page.getByRole("button", { name: "All buttons" }).click();
   await page.getByRole("region", { name: "Safe mode" }).getByRole("button", { name: "Find and replace" }).click();
-  await previewBtn.click();
+  await job(() => previewBtn.click());
   await createCopies.waitFor({ timeout: 20000 });
-  await createCopies.click();
-  await cross.waitFor({ timeout: 20000 });
+  await job(() => createCopies.click());
+  // The button before this one left its cross in the grid, so "a cross" is there while this Create still runs: its
+  // own cross, the second, is what says the job's final view is drawn (a click sooner can land mid-scroll and miss).
+  await safeGrid.getByRole("button", { name: /: not done$/ }).nth(1).waitFor({ timeout: 20000 });
   await cross.click();
   await safeGrid.getByRole("button", { name: "Work on it in Default mode" }).click();
   await page.getByLabel("Describe a change or answer a question").waitFor({ timeout: 5000 });
@@ -633,9 +649,12 @@ try {
   await scenario("obliterate-done");
   await page.reload();
   await page.getByText("Your edited copies").waitFor({ timeout: 5000 });
+  const copies = page.getByRole("region", { name: "Your edited copies", exact: true });
+  const standingGrid = page.getByRole("region", { name: "Where each document stands", exact: true });
   check("a copy delivered with a failed check is marked UNVERIFIED",
-    (await page.getByText("UNVERIFIED", { exact: true }).count()) === 1 &&
-      (await page.getByText("UNVERIFIED — V2 (Text preservation) failed. Check it in Word before you use it.").isVisible()));
+    (await copies.getByText("UNVERIFIED", { exact: true }).count()) === 1 &&
+      (await copies.getByText("UNVERIFIED — V2 (Text preservation) failed. Check it in Word before you use it.").isVisible()));
+  check("…and its document carries the mark in the grid", (await standingGrid.getByText("UNVERIFIED", { exact: true }).count()) === 1);
   await page.getByRole("button", { name: "Settings" }).click();
   await showSwitch.click();
   await page.waitForFunction(() => document.querySelector("[role=switch][aria-label='Show Obliterate mode']")?.getAttribute("aria-checked") === "false");
@@ -643,6 +662,319 @@ try {
   await page.getByLabel("Describe a change or answer a question").waitFor({ timeout: 5000 });
   check("hiding it again leaves the mode",
     (await gone(obliterate)) && (await modes.getByRole("button", { name: "Default" }).getAttribute("aria-pressed")) === "true");
+
+  // 18–21. Obliterate's own tools (docs/WEB_API.md: `hands_on`, `word`, `attachments[].rescue`, `export.anyway`), none
+  // of which uses AI. Each document is addressed by its row in the documents section, and every control by its role
+  // and name. The section folds once a plan or copies exist, so a check that reads its rows opens it first.
+  const post = (path, body) => fetch(`${BASE}${path}`, { method: "POST", headers: { "X-Spec-Surgeon-Token": TOKEN, "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  const docs = page.getByRole("region", { name: "Your documents", exact: true });
+  const row = (text) => docs.getByRole("listitem").filter({ hasText: text });
+  const openTray = async () => {
+    await trayToggle.waitFor({ timeout: 5000 });
+    if ((await trayToggle.getAttribute("aria-expanded")) === "false") await trayToggle.click();
+  };
+  const partsButtons = docs.getByRole("button", { name: "Parts", exact: true });
+  const wordButtons = docs.getByRole("button", { name: "Word actions", exact: true });
+  const rescueButtons = docs.getByRole("button", { name: "Try to rescue", exact: true });
+  const toolsOn = strip.getByRole("button", { name: "Hands-on tools: on", exact: true });
+  const toolsOff = strip.getByRole("button", { name: "Hands-on tools: off", exact: true });
+  const backToDefault = strip.getByRole("button", { name: "Back to Default", exact: true });
+  const createOne = page.getByRole("button", { name: "Create 1 edited copy", exact: true });
+  const SPRINKLERS = "21 13 13 Wet-Pipe Sprinkler Systems.docx";
+  const COMMON = "21 05 00 Common Work Results for Fire Suppression.docx";
+  const PUMPS = "21 31 13 Electric-Drive, Centrifugal Fire Pumps.docx";
+  const previewOf = (name) => page.getByRole("region", { name: `Preview · ${name}`, exact: true });
+
+  // 18. The hands-on tools: off unless the warning's own box is ticked or the strip's switch turns them on. Then each
+  // document row offers Parts, a read-only browser of its file's parts with a search, Save this part and Replace this
+  // part; the switch turned off, or the mode left, takes them away.
+  await scenario("obliterate-offered");
+  await page.reload();
+  await obliterate.waitFor({ timeout: 5000 });
+  const refusedParts = await post("/api/parts", { path: `C:/Specs/Riverside/${SPRINKLERS}` });
+  check("the part routes answer 400 while the tools are off",
+    refusedParts.status === 400 && String((await refusedParts.json()).error).startsWith("The hands-on tools are off."));
+  await obliterate.click();
+  await warning.waitFor({ timeout: 5000 });
+  await understood.check();
+  await handsOnBox.check();
+  await turnOn.click();
+  check("the warning's box turns the hands-on tools on with the mode",
+    (await shows(toolsOn)) && (await toolsOn.getAttribute("aria-pressed")) === "true");
+  check("…and the chat says what they are", await shows(page.getByText(/^Hands-on tools are on\. Parts, beside each document/)));
+  check("each document row then offers Parts, a refused one none",
+    (await shows(partsButtons.first())) && (await partsButtons.count()) === 3 &&
+      (await row("21 00 00 Table of contents.docx").getByRole("button", { name: "Parts", exact: true }).count()) === 0);
+  await row(SPRINKLERS).getByRole("button", { name: "Parts", exact: true }).click();
+  const parts = page.getByRole("dialog", { name: `Parts of ${SPRINKLERS}`, exact: true });
+  await parts.waitFor({ timeout: 5000 });
+  const partList = parts.getByRole("navigation", { name: "Parts", exact: true });
+  const partText = parts.getByRole("list", { name: "The part as text", exact: true });
+  const partLine = (text) => partText.getByText(text, { exact: true });
+  const mainPartShown = partLine("<w:t>SECTION 21 13 13</w:t>");
+  const footerPart = partList.getByRole("button", { name: /^footer1\.xml\s*\d/ });
+  check("the Parts browser lists the parts of the file",
+    (await shows(footerPart)) && (await partList.getByRole("button").count()) === 12 &&
+      (await partList.getByText("word/media", { exact: true }).isVisible()));
+  check("…and shows the main part first, as text", (await shows(mainPartShown)) && (await parts.getByText(/^Read-only\. To change a part:/).isVisible()));
+  check("a long part is shown a page at a time", await shows(parts.getByText("Page 1 of 2")));
+  await parts.getByRole("button", { name: "›", exact: true }).click();
+  check("…and the next page carries on where the first ended",
+    (await shows(parts.getByText("Page 2 of 2"))) && (await shows(partLine("401"))) && (await shows(partLine("<w:t>END OF SECTION 21 13 13</w:t>"))));
+  await partList.getByRole("button", { name: /^image1\.png/ }).click();
+  check("a part that is not text says so", await shows(parts.getByText(/^Not text: image\/png, 18,432 bytes\./)));
+  await parts.getByRole("searchbox", { name: "Search every part" }).fill("Issued FOR bid");
+  await parts.getByRole("button", { name: "Search", exact: true }).click();
+  check("the search lists every line that holds the words, whatever their case", await shows(partList.getByText(/^1 line holds? “issued for bid”\.$/)));
+  await partList.getByRole("button", { name: /^footer1\.xml:7/ }).click();
+  check("…and a match opens its part", (await shows(partLine("<w:t>Riverside Medical Center — Issued for Bid</w:t>"))) && (await parts.getByText("word/footer1.xml", { exact: true }).isVisible()));
+  await parts.getByRole("button", { name: "Save this part…", exact: true }).click();
+  check("Save this part says where the part's own bytes went",
+    await shows(page.getByText(new RegExp(`^Saved the part word/footer1\\.xml of ${SPRINKLERS.replace(/\./g, "\\.")} \\(the original\\), as it is, to .* - word_footer1\\.xml\\.`))));
+  // Replace this part: a file of the user's in the part's place, after a preview that lists the words it changes
+  const newFooter = join(scratch, "footer1.xml");
+  writeFileSync(newFooter, '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<w:ftr xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:p><w:pPr><w:pStyle w:val="Footer"/></w:pPr><w:r><w:t>Riverside Medical Center — Issued for Construction</w:t></w:r></w:p></w:ftr>');
+  const replaceBtn = parts.getByRole("button", { name: "Replace this part…", exact: true });
+  const replaceFooter = async () => {
+    const [chooser] = await Promise.all([page.waitForEvent("filechooser"), replaceBtn.click()]);
+    await job(() => chooser.setFiles(newFooter));
+    await createOne.waitFor({ timeout: 20000 });
+  };
+  await replaceFooter();
+  check("Replace this part closes the browser and previews the one document", (await gone(parts)) && (await page.getByRole("region", { name: "Left untouched", exact: true }).getByText(`The part was replaced in ${SPRINKLERS} only`, { exact: false }).count()) === 2);
+  check("the preview lists the words the replaced part changes, read from the copy",
+    (await shows(previewOf(SPRINKLERS).getByText("Words the replaced part changes, as the independent checker read them:", { exact: true }))) &&
+      (await previewOf(SPRINKLERS).getByRole("list", { name: `Words changed in ${SPRINKLERS}`, exact: true }).innerText()) === "footer — Words removed “Bid” · Words added “Construction”");
+  check("…and the copy is checked, not unproven", await previewOf(SPRINKLERS).getByText("Checked", { exact: true }).isVisible());
+  await openTray();
+  check("the tools stay on while the replacement waits", (await toolsOn.isVisible()) && (await partsButtons.count()) === 3);
+  await toolsOn.click();
+  check("turning the switch off takes Parts off the documents",
+    (await shows(toolsOff)) && (await gone(partsButtons.first())) && (await trayToggle.getAttribute("aria-expanded")) === "true");
+  check("…and withdraws the part replacement that waited", (await gone(createOne)) && (await shows(page.getByText("Hands-on tools are off.", { exact: true }))));
+  await toolsOff.click();
+  check("the strip's switch turns them on again", (await shows(toolsOn)) && (await shows(partsButtons.first())) && (await partsButtons.count()) === 3);
+  await row(SPRINKLERS).getByRole("button", { name: "Parts", exact: true }).click();
+  await mainPartShown.waitFor({ timeout: 5000 });
+  await footerPart.click();
+  await partLine("<w:t>Riverside Medical Center — Issued for Bid</w:t>").waitFor({ timeout: 5000 });
+  await replaceFooter();
+  await job(() => createOne.click());
+  check("Create delivers the copy, with no mark on it",
+    (await shows(copies.getByRole("button", { name: SPRINKLERS, exact: true }))) && (await copies.getByText(/^UNVERIFIED|^UNPROVEN/).count()) === 0);
+  await openTray();
+  await row(SPRINKLERS).getByRole("button", { name: "Parts", exact: true }).click();
+  await mainPartShown.waitFor({ timeout: 5000 });
+  const whichFile = parts.getByRole("group", { name: "Which file", exact: true });
+  check("once a copy exists the browser offers both files, the edited copy first",
+    (await whichFile.getByRole("button", { name: "The edited copy", exact: true }).getAttribute("aria-pressed")) === "true");
+  await footerPart.click();
+  check("the edited copy holds the file that took the part's place", await shows(partLine("<w:t>Riverside Medical Center — Issued for Construction</w:t>")));
+  await whichFile.getByRole("button", { name: "The original", exact: true }).click();
+  await mainPartShown.waitFor({ timeout: 5000 });
+  await footerPart.click();
+  check("…and the original its own", await shows(partLine("<w:t>Riverside Medical Center — Issued for Bid</w:t>")));
+  check("a part is replaced in the edited copy only", await replaceBtn.isDisabled());
+  await page.keyboard.press("Escape");
+  await gone(parts);
+  await backToDefault.click();
+  await page.getByText(/^Obliterate mode is off/).waitFor({ timeout: 5000 });
+  check("leaving the mode takes the tools away",
+    (await gone(partsButtons.first())) && (await trayToggle.getAttribute("aria-expanded")) === "true" && (await strip.count()) === 0);
+  await obliterate.click();
+  await warning.waitFor({ timeout: 5000 });
+  check("the warning's box is empty again", !(await handsOnBox.isChecked()));
+  await understood.check();
+  await turnOn.click();
+  check("…and without it the mode comes on with the tools off", (await shows(toolsOff)) && (await partsButtons.count()) === 0);
+
+  // 19. Word actions: a fixed menu beside each document, ticked in the order they run. Word makes the copies now; each
+  // is shown as not proven with Word's own account apart, a document Word found nothing to do in gets no copy, and
+  // Create delivers the copies shown, marked UNPROVEN.
+  await scenario("obliterate");
+  await page.reload();
+  await strip.waitFor({ timeout: 5000 });
+  check("in Obliterate mode each document row offers Word actions, with the hands-on tools off",
+    (await shows(wordButtons.first())) && (await wordButtons.count()) === 3 && (await partsButtons.count()) === 0 && (await toolsOff.isVisible()));
+  await row(PUMPS).getByRole("button", { name: "Word actions", exact: true }).click();
+  const word = page.getByRole("dialog", { name: `Word actions — ${PUMPS}`, exact: true });
+  await word.waitFor({ timeout: 5000 });
+  const runInWord = word.getByRole("button", { name: "Run in Word", exact: true });
+  const wordAction = (label) => word.getByRole("checkbox", { name: new RegExp(`^${label}`) });
+  check("the menu lists the ten named actions, and Run waits for one", (await word.getByRole("listitem").getByRole("checkbox").count()) === 10 && (await runInWord.isDisabled()));
+  await wordAction("Accept all tracked changes").check();
+  check("accepting every tracked change holds rejecting them back",
+    (await wordAction("Reject all tracked changes").isDisabled()) && (await word.getByText("After one of these, no tracked change is left for the other.", { exact: true }).isVisible()));
+  await wordAction("Open and repair, then save").check();
+  check("Open and Repair runs first whenever it is ticked",
+    (await word.getByRole("listitem").filter({ hasText: "Open and repair, then save" }).getByLabel("Runs number 1", { exact: true }).count()) === 1 &&
+      (await word.getByText("Runs first: it is how Word opens the copy.", { exact: true }).isVisible()));
+  await wordAction("Accept all tracked changes").uncheck();
+  await wordAction("Open and repair, then save").uncheck();
+  check("with nothing ticked Run waits again", await runInWord.isDisabled());
+  // Stop ends a run between documents: Word's copies are withdrawn and nothing is previewed (no AI is cut off here)
+  const alsoOthers = word.getByRole("checkbox", { name: "Also run on the other 2 documents", exact: true });
+  await wordAction("Update fields").check();
+  await alsoOthers.check();
+  const stoppedRun = jobEnds();
+  await runInWord.click();
+  await page.getByRole("button", { name: "Stop now", exact: true }).click();
+  await stoppedRun;
+  check("Stop ends a Word run, and nothing is previewed",
+    (await shows(page.getByText(/^Stopped\. The preview was not finished, so it is withdrawn/), 20000)) &&
+      (await page.getByRole("button", { name: /^Create \d+ edited cop(?:y|ies)$/ }).count()) === 0);
+  await row(PUMPS).getByRole("button", { name: "Word actions", exact: true }).click();
+  await word.waitFor({ timeout: 5000 });
+  check("the menu opens with nothing ticked each time", (await word.getByRole("checkbox", { checked: true }).count()) === 0);
+  await wordAction("Remove protection").check();
+  await alsoOthers.check();
+  await job(() => runInWord.click());
+  await createOne.waitFor({ timeout: 20000 });
+  check("a copy Word made is shown as not proven, Word's own account apart from the reader's",
+    (await previewOf(PUMPS).getByText("Not proven", { exact: true }).isVisible()) &&
+      (await previewOf(PUMPS).getByRole("list", { name: `What Word says it did in ${PUMPS}`, exact: true }).innerText()) === "1 protection setting turned off" &&
+      (await previewOf(PUMPS).getByRole("list", { name: `Other changes in ${PUMPS}`, exact: true }).innerText()).startsWith("Settings: the editing restriction"));
+  check("a document Word found nothing to do in gets no copy, and says why",
+    (await previewOf(SPRINKLERS).getByText("No copy", { exact: true }).isVisible()) && (await previewOf(COMMON).getByText("No copy", { exact: true }).isVisible()) &&
+      (await previewOf(COMMON).getByText("Word found nothing to do in it: Remove protection: nothing to do.", { exact: true }).isVisible()));
+  await job(() => createOne.click());
+  check("Create delivers the copy Word made, marked UNPROVEN",
+    (await shows(copies.getByText("UNPROVEN", { exact: true }))) && (await copies.getByRole("button", { name: new RegExp(`^${PUMPS.replace(/\./g, "\\.")}`) }).count()) === 1);
+  check("the grid carries its mark, and a cross for each document Word made no copy of",
+    (await standingGrid.getByText("UNPROVEN", { exact: true }).count()) === 1 && (await standingGrid.getByRole("button", { name: /: not done$/ }).count()) === 2);
+  // A request sent while a Word preview waits takes its place: Create then makes that request's copies, not Word's.
+  await openTray();
+  await row(SPRINKLERS).getByRole("button", { name: "Word actions", exact: true }).click();
+  const repairOnly = page.getByRole("dialog", { name: `Word actions — ${SPRINKLERS}`, exact: true });
+  await repairOnly.getByRole("checkbox", { name: /^Open and repair, then save/ }).check();
+  await job(() => repairOnly.getByRole("button", { name: "Run in Word", exact: true }).click());
+  await createOne.waitFor({ timeout: 20000 });
+  await box.fill("change the footer");
+  await job(() => box.press("Enter"));
+  const createThree = page.getByRole("button", { name: "Create 3 edited copies", exact: true });
+  await createThree.waitFor({ timeout: 20000 });
+  await job(() => createThree.click());
+  const plainCopies = await Promise.all([SPRINKLERS, COMMON, PUMPS].map((name) => copies.getByRole("button", { name, exact: true }).count()));
+  check("a request sent over a Word preview is what Create then makes: three copies, none of them Word's",
+    plainCopies.join() === "1,1,1" && (await copies.getByText("UNPROVEN", { exact: true }).count()) === 0, plainCopies.join());
+  // A cross's Obliterate this one, with the mode off: the same warning, naming the document; its box turns the tools on.
+  await backToDefault.click();
+  await page.getByText(/^Obliterate mode is off/).waitFor({ timeout: 5000 });
+  await standingGrid.getByRole("button", { name: new RegExp(`^${SPRINKLERS.replace(/\./g, "\\.")}.*: not done$`) }).click();
+  await standingGrid.getByRole("button", { name: `Obliterate ${SPRINKLERS}`, exact: true }).click();
+  await warning.waitFor({ timeout: 5000 });
+  await understood.check();
+  await handsOnBox.check();
+  await turnOn.click();
+  check("Obliterate this one takes the warning's box too: the mode and the tools come on, and the pass begins",
+    (await shows(toolsOn)) && (await shows(page.getByText(new RegExp(`^Working on ${SPRINKLERS.replace(/\./g, "\\.")}, from your to-do list\\.`)))));
+  // On a computer without Word the menu says why, and a rescue that needs Word says it could not be tried.
+  await scenario("obliterate-no-word");
+  await page.reload();
+  await strip.waitFor({ timeout: 5000 });
+  await row(SPRINKLERS).getByRole("button", { name: "Word actions", exact: true }).click();
+  const noWord = page.getByRole("dialog", { name: `Word actions — ${SPRINKLERS}`, exact: true });
+  await noWord.waitFor({ timeout: 5000 });
+  check("without Word the menu says why and nothing can be run",
+    (await noWord.getByRole("alert").innerText()).startsWith("Microsoft Word is not installed on this computer") &&
+      (await noWord.getByRole("button", { name: "Run in Word", exact: true }).isDisabled()) &&
+      (await noWord.getByRole("checkbox", { name: /^Remove protection/ }).isDisabled()));
+  await page.keyboard.press("Escape");
+  await gone(noWord);
+  await job(() => row("21 00 00 Table of contents.docx").getByRole("button", { name: "Try to rescue", exact: true }).click());
+  check("…and a rescue that needs Word says it was not tried, the file as it was",
+    (await shows(page.getByText(/^Try to rescue: 21 00 00 Table of contents\.docx was not rescued\. Microsoft Word is not installed.* The file is as it was\.$/))) &&
+      (await rescueButtons.count()) === 3);
+
+  // 20. Try to rescue: beside a refused document with something to try, in Obliterate mode alone. What comes of it
+  // takes the refused file's place, tagged Salvaged, and every copy made from it says so; a password-protected
+  // document asks for its password first, which reaches no message and no view.
+  await scenario("obliterate-rescue");
+  await page.reload();
+  await strip.waitFor({ timeout: 5000 });
+  const STANDPIPES = "21 12 00 Fire-Suppression Standpipes.docx";
+  const CLEAN_AGENT = "21 22 00 Clean-Agent Fire-Extinguishing Systems.docx";
+  check("each refused document with something to try offers Try to rescue", (await shows(rescueButtons.first())) && (await rescueButtons.count()) === 3);
+  await job(() => row(STANDPIPES).getByRole("button", { name: "Try to rescue", exact: true }).click());
+  await page.getByText(new RegExp(`^Rescued ${STANDPIPES.replace(/\./g, "\\.")}\\.`)).waitFor({ timeout: 20000 });
+  check("a rescued document takes the refused file's place, tagged Salvaged",
+    (await shows(row(STANDPIPES).getByText("Salvaged", { exact: true }))) && (await rescueButtons.count()) === 2 &&
+      (await row(STANDPIPES).getByRole("button", { name: "Word actions", exact: true }).count()) === 1);
+  await row(CLEAN_AGENT).getByRole("button", { name: "Try to rescue", exact: true }).click();
+  const ask = page.getByRole("dialog", { name: `The document's password — ${CLEAN_AGENT}`, exact: true });
+  await ask.waitFor({ timeout: 5000 });
+  const passwordBox = ask.getByLabel("Password", { exact: true });
+  const tryIt = ask.getByRole("button", { name: "Try to rescue", exact: true });
+  check("a password-protected document asks for its password first, in a password field",
+    (await tryIt.isDisabled()) && (await passwordBox.getAttribute("type")) === "password");
+  await passwordBox.fill("wrong guess");
+  await job(() => tryIt.click());
+  check("a wrong password rescues nothing, and the file stays refused",
+    (await shows(page.getByText(new RegExp(`^Try to rescue: Word says that is not the password of ${CLEAN_AGENT.replace(/\./g, "\\.")}\\.`)))) &&
+      (await row(CLEAN_AGENT).getByRole("button", { name: "Try to rescue", exact: true }).count()) === 1);
+  await row(CLEAN_AGENT).getByRole("button", { name: "Try to rescue", exact: true }).click();
+  await ask.waitFor({ timeout: 5000 });
+  await passwordBox.fill("open sesame, zebra");
+  await job(() => tryIt.click());
+  await page.getByText(new RegExp(`^Rescued ${CLEAN_AGENT.replace(/\./g, "\\.")}\\.`)).waitFor({ timeout: 20000 });
+  check("the right one rescues it, and the chat says the rescued document has no password",
+    (await shows(row(CLEAN_AGENT).getByText("Salvaged", { exact: true }))) && (await page.getByText(/The rescued document has NO password:/).isVisible()));
+  const stateNow = await (await fetch(`${BASE}/api/state`, { headers: { "X-Spec-Surgeon-Token": TOKEN } })).text();
+  check("the password is in no message and no view", !stateNow.includes("zebra") && !(await page.content()).includes("zebra"));
+  await box.fill("plan it");
+  await job(() => box.press("Enter"));
+  const createFive = page.getByRole("button", { name: "Create 5 edited copies", exact: true });
+  await createFive.waitFor({ timeout: 20000 });
+  await job(() => createFive.click());
+  check("every copy made from a rescued document says so",
+    (await shows(copies.getByText(new RegExp(`^SALVAGED: the app rescued it from ${STANDPIPES.replace(/\./g, "\\.")}, a file it could not read as it was`)))) &&
+      (await copies.getByText(/^SALVAGED: /).count()) === 2);
+  check("…and the grid carries the mark on both documents", (await standingGrid.getByText("SALVAGED", { exact: true }).count()) === 2);
+  await openTray();
+  await backToDefault.click();
+  await page.getByText(/^Obliterate mode is off/).waitFor({ timeout: 5000 });
+  check("Default mode offers no rescue, and a rescued document keeps its tag there",
+    (await gone(rescueButtons.first())) && (await row("21 00 00 Table of contents.docx").count()) === 1 && (await docs.getByText("Salvaged", { exact: true }).count()) === 2);
+
+  // 21. Export anyway: offered only once a clean export has left a marked copy without a file, for that kind and
+  // that copy; Word makes it, the chat names it UNCHECKED, and a kind that was made leaves the offer.
+  await scenario("obliterate-done");
+  await page.reload();
+  await copies.waitFor({ timeout: 5000 });
+  const madeByWord = exportMenu.getByRole("group", { name: "Made by Word, unchecked", exact: true });
+  await exportBtn.click();
+  await exportMenu.waitFor({ timeout: 5000 });
+  check("Export offers nothing made by Word before a clean export left a marked copy out",
+    (await exportMenu.getByRole("menuitem").count()) === 3 && (await madeByWord.count()) === 0);
+  await job(() => exportMenu.getByRole("menuitem", { name: /^PDF \(Clean\)(?!, made by Word)/ }).click());
+  check("a clean export names the copy it left without a file, and that Word can make it anyway",
+    (await shows(page.getByText(new RegExp(`Not saved: ${COMMON.replace(/\./g, "\\.")} — it did not pass the independent checks \\(V2\\)\\.`)), 20000)) &&
+      (await page.getByText(/Export can have Word make it anyway, unchecked: Export → “PDF \(Clean\), made by Word”\./).isVisible()));
+  await exportBtn.click();
+  const pdfByWord = madeByWord.getByRole("menuitem", { name: /^PDF \(Clean\), made by Word/ });
+  check("Export then offers that kind made by Word, for that copy alone",
+    (await shows(pdfByWord)) && (await madeByWord.getByRole("menuitem").count()) === 1 && (await pdfByWord.innerText()).includes(`For ${COMMON}.`));
+  await job(() => pdfByWord.click());
+  check("the chat names the file UNCHECKED, with Word's own count and what the app read in it",
+    (await shows(page.getByText(/^Saved 1 clean PDF to .*, made by Word and UNCHECKED:/), 20000)) &&
+      (await page.getByText(/21 05 00 Common Work Results for Fire Suppression\.pdf — Word's own count: .*\. The app read the file Word saved:/).isVisible()));
+  await exportBtn.click();
+  await exportMenu.waitFor({ timeout: 5000 });
+  check("a kind Word made leaves the offer", (await exportMenu.getByRole("menuitem").count()) === 3 && (await madeByWord.count()) === 0);
+  await job(() => exportMenu.getByRole("menuitem", { name: /^Word \(Tracked Changes OFF\)(?!, made by Word)/ }).click());
+  await page.getByText(/Export → “Word \(Tracked Changes OFF\), made by Word”\./).waitFor({ timeout: 20000 });
+  await exportBtn.click();
+  check("each kind is offered by its own export",
+    (await shows(madeByWord.getByRole("menuitem", { name: /^Word \(Tracked Changes OFF\), made by Word/ }))) && (await madeByWord.getByRole("menuitem").count()) === 1);
+  const wordNotAnyway = await post("/api/export", { kind: "word", anyway: true });
+  check("Export anyway makes the clean kinds only", wordNotAnyway.status === 400 && (await wordNotAnyway.json()).error === "Export anyway makes Word (Tracked Changes OFF) or PDF (Clean).");
+  await page.keyboard.press("Escape");
+  await backToDefault.click();
+  await page.getByText(/^Obliterate mode is off/).waitFor({ timeout: 5000 });
+  await exportBtn.click();
+  await exportMenu.waitFor({ timeout: 5000 });
+  check("Default mode is offered none of it", (await exportMenu.getByRole("menuitem").count()) === 3 && (await madeByWord.count()) === 0);
+  await page.keyboard.press("Escape");
 
   check("no page errors", errors.length === 0, errors.join(" | ").slice(0, 300));
   await browser.close();

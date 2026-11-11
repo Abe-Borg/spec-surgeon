@@ -91,7 +91,7 @@ try {
   await shot(page, "update-available");
   await scenario("no-key");
   await page.reload();
-  await page.getByText("Connect your API key").waitFor();
+  await page.getByText("Add your API key").waitFor();
   await page.getByRole("button", { name: "Settings" }).click();
   await page.getByText("AI connection").waitFor();
   await page.waitForTimeout(300);

@@ -19,9 +19,23 @@
  * Mock-only routes (never in the real server): POST /mock/scenario {name}
  * sets the view to a canned scenario (empty, attached, question, preview,
  * layouts, done, todo, paused, update-available, update-ready, up-to-date,
- * no-key, safe, safe-done); POST /mock/reset; GET /mock/page-reports (what the page sent to
+ * no-key, safe, safe-done, and Obliterate's below); POST /mock/reset; GET /mock/page-reports (what the page sent to
  * /api/diagnostics). A check for updates finds 1.7.0, except after
  * the up-to-date scenario, where it answers "You're up to date".
+ *
+ * Obliterate mode's own tools (docs/WEB_API.md: `hands_on`, `word`, `attachments[].rescue` and `salvaged`,
+ * `export.anyway`, and their routes) answer from canned data, with no Word and no file system behind them:
+ *  - the hands-on tools read a small package made up for each document (its main part runs to two pages). Save this
+ *    part and Export answer as if the native folder dialog had returned a folder. Replace this part previews the file
+ *    it is given: its words are compared with the canned part's, a file that is not well-formed XML fails V1, and
+ *    Create keeps the file, so the browser then shows it in the edited copy;
+ *  - a Word action finds in each canned document what WORD_FINDS says; a document with nothing to do gets no copy;
+ *  - Try to rescue takes any password that does not start with "wrong";
+ *  - a clean export (Word, Tracked Changes OFF; PDF, Clean) leaves a copy delivered UNVERIFIED without a file, which
+ *    is what Export anyway is then offered for.
+ * Their scenarios: obliterate-offered (Default mode, Obliterate shown in the top bar), obliterate (the mode on),
+ * obliterate-rescue (refused documents with something to try), obliterate-no-word (Word cannot be reached) and
+ * obliterate-done (three copies, one UNVERIFIED).
  *
  * No dependencies: http, fs, path, zlib. Preview images are PNGs drawn here.
  */
@@ -55,6 +69,15 @@ const DOCS = [
 const REFUSED = {
   path: "C:/Specs/Riverside/21 00 00 Table of contents.docx",
   reason: "21 00 00 Table of contents.docx cannot be opened as a Word package; open it in Word and save it again as .docx.",
+};
+// Two more documents triage refuses, each with something Obliterate's Try to rescue can try (triage.py's sentences)
+const ENCRYPTED = {
+  path: "C:/Specs/Riverside/21 22 00 Clean-Agent Fire-Extinguishing Systems.docx",
+  reason: "21 22 00 Clean-Agent Fire-Extinguishing Systems.docx is password-protected; remove the password in Word and save it again as .docx.",
+};
+const DOCTYPED = {
+  path: "C:/Specs/Riverside/21 12 00 Fire-Suppression Standpipes.docx",
+  reason: "21 12 00 Fire-Suppression Standpipes.docx: word/document.xml carries an XML document type declaration (<!DOCTYPE …>), which Word never writes, so its text cannot be read exactly; open the file in Word and save it again as .docx, or get it again from where it came from.",
 };
 const TEMPLATE = { path: "C:/Specs/Templates/Office master 2026.docx" };
 const PICTURE = { path: "C:/Specs/Riverside/logo-2026.png", notes: ["A PNG picture, 600 × 200 pixels, for the edit to use."] };
@@ -222,7 +245,7 @@ function samples() {
 function approveAction(v, token) {
   const out = (a) =>
     (v.plan?.set_aside ?? []).some((i) => i.path === a.path || i.name === a.name) ||
-    v.samples.some((sv) => sv.set_aside && (sv.source === a.path || sv.source === a.current));
+    v.samples.some((sv) => (sv.set_aside || sv.no_copy) && (sv.source === a.path || sv.source === a.current));
   const runs = v.attachments.filter(
     (a) =>
       a.kind === "document" &&
@@ -275,8 +298,116 @@ function occurrences(skipped = []) {
 }
 
 // document_task.OBLITERATE_ON / OBLITERATE_OFF
-const OBLITERATE_ON = "Obliterate mode is on. Claude may write wording and custom methods that change anything Word stores, and a copy whose checks fail is delivered marked UNVERIFIED instead of being held back. A custom method predicts nothing: you approve the copies it made, and each is delivered marked UNPROVEN. Claude may also plan a raw XML edit: the app proves the edit itself, and lists the words it changes before you approve. Copies only; your originals are never written. What was planned before is void.";
-const OBLITERATE_OFF = "Obliterate mode is off: every placed word is yours again, custom methods are formatting only, raw XML edits are refused, and a copy whose checks fail is held back. What was planned in Obliterate mode is void.";
+const OBLITERATE_ON = "Obliterate mode is on. Claude may write wording and custom methods that change anything Word stores, and a copy whose checks fail is delivered marked UNVERIFIED instead of being held back. A custom method predicts nothing: you approve the copies it made, and each is delivered marked UNPROVEN. Claude may also plan a raw XML edit: the app proves the edit itself, and lists the words it changes before you approve. Word itself can run named actions on a copy, from the Word actions menu beside each document or in a plan of Claude's: nothing is predicted for them, so you approve the copies Word made. Copies only; your originals are never written. What was planned before is void.";
+const OBLITERATE_OFF = "Obliterate mode is off: every placed word is yours again, custom methods are formatting only, raw XML edits and Word actions are refused, and a copy whose checks fail is held back. What was planned in Obliterate mode is void.";
+
+// --- Obliterate's own tools: the app's words (document_task.py, word_actions.py, rescue.py, exports.py, preview.py) ---
+
+const HANDS_ON_ON = "Hands-on tools are on. Parts, beside each document, shows the parts of its file read-only, with a search; Save this part writes one out as it is, to a folder you choose; Replace this part puts a file of yours in a part's place, byte for byte, after a preview that lists the words it changes. None of them uses AI, and nothing in the window edits XML.";
+const HANDS_ON_OFF = "Hands-on tools are off.";
+const HANDS_ON_NEEDED = "The hands-on tools are off. Obliterate mode's warning turns them on, or its strip above the message box.";
+const HANDS_ON_OBLITERATE_ONLY = "The hands-on tools are Obliterate mode's: turn Obliterate on first.";
+const PART_ONLY_THERE = (doc) => `The part was replaced in ${doc} only; this document was not asked about.`;
+const PART_NO_WORDS_CHANGE = "The replaced part changes no words: the independent checker read the same text in the copy as in the original — the words of every paragraph and any other text between tags.";
+const PART_WORDS_CHANGE_HEAD = "Before you approve — the words the replaced part changes, as the independent checker read them in the copy:";
+const PART_OTHER_CHANGES_HEAD = "Before you approve — what else the replaced part changes beside the words, as the independent reader found it in the copy:";
+const RAW_UNREAD = (doc) => `The words this changes could not be listed for ${doc}: the copy could not be read part by part. Its preview says which check failed.`;
+const WHY_PART = "It replaced a part of one document with a file you chose that time (a hands-on tool), so it cannot be repeated on others.";
+const MAX_PART_BYTES = 64 * 1024 * 1024;   // ops/replace_part.MAX_PART_BYTES
+
+const WORD_LABEL = "Word actions";
+const WORD_OBLITERATE_ONLY = "The Word actions are Obliterate mode's: turn Obliterate on first.";
+const WORD_ONLY_THERE = (doc) => `Word ran its actions on ${doc} only; this document was not asked about.`;
+const NO_WORD = "Microsoft Word is not installed on this computer (or the app cannot reach it), and the Word actions are Word's own commands: they run nowhere else.";
+const NOTHING_TO_DO = "Word found nothing to do in it";
+const WORD_MINUTES = 5;                    // word_actions.TIMEOUT_S, in minutes
+const WORD_UNPROVEN_MARK = "UNPROVEN (Word made it: what it changed was shown to you, not proven)";
+const WORD_WORDS_CHANGE_HEAD = "Before you approve — the words Word's actions change, as the independent checker read them in each copy:";
+const WORD_OTHER_CHANGES_HEAD = "Before you approve — what else Word's actions change beside the words, as the independent reader found it in each copy:";
+const WORD_ACCOUNT_HEAD = "What Word itself says it did (Word's own count, not the independent reader's; the lists above are what the reader found):";
+const NO_WORDS_CHANGE = "No words change: the independent checker read the same words in the sample copies as in the originals, in the body, headers, footers, notes and comments.";
+const NO_COPY_HEAD = "No copy could be made of these, so none is created; each goes on your to-do list when the others are created:";
+const WHY_WORD = "Word made its copies, and you approved each copy as it was shown, not a plan the engine checks. A recipe keeps only plans the engine runs and checks as they are written; run the Word actions again when you need them.";
+/** The menu (word_actions.MENU, the actions it offers): what each does, and Word's own account for one and for several. */
+const WORD_MENU = [
+  { id: "repair", label: "Open and repair, then save", does: "Word opens the copy with its Open and Repair command and saves it again.", one: "opened with Open and Repair and saved again", many: "opened with Open and Repair and saved again" },
+  { id: "remove_protection", label: "Remove protection", does: "Word turns off the copy's editing restrictions, its read-only recommendation and its Marked as Final state. A restriction set with a password is not removed: Word needs the password.", one: "{n} protection setting turned off", many: "{n} protection settings turned off" },
+  { id: "accept_changes", label: "Accept all tracked changes", does: "Word accepts every tracked change in the copy.", one: "{n} tracked change accepted", many: "{n} tracked changes accepted" },
+  { id: "reject_changes", label: "Reject all tracked changes", does: "Word rejects every tracked change in the copy.", one: "{n} tracked change rejected", many: "{n} tracked changes rejected" },
+  { id: "update_fields", label: "Update fields", does: "Word updates every field in the copy: tables of contents, cross-references, page numbers, dates. A field that reads another file or asks a question is left as it is.", one: "{n} field updated", many: "{n} fields updated" },
+  { id: "unlink_fields", label: "Unlink fields", does: "Word replaces every field in the body, the notes and the body's text boxes with the text it shows. Fields in headers and footers stay live: their page numbers and running titles.", one: "{n} field replaced with its text", many: "{n} fields replaced with their text" },
+  { id: "numbers_to_text", label: "Turn automatic numbers into typed text", does: "Word turns the copy's automatic list numbers into typed text.", one: "{n} numbered paragraph given a typed number", many: "{n} numbered paragraphs given typed numbers" },
+  { id: "upgrade_compatibility", label: "Leave compatibility mode", does: "Word converts the copy to its current file format (its Convert command), leaving compatibility mode.", one: "converted out of compatibility mode", many: "converted out of compatibility mode" },
+  { id: "textboxes_to_text", label: "Turn text boxes into plain text", does: "Word puts the text of each text box into the document as ordinary paragraphs, where the box is anchored, and deletes the box: in the body and in headers and footers.", one: "{n} text box turned into plain text", many: "{n} text boxes turned into plain text" },
+  { id: "delete_shapes", label: "Delete drawn shapes", does: "Word deletes every drawn shape, in the body and in headers and footers: text boxes with their text, lines, AutoShapes, WordArt, SmartArt, groups, canvases and watermarks. Pictures, charts and embedded objects stay.", one: "{n} drawn shape deleted", many: "{n} drawn shapes deleted" },
+];
+/** What Word finds to do, by action, in each of the three canned documents (any other document: as the first). The
+ *  second has no tracked change and types its numbers by hand; only the third has its editing restricted. Open and
+ *  Repair always saves the file again, whatever it counts. */
+const WORD_FINDS = {
+  remove_protection: [0, 0, 1],
+  accept_changes: [2, 0, 4],
+  reject_changes: [2, 0, 4],
+  update_fields: [3, 3, 5],
+  unlink_fields: [1, 1, 2],
+  numbers_to_text: [38, 0, 41],
+  upgrade_compatibility: [0, 1, 0],
+  textboxes_to_text: [0, 1, 0],
+  delete_shapes: [0, 1, 1],
+};
+/** What the independent reader lists for a copy an action changed (`samples[].text_changes` and `changes`), canned. */
+const WORD_SHOWS = {
+  repair: () => ({ words: [], other: ["Word wrote every part of the file again; the words, tables and pictures read the same."] }),
+  remove_protection: () => ({ words: [], other: ["Settings: the editing restriction (document protection) is no longer in the settings part."] }),
+  accept_changes: (n) => ({
+    words: [{ part: "word/document.xml", where: "body paragraph 14", paragraph: 13, removed: ["Issued for Bid"], added: ["Issued for Construction"], settled: true }],
+    other: [`Tracked changes: ${n} in the original, none in the copy.`],
+  }),
+  reject_changes: (n) => ({
+    words: [{ part: "word/document.xml", where: "body paragraph 14", paragraph: 13, removed: ["Issued for Construction"], added: ["Issued for Bid"], settled: true }],
+    other: [`Tracked changes: ${n} in the original, none in the copy.`],
+  }),
+  update_fields: () => ({ words: [{ part: "word/document.xml", where: "body paragraph 3", paragraph: 2, removed: ["12"], added: ["13"] }], other: [] }),
+  unlink_fields: (n) => ({ words: [], other: [`Fields: ${n} field${n === 1 ? "" : "s"} in the body ${n === 1 ? "is" : "are"} now the text ${n === 1 ? "it" : "they"} showed.`] }),
+  numbers_to_text: (n) => ({
+    words: [
+      { part: "word/document.xml", where: "body paragraph 4", paragraph: 3, removed: [], added: ["1.1"] },
+      { part: "word/document.xml", where: "body paragraph 5", paragraph: 4, removed: [], added: ["A."] },
+    ],
+    other: [`Numbering: ${n} paragraphs no longer carry automatic numbering.`],
+  }),
+  upgrade_compatibility: () => ({ words: [], other: ["Settings: the compatibility settings changed; the file is in Word's current format."] }),
+  textboxes_to_text: (n) => ({
+    words: [{ part: "word/document.xml", where: "body paragraph 9", paragraph: 8, removed: [], added: ["NOTE TO SPECIFIER"], block: "new" }],
+    other: [`Drawings: ${n} text box${n === 1 ? " is" : "es are"} no longer there.`],
+  }),
+  delete_shapes: (n) => ({
+    words: [{ part: "word/header1.xml", where: "header", paragraph: 0, removed: ["DRAFT"], added: [] }],
+    other: [`Drawings: ${n} drawn shape${n === 1 ? " is" : "s are"} no longer there.`],
+  }),
+};
+
+const RESCUE_LABEL = "Try to rescue";
+const RESCUE_OBLITERATE_ONLY = "Try to rescue is Obliterate mode's: turn Obliterate on first.";
+const RESCUE_WORD_KINDS = ["format", "password", "unopenable"];   // Word's; `doctype` is the app's own mending
+const RESCUE_UNPROVEN = "Nothing proves the rescue kept everything your file held: the file could not be read as it was, so there is nothing to compare the result with. Open both in Word and compare them before you rely on it.";
+const NO_PASSWORD_NOW = "The rescued document has NO password: it sits in this window's scratch folder until the window closes, and every copy made from it is unprotected too. Keep them as carefully as the original.";
+const NO_MACROS = "A .docx holds no macros: the ones in your file are not in the rescued document.";
+const RESCUE_STOPPED = "Stopped. Nothing was rescued: the file is as it was, still refused, and nothing else in this conversation changed.";
+const APP_FOLDERS = "C:/Users/abe/AppData/Local/Spec Surgeon/";   // the app's own: nothing the user asks for is saved here
+const RESCUED_ROOT = `${APP_FOLDERS}scratch/w-1/rescued`;
+const SALVAGED_LINE = (from) => `SALVAGED: the app rescued it from ${from}, a file it could not read as it was, so nothing proves the rescued document holds everything that file did; its copies are checked against the rescued document.`;
+
+const ANYWAY_OBLITERATE_ONLY = "Export anyway is Obliterate mode's: turn Obliterate on first.";
+const ANYWAY_KINDS = "Export anyway makes Word (Tracked Changes OFF) or PDF (Clean).";
+const ANYWAY_NOTHING = "There is nothing to export anyway. It is offered for a marked copy (UNVERIFIED, UNPROVEN or SALVAGED) that this kind of export left without a file: run that export first.";
+const ANYWAY_LABELS = { accepted: "Word (Tracked Changes OFF), made by Word", pdf: "PDF (Clean), made by Word" };
+const ANYWAY_DOES = {
+  accepted: "Word accepts every tracked change on a private copy and saves it; comments stay.",
+  pdf: "Word deletes every comment and accepts every tracked change on a private copy, and the PDF is made from that.",
+};
+const EXPORT_STOPPED = "Stopped. Nothing was saved: the files are written only once every one is made and checked. Your edited copies are as they were.";
+const PREVIEW_STOPPED = "Stopped. The preview was not finished, so it is withdrawn: nothing was created, and your documents and copies are as they were before you pressed the button. Press a button to preview again.";
 
 function results() {
   return DOCS.map((d) => ({ source: d.path, output: `${RUN_DIR}/${name(d.path)}`, name: name(d.path), saved_to: "" }));
@@ -328,6 +459,8 @@ function emptyView() {
     update: { state: "none", version: "", notes: "", progress: 0, error: "" },
     mode: "default",
     modes: ["safe", "default"],
+    hands_on: false, // Obliterate's hands-on tools; every answer settles it and `word` for the mode (obliterateFields)
+    word: null,
     template: NO_TEMPLATE,
     left_untouched: [],
     tutorial: { active: false, id: "", scenario: "", finished_version: 0 }, // GET /api/state refreshes it from settings
@@ -562,6 +695,33 @@ const SCENARIOS = {
     ];
     return v;
   },
+  /** Default mode with Obliterate shown in the top bar (Settings → Advanced): where its warning is opened from. */
+  "obliterate-offered": () => {
+    const v = SCENARIOS.attached();
+    settings = { ...settings, show_obliterate: true };
+    v.modes = ["safe", "default", "obliterate"];
+    return v;
+  },
+  /** Obliterate mode on, the documents attached and nothing done yet: Word actions beside each document, Try to
+   *  rescue beside the refused one, and the hands-on tools off until their switch turns them on. */
+  obliterate: () => {
+    const v = SCENARIOS["obliterate-offered"]();
+    v.mode = "obliterate";
+    return v;
+  },
+  /** …with two more refused documents: one protected with a password, one with a document type declaration. */
+  "obliterate-rescue": () => {
+    const v = SCENARIOS.obliterate();
+    const at = v.attachments.findIndex((a) => a.state === "refused") + 1;
+    v.attachments.splice(at, 0, attachment(ENCRYPTED.path, "document", ENCRYPTED), attachment(DOCTYPED.path, "document", DOCTYPED));
+    return v;
+  },
+  /** …on a computer where Word cannot be reached: the menu says why, and so does a rescue that needs Word. */
+  "obliterate-no-word": () => {
+    const v = SCENARIOS["obliterate-rescue"]();
+    wordAvailable = false;
+    return v;
+  },
   todo: () => {
     const v = SCENARIOS.done();
     const aside = DOCS[1];
@@ -659,7 +819,7 @@ function undoFields() {
 }
 /** What you've done so far with this run's line added (docs/WEB_API.md, `working.done`): the documents attached now,
  *  those it delivered, and why each other one got none. */
-function doneWith(request, delivered, untouched) {
+function doneWith(request, delivered, untouched, own = null) {
   const docs = view.attachments.filter((a) => a.kind === "document" && a.state !== "refused");
   const not = docs
     .filter((a) => !delivered.some((d) => d.source === a.path))
@@ -669,12 +829,17 @@ function doneWith(request, delivered, untouched) {
     ? lastRecipeRun.steps
     : lastRecipe
       ? [buttonStep(lastRecipe, lastInputs, request)]
-      : [{ kind: "plan", label: "Your request", text: request, plan: ["Sets the text of the documents as you asked."], needs: [], places: [], unguarded: view.mode === "obliterate", files: [] }];
+      : [{ kind: "plan", label: "Your request", text: request, plan: own ? own.sentences : ["Sets the text of the documents as you asked."], needs: [], places: [], unguarded: view.mode === "obliterate", files: [] }];
   const run = {
     id: `run-${++seq}`, request, recipe: lastRecipe, documents: docs.length - not.length, of: docs.length, not,
     mode: view.mode, reasons,
     name: lastRecipeRun ? lastRecipeRun.name : "", steps,
-    buttons: steps.filter((st) => st.kind === "button").map((st) => st.button), why_not: "",
+    buttons: steps.filter((st) => st.kind === "button").map((st) => st.button),
+    // one of Obliterate's own actions is no recipe step (saved_recipes.WHY_WORD, WHY_PART)
+    why_not: own ? own.why_not : "",
+    // what the record of where each document stands reads beside `not` (standingOf; the page reads neither)
+    ...(own ? { apart: own.apart, whys: Object.fromEntries(untouched.map((u) => [u.name, u.why])) } : {}),
+    marks: Object.fromEntries(delivered.filter((d) => (d.unverified ?? []).length > 0).map((d) => [d.name, d.unverified])),
   };
   lastRecipeRun = null;
   return [...(view.working.done ?? []), run];
@@ -739,13 +904,397 @@ function recipeBlockedOf(v) {
  *  saved as Word with their tracked changes. */
 function exportOf(v) {
   const results = v.results ?? [];
-  return { folder: v.export?.folder ?? "", unsaved: results.filter((r) => !r.saved_to).length, copies: results.length };
+  const anyway = anywayOf(v);
+  return {
+    folder: v.export?.folder ?? "", unsaved: results.filter((r) => !r.saved_to).length, copies: results.length,
+    ...(anyway.length ? { anyway } : {}),   // absent when there is nothing to offer, as the server leaves it out
+  };
 }
 function discardOf(v) {
   if (v.busy) return "";
   if (v.stage === "preview") return "preview";
   if (v.mode !== "safe" && ["question", "resume", "budget"].includes(v.stage)) return "request";
   return "";
+}
+
+// --- Obliterate's own tools: what the mock keeps for them, and the view's fields (docs/WEB_API.md) ---------------
+
+let wordAvailable = true;          // whether Word can be reached; the obliterate-no-word scenario turns it off
+/** The plan the app built itself — Word actions, or Replace this part: `{ token, source: "word" | "hands-on",
+ *  deliver: [{path, marks}], failed: [{path, name, reason, why}], apart: {name: reason}, sentences, why_not,
+ *  replace?: {key, part} }`. Create delivers the copies it shows; no model is ever asked about it. It is read through
+ *  `waitingOwn()` alone: it counts only while the approval it was shown with (`token`) is the one on screen. */
+let ownPlan = null;
+const replacedParts = new Map();   // `${document path}\t${part}` → the file a created Replace this part put there
+const savedParts = new Map();      // where Save this part wrote → what it wrote there
+let rescues = 0;
+const exportMissed = { accepted: new Set(), pdf: new Set() };   // the copies (`output`) a clean export left without a file
+function resetObliterate() {
+  ownPlan = null;
+  replacedParts.clear();
+  savedParts.clear();
+  exportMissed.accepted.clear();
+  exportMissed.pdf.clear();
+}
+
+const WORD_ACTIONS = Object.fromEntries([
+  ...WORD_MENU,
+  // Export anyway's alone, on no menu (word_actions.MENU, `offered=False`)
+  { id: "delete_comments", label: "Delete all comments", does: "Word deletes every comment in the copy, with its replies.", one: "{n} comment deleted", many: "{n} comments deleted" },
+].map((action) => [action.id, action]));
+const listed = (names) => (names.length === 1 ? names[0] : `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`);
+const failedMarks = (r) => (r.unverified ?? []).filter((m) => !m.includes("UNPROVEN"));
+const salvagedOf = (v, source) => v.attachments.find((a) => a.kind === "document" && a.path === source)?.salvaged;
+/** A copy no check proves as it is: delivered UNVERIFIED or UNPROVEN, or made from a document the app rescued. */
+const marked = (v, r) => (r.unverified ?? []).length > 0 || !!salvagedOf(v, r.source);
+
+/** The menu of named Word actions as the view carries it (`word`). */
+function wordMenu() {
+  return { available: wordAvailable, why: wordAvailable ? "" : NO_WORD, actions: WORD_MENU.map(({ id, label, does }) => ({ id, label, does })), minutes: WORD_MINUTES };
+}
+/** What Try to rescue would try for a refused document (`attachments[].rescue`), read off why triage refused it;
+ *  "" when there is nothing to try. */
+function rescueKind(a) {
+  if (a.kind !== "document" || a.state !== "refused") return "";
+  if (/\.(doc|docm)$/i.test(a.path)) return "format";
+  if (a.reason.includes("password-protected")) return "password";
+  if (a.reason.includes("document type declaration")) return "doctype";
+  return a.reason.includes("cannot be opened as a Word package") ? "unopenable" : "";
+}
+/** Export anyway's copies for a clean kind: in Obliterate mode alone, each a marked copy that kind's checked export
+ *  left without a file. */
+function anywayCopies(v, kind) {
+  return v.mode === "obliterate" ? (v.results ?? []).filter((r) => exportMissed[kind]?.has(r.output) && marked(v, r)) : [];
+}
+function anywayOf(v) {
+  return Object.keys(ANYWAY_LABELS).flatMap((kind) => {
+    const copies = anywayCopies(v, kind);
+    return copies.length ? [{ kind, label: ANYWAY_LABELS[kind], does: ANYWAY_DOES[kind], copies: copies.map((r) => r.name), blocked: wordAvailable ? "" : NO_WORD }] : [];
+  });
+}
+/** The view's fields for Obliterate's tools: `hands_on` and `word` in that mode alone, `rescue` on a refused document
+ *  with something to try (that mode alone too), and its mark's sentence on each copy of a rescued document. */
+function obliterateFields(v) {
+  const on = v.mode === "obliterate";
+  v.hands_on = on && v.hands_on === true;
+  v.word = on ? wordMenu() : null;
+  for (const a of v.attachments) {
+    const kind = on ? rescueKind(a) : "";
+    if (kind) a.rescue = kind;
+    else delete a.rescue;
+  }
+  for (const r of v.results ?? []) {
+    const record = salvagedOf(v, r.source);
+    if (record) r.salvaged = SALVAGED_LINE(record.from);
+    else delete r.salvaged;
+  }
+}
+
+// --- The hands-on tools' reading half: a package made up for each document (src/spec_surgeon/hands_on.py) --------
+
+const PAGE_LINES = 400;            // hands_on.PAGE_LINES, LINE_CHARS, SEARCH_HITS, QUERY_CHARS
+const LINE_CHARS = 2000;
+const SEARCH_HITS = 200;
+const QUERY_CHARS = 200;
+const XML_HEAD = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n';
+const NS_W = 'xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"';
+const NS_R = 'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"';
+const REL = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
+const PKG = "http://schemas.openxmlformats.org/package/2006";
+const WML = "application/vnd.openxmlformats-officedocument.wordprocessingml";
+const RELS_TYPE = "application/vnd.openxmlformats-package.relationships+xml";
+const SPEC_PARTS = [
+  ["GENERAL", ["SUMMARY", "REFERENCES", "SUBMITTALS", "QUALITY ASSURANCE"]],
+  ["PRODUCTS", ["MANUFACTURERS", "MATERIALS", "COMPONENTS", "ACCESSORIES"]],
+  ["EXECUTION", ["EXAMINATION", "INSTALLATION", "FIELD QUALITY CONTROL", "CLEANING"]],
+];
+const SPEC_LINES = [
+  "Section includes the materials, installation and testing of the work shown on the Drawings.",
+  "Comply with the codes and standards adopted by the authority having jurisdiction.",
+  "Submit product data and shop drawings before the work starts.",
+  "Deliver materials in the manufacturer's original packaging, and store them off the ground and under cover.",
+];
+const esc = (text) => text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+const unesc = (text) => text.replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&amp;/g, "&");
+const para = (text, style) => `<w:p><w:pPr><w:pStyle w:val="${style}"/></w:pPr><w:r><w:t>${esc(text)}</w:t></w:r></w:p>`;
+
+/** The members of a document's file, in the package's own order: `{name, type, xml, text, size}`, `text` the part's
+ *  own bytes as text (null for a part that is not text). Made up from the document's name and triage's notes: the
+ *  one whose numbers are typed has no numbering part, the restricted one says so in its settings, and the one
+ *  with comments has a comments part. */
+function packageOf(a) {
+  const notes = a.notes ?? [];
+  const number = /^\d\d \d\d \d\d/.exec(a.name)?.[0] ?? "00 00 00";
+  const title = a.name.replace(/^\d\d \d\d \d\d\s*/, "").replace(/\.docx$/i, "");
+  const typed = notes.some((n) => n.includes("typed by hand"));
+  const restricted = notes.some((n) => n.includes("restricted"));
+  const commented = notes.some((n) => n.includes("comment"));
+  const body = [para(`SECTION ${number}`, "SCT"), para(title.toUpperCase(), "TTL")];
+  SPEC_PARTS.forEach(([part, articles], i) => {
+    body.push(para(`PART ${i + 1} - ${part}`, "PRT"));
+    articles.forEach((article, j) => {
+      body.push(para(typed ? `${i + 1}.${j + 1} ${article}` : article, "ART"));
+      SPEC_LINES.forEach((line, k) => body.push(para(typed ? `${"ABCD"[k]}. ${line}` : line, "PR1")));
+    });
+  });
+  body.push(para(`END OF SECTION ${number}`, "EOS"));
+  const style = (id, label) => `<w:style w:type="paragraph" w:styleId="${id}"><w:name w:val="${label}"/><w:basedOn w:val="Normal"/></w:style>`;
+  const members = [
+    ["_rels/.rels", RELS_TYPE, `<Relationships xmlns="${PKG}/relationships"><Relationship Id="rId1" Type="${REL}/officeDocument" Target="word/document.xml"/><Relationship Id="rId2" Type="${PKG}/relationships/metadata/core-properties" Target="docProps/core.xml"/><Relationship Id="rId3" Type="${REL}/extended-properties" Target="docProps/app.xml"/></Relationships>`],
+    ["word/document.xml", `${WML}.document.main+xml`, `<w:document ${NS_W} ${NS_R}><w:body>${body.join("")}<w:sectPr><w:headerReference w:type="default" r:id="rId4"/><w:footerReference w:type="default" r:id="rId5"/><w:pgSz w:w="12240" w:h="15840"/><w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440" w:header="720" w:footer="720" w:gutter="0"/></w:sectPr></w:body></w:document>`],
+    ["word/_rels/document.xml.rels", RELS_TYPE, `<Relationships xmlns="${PKG}/relationships"><Relationship Id="rId1" Type="${REL}/styles" Target="styles.xml"/><Relationship Id="rId2" Type="${REL}/settings" Target="settings.xml"/>${typed ? "" : `<Relationship Id="rId3" Type="${REL}/numbering" Target="numbering.xml"/>`}<Relationship Id="rId4" Type="${REL}/header" Target="header1.xml"/><Relationship Id="rId5" Type="${REL}/footer" Target="footer1.xml"/><Relationship Id="rId6" Type="${REL}/image" Target="media/image1.png"/>${commented ? `<Relationship Id="rId7" Type="${REL}/comments" Target="comments.xml"/>` : ""}</Relationships>`],
+    ["word/styles.xml", `${WML}.styles+xml`, `<w:styles ${NS_W}><w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/><w:rPr><w:rFonts w:ascii="Arial" w:hAnsi="Arial"/><w:sz w:val="20"/></w:rPr></w:style>${[["SCT", "Section Number"], ["TTL", "Section Title"], ["PRT", "PRT"], ["ART", "ART"], ["PR1", "PR1"], ["EOS", "End of Section"], ["Header", "header"], ["Footer", "footer"]].map(([id, label]) => style(id, label)).join("")}</w:styles>`],
+    ["word/settings.xml", `${WML}.settings+xml`, `<w:settings ${NS_W}><w:zoom w:percent="100"/>${restricted ? '<w:documentProtection w:edit="readOnly" w:enforcement="1"/>' : ""}<w:defaultTabStop w:val="720"/><w:compat><w:compatSetting w:name="compatibilityMode" w:uri="http://schemas.microsoft.com/office/word" w:val="15"/></w:compat></w:settings>`],
+    ...(typed ? [] : [["word/numbering.xml", `${WML}.numbering+xml`, `<w:numbering ${NS_W}><w:abstractNum w:abstractNumId="0"><w:multiLevelType w:val="multilevel"/><w:lvl w:ilvl="0"><w:start w:val="1"/><w:numFmt w:val="decimal"/><w:lvlText w:val="PART %1"/></w:lvl><w:lvl w:ilvl="1"><w:start w:val="1"/><w:numFmt w:val="decimal"/><w:lvlText w:val="%1.%2"/></w:lvl><w:lvl w:ilvl="2"><w:start w:val="1"/><w:numFmt w:val="upperLetter"/><w:lvlText w:val="%3."/></w:lvl></w:abstractNum><w:num w:numId="1"><w:abstractNumId w:val="0"/></w:num></w:numbering>`]]),
+    ...(commented ? [["word/comments.xml", `${WML}.comments+xml`, `<w:comments ${NS_W}>${["Confirm with the Owner.", "Coordinate with Division 26.", "Check against the Drawings."].map((text, i) => `<w:comment w:id="${i}" w:author="Reviewer"><w:p><w:r><w:t>${text}</w:t></w:r></w:p></w:comment>`).join("")}</w:comments>`]] : []),
+    ["word/header1.xml", `${WML}.header+xml`, `<w:hdr ${NS_W}>${para(`${number} ${title}`, "Header")}</w:hdr>`],
+    ["word/footer1.xml", `${WML}.footer+xml`, `<w:ftr ${NS_W}>${para("Riverside Medical Center — Issued for Bid", "Footer")}</w:ftr>`],
+    ["word/media/image1.png", "image/png", null],
+    ["docProps/core.xml", "application/vnd.openxmlformats-package.core-properties+xml", `<cp:coreProperties xmlns:cp="${PKG}/metadata/core-properties" xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:title>${esc(title)}</dc:title><dc:creator>Riverside Design Team</dc:creator><cp:revision>14</cp:revision></cp:coreProperties>`],
+    ["docProps/app.xml", "application/vnd.openxmlformats-officedocument.extended-properties+xml", `<Properties xmlns="http://schemas.openxmlformats.org/officeDocument/2006/extended-properties"><Application>Microsoft Office Word</Application><Pages>12</Pages></Properties>`],
+  ];
+  const types = `<Types xmlns="${PKG}/content-types"><Default Extension="rels" ContentType="${RELS_TYPE}"/><Default Extension="xml" ContentType="application/xml"/><Default Extension="png" ContentType="image/png"/>${members.filter(([name, type]) => name.endsWith(".xml") && type !== RELS_TYPE).map(([name, type]) => `<Override PartName="/${name}" ContentType="${type}"/>`).join("")}</Types>`;
+  return [["[Content_Types].xml", "", types], ...members].map(([name, type, text]) =>
+    text === null
+      ? { name, type, xml: false, text: null, size: 18_432 }
+      : { name, type, xml: true, text: XML_HEAD + text, size: Buffer.byteLength(XML_HEAD + text) },
+  );
+}
+
+/** The parts of the file the browser reads: the attached original, or (`current`) the copy the next change is made
+ *  on, which holds whatever a created Replace this part put in a part's place. */
+function partsOf(a, which) {
+  return packageOf(a).map((p) => (which === "original" ? p : (replacedParts.get(`${a.path}\t${p.name}`) ?? p)));
+}
+
+/** Why text does not read as XML, near enough for a mock (one root, every tag closed in its turn); "" when it does. */
+function xmlProblem(text) {
+  const tokens = /<!--[\s\S]*?-->|<\?[\s\S]*?\?>|<!\[CDATA\[[\s\S]*?\]\]>|<(\/?)([A-Za-z_][\w:.-]*)((?:\s+[\w:.-]+\s*=\s*(?:"[^"<]*"|'[^'<]*'))*)\s*(\/?)>|<|&(?!(?:amp|lt|gt|quot|apos|#\d+|#x[0-9a-fA-F]+);)/g;
+  const open = [];
+  let roots = 0;
+  let last = 0;
+  for (let m = tokens.exec(text); m; m = tokens.exec(text)) {
+    if (open.length === 0 && text.slice(last, m.index).replace(/^﻿/, "").trim()) return "text outside the root element";
+    last = tokens.lastIndex;
+    if (m[0] === "<" || m[0] === "&") return `a stray ${m[0]} at character ${m.index + 1}`;
+    if (!m[2]) continue;               // a comment, a processing instruction or a CDATA section
+    if (m[1]) {
+      if (open.pop() !== m[2]) return `</${m[2]}> closes an element that is not open`;
+    } else {
+      if (open.length === 0 && ++roots > 1) return "more than one root element";
+      if (!m[4]) open.push(m[2]);
+    }
+  }
+  if (open.length) return `<${open[open.length - 1]}> is never closed`;
+  if (text.slice(last).trim()) return "text after the root element";
+  return roots === 1 ? "" : "no root element";
+}
+
+/** XML indented for reading, as the browser shows a part: an element per line, one that holds only text on one line. */
+function indentXml(text) {
+  const tokens = text.match(/<!--[\s\S]*?-->|<\?[\s\S]*?\?>|<[^>]+>|[^<]+/g) ?? [];
+  const lines = [];
+  let depth = 0;
+  for (let i = 0; i < tokens.length; i++) {
+    const token = tokens[i];
+    const pad = "  ".repeat(depth);
+    if (token.startsWith("<?")) continue;                       // the declaration: not part of the tree
+    if (!token.startsWith("<")) {
+      if (token.trim()) lines.push(pad + token.trim());
+    } else if (token.startsWith("</")) {
+      depth = Math.max(0, depth - 1);
+      lines.push("  ".repeat(depth) + token);
+    } else if (token.startsWith("<!--") || token.endsWith("/>")) {
+      lines.push(pad + token);
+    } else if (tokens[i + 1]?.startsWith("</")) {
+      lines.push(pad + token + tokens[++i]);
+    } else if (tokens[i + 1] !== undefined && !tokens[i + 1].startsWith("<") && tokens[i + 2]?.startsWith("</")) {
+      lines.push(pad + token + tokens[i + 1] + tokens[i + 2]);
+      i += 2;
+    } else {
+      lines.push(pad + token);
+      depth += 1;
+    }
+  }
+  return lines;
+}
+
+/** A part as the browser shows it: `{lines, note}` (hands_on.Reader.shown). */
+function shownOf(p) {
+  if (!p.xml || p.text === null) {
+    return { lines: [], note: `Not text: ${p.type || "no declared type"}, ${p.size.toLocaleString("en-US")} bytes. Save it out to open it.` };
+  }
+  const problem = xmlProblem(p.text);
+  const lines = problem ? p.text.split(/\r?\n/) : indentXml(p.text);
+  return {
+    lines: lines.map((line) => (line.length <= LINE_CHARS ? line : `${line.slice(0, LINE_CHARS)} … (${(line.length - LINE_CHARS).toLocaleString("en-US")} more characters on this line)`)),
+    note: problem ? `Not well-formed XML (${problem}): shown as its own text.` : "Shown indented for reading; Save writes the part's own bytes.",
+  };
+}
+
+/** One page of a part (hands_on.Reader.page). */
+function pageOf(p, page) {
+  const shown = shownOf(p);
+  const total = shown.lines.length;
+  const pages = Math.max(1, Math.ceil(total / PAGE_LINES));
+  const at = Math.min(Math.max(1, Number.isInteger(page) ? page : 1), pages);
+  const start = (at - 1) * PAGE_LINES;
+  return { part: p.name, size: p.size, type: p.type, xml: p.xml, lines: shown.lines.slice(start, start + PAGE_LINES), first: start + 1, page: at, pages, total, note: shown.note };
+}
+
+/** Every shown line of every text part that holds the words, letters compared without case (hands_on.Reader.search). */
+function searchOf(parts, query) {
+  const needle = String(query ?? "").split(/\s+/).filter(Boolean).join(" ").toLowerCase().slice(0, QUERY_CHARS);
+  if (!needle) return { query: "", matches: [], more: false };
+  const matches = [];
+  for (const p of parts) {
+    if (!p.xml) continue;
+    const lines = shownOf(p).lines;
+    for (let i = 0; i < lines.length; i++) {
+      const at = lines[i].toLowerCase().indexOf(needle);
+      if (at < 0) continue;
+      if (matches.length >= SEARCH_HITS) return { query: needle, matches, more: true };
+      const start = Math.max(0, at - 80);
+      matches.push({ part: p.name, line: i + 1, page: Math.floor(i / PAGE_LINES) + 1, text: (start ? "…" : "") + lines[i].slice(start, at + needle.length + 120).trim() });
+    }
+  }
+  return { query: needle, matches, more: false };
+}
+
+/** `{a}` — the attached document a hands-on tool is asked about — or `{error}` in the server's words: the tools are
+ *  off, or the path is not one of the documents (document_task._hands_on_document). */
+function handsOnDocument(path) {
+  if (view.mode !== "obliterate" || !view.hands_on) return { error: HANDS_ON_NEEDED };
+  const a = view.attachments.find((x) => x.kind === "document" && x.state !== "refused" && x.path === path);
+  return a ? { a } : { error: "That is not one of the documents attached here." };
+}
+
+/** The words of each paragraph of a part, in order: what the independent checker reads. */
+function wordsOf(text) {
+  return [...text.matchAll(/<w:p[ >][\s\S]*?<\/w:p>/g)].map((p) =>
+    [...p[0].matchAll(/<w:t(?:\s[^>]*)?>([^<]*)<\/w:t>/g)].map((t) => unesc(t[1])).join(""),
+  );
+}
+/** `samples[].text_changes` for a replaced part: one entry per paragraph whose words differ, the stretch that does. */
+function partTextChanges(part, before, after) {
+  const was = wordsOf(before);
+  const is = wordsOf(after);
+  const where = (i) => (part === "word/document.xml" ? `body paragraph ${i + 1}` : /\/header\d*\.xml$/.test(part) ? "header" : /\/footer\d*\.xml$/.test(part) ? "footer" : part);
+  const out = [];
+  for (let i = 0; i < Math.max(was.length, is.length); i++) {
+    if (was[i] === is[i]) continue;
+    const entry = { part, where: where(i), paragraph: i, removed: [], added: [] };
+    if (was[i] === undefined) {
+      entry.block = "new";
+      if (is[i]) entry.added = [is[i]];
+    } else if (is[i] === undefined) {
+      entry.block = "gone";
+      if (was[i]) entry.removed = [was[i]];
+    } else {
+      const x = was[i].split(" ");
+      const y = is[i].split(" ");
+      let head = 0;
+      while (head < x.length && head < y.length && x[head] === y[head]) head++;
+      let tail = 0;
+      while (tail < x.length - head && tail < y.length - head && x[x.length - 1 - tail] === y[y.length - 1 - tail]) tail++;
+      const gone = x.slice(head, x.length - tail).join(" ");
+      const come = y.slice(head, y.length - tail).join(" ");
+      if (gone) entry.removed = [gone];
+      if (come) entry.added = [come];
+    }
+    out.push(entry);
+  }
+  return out;
+}
+
+// --- Word's side: what its actions find in a document, and what is tried for a refused file ----------------------
+
+/** Why the actions cannot run as asked, in the menu's words (word_actions.check); "" when they can. */
+function wordProblem(actions) {
+  if (!Array.isArray(actions) || actions.length === 0 || !actions.every((id) => typeof id === "string")) return "Choose at least one Word action.";
+  const seen = [];
+  for (const id of actions) {
+    const action = WORD_MENU.find((x) => x.id === id);
+    if (!action) return `'${id}' is not a Word action on the menu (${WORD_MENU.map((x) => x.id).join(", ")}).`;
+    if (seen.includes(id)) return `${action.label} is listed twice; an action runs once.`;
+    seen.push(id);
+  }
+  if (seen.includes("repair") && seen[0] !== "repair") return `${WORD_ACTIONS.repair.label} comes first: it is how Word opens the copy.`;
+  if (seen.includes("accept_changes") && seen.includes("reject_changes")) return "Accepting and rejecting every tracked change cannot both run: after one, none is left for the other.";
+  return "";
+}
+/** How many things an action finds to do in a document (WORD_FINDS; a document's comments for Export anyway's own). */
+function wordFound(a, id) {
+  if (id === "delete_comments") return (a.notes ?? []).some((n) => n.includes("comment")) ? 3 : 0;
+  const row = WORD_FINDS[id];
+  const i = DOCS.findIndex((d) => d.path === a.path);
+  return row ? row[i < 0 ? 0 : i] : 1;
+}
+/** Word's own account of what its actions did to a document's copy, one line per action (word_actions.account). */
+function wordAccount(a, actions) {
+  return actions.map((id) => {
+    const action = WORD_ACTIONS[id];
+    const n = wordFound(a, id);
+    if (id === "repair") return action.one;
+    return n ? (n === 1 ? action.one : action.many).replace("{n}", n.toLocaleString("en-US")) : `${action.label}: nothing to do`;
+  });
+}
+/** One document's sample of a Word run (`samples[]` with `made_by: "word"`): its copy as the independent reader
+ *  read it, or no copy when Word found nothing to do in it. */
+function wordSample(a, actions, index) {
+  const account = wordAccount(a, actions);
+  const base = { source: a.path, name: a.name, images: [], pages_before: null, pages_after: null, failures: [], geometry: null, text_changes: null, unproven: true, changes: [], no_copy: false, raw_xml: false, raw_what: "", made_by: "word", word_account: [] };
+  if (!actions.some((id) => id === "repair" || wordFound(a, id) > 0)) {
+    return { ...base, passed: false, no_copy: true, failures: [{ check: "Preview", reason: `${NOTHING_TO_DO}: ${account.join("; ")}.` }] };
+  }
+  const shows = actions.filter((id) => id === "repair" || wordFound(a, id) > 0).map((id) => WORD_SHOWS[id](wordFound(a, id)));
+  return {
+    ...base,
+    images: [`/api/image?path=${encodeURIComponent(`${RUN_DIR}/preview/${(index % 2) + 1}.png`)}`],
+    pages_before: 12, pages_after: 12, passed: true,
+    geometry: { status: "NA", note: "Word saved the whole file again: its pages are shown, not compared with a prediction." },
+    text_changes: shows.flatMap((x) => x.words), changes: shows.flatMap((x) => x.other), word_account: account,
+  };
+}
+
+/** What a rescue did, one sentence (rescue.py): the app's own mending, or Word's, with Word's own account. */
+const RESCUE_STEPS = {
+  doctype: () => "The app wrote word/document.xml again without the document type declaration; every other part is your file's, byte for byte.",
+  format: (a) => `Word opened a private copy of the ${/\.[^.]+$/.exec(a.name)[0].toLowerCase()} file and saved it as a .docx (Word's own account: saved as a Word document).`,
+  password: () => "Word opened a private copy with the password you typed and saved it as a .docx without one (Word's own account: saved as a Word document).",
+  unopenable: () => "Word opened a private copy with Open and Repair and saved what it could read as a .docx (Word's own account: opened with Open and Repair and saved again).",
+};
+
+/** Why a plan of the app's own (a part replacement, Word actions) cannot be made now; "" when it can: a preview that
+ *  waits or a request that is open is finished or dropped first (document_task._hands_on_blocked). */
+function ownPlanBlocked() {
+  if (view.stage === "preview") return "Discard the preview first, or create its copies.";
+  if (["question", "budget"].includes(view.stage)) return "Drop the request that is open first, or finish it.";
+  return "";
+}
+/** The documents a plan covers now: those of a pass over the to-do list, else every one that is not set aside. */
+function documentsInScope() {
+  return view.attachments.filter(
+    (a) => a.kind === "document" && a.state !== "refused" && (view.focus.length ? view.focus.includes(a.path) : !view.todo.some((t) => t.path === a.path)),
+  );
+}
+/** The own plan whose approval is on screen, the one Create would deliver; null when there is none, and once
+ *  anything has put another plan in its place (a request sent over its preview, a choice, the tour's own view). */
+function waitingOwn() {
+  return ownPlan && view.stage === "preview" && view.action.token === ownPlan.token ? ownPlan : null;
+}
+/** Where the window rests with nothing waiting: on its copies, else empty. */
+const restingStage = () => (view.results.length && view.working.generation ? "done" : "empty");
+/** An own plan that waits is withdrawn (the hands-on tools turned off, the documents changed): there is nothing to
+ *  continue, since the app plans it again only when it is asked again. */
+function withdrawOwn() {
+  ownPlan = null;
+  view.plan = null;
+  view.samples = [];
+  view.worth_knowing = [];
+  view.warnings = [];
+  view.action = { label: "", token: "", kind: "none", can_hold: false };
+  view.stage = restingStage();
 }
 let settings = { key_present: true, origin: "saved", can_remember: true, export_folder: "", logs_dir: "C:/Users/abe/AppData/Roaming/Spec Surgeon/logs", theme: "clay", fast_mode: false, show_obliterate: false, tutorial_version: 0, safe_note_hidden: false, spending_limit_usd: 20, spending_default_usd: 20, fast: { model: "claude-opus-5-5", available: true, speedup: 2.5, price_factor: 2, standard_usd_per_mtok: [4, 20], fast_usd_per_mtok: [8, 40], refused: null } };
 const THEMES = ["clay", "blueprint", "graphite", "carbon", "linen"];
@@ -765,20 +1314,31 @@ function standingOf(v) {
   const docs = v.attachments.filter((a) => a.kind === "document" && a.state !== "refused");
   const runs = v.working?.done ?? [];
   const waived = v.waived ?? [];
+  // a document's badges: the mark its copy carries (`results[].unverified`, a rescued document's own), then set aside
+  const badges = (a) => {
+    const marks = (v.results ?? []).find((r) => r.source === a.path)?.unverified ?? [];
+    return [
+      ...(a.salvaged ? ["SALVAGED"] : []),
+      ...(marks.some((m) => !m.includes("UNPROVEN")) ? ["UNVERIFIED"] : marks.length ? ["UNPROVEN"] : []),
+      ...(v.todo.some((t) => t.path === a.path) ? ["set aside"] : []),
+    ];
+  };
   const rows = docs.map((a) => [
     a.path,
-    v.todo.some((t) => t.path === a.path) ? ["set aside"] : [],
+    badges(a),
     ...runs.map((run) => {
       const mode = run.mode ?? (run.recipe || v.mode === "safe" ? "safe" : v.mode);
       const miss = (run.not ?? []).find((n) => n.name === a.name);
       const reason = run.reasons?.[a.name];
+      // one of Obliterate's own actions, asked for another document: it was not run on this one
+      if (miss && run.apart?.[a.name]) return skipped("not part of it", "This was not run on it.");
       const fail = miss?.why === "set aside" ? failed(mode, "held", HELD_REASON)
-        : miss?.why === "left untouched" ? failed(mode, "refused", reason ?? "It could not be changed exactly, so it was left as it is.")
+        : miss?.why === "left untouched" ? failed(mode, run.whys?.[a.name] ?? "refused", reason ?? "It could not be changed exactly, so it was left as it is.")
         : null;
       if (run.fixed?.[a.name]) return [fail ?? failed(mode, "refused", reason ?? "It could not be changed."), ran(run.fixed[a.name])];
       if (fail && waived.includes(`${run.id}\t${a.path}`)) return [fail, { ...skipped("waived", "You said it is not needed on this one.", mode), state: "waived" }];
       if (fail) return fail;
-      return miss ? skipped("attached later", "It was attached after this was done.") : ran(mode);
+      return miss ? skipped("attached later", "It was attached after this was done.") : ran(mode, run.marks?.[a.name] ? { marks: run.marks[a.name] } : {});
     }),
   ]);
   const standing = standingView(runs.map((run) => ({ id: run.id, request: run.request, mode: run.mode ?? (run.recipe ? "safe" : v.mode === "safe" ? "default" : v.mode), recipe: run.recipe ?? "", name: run.name ?? "" })), rows);
@@ -794,14 +1354,18 @@ function owedOf(v) {
   return standing.operations.flatMap((op, i) => standing.documents.filter((d) => d.cells[i].state === "failed").map((d) => ({ operation: op.id, path: d.path, name: d.name, request: op.request })));
 }
 
+/** The fields of the view that follow from the rest of it, settled as every answer that carries the view is sent. */
+function settle() {
+  obliterateFields(view);
+  view.standing = standingOf(view);
+  view.discard = discardOf(view);
+  view.export = exportOf(view);
+  view.saved_recipes = recipesOf(view);
+  view.recipe_blocked = recipeBlockedOf(view);
+}
+
 function json(res, status, body) {
-  if (body === view) {
-    view.standing = standingOf(view);
-    view.discard = discardOf(view);
-    view.export = exportOf(view);
-    view.saved_recipes = recipesOf(view);
-    view.recipe_blocked = recipeBlockedOf(view);
-  }
+  if (body === view) settle();
   const data = JSON.stringify(body);
   res.writeHead(status, {
     "Content-Type": "application/json; charset=utf-8",
@@ -953,11 +1517,7 @@ function startStream(res) {
   const end = () => {
     view.busy = false;
     running = null;
-    view.standing = standingOf(view);
-    view.discard = discardOf(view);
-    view.export = exportOf(view);
-    view.saved_recipes = recipesOf(view);
-    view.recipe_blocked = recipeBlockedOf(view);
+    settle();
     res.write(`data: ${JSON.stringify({ type: "done", state: view })}\n\n`);
     res.end();
   };
@@ -966,6 +1526,7 @@ function startStream(res) {
   const fail = (message, resend = "") => {
     view.busy = false;
     running = null;
+    settle();
     res.write(`data: ${JSON.stringify({ type: "error", message, state: view, ...(resend ? { resend } : {}) })}\n\n`);
     res.end();
   };
@@ -1088,7 +1649,7 @@ function safeStopped(s) {
   view.warnings = [];
   view.stage = view.results.length ? "done" : "empty";
   view.action = { label: "", token: "", kind: "none", can_hold: false };
-  view.messages.push(msg("app", "Stopped. The preview was not finished, so it is withdrawn: nothing was created, and your documents and copies are as they were before you pressed the button. Press a button to preview again."));
+  view.messages.push(msg("app", PREVIEW_STOPPED));
   return s.end();
 }
 
@@ -1240,6 +1801,258 @@ async function occurrencesJob(res, skip) {
   s.end();
 }
 
+// --- Obliterate's own jobs: no AI call in any of them ---------------------------------------------------------------
+
+const CHECK_NAMES = { V1: "Package hash whitelist", V2: "Text preservation" };   // a failed check's mark: "V2 (Text preservation)"
+const quoted = (words) => words.map((w) => `“${w}”`).join(", ");
+/** One entry of `text_changes` as the chat says it. */
+function changePhrase(entry) {
+  const said = [entry.removed.length ? `words removed ${quoted(entry.removed)}` : "", entry.added.length ? `words added ${quoted(entry.added)}` : ""].filter(Boolean);
+  return said.length ? said.join("; ") : "only the spacing changes, no words";
+}
+/** What the chat says before the approval button of an own plan (preview.py): the words its copies change as the
+ *  independent checker read them, what else they change, Word's own account, and the documents without a copy. */
+function ownLists(shown, heads) {
+  const out = [];
+  const read = shown.filter((sv) => !sv.no_copy && Array.isArray(sv.text_changes));
+  const words = read.flatMap((sv) => sv.text_changes.map((entry) => `• ${sv.name}, ${entry.where}: ${changePhrase(entry)}`));
+  if (read.length) out.push(words.length ? [heads.words, ...words].join("\n\n") : heads.none);
+  const other = shown.flatMap((sv) => (sv.changes ?? []).map((line) => `• ${sv.name}: ${line}`));
+  if (other.length) out.push([heads.other, ...other].join("\n\n"));
+  const unread = shown.filter((sv) => sv.raw_xml && sv.text_changes === null);
+  if (unread.length) out.push(RAW_UNREAD(listed(unread.map((sv) => sv.name))));
+  const account = shown.filter((sv) => !sv.no_copy && (sv.word_account ?? []).length > 0);
+  if (account.length) out.push([WORD_ACCOUNT_HEAD, ...account.map((sv) => `• ${sv.name}: ${sv.word_account.join("; ")}.`)].join("\n\n"));
+  const none = shown.filter((sv) => sv.no_copy);
+  if (none.length) out.push([NO_COPY_HEAD, ...none.map((sv) => `• ${sv.name}: ${sv.failures[0].reason.replace(/\.$/, "")}.`)].join("\n\n"));
+  return out;
+}
+
+/** An own plan's preview on screen: the plan and its pages, the app's lists of what the copies change, then the one
+ *  button. `shown`: its samples, every document it is for; `apart`: the documents it leaves out, each with why. */
+async function showOwnPlan(s, { source, request, title, summary, shown, apart, heads, why_not, replace }) {
+  const say = async (text) => {
+    const m = msg("app", text);
+    view.messages.push(m);
+    await s.emit({ type: "message", message: m });
+  };
+  view.plan = {
+    groups: [{ id: "", label: "", count: shown.filter((sv) => !sv.no_copy).length, files: [], changes: [{ title, summary, details: [] }], assumptions: [] }],
+    targets: [],
+    set_aside: Object.entries(apart).map(([name, reason]) => ({ name, reason })),
+    stages: 1,
+  };
+  await s.emit({ type: "plan", plan: view.plan });
+  view.samples = shown;
+  view.occurrences = [];
+  view.warnings = [];
+  view.worth_knowing = [];
+  view.blocking = false;
+  await s.emit({ type: "samples", samples: view.samples, occurrences: [], warnings: [], worth_knowing: [], blocking: false });
+  for (const text of ownLists(shown, heads)) await say(text);
+  ownPlan = {
+    source, why_not, replace, apart,
+    sentences: [summary],
+    deliver: shown.filter((sv) => !sv.no_copy).map((sv) => ({ path: sv.source, marks: [...(sv.unproven ? [WORD_UNPROVEN_MARK] : []), ...sv.failures.map((f) => `${f.check} (${CHECK_NAMES[f.check] ?? f.check})`)] })),
+    failed: shown.filter((sv) => sv.no_copy).map((sv) => ({ path: sv.source, name: sv.name, reason: sv.failures[0].reason, why: "failed" })),
+  };
+  lastRequest = request;
+  lastRecipe = "";
+  lastRecipeRun = null;
+  view.stage = "preview";
+  view.action = approveAction(view, `tok-approve-${++seq}`);
+  ownPlan.token = view.action.token;   // the approval this plan was shown with: another one on screen is another plan
+  view.working = { ...view.working, ...undoFields() };
+}
+
+/** What every own job starts by clearing: the question and the pages of whatever was on screen. */
+function clearForOwnPlan() {
+  view.questions = [];
+  view.choices = [];
+  view.chips = [];
+  view.plan = null;
+  view.samples = [];
+  view.worth_knowing = [];
+  view.warnings = [];
+  view.blocking = false;
+  view.action = { label: "", token: "", kind: "none", can_hold: false };
+}
+
+/** Replace this part (document_task._replace_part): the one-operation plan the window builds, previewed. The copy is
+ *  proven to hold the file's bytes; what they change in the words is read from the copy and listed. A choice that
+ *  cannot be used is said in one message and nothing is previewed. */
+async function replacePartJob(res, a, part, file) {
+  const s = startStream(res);
+  const refuse = (why) => {
+    view.messages.push(msg("app", `Replace this part: ${why}`));
+    return s.end();
+  };
+  const blocked = ownPlanBlocked();
+  if (blocked) return refuse(blocked);
+  if (!documentsInScope().includes(a)) return refuse(`${a.name} is set aside, out of every plan. Put it back, or use Obliterate this one, first.`);
+  const text = part.xml ? file.data.toString("utf8") : null;
+  if (part.xml ? text === part.text : part.replacedWith === file.name && part.size === file.data.length) {
+    return refuse(`The file holds exactly what ${part.name} already holds, so nothing would change. Save your changes to the file, then choose it again.`);
+  }
+  await s.emit({ type: "status", kind: "checking", text: "Checking the document…" });
+  const request = `Replace the part ${part.name} of ${a.name} with my file ${file.name}.`;
+  const summary = `Replace the part “${part.name}” with the file “${file.name}”, byte for byte. Not tracked; no other part of the document changes.`;
+  view.messages.push(msg("user", request));
+  const planned = msg("app", `Planned without AI: ${summary} The copy is checked byte for byte against your file. What the new part changes in the words is not predicted: it is read from the copy and listed below, before the button.`);
+  view.messages.push(planned);
+  await s.emit({ type: "message", message: planned });
+  clearForOwnPlan();
+  await s.emit({ type: "status", kind: "previewing", text: "" });
+  await s.emit({ type: "status", kind: "rendering", text: "" });
+  // a part that is no longer well-formed XML is placed as it was given: nothing of it can be read, and V1 fails
+  const problem = part.xml ? xmlProblem(text) : "";
+  const sample = {
+    source: a.path, name: a.name, images: problem ? [] : [`/api/image?path=${encodeURIComponent(`${RUN_DIR}/preview/1.png`)}`],
+    pages_before: problem ? null : 12, pages_after: problem ? null : 12,
+    passed: !problem,
+    failures: problem ? [{ check: "V1", reason: `The copy's part ${part.name} is not well-formed XML (${problem}), so Word would not open the file.` }] : [],
+    geometry: { status: "NA", note: "No page-layout comparison for this change: a replaced part can move or change what the pages show." },
+    text_changes: problem ? null : part.xml ? partTextChanges(part.name, part.text, text) : [],
+    unproven: false,
+    changes: [part.xml
+      ? `Parts: ${part.name} is your file now, ${file.data.length.toLocaleString("en-US")} bytes where there were ${part.size.toLocaleString("en-US")}; no other part changed.`
+      : `Parts: ${part.name} is your file now, ${file.data.length.toLocaleString("en-US")} bytes where there were ${part.size.toLocaleString("en-US")}; it is not text, so it was compared by its bytes only.`],
+    no_copy: false, raw_xml: true, raw_what: "part", made_by: "", word_account: [],
+  };
+  await showOwnPlan(s, {
+    source: "hands-on", request, title: "Replace a part", summary, shown: [sample],
+    apart: Object.fromEntries(documentsInScope().filter((x) => x !== a).map((x) => [x.name, PART_ONLY_THERE(a.name)])),
+    heads: { words: PART_WORDS_CHANGE_HEAD, none: PART_NO_WORDS_CHANGE, other: PART_OTHER_CHANGES_HEAD },
+    why_not: WHY_PART,
+    replace: { key: `${a.path}\t${part.name}`, part: { name: part.name, type: part.type, xml: part.xml, text, size: file.data.length, replacedWith: file.name } },
+  });
+  s.end();
+}
+
+/** Word actions (document_task._word_actions): Word makes each planned document's copy now, and the copies are
+ *  previewed, each read by the independent reader and none proven. A document Word finds nothing to do in gets no
+ *  copy and the reason; no copy at all, and nothing is previewed. Stop ends it between documents. */
+async function wordActionsJob(res, a, actions, every) {
+  const s = startStream(res);
+  const say = async (text) => {
+    const m = msg("app", text);
+    view.messages.push(m);
+    await s.emit({ type: "message", message: m });
+  };
+  const blocked = ownPlanBlocked() || (wordAvailable ? "" : NO_WORD);
+  if (blocked) {
+    view.messages.push(msg("app", `${WORD_LABEL}: ${blocked}`));
+    return s.end();
+  }
+  const scope = documentsInScope();
+  if (!scope.includes(a)) {
+    view.messages.push(msg("app", view.focus.length
+      ? `${WORD_LABEL}: a pass over your to-do list is open on ${view.focus.map(name).join(", ")}, and ${a.name} is not part of it. Finish the pass or drop it first.`
+      : `${WORD_LABEL}: ${a.name} is set aside, out of every plan. Put it back, or use Obliterate this one, first.`));
+    return s.end();
+  }
+  const several = every && scope.length > 1;
+  const targets = several ? scope : [a];
+  const request = `Run in Word on ${several ? `every document (${scope.length})` : a.name}: ${actions.map((id) => WORD_ACTIONS[id].label).join("; then ")}.`;
+  await s.emit({ type: "status", kind: "checking", text: "Word is working on a copy…" });
+  view.messages.push(msg("user", request));
+  await say(`Planned without AI. ${actions.map((id) => `Word action, ${WORD_ACTIONS[id].label}: ${WORD_ACTIONS[id].does}`).join(" ")} Word saves the whole file again, so nothing is predicted: Word makes each copy now, on a private copy of the document, and what it changes is read from that copy and listed below, before the button. Up to ${WORD_MINUTES} minutes a document.`);
+  clearForOwnPlan();
+  const shown = [];
+  for (const doc of targets) {
+    // Word takes its time over each document: room for Stop now to land
+    for (let i = 0; i < 8 && !s.job.stop; i++) await s.emit({ type: "status", kind: "previewing", text: `Word is working on a copy of ${doc.name}…` });
+    if (s.job.stop) {
+      view.stage = restingStage();
+      view.messages.push(msg("app", PREVIEW_STOPPED));
+      return s.end();
+    }
+    shown.push(wordSample(doc, actions, shown.length));
+  }
+  if (shown.every((sv) => sv.no_copy)) {
+    view.stage = restingStage();
+    await say(`Word made no copy, so there is nothing to preview or create: ${shown.map((sv) => `${sv.name} — ${sv.failures[0].reason.replace(/\.$/, "")}`).join("; ")}.`);
+    return s.end();
+  }
+  await showOwnPlan(s, {
+    source: "word", request, title: WORD_LABEL,
+    summary: `${actions.map((id) => WORD_ACTIONS[id].does).join(" ")} Not tracked. Word saves the whole file again, so nothing is predicted.`,
+    shown,
+    apart: several ? {} : Object.fromEntries(scope.filter((x) => x !== a).map((x) => [x.name, WORD_ONLY_THERE(a.name)])),
+    heads: { words: WORD_WORDS_CHANGE_HEAD, none: NO_WORDS_CHANGE, other: WORD_OTHER_CHANGES_HEAD },
+    why_not: WHY_WORD,
+  });
+  s.end();
+}
+
+/** Try to rescue (document_task._rescue): the one thing that could make a refused document a file the engine takes.
+ *  What comes of it is attached in the refused file's place, marked SALVAGED; a rescue that makes no document leaves
+ *  the file refused and says why. The password is read here and goes nowhere: no message or answer carries it. */
+async function rescueJob(res, a, password) {
+  const s = startStream(res);
+  const kind = rescueKind(a);
+  const end = (text) => {
+    view.messages.push(msg("app", text));
+    return s.end();
+  };
+  if (kind === "password" && !password) {
+    return end(`${RESCUE_LABEL}: ${a.name} is protected with a password. Press ${RESCUE_LABEL} again and type it: it is given to Word for this one attempt and kept nowhere.`);
+  }
+  for (let i = 0; i < 8 && !s.job.stop; i++) await s.emit({ type: "status", kind: "checking", text: "Trying to rescue the file…" });
+  if (s.job.stop) return end(RESCUE_STOPPED);
+  if (RESCUE_WORD_KINDS.includes(kind) && !wordAvailable) return end(`${RESCUE_LABEL}: ${a.name} was not rescued. ${NO_WORD.replace(/\.$/, "")}. The file is as it was.`);
+  if (kind === "password" && password.toLowerCase().startsWith("wrong")) {
+    return end(`${RESCUE_LABEL}: Word says that is not the password of ${a.name}. Nothing was rescued; press it again to try another.`);
+  }
+  const rescued = `${a.name.replace(/\.[^.]+$/, "")}.docx`;
+  const steps = [RESCUE_STEPS[kind](a)];
+  const notes = [...(kind === "password" ? [NO_PASSWORD_NOW] : []), ...(/\.docm$/i.test(a.name) ? [NO_MACROS] : [])];
+  const fresh = { ...attachment(`${RESCUED_ROOT}/20261110-1015${String(rescues++ % 60).padStart(2, "0")}/${rescued}`, "document"), salvaged: { from: a.name, kind, steps, notes } };
+  view.attachments = view.attachments.map((x) => (x === a ? fresh : x));   // in the refused file's own place
+  voidPlan();
+  end(`Rescued ${a.name}. ${steps.join(" ")} It is attached as ${rescued}, marked SALVAGED; your file was read and not changed. It holds 212 paragraphs, 3 tables and 1 picture or drawn object in its body, with 1 header part and 1 footer part. ${RESCUE_UNPROVEN}${notes.map((note) => ` ${note}`).join("")}`);
+}
+
+/** What the chat adds after a clean export that left marked copies without a file, in Obliterate mode
+ *  (document_task._anyway_offer): Export can have Word make them anyway, and where. */
+function anywayOffer(kind) {
+  const names = anywayCopies(view, kind).map((r) => r.name);
+  if (!names.length) return "";
+  const one = names.length === 1;
+  return ` ${listed(names)} ${one ? "is a marked copy" : "are marked copies"}, so in Obliterate mode Export can have Word make ${one ? "it" : "them"} anyway, unchecked: Export → “${ANYWAY_LABELS[kind]}”.` +
+    (wordAvailable ? "" : " That needs Microsoft Word, which the app cannot reach on this computer.");
+}
+
+/** Export anyway (document_task.export with `anyway`): the clean kind made by Word for the marked copies that kind's
+ *  checked export left without a file. Nothing is planned or checked, so the chat names each file UNCHECKED, with
+ *  Word's own count and what the app read in the file Word saved. Stop ends it with nothing saved. */
+async function exportAnywayJob(res, kind, folder) {
+  const s = startStream(res);
+  const copies = anywayCopies(view, kind);
+  for (let i = 0; i < 8 && !s.job.stop; i++) await s.emit({ type: "status", kind: "creating", text: "Word is making the clean copies…" });
+  if (s.job.stop) {
+    view.messages.push(msg("app", EXPORT_STOPPED));
+    return s.end();
+  }
+  if (kind === "pdf") await s.emit({ type: "status", kind: "rendering", text: "Saving the clean PDFs…" });
+  const one = copies.length === 1;
+  const each = `a private copy of ${one ? "it" : "each"}`;
+  const what = kind === "accepted" ? `${copies.length} Word cop${one ? "y" : "ies"} with every tracked change accepted` : `${copies.length} clean PDF${one ? "" : "s"}`;
+  const how = kind === "accepted"
+    ? `Word accepted every tracked change on ${each} and saved that`
+    : `Word deleted every comment and accepted every tracked change on ${each}, and the PDF${one ? " was" : "s were"} made from that by Microsoft Word`;
+  let said = `Saved ${what} to ${folder}, made by Word and UNCHECKED: the checked way could not make ${one ? "it" : "them"}, so ${how}. No check proves ${one ? "the file is" : "the files are"} your edited cop${one ? "y" : "ies"} with nothing else changed.`;
+  for (const r of copies) {
+    const doc = view.attachments.find((a) => a.path === r.source) ?? { path: r.source, notes: [] };
+    const account = wordAccount(doc, kind === "pdf" ? ["delete_comments", "accept_changes"] : ["accept_changes"]);
+    said += ` ${kind === "pdf" ? r.name.replace(/\.docx$/i, ".pdf") : r.name} — Word's own count: ${account.join("; ")}. The app read the file Word saved: its words are your edited copy's with every tracked change accepted, and no tracked change ${kind === "pdf" ? "or comment " : ""}is left.`;
+    exportMissed[kind].delete(r.output);   // made: no longer offered
+  }
+  view.messages.push(msg("app", `${said} Your edited copies are as they were.`));
+  view.export = { ...view.export, folder };
+  s.end();
+}
+
 async function primaryJob(res, token, hold = []) {
   const s = startStream(res);
   if (view.action.kind === "continue") {
@@ -1262,12 +2075,16 @@ async function primaryJob(res, token, hold = []) {
     return s.end();
   }
   // The documents marked with the red X: on the to-do list, no copy; the others run. The pass over the to-do list
-  // (`focus`) ends with its copies.
-  const inScope = view.attachments.filter(
-    (a) => a.kind === "document" && a.state !== "refused" && (view.focus.length ? view.focus.includes(a.path) : !view.todo.some((t) => t.path === a.path)),
-  );
+  // (`focus`) ends with its copies. A plan of the app's own (Word actions, Replace this part) runs on the documents
+  // it showed a copy of, and Create delivers those copies.
+  const own = waitingOwn();
+  const inScope = documentsInScope();
   const held = inScope.filter((a) => hold.includes(a.current) || hold.includes(a.path));
-  const running = inScope.filter((a) => !held.includes(a));
+  const running = inScope.filter((a) => !held.includes(a) && (!own || own.deliver.some((d) => d.path === a.path)));
+  const copyOf = (a) => {
+    const marks = own?.deliver.find((d) => d.path === a.path)?.marks ?? [];
+    return { source: a.path, output: `${RUN_DIR}/${a.name}`, name: a.name, saved_to: "", ...(marks.length ? { unverified: marks } : {}) };
+  };
   const todoBefore = [...view.todo];
   for (const a of held) {
     if (!view.todo.some((t) => t.path === a.path)) view.todo.push({ path: a.path, name: a.name, why: "held", reason: HELD_REASON });
@@ -1285,6 +2102,7 @@ async function primaryJob(res, token, hold = []) {
     view.todo = [];
     view.stage = "resume";
     view.action = { label: "Continue", token: `tok-continue-${++seq}`, kind: "continue", can_hold: false };
+    if (own) ownPlan = null;
     return s.end();
   }
   await s.emit({ type: "status", kind: "creating", text: "" });
@@ -1307,7 +2125,9 @@ async function primaryJob(res, token, hold = []) {
         return a ? [{ path: a.path, name: x.name, reason: x.reason }] : [];
       })
     : [];
-  const fresh = results().filter((r) => running.some((a) => a.path === r.source) && !asideByButton.some((x) => x.path === r.source));
+  const fresh = running.filter((a) => !asideByButton.some((x) => x.path === a.path)).map(copyOf);
+  // a copy made again is no longer the one a clean export left without a file: Export anyway is offered for none of them
+  for (const copy of fresh) for (const missed of Object.values(exportMissed)) missed.delete(copy.output);
   if (view.mode === "safe") {
     // A button's run: the app's own note, no AI words; what it left untouched waits beside the copies. What it
     // replaces is kept for Undo.
@@ -1318,6 +2138,7 @@ async function primaryJob(res, token, hold = []) {
       left_untouched: beforeButton ? beforeButton.left_untouched : view.left_untouched,
       currents: view.attachments.map((a) => [a.path, a.current]),
       done: view.working.done ?? [],
+      replaced: [...replacedParts],
     });
     const doneSoFar = doneWith(lastRequest || "the last button", fresh, asideByButton);
     beforeButton = null;
@@ -1349,7 +2170,34 @@ async function primaryJob(res, token, hold = []) {
     left_untouched: view.left_untouched,
     currents: view.attachments.map((a) => [a.path, a.current]),
     done: view.working.done ?? [],
+    replaced: [...replacedParts],
   });
+  if (own) {
+    // One of Obliterate's own actions: the copies shown are delivered as they are, with their marks; no AI words follow.
+    // A document Word could make no copy of owes the action (a failed cell); one it was not asked about does not.
+    ownPlan = null;
+    const doneSoFar = doneWith(lastRequest || "the last change", fresh, own.failed, own);
+    if (own.replace && fresh.length) replacedParts.set(own.replace.key, own.replace.part);
+    view.results = [...view.results.filter((r) => !fresh.some((f) => f.source === r.source)), ...fresh];
+    await s.emit({ type: "results", results: view.results });
+    const n = fresh.length;
+    const unverified = fresh.filter((r) => failedMarks(r).length > 0).length;
+    const done = msg("app", `${n} document ${n === 1 ? "copy is" : "copies are"} ready. You can open ${n === 1 ? "it" : "them"}, describe another change to make on top of ${n === 1 ? "it" : "them"}, or start over from the originals.` +
+      (own.source === "word" ? ` ${n === 1 ? "It is" : "Each is"} marked UNPROVEN: Word made it, and what it changed was shown to you, not proven.` : "") +
+      (unverified ? ` ${unverified} ${unverified === 1 ? "was" : "were"} delivered UNVERIFIED: a check failed, and each one's failed checks are beside it.` : "") +
+      (own.failed.length ? ` No copy was made of ${listed(own.failed.map((x) => x.name))}; ${own.failed.length === 1 ? "its reason is" : "each one's reason is"} in Where each document stands.` : ""));
+    view.messages.push(done);
+    await s.emit({ type: "message", message: done });
+    view.stage = "done";
+    view.plan = null;
+    view.samples = [];
+    view.worth_knowing = [];
+    view.action = { label: "", token: "", kind: "none", can_hold: false };
+    view.working = { generation: view.working.generation + 1, from_originals: false, can_start_over: true, done: doneSoFar };
+    view.attachments = view.attachments.map((a) => (running.some((r) => r.path === a.path) ? { ...a, current: `${RUN_DIR}/${a.name}` } : a));
+    view.working = { ...view.working, ...undoFields() };
+    return s.end();
+  }
   const doneSoFar = doneWith(lastRequest || "the last change", fresh, []);
   view.results = [...view.results.filter((r) => !fresh.some((f) => f.source === r.source)), ...fresh];
   await s.emit({ type: "results", results: view.results });
@@ -1382,9 +2230,14 @@ async function primaryJob(res, token, hold = []) {
   s.end();
 }
 
+/** Obliterate mode alone takes an old .doc or a .docm as a document: refused as triage refuses it, to be rescued. */
+const rescuable = (path, template) => view.mode === "obliterate" && !template && /\.(doc|docm)$/i.test(path);
+const notDocx = (path) => `${name(path)} is not a .docx file: .docm and .doc files are not supported; save it as .docx in Word.`;
+
 /** Adding or removing a document after a plan exists voids that plan: the
  *  button reads Continue until the documents are checked again. */
 function voidPlan() {
+  if (waitingOwn()) return withdrawOwn();
   if (!view.plan) return;
   view.action = { label: "Continue", token: `tok-continue-${++seq}`, kind: "continue", can_hold: false };
   view.messages.push(msg("app", "The documents changed. Review the updated plan first."));
@@ -1396,8 +2249,10 @@ function parseMultipart(body, contentType) {
   const m = /boundary=(?:"([^"]+)"|([^;]+))/i.exec(contentType || "");
   const boundary = m ? m[1] || m[2] : null;
   const files = [];
+  const fields = {};    // every plain field, by name
+  const uploads = [];   // every file: the field it came in, its name and its bytes
   let template = false;
-  if (!boundary) return { files, template };
+  if (!boundary) return { files, template, fields, uploads };
   const parts = body.toString("latin1").split(`--${boundary}`);
   for (const part of parts) {
     const headerEnd = part.indexOf("\r\n\r\n");
@@ -1406,10 +2261,15 @@ function parseMultipart(body, contentType) {
     const value = part.slice(headerEnd + 4).replace(/\r\n$/, "");
     const fname = /filename="([^"]*)"/i.exec(headers);
     const field = /name="([^"]*)"/i.exec(headers);
-    if (fname) files.push(Buffer.from(fname[1], "latin1").toString("utf8"));
-    else if (field && field[1] === "template") template = value.trim() === "true";
+    if (fname) {
+      files.push(Buffer.from(fname[1], "latin1").toString("utf8"));
+      uploads.push({ field: field ? field[1] : "", name: Buffer.from(fname[1], "latin1").toString("utf8"), data: Buffer.from(value, "latin1") });
+    } else if (field) {
+      fields[field[1]] = Buffer.from(value, "latin1").toString("utf8");
+      if (field[1] === "template") template = value.trim() === "true";
+    }
   }
-  return { files, template };
+  return { files, template, fields, uploads };
 }
 
 // --- Static files ---------------------------------------------------------
@@ -1440,6 +2300,8 @@ async function handle(req, res) {
     if (path === "/mock/reset") {
       view = emptyView();
       resetGoingBack();
+      resetObliterate();
+      wordAvailable = true;
       running = null;
       return json(res, 200, view);
     }
@@ -1448,6 +2310,8 @@ async function handle(req, res) {
       if (!make) return json(res, 400, { error: `Unknown scenario; one of ${Object.keys(SCENARIOS).join(", ")}.` });
       settings = { ...settings, key_present: true, origin: "saved" };
       updateFound = true;
+      resetObliterate();
+      wordAvailable = true;   // the obliterate-no-word scenario turns it off
       view = make();
       running = null;
       resetGoingBack();
@@ -1505,6 +2369,11 @@ async function handle(req, res) {
       const body = await readJson(req);
       const paths = Array.isArray(body.paths) ? body.paths : [];
       for (const p of paths) {
+        if (rescuable(p, body.template)) {
+          // Obliterate alone: attached refused, with Try to rescue beside it (docs/WEB_API.md, `POST /api/pick`)
+          if (!view.attachments.some((a) => a.path === p)) view.attachments.push(attachment(p, "document", { reason: notDocx(p) }));
+          continue;
+        }
         if (!/\.(docx|png|jpe?g|gif|xlsx|csv|json)$/i.test(p)) return json(res, 400, { error: `${name(p)} is not a .docx; save it as a Word document first.` });
         const kind = body.template ? "template" : /\.docx$/i.test(p) ? "document" : "reference";
         if (kind === "template") {
@@ -1522,6 +2391,10 @@ async function handle(req, res) {
       for (const f of files) {
         const kind = template ? "template" : /\.docx$/i.test(f) ? "document" : "reference";
         const p = `C:/Users/abe/AppData/Roaming/Spec Surgeon/attachments/20261020-1500/${f}`;
+        if (rescuable(f, template)) {
+          view.attachments.push(attachment(p, "document", { reason: notDocx(f) }));
+          continue;
+        }
         if (kind === "template") view.attachments = view.attachments.filter((a) => a.kind !== "template");
         const extra = /\.docx$/i.test(f) ? (f.toLowerCase().includes("empty") ? REFUSED : {}) : PICTURE;
         if (!/\.(docx|png|jpe?g|gif|xlsx|csv|json)$/i.test(f)) return json(res, 400, { error: `${f} is not a .docx; save it as a Word document first.` });
@@ -1657,8 +2530,118 @@ async function handle(req, res) {
         view.samples = [];
         view.worth_knowing = [];
         view.action = { label: "", token: "", kind: "none", can_hold: false };
+        // the hands-on tools: on with the mode only when the warning's own box was ticked (the literal `true`), and
+        // gone with it; what the app planned itself under the other rules is void
+        ownPlan = null;
+        view.hands_on = body.mode === "obliterate" && body.hands_on === true;
+        if (view.hands_on) view.messages.push(msg("app", HANDS_ON_ON));
       }
       return json(res, 200, view);
+    }
+    case "POST /api/hands-on": {
+      // the hands-on tools' own switch, in Obliterate's strip; never kept
+      if (view.busy) return busyRefusal();
+      const body = await readJson(req);
+      if (view.mode !== "obliterate") return json(res, 400, { error: HANDS_ON_OBLITERATE_ONLY });
+      const on = body.on === true;
+      if (on !== (view.hands_on === true)) {
+        if (!on && waitingOwn()?.source === "hands-on") withdrawOwn();   // a part replacement that waits is withdrawn
+        view.hands_on = on;
+        view.messages.push(msg("app", on ? HANDS_ON_ON : HANDS_ON_OFF));
+      }
+      return json(res, 200, view);
+    }
+    case "POST /api/parts": {
+      // read-only, so it answers while work runs too
+      const body = await readJson(req);
+      const found = handsOnDocument(body.path);
+      if (found.error) return json(res, 400, { error: found.error });
+      const which = body.which === "original" ? "original" : "current";
+      return json(res, 200, {
+        path: found.a.path, document: found.a.name, which, has_copy: found.a.current !== found.a.path,
+        parts: partsOf(found.a, which).map(({ name: part, size, type, xml }) => ({ name: part, size, type, xml })),
+      });
+    }
+    case "POST /api/part": {
+      const body = await readJson(req);
+      const found = handsOnDocument(body.path);
+      if (found.error) return json(res, 400, { error: found.error });
+      const part = partsOf(found.a, body.which === "original" ? "original" : "current").find((x) => x.name === body.part);
+      if (!part) return json(res, 400, { error: `${found.a.name} has no part named ${body.part ?? ""}.` });
+      return json(res, 200, pageOf(part, body.page));
+    }
+    case "POST /api/parts/search": {
+      const body = await readJson(req);
+      const found = handsOnDocument(body.path);
+      if (found.error) return json(res, 400, { error: found.error });
+      return json(res, 200, searchOf(partsOf(found.a, body.which === "original" ? "original" : "current"), body.query));
+    }
+    case "POST /api/part/save": {
+      // Save this part: its own bytes into a folder. The mock has no dialog and writes no file: it answers as if the
+      // dialog had returned a folder, and remembers what "is there" so a second save finds it.
+      if (view.busy) return busyRefusal();
+      if (tutorial) return json(res, 409, { error: "End the tour first; this saves a part of your own documents." });
+      const body = await readJson(req);
+      const found = handsOnDocument(body.path);
+      if (found.error) return json(res, 400, { error: found.error });
+      const which = body.which === "original" ? "original" : "current";
+      const part = partsOf(found.a, which).find((x) => x.name === body.part);
+      if (!part) return json(res, 400, { error: `${found.a.name} has no part named ${body.part ?? ""}.` });
+      const folder = typeof body.folder === "string" && body.folder ? body.folder : "C:/Users/abe/Documents/Saved parts";
+      if (folder.startsWith(APP_FOLDERS)) {
+        return json(res, 400, { error: `${folder} is inside the app's scratch folder, which is deleted when the window closes; nothing was saved. Choose a folder of your own.` });
+      }
+      const base = `${found.a.name.replace(/\.docx$/i, "")} - ${part.name.replace(/^\/+|\/+$/g, "").replace(/[\\/]/g, "_")}`;
+      const bytes = part.text ?? `${part.size} bytes`;
+      let dest = `${folder}/${base}`;
+      // a file there with the same bytes is that file; one with other bytes is left, and this one numbered beside it
+      for (let n = 2; savedParts.has(dest) && savedParts.get(dest) !== bytes; n++) dest = `${folder}/${base.replace(/(\.[^.]+)?$/, (ext) => ` (${n})${ext}`)}`;
+      const already = savedParts.has(dest);
+      savedParts.set(dest, bytes);
+      const of = which === "current" && found.a.current !== found.a.path ? "its edited copy" : "the original";
+      view.messages.push(msg("app", `Saved the part ${part.name} of ${found.a.name} (${of}), as it is, to ${dest}${already ? " (it was already there, unchanged)." : "."} Change it in an editor of your own; Replace this part then puts it back, after a preview.`));
+      return json(res, 200, view);
+    }
+    case "POST /api/part/replace": {
+      // Replace this part: multipart `path`, `part` and `file`; the one-operation plan is built and previewed
+      if (view.busy) return busyRefusal();
+      if (tutorial) return json(res, 409, { error: "End the tour first; this changes a copy of your own documents." });
+      const { fields, uploads } = parseMultipart(await readBody(req), req.headers["content-type"]);
+      const found = handsOnDocument(fields.path ?? "");
+      if (found.error) return json(res, 400, { error: found.error });
+      const part = partsOf(found.a, "current").find((x) => x.name === fields.part);
+      if (!part) return json(res, 400, { error: `${found.a.name} has no part named ${fields.part ?? ""}.` });
+      const file = uploads.find((u) => u.field === "file");
+      if (!file) return json(res, 400, { error: "Choose the file that takes the part's place." });
+      if (file.data.length > MAX_PART_BYTES) {
+        return json(res, 400, { error: `${file.name} is ${file.data.length.toLocaleString("en-US")} bytes; a part is replaced with a file of at most ${MAX_PART_BYTES.toLocaleString("en-US")}.` });
+      }
+      return replacePartJob(res, found.a, part, file);
+    }
+    case "POST /api/rescue": {
+      // Try to rescue: a refused document with something to try, in Obliterate mode alone
+      if (view.busy) return busyRefusal();
+      if (tutorial) return json(res, 409, { error: "End the tour first; this attaches a document to your own conversation." });
+      const body = await readJson(req);
+      if (body.password !== undefined && body.password !== null && typeof body.password !== "string") return json(res, 400, { error: "The password must be text." });
+      if (view.mode !== "obliterate") return json(res, 400, { error: RESCUE_OBLITERATE_ONLY });
+      const a = view.attachments.find((x) => x.kind === "document" && x.path === body.path);
+      if (!a) return json(res, 400, { error: "That file is not attached." });
+      if (!rescueKind(a)) return json(res, 400, { error: `There is nothing to rescue in ${a.name}.` });
+      return rescueJob(res, a, body.password || "");
+    }
+    case "POST /api/word-actions": {
+      // Word actions: the named actions, in that order, on a copy of the document (of each in scope with `every`)
+      if (view.busy) return busyRefusal();
+      if (tutorial) return json(res, 409, { error: "End the tour first; this changes a copy of your own documents." });
+      const body = await readJson(req);
+      if (!Array.isArray(body.actions) || !body.actions.every((id) => typeof id === "string")) return json(res, 400, { error: "Choose at least one Word action." });
+      if (view.mode !== "obliterate") return json(res, 400, { error: WORD_OBLITERATE_ONLY });
+      const a = view.attachments.find((x) => x.kind === "document" && x.state !== "refused" && x.path === body.path);
+      if (!a) return json(res, 400, { error: "That document is not attached." });
+      const problem = wordProblem(body.actions);
+      if (problem) return json(res, 400, { error: problem });
+      return wordActionsJob(res, a, body.actions, body.every === true);
     }
     case "POST /api/todo/work": {
       // a failed cell's Work on it: the pass over that cell, over an operation, or over the list; from Safe mode the
@@ -1771,6 +2754,8 @@ async function handle(req, res) {
         view.mode = "obliterate";
         view.connection = { ready: settings.key_present, origin: settings.origin };
         view.messages.push(msg("app", OBLITERATE_ON));
+        view.hands_on = body.hands_on === true;
+        if (view.hands_on) view.messages.push(msg("app", HANDS_ON_ON));
       }
       view.todo = view.todo.filter((t) => t.path !== body.path);
       view.focus = [body.path];
@@ -1785,6 +2770,7 @@ async function handle(req, res) {
       }
       if (view.mode !== "safe") {
         // Default and Obliterate: the request ends with nothing created; the next message is a new request
+        ownPlan = null;
         view.plan = null;
         view.samples = [];
         view.worth_knowing = [];
@@ -1822,6 +2808,12 @@ async function handle(req, res) {
       if (!top) return json(res, 400, { error: "There is nothing to undo." });
       if (undoFields().undo_blocked) return json(res, 400, { error: undoFields().undo_blocked });
       undoStack.pop();
+      // the copies go back: the parts a later Replace this part put there with them, and what Export anyway offered
+      if (top.replaced) {
+        replacedParts.clear();
+        for (const [key, part] of top.replaced) replacedParts.set(key, part);
+      }
+      for (const missed of Object.values(exportMissed)) missed.clear();
       const currents = new Map(top.currents);
       view.attachments = view.attachments.map((a) => (currents.has(a.path) ? { ...a, current: currents.get(a.path) } : a));
       view.results = top.results;
@@ -1843,6 +2835,7 @@ async function handle(req, res) {
     case "POST /api/start-over":
       if (view.busy) return busyRefusal();
       resetGoingBack();
+      resetObliterate();
       view.working = { generation: 0, from_originals: true, can_start_over: false, done: [] };
       view.plan = null;
       view.samples = [];
@@ -1865,6 +2858,7 @@ async function handle(req, res) {
       const mode = view.mode, modes = view.modes;
       view = emptyView();
       resetGoingBack();
+      resetObliterate();
       view.update = keep;
       view.mode = mode;
       view.modes = modes;
@@ -1876,9 +2870,19 @@ async function handle(req, res) {
       if (view.busy) return busyRefusal();
       const body = await readJson(req);
       const kind = typeof body.kind === "string" && body.kind ? body.kind : "word";
+      const folder = "C:/Users/abe/Documents/Saved copies";
+      if (body.anyway === true) {
+        // Export anyway (Obliterate mode alone): the clean kind made by Word for the marked copies that kind's
+        // checked export left without a file; each refusal before the folder is asked for
+        if (view.mode !== "obliterate") return json(res, 400, { error: ANYWAY_OBLITERATE_ONLY });
+        if (!(kind in ANYWAY_LABELS)) return json(res, 400, { error: ANYWAY_KINDS });
+        if (anywayCopies(view, kind).length === 0) return json(res, 400, { error: ANYWAY_NOTHING });
+        if (!wordAvailable) return json(res, 400, { error: NO_WORD });
+        settings.export_folder = folder;
+        return exportAnywayJob(res, kind, folder);
+      }
       if (!["word", "accepted", "pdf"].includes(kind)) return json(res, 400, { error: "Export saves Word with tracked changes on or off, or a clean PDF." });
       if (view.results.length === 0) return json(res, 400, { error: "There are no edited copies to save yet." });
-      const folder = "C:/Users/abe/Documents/Saved copies";
       settings.export_folder = folder;
       if (kind === "word") {
         view.results = view.results.map((r) => ({ ...r, saved_to: `${folder}/${r.name}` }));
@@ -1889,10 +2893,24 @@ async function handle(req, res) {
       const s = startStream(res);
       await s.emit({ type: "status", kind: "creating", text: "Creating and checking the clean copies…" });
       if (kind === "pdf") await s.emit({ type: "status", kind: "rendering", text: "Saving the clean PDFs…" });
-      const n = view.results.length;
-      const done = msg("app", kind === "pdf"
-        ? `Saved ${n} clean PDF${n === 1 ? "" : "s"} to ${folder}, made by Microsoft Word: every comment removed and every tracked change accepted, each from a copy the checks passed. Your edited copies are as they were.`
-        : `Saved ${n} Word cop${n === 1 ? "y" : "ies"} with every tracked change accepted to ${folder}. Comments stay; your edited copies are as they were.`);
+      // A copy delivered UNVERIFIED does not pass the clean run's checks either, so it gets no file and is named with
+      // why; the others are written. What this kind left out is what Export anyway may then be offered for.
+      const missing = view.results.filter((r) => failedMarks(r).length > 0);
+      const made = view.results.filter((r) => !missing.includes(r));
+      exportMissed[kind].clear();
+      for (const r of missing) exportMissed[kind].add(r.output);
+      const n = made.length;
+      const shown = made.filter((r) => (r.unverified ?? []).length > 0).length;
+      const salvaged = made.filter((r) => salvagedOf(view, r.source)).length;
+      const done = msg("app", (n === 0
+        ? `No ${kind === "pdf" ? "PDF" : "file"} was saved.`
+        : kind === "pdf"
+          ? `Saved ${n} clean PDF${n === 1 ? "" : "s"} to ${folder}, made by Microsoft Word: every comment removed and every tracked change accepted, each from a copy the checks passed. Your edited copies are as they were.`
+          : `Saved ${n} Word cop${n === 1 ? "y" : "ies"} with every tracked change accepted to ${folder}. Comments stay; your edited copies are as they were.`) +
+        (shown ? ` ${shown} ${shown === 1 ? "was" : "were"} made from an edited copy marked UNPROVEN: a custom method made it, and what it changed was shown to you, not proven.` : "") +
+        (salvaged ? ` ${salvaged} ${salvaged === 1 ? "was" : "were"} made from a document the app rescued (SALVAGED): nothing proves the rescued document holds everything the file it came from did.` : "") +
+        (missing.length ? ` Not saved: ${missing.map((r) => `${r.name} — it did not pass the independent checks (${failedMarks(r).map((m) => m.split(" ")[0]).join(", ")})`).join("; ")}.` : "") +
+        anywayOffer(kind));
       view.messages.push(done);
       await s.emit({ type: "message", message: done });
       view.export = { ...view.export, folder };
@@ -1945,6 +2963,8 @@ async function handle(req, res) {
         view.modes = body.show_obliterate ? ["safe", "default", "obliterate"] : ["safe", "default"];
         if (!body.show_obliterate && view.mode === "obliterate") {
           view.mode = "default";
+          view.hands_on = false;
+          if (waitingOwn()) withdrawOwn();
           view.messages.push(msg("app", OBLITERATE_OFF));
         }
         if (!("api_key" in body)) return json(res, 200, keySettings());
