@@ -142,7 +142,9 @@ function HowToUse({ onStartTourAt }: { onStartTourAt: (chapter: string) => void 
                 <Tag>Try these in Default mode</Tag> puts those documents on your to-do list in Default mode. Press
                 another button to change the copies further, or <Tag>Undo the last button</Tag> to go back to the
                 copies from before it; nothing is deleted. <Tag>What you've done so far</Tag>, under the copies, lists
-                every button you ran, oldest first, and a button you already ran carries a checkmark.
+                every button you ran, oldest first, and a button you already ran carries a checkmark.{" "}
+                <Tag>Where each document stands</Tag>, above it, shows for every button which documents got it and,
+                for any that did not, why: the reason stays there however many buttons you press after it.
               </>
             ),
           },
@@ -445,6 +447,7 @@ function Workflows() {
           "Start over from the originals — a reply you can tap, or the link under the copies — goes back to your files.",
           "Undo the last button (Safe mode) or Undo the last change (Default and Obliterate) goes back one run at a time: the next button or request builds on the copies from before it, and the copies the undone run made stay in the scratch folder until the window closes.",
           "What you've done so far, under the copies, lists each button or request the copies carry since the originals, oldest first, with how many of the documents carry it and why any other does not. Undo takes the newest off and Start over clears it; in Safe mode a button you already ran carries a checkmark.",
+          "Where each document stands, above that list, is one grid for the whole job in every mode: every button or request across, every document down. A check means that document got it, with the mode that did it; a cross means it could not be done; a dash means it was not run on that document. Click a mark for its reason and every attempt made. A reason stays there however many changes come after, and the line under the grid counts what is still not done.",
           "Changed your mind before the copies exist? Discard preview withdraws a waiting preview in every mode, and in Default and Obliterate Drop this request ends a request that is still open (the assistant's question, a pause at the spending check, a reply waiting to continue). Nothing is created, and your next message starts a new request; the assistant is told the last one was withdrawn.",
           "A document attached after a run is an original beside the copies, and gets only the next change.",
         ]}

@@ -212,6 +212,11 @@ test("a step's needs are read off the view, and unmet on an empty one", () => {
     results: [{ source: "a", output: "c", name: "a" }],
     working: { ...EMPTY_VIEW.working, generation: 1, done: [{ request: "r", recipe: "", documents: 1, of: 1, not: [] }] },
     todo: [{ path: "d", name: "d", why: "held", reason: "x" }],
+    standing: {
+      operations: [{ id: "o", number: 1, request: "r", mode: "safe", recipe: "", name: "", done: 1, failed: 0 }],
+      documents: [{ path: "a", name: "a", owed: 0, badges: [], cells: [{ state: "done", mode: "safe", why: "", reason: "", marks: [], note: "", first: "", attempts: [] }] }],
+      owed: { cells: 0, documents: 0 },
+    },
     stage: "question",
     questions: ["Which?"],
   });

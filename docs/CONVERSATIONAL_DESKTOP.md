@@ -696,7 +696,7 @@ touched:
   in order: your practice workspace (the top bar, the modes, spending and the context gauge, Settings), the documents
   (a folder at once, the template, pictures and tables, removing them), Safe mode's note, buttons, recipes and form,
   the preview (the pages and the layout check, Worth knowing, checkmarks and the red X, Left untouched, the one
-  button), the copies (What you've done so far, Save as a recipe, Export, the working set, the hand-off to Default
+  button), the copies (What you've done so far, Where each document stands, Save as a recipe, Export, the working set, the hand-off to Default
   mode, the to-do list), find and replace occurrence by occurrence, the conversation (an answer that ends a request,
   a request kept to some documents), questions and suggested replies, a plan in Default mode (a document left out, a
   custom method's word changes, Create with some set aside), the to-do list's pass, Help and About, and the finish.
@@ -1056,6 +1056,57 @@ changes, the displayed action is void and the window says "The documents or plan
 plan first." Typing a new message disables the button until the message is sent, and unticking a find-and-replace
 occurrence holds it until **Update the preview** has made the plan again. The marks on the previews
 belong to the displayed plan too: a new plan or preview starts the review over.
+
+## Where each document stands
+
+The owner's request of 2026-11-10: "the app needs a way to track what worked on what spec(s) and what didn't" — over
+a batch worked through several buttons, then Default mode, then Obliterate for the last one or two. Before it, the
+window kept runs (What you've done so far) and a to-do list, and nothing tied an operation that failed to its document
+for longer than one step: Safe mode's **Left untouched by the last button** is the last button's alone, so the reason
+a document missed the first button was gone at the second press; a button or request that delivered no copy left no
+line; and a later fix was a new line beside the old one, which still said "not A, B".
+
+`standing.py` keeps one record across modes (`DocumentTask.standing`, journalled; the view's `standing`):
+
+- **An operation** is one thing the user asked for: a Safe-mode button, a request's plan (however many changes it
+  carries: the engine delivers it whole or not at all per document, so it is one operation), a saved recipe's run, or
+  one of Obliterate's own actions (Word actions, Replace this part). A button or a recipe that no document can take
+  is recorded too, every document failed, though nothing could be approved. A request dropped or a preview discarded
+  is not an operation. It keeps the mode it was asked in.
+- **A cell** is one document under one operation: **done** (with the mode that did it, and the marks its copy was
+  delivered with — in Obliterate a copy delivered UNVERIFIED or UNPROVEN is done with its mark, never a clean check
+  and never owed; the mark is that delivery's own, and the one a document carries on from an earlier copy shows on
+  its row, `_own_marks`), **failed** (why — refused, failed, the red X, set aside at the user's word — and the reason in the
+  words Left untouched or the to-do list gives it) or **not run** (the user left it out of the request, it waited on
+  the to-do list, it was attached later, or the action was another document's alone).
+- **A cell keeps every attempt**, oldest first, and its state is the last one's. Within one approval a later word on
+  the same document replaces the earlier (a result that failed and that recovery then fixed is one attempt, done,
+  that remembers the reason it failed first); across approvals attempts add up. A pass over the to-do list opens no
+  operation: each to-do entry keeps the id of the operation it did not get (`operation`), the pass carries them
+  (`focus["operations"]`), and what the pass delivers is recorded under that operation — so the cell that read
+  failed in Safe mode reads done in Default mode, with both attempts. An action of its own inside a pass
+  (Obliterate's Word actions, before the plan is run again) is its own operation (`_own_op`).
+
+`DocumentTask` writes to it wherever an outcome is decided (`_stands`): at an approval, the documents the plan does
+not cover (`_stand_aside`); every to-do entry as it is made (`_set_aside`); Safe mode's Left untouched
+(`_leave_untouched`, `_record_none_took`); each result that did not pass, straight after the run; each copy that
+joins the working set (`_advance_generation`), the copy that failed taken as it is among them. Every operation and
+attempt carries the number it was recorded at, and an undo point keeps the number at its approval: **Undo** takes
+back exactly what was recorded since (`Standing.rewind`), **Start over** clears the record, and a document removed
+takes its cells with it (attached again it reads as attached later). A journal whose record does not read restores
+the conversation without one, and an undo point from before the record clears it rather than show as done something
+that may not be.
+
+The window shows it under the copies as **Where each document stands**: operations across (numbered, each under its
+mode), documents down (each with its badges: SALVAGED, UNVERIFIED, UNPROVEN, set aside), a check, a cross or a dash
+in each cell. A mark opens that cell's reason and every attempt made; the line underneath counts what is still owed
+and **Show only these** lists just those documents. The grid is read-only.
+
+**It describes and never decides.** No button, plan, gate or model reads the record, and what the buttons, the
+conversation, the to-do list and Left untouched do is unchanged by it. What comes next — a failed document staying
+in the batch for the next request in every mode, the to-do list becoming the failed cells, and working one from any
+mode — is designed in `docs/BACKLOG.md` ("Where each document stands: the batch rule and the hand-up") and not built.
+Pinned by `tests/test_standing.py` and `frontend/tests/standing.test.ts`.
 
 ## What is left untouched, and why
 

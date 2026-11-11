@@ -253,6 +253,15 @@ request at a time); `applied` keeps the changes each copy carries, so the histor
 that delivered copies (its request, the Safe-mode button, the documents it delivered and why the others got none), which
 the window lists under the copies as **What you've done so far** in every mode (`DocumentTask._done_view`, the view's
 `working.done`; a Safe-mode button it names carries a checkmark), Undo taking the newest off.
+**Where each document stands** (`standing.py`, `DocumentTask.standing`, the view's `standing`; the owner's decision of
+2026-11-11) is the record of what worked on what: an operation per button, request, saved recipe run or Obliterate
+action — one no document could take included — and under it each document's attempts, oldest first: done (the mode,
+the marks its copy carries), failed (the reason, kept however many buttons follow) or not run. `_stands` writes an
+outcome wherever one is decided; a to-do entry keeps the operation it did not get, so the pass that fixes it settles
+that cell (`focus["operations"]`) instead of opening another; Undo rewinds the record to its approval's number, Start
+over clears it, the journal keeps it, and the window draws it as a grid under the copies. **It describes and never
+decides**: no button, plan, gate or model reads it. What follows it (failed documents staying in the batch in every
+mode, the to-do list as the failed cells) is in `docs/BACKLOG.md` and not built.
 A request ends with copies, with a discarded preview or dropped request, or with a reply that is an answer and nothing pending (words
 alone: no question, choice, suggested reply, plan, refused plan or custom method — `DocumentTask._answered`): the
 decisions are cleared, the conversation ends, and the exchange (the user's words, the answer's first sentence) is kept
@@ -450,6 +459,9 @@ jobs). Details: `docs/CONVERSATIONAL_DESKTOP.md`.
     plan step is moved or removed whole, never rewritten; refused when the recipe's `revision` moved since the editor
     opened) and grown from the save dialog (`Store.append`, **Add to a saved recipe**); the mode is always its steps'.
     No export or import of recipe files (the owner's decision, 2026-10-29). Pinned by `tests/test_saved_recipes.py`.
+  - `standing.py` — where each document stands: the record of every operation asked for and each document's attempts
+    under it (`Standing`: `open`, `record`, `rewind`, `forget`, `view`, the journal's `to_json`/`from_json`). Plain
+    data; it imports nothing of the engine and decides nothing. Pinned by `tests/test_standing.py`.
   - `tutorial.py` — the guided tour's practice workspace (`docs/CONVERSATIONAL_DESKTOP.md`, "The guided tour"):
     `TutorialTask` (a `DocumentTask` without a journal over the bundled showcase in `examples/tutorial/`, which
     `tests/make_tutorial_showcase.py` builds byte-stable; `send`/`choose` refused, `NO_CONVERSATION`) and `Tutorial`

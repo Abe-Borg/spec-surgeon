@@ -15,6 +15,7 @@
  * type without React or a DOM.
  */
 import type { Choice, FailedCopy, JobEvent, Message, PreviewNote, SavedRecipe, Status, View } from "../types.ts";
+import { normalizeStanding } from "./standing.ts";
 
 /** The Worth knowing notes from the wire: each with its text, its document's name or "". */
 export function notesOf(value: unknown): PreviewNote[] {
@@ -197,6 +198,7 @@ export function normalizeView(raw: unknown): View {
     export: obj(v.export, EMPTY_VIEW.export),
     action: obj(v.action, EMPTY_VIEW.action),
     todo: list(v.todo),
+    standing: normalizeStanding(v.standing),
     focus: list<string>(v.focus).filter((p) => typeof p === "string"),
     // an older server sends none: nothing is offered
     failed_copies: list<FailedCopy>(v.failed_copies).filter(

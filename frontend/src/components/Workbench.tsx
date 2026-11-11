@@ -3,6 +3,7 @@ import type { Attachment, TodoItem, View } from "../types";
 import type { Mark, Reviews } from "../lib/review";
 import type { Unticks } from "../lib/occurrences";
 import { changedTip, copiesNote, copyTip, doneCoverage, doneSteps, doneSubtitle, isSaved, notSavedTip, openTarget, planHasContent, runFolder, saveRecipeBlocked, saveRecipeTip, undoLink } from "../lib/workbench";
+import { standingOf } from "../lib/standing";
 import { TOUR_HOLD } from "../lib/tour";
 import { copyMark, failedCopyLine, resultsLead, unverifiedLine } from "../lib/modes";
 import DocumentsTray from "./DocumentsTray";
@@ -10,6 +11,7 @@ import Markdown from "./Markdown";
 import PaperCard from "./PaperCard";
 import OccurrencesCard from "./OccurrencesCard";
 import PreviewCard from "./PreviewCard";
+import StandingCard from "./StandingCard";
 import Tip from "./Tip";
 import { paperBtn } from "./ModalShell";
 
@@ -155,6 +157,7 @@ function Workbench({
   const setAside = view.plan?.set_aside ?? [];
   const todo = view.todo ?? [];
   const done = doneSteps(view);
+  const standing = standingOf(view);
   const scrollRef = useRef<HTMLElement>(null);
   const previewsRef = useRef<HTMLDivElement>(null);
   const resultsRef = useRef<HTMLDivElement>(null);
@@ -434,6 +437,12 @@ function Workbench({
           </div>
         )}
 
+
+        {standing.operations.length > 0 && (
+          <div data-tour="standing-grid">
+            <StandingCard standing={standing} safe={safe} />
+          </div>
+        )}
 
         {done.length > 0 && (
           <div data-tour="done-list" data-capability="results.done">

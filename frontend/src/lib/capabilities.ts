@@ -67,6 +67,8 @@ export const END_USER_CAPABILITIES = [
   "results.undo",
   "results.done",
   "results.hand-off",
+  "standing.cell",
+  "standing.filter",
   "todo.card",
   "todo.put-back",
   "todo.obliterate",

@@ -10,6 +10,58 @@ them was built; `git log --all -- 'docs/PLAN-*'` finds them, with their findings
 
 ## Not built
 
+### Where each document stands: the batch rule and the hand-up (P2)
+
+The owner's request of 2026-11-10 ("the app needs a way to track what worked on what spec(s) and what didn't … the
+specs, and the operations that failed on those specs, 'bubble' up" from Safe to Default to Obliterate) and decisions
+of 2026-11-11. P1 — the record and the grid (`standing.py`, the view's `standing`, the card **Where each document
+stands**) — is built and changes no behaviour; its real-file run is under "Waiting on the owner's machine". P2
+changes what the window does with what the record holds. A user may start in any mode, so nothing here assumes Safe
+came first: the mode is a label on each attempt, never a stage of the batch.
+
+Rules, each approved by the owner:
+
+1. **A failed cell never takes a document out of the batch**, in any mode: the document stays in scope for the next
+   button or request (today Safe mode does this and Default does not — a failed document goes on the to-do list, out
+   of every plan, and misses what runs while it waits). Only the user's own set-aside takes one out: the red X on a
+   preview, or asking the assistant. That document is failed under the operation it was set aside from and not run
+   under those that ran while it waited. The cost, accepted: a document can get the second operation before the first
+   is fixed; the engine plans each document from the state it is in, so nothing is guessed.
+2. **The to-do list is the failed cells.** `DocumentTask.todo` keeps only the documents the user set aside; engine
+   failures (`_bin_failed`, `_refused_now`, `set_rest_aside`, Safe mode's Left untouched) are cells and nothing else.
+   The case file moves from the to-do entry to the cell, one per document per operation (today a document keeps one).
+3. **A pass takes one operation and the documents that owe it**, or one document (`start_todo(operation=, only=)`;
+   the chat's reply works the oldest operation first). Inside it only those documents are in scope, as today. Copies
+   delivered turn the cell to done in that mode; no copy leaves it failed with the new reason added.
+4. **A failed cell can be worked in any mode that can do it**, up, down or the same again: a Safe button's in Safe
+   (the same button pressed again), Default or Obliterate; a request's in Default or Obliterate (in Safe it is shown
+   and says it needs Default mode: no button repeats a worded request); the user's words carry between Default and
+   Obliterate, and the gate of the mode the pass runs in decides. From Safe, any failed cell, a whole column or all
+   of them go to Default at any time (this replaces `hand_off`, which takes the last button's alone).
+   **Obliterate this one** is the cell's, with that cell's case file; work done inside a pass that is not the plan (a
+   Word action, the copy that failed) is recorded in that cell's attempts, not as a column.
+5. **Not needed on this one** clears a failed cell at the user's word (a later operation made it moot), recorded as
+   their decision, and can be put back.
+6. **Nothing is inferred**, with one exception: the same Safe-mode button pressed again with the identical form
+   settles its own earlier failed cells on the documents it now delivers (it is the same operation; the new press is
+   still its own column). The app never decides that two differently worded operations are the same.
+7. **What Claude hears**: for each document in scope, what it still owes and why, as context; it plans what the
+   request asks. The Default prompt's sentence about a failed document going on the to-do list changes with it (a
+   deliberate prompt change). The record itself still decides nothing.
+
+With it: the cards **Left untouched by the last button** and **Set aside for more work** are retired for the grid
+(Left untouched beside a preview stays: it is about the plan on screen); the chat's to-do card becomes the summary of
+what is owed; the reply "Work on the documents I set aside" becomes "Work on my to-do list"; What you've done so far
+keeps its lines and drops the "not A, B (left untouched)" tail, which the grid says per document with the reason. The
+tour's to-do chapter, the capabilities, the trust surfaces (T84 says no model reads the record: that changes with
+rule 7), `docs/WEB_API.md`, Help and the README change in the same pull request, and the tests that pin today's
+to-do list are rewritten to these rules (about 28 files), with a test per rule.
+
+Not in this plan, each on the owner's word: a bundled request split into a cell per step (the engine delivers it
+whole or not at all, so the cell names the step that stopped it); running a not-run cell on demand (catching up a
+document attached later); a **Try again** button for a Safe-mode failure (rule 6 covers pressing the button again);
+the grid saved as a file (with H4's **Save the copies with their records…**).
+
 ### Batch consistency: what the owner's live runs of 2026-10-22/23 left open
 
 | Item | What the run showed | What to build |
@@ -188,6 +240,26 @@ write-back over the originals unless asked for (T1 is the claim most of the trus
 Everything else is built and tested on fixtures; nothing is done on fixtures alone. These runs need real
 specifications, Windows and Word, and only the owner can do them. Record what a run finds as a new item above.
 
+- **Where each document stands (P1, built 2026-11-11):** the record and its grid; it changes nothing the buttons,
+  the conversation or the to-do list do. Take a batch of about ten real specifications in which a button fails on
+  some (one with no SECTION line, one with editing restricted, a template attached).
+  1. *Safe mode, three buttons.* Press **Remove all headers and footers**, then **Remove watermarks**, then **Match
+     headers and footers to the template**, creating the copies each time. After each: **Where each document stands**
+     has a new numbered column under SAFE; a document the button could not change has a cross, and clicking it gives
+     the same reason Left untouched gave. After the second button the Left untouched card no longer names the first
+     button's documents, and their crosses and reasons are still in the grid. The line underneath counts what is
+     owed; **Show only these** lists those documents alone.
+  2. *A button nothing can take.* Press a button no document can take (the template button with no template that
+     fits): no copies, and the grid has its column with a cross on every document.
+  3. *Default mode.* **Try these in Default mode**, work on them, and create the copies: the crosses of that button
+     turn to checks labelled Default, in the same column, and clicking one lists both attempts. Then ask for a change
+     that one document refuses: its column reads DEFAULT, the refused document has a cross and the badge *set aside*.
+  4. *Obliterate.* **Obliterate this one** on that document; take the copy that failed, or run a Word action and then
+     the plan: its cell turns to a check labelled Obliterate, amber, with UNVERIFIED or UNPROVEN on the document's
+     row; a Word action shows as a column of its own with a dash on every other document.
+  5. *Going back.* **Undo** takes the newest column (or the newest fix) off; close the window without saving and
+     reopen it: the restored conversation shows the same grid; **Start over** clears it; a document removed and
+     attached again shows dashes ("attached after this was done") under every earlier column.
 - **Obliterate's Export anyway (O7, built 2026-11-10):** with Word and Obliterate shown in Settings; no API key is
   needed. No file has been made by a real Word here, so read each one against your copy by eye. You need a document
   whose clean version the checked way cannot make: one with a tracked change inside an equation, a tracked
