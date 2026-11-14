@@ -86,6 +86,7 @@ export const END_USER_CAPABILITIES = [
   "about.updates",
   "about.diagnostics",
   "update.banner",
+  "update.license",
   "obliterate.warning",
   // Obliterate's hands-on tools (off unless turned on with the mode)
   "handson.toggle",

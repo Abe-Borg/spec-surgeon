@@ -238,7 +238,7 @@ def test_settings_about_updates_and_new_conversation(tmp_path, monkeypatch):
     assert client.post("/api/settings", json={"fast_mode": False}).json()["fast_mode"] is False
     assert llm.FAST_MODE is False and load_settings().fast_mode is False
     about = client.get("/api/about").json()
-    assert about["version"] == "1.6.0" and "MIT" in about["license"] and about["credits"]
+    assert about["version"] == "1.6.0" and "AGPL-3.0-only" in about["license"] and about["credits"]
     assert client.post("/api/update/check").json()["state"] == "available"
     assert client.post("/api/update/download").json()["state"] == "available"
     assert ("check", True) in state.updates.calls and ("install",) in state.updates.calls

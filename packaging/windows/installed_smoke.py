@@ -198,7 +198,8 @@ def _gui(request, result):
         _conversation_run(api, sources, __version__)
         about = api.get("/api/about")
         assert about["version"] == __version__ and about["credits"], about
-        for text in ("MIT License", "GNU AFFERO GENERAL PUBLIC LICENSE", f"pymupdf-{pymupdf.VersionBind}.tar.gz"):
+        for text in ("AGPL-3.0-only", "Part 2. Legacy MIT notice", "GNU AFFERO GENERAL PUBLIC LICENSE",
+                     f"pymupdf-{pymupdf.VersionBind}.tar.gz"):
             assert text in about["license"], text             # the frozen app finds its AGPL text and PyMuPDF
         assert any("pywebview" in line for line in about["credits"]), about["credits"]
         update = api.get("/api/update")

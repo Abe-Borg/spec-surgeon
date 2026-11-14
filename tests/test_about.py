@@ -4,6 +4,7 @@ version info, the updater's repository name — agrees with it."""
 from __future__ import annotations
 
 import hashlib
+import json
 import re
 import tomllib
 from importlib import metadata
@@ -19,13 +20,20 @@ SPEC = (ROOT / "packaging" / "windows" / "app.spec").read_text(encoding="utf-8")
 AGPL_SHA256 = "57c8ff33c9c0cfc3ef00e650a1cc910d7ee479a8bc509f6c9209a7c2a11399d6"
 
 
-def test_the_license_file_is_the_mit_text_with_the_author_s_copyright():
+def test_the_license_file_is_agpl_only_with_the_author_s_copyright():
     text = (ROOT / "LICENSE").read_text(encoding="utf-8")
     assert text.strip() == about.LICENSE_TEXT.strip()
-    assert text.startswith("MIT License\n")
+    assert text.startswith("Spec Surgeon\n")
     assert f"Copyright (c) {about.COPYRIGHT_YEAR} {about.AUTHOR}" in text
-    assert about.COPYRIGHT in text and about.LICENSE_SPDX == "MIT"
-    assert "WITHOUT WARRANTY OF ANY KIND" in text
+    assert about.COPYRIGHT in text and about.LICENSE_SPDX == "AGPL-3.0-only"
+    assert "SPDX-License-Identifier: AGPL-3.0-only" in text and "version 3 only" in text
+    assert text.endswith(about.agpl_text())
+    assert "WITHOUT ANY WARRANTY" in text and "16. Limitation of Liability." in text
+    legacy = (ROOT / "src/spec_surgeon/legal/MIT-legacy.txt").read_text(encoding="utf-8")
+    assert "MIT License\n" in legacy and about.COPYRIGHT in legacy
+    assert "Permission is hereby granted, free of charge" in legacy
+    assert "WITHOUT WARRANTY OF ANY KIND" in legacy
+    assert "does not grant MIT permissions for subsequent AGPL-only changes" in legacy
 
 
 def test_the_agpl_text_is_the_fsf_s_and_ships_with_the_package():
@@ -40,13 +48,14 @@ def test_the_agpl_text_is_the_fsf_s_and_ships_with_the_package():
     assert '"legal/*.txt"' in SPEC                                          # the frozen app's About box reads it
 
 
-def test_the_distributed_program_is_never_described_as_mit_only():
-    # Spec Surgeon's own code is MIT; with PyMuPDF (AGPL-3.0, no commercial license held) the app as a whole is AGPL.
+def test_the_distributed_program_and_own_code_are_agpl_only_with_the_legacy_notice_preserved():
     text = about.license_text("1.28.2", "1.28.1")
     notice = about.distribution_notice("1.28.2", "1.28.1")
     assert text.startswith(notice)
     assert about.LICENSE_TEXT.strip() in text and about.agpl_text().strip() in text
-    assert text.index(about.LICENSE_TEXT.strip()) < text.index(about.agpl_text().strip())
+    assert text.index(about.agpl_text().strip()) < text.index("Part 2. Legacy MIT notice")
+    assert "MIT License\n" in text
+    assert "AGPL-3.0-only" in notice and "Earlier MIT grants remain valid" in notice
     assert "No commercial license" in notice and "PyMuPDF" in notice and "Artifex" in notice
     assert "distributed under the\nterms of the GNU Affero General Public License version 3" in notice
     assert "Corresponding Source" in notice and about.RELEASES_URL in notice
@@ -55,10 +64,11 @@ def test_the_distributed_program_is_never_described_as_mit_only():
     assert about.source_assets("1.28.2", "1.28.1") == ("pymupdf-1.28.2.tar.gz", "mupdf-1.28.1-source.tar.gz")
     assert "pymupdf-<version>.tar.gz" in about.distribution_notice()           # without PyMuPDF installed
     assert all(len(line) <= 80 for line in notice.splitlines())             # reads in Notepad and the wizard
-    assert "MIT" in about.APP_LICENSE and "AGPL" in about.APP_LICENSE
+    assert "MIT" not in about.APP_LICENSE and "AGPL-3.0-only" in about.APP_LICENSE
     summary = " ".join(about.LICENSE_SUMMARY)
-    for words in ("MIT License", "GNU Affero General Public License v3", "No commercial license", about.RELEASES_URL,
-                  "complete source code", "without warranty"):
+    for words in ("AGPL-3.0-only", "GNU Affero General Public License v3", "No commercial license", about.RELEASES_URL,
+                  "complete source code", "without warranty", "AGPL section 13", "Earlier MIT grants remain valid",
+                  "to the extent permitted by applicable law"):
         assert words in summary, words
     pymupdf, mupdf = about.pdf_versions()
     assert pymupdf and mupdf                                                # a core dependency
@@ -68,7 +78,10 @@ def test_package_metadata_names_the_license_the_author_and_the_repository():
     pyproject = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
     project = pyproject["project"]
     assert project["license"] == about.LICENSE_SPDX
-    assert project["license-files"] == ["LICENSE"]
+    assert project["license-files"] == ["LICENSE", "src/spec_surgeon/legal/MIT-legacy.txt"]
+    frontend = json.loads((ROOT / "frontend/package.json").read_text(encoding="utf-8"))
+    lock = json.loads((ROOT / "frontend/package-lock.json").read_text(encoding="utf-8"))
+    assert frontend["license"] == lock["packages"][""]["license"] == about.LICENSE_SPDX
     assert project["authors"] == [{"name": about.AUTHOR, "email": about.EMAIL}]
     assert project["urls"]["Repository"] == about.GITHUB_URL
     assert "include LICENSE" in (ROOT / "MANIFEST.in").read_text(encoding="utf-8")
@@ -83,7 +96,7 @@ def test_the_links_and_the_email_are_well_formed():
 
 
 def test_the_installer_shows_the_license_the_copyright_and_the_links():
-    # The wizard's license page is the bundle's LICENSE.txt (both licenses), shown rather than agreed to: the AGPL
+    # The wizard's page is the bundle's LICENSE.txt (AGPL and legacy notice), shown rather than agreed to: the AGPL
     # asks no one to accept it to receive or run the program.
     assert "InfoBeforeFile={#SourcePath}..\\..\\dist\\SpecSurgeon\\LICENSE.txt" in ISS
     assert not re.search(r"^LicenseFile=", ISS, re.M)
@@ -94,9 +107,9 @@ def test_the_installer_shows_the_license_the_copyright_and_the_links():
     assert "DisableWelcomePage=no" in ISS                                    # the welcome page carries the links
     assert f"GitHubUrl = '{about.GITHUB_URL}'" in ISS and f"LinkedInUrl = '{about.LINKEDIN_URL}'" in ISS
     beveled = re.search(r"^BeveledLabel=(.*)$", ISS, re.M).group(1)
-    assert about.COPYRIGHT in beveled and "MIT License" in beveled and "AGPL v3" in beveled
+    assert about.COPYRIGHT in beveled and "AGPL-3.0-only" in beveled and "AGPL v3" in beveled
     welcome = re.search(r"^WelcomeLabel2=(.*)$", ISS, re.M).group(1)
-    assert "MIT License" in welcome and "PyMuPDF" in welcome and "AGPL v3" in welcome and "source" in welcome
+    assert "AGPL-3.0-only" in welcome and "PyMuPDF" in welcome and "AGPL v3" in welcome and "source" in welcome
     assert "released under the MIT License" not in ISS                      # never MIT-only
     assert 'Source: "*"; DestDir: "{app}"' in ISS                            # LICENSE.txt ships in the bundle
     assert 'DestName: "LICENSE.txt"' not in ISS                             # not the MIT file alone over it
@@ -105,7 +118,7 @@ def test_the_installer_shows_the_license_the_copyright_and_the_links():
     assert "WelcomeLabel2=" in ISS
     assert "CloseApplications=yes" in ISS and "SetupLogging=yes" in ISS      # unchanged by the welcome page
     legal = re.search(r"StringStruct\('LegalCopyright', '([^']*)'\)", SPEC).group(1)
-    assert about.COPYRIGHT in legal and "MIT" in legal and "AGPL-3.0" in legal
+    assert about.COPYRIGHT in legal and "MIT" not in legal and "AGPL-3.0-only" in legal
 
 
 def test_about_text_says_everything_in_plain_words():

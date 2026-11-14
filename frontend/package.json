@@ -2,7 +2,7 @@
   "name": "spec-surgeon-frontend",
   "private": true,
   "version": "1.19.0",
-  "license": "MIT",
+  "license": "AGPL-3.0-only",
   "author": {
     "name": "Abraham Borg",
     "url": "https://github.com/Abe-Borg"

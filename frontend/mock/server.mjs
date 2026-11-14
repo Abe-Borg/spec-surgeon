@@ -3003,11 +3003,12 @@ async function handle(req, res) {
         email: "abrahamborg@gmail.com",
         linkedin: "https://www.linkedin.com/in/abrahamborg/",
         copyright: "© 2026 Abraham Borg",
-        license_name: "MIT License",
+        license_name: "GNU Affero General Public License v3 only (AGPL-3.0-only)",
         license_summary: [
-          "Free to use, copy, change and share, for any purpose, including commercially.",
-          "Keep the copyright notice and this license text with every copy or substantial part of it.",
-          "Provided as is, without warranty of any kind: the author is not liable for anything that happens through its use. Check every delivered file yourself.",
+          "Spec Surgeon, including its own code, is under AGPL-3.0-only. You may use it, including commercially, change it and share it under those terms.",
+          "Redistribution requires compliance with the AGPL, including providing Corresponding Source. Modified versions used over a network must offer their Corresponding Source under section 13.",
+          "Earlier MIT grants remain valid for previously MIT-licensed portions; they do not cover subsequent AGPL-only changes. Third-party components retain their own licenses.",
+          "Provided as is, without warranty, with liability excluded to the extent permitted by applicable law under AGPL sections 15 and 16. Check every delivered file yourself.",
         ],
         model: "claude-opus-5-5",
         components: [

@@ -5,11 +5,10 @@ One place that the window's About box, the installer, the package metadata and t
 so the name on the copyright line, the links and the license text cannot drift apart. No window code here: the
 packaging scripts read it too.
 
-Two licenses, never one: Spec Surgeon's own code is MIT (the ``LICENSE`` file, the wheel's metadata). It uses
-PyMuPDF and MuPDF, Artifex Software's, under the GNU AGPL v3 or an Artifex commercial license; no commercial license
-is held, so the Windows app, which bundles PyMuPDF, is distributed as a whole under the AGPL v3, with its
-Corresponding Source on each release page (``packaging/windows/license_notices.py`` writes the app's LICENSE.txt
-and fetches the PyMuPDF and MuPDF source for the release).
+Spec Surgeon is licensed under AGPL-3.0-only, including its own code. PyMuPDF and MuPDF are Artifex Software's,
+under the GNU AGPL v3 or an Artifex commercial license; no commercial license is held. Earlier MIT grants remain
+valid, and their notice is preserved in ``legal/MIT-legacy.txt``. Corresponding Source goes on each release page
+(``packaging/windows/license_notices.py`` writes the app's LICENSE.txt and fetches the PyMuPDF and MuPDF source).
 """
 from __future__ import annotations
 
@@ -32,55 +31,66 @@ COPYRIGHT_LINE = f"© {COPYRIGHT_YEAR} {AUTHOR}"         # for the window
 
 RELEASES_URL = f"{GITHUB_URL}/releases"
 
-LICENSE_NAME = "MIT License"                               # Spec Surgeon's own code: the LICENSE file
-LICENSE_SPDX = "MIT"
-LICENSE_URL = "https://opensource.org/license/mit"
+LICENSE_NAME = "GNU Affero General Public License v3 only"
+LICENSE_SPDX = "AGPL-3.0-only"
+LICENSE_URL = "https://www.gnu.org/licenses/agpl-3.0.html"
 
 AGPL_NAME = "GNU Affero General Public License v3"         # PyMuPDF and MuPDF, and so the app as a whole
 AGPL_SPDX = "AGPL-3.0"
 AGPL_URL = "https://www.gnu.org/licenses/agpl-3.0.html"
 AGPL_FILE = "legal/AGPL-3.0.txt"                            # the FSF's text, as PyMuPDF ships it (COPYING)
+LEGACY_MIT_FILE = "legal/MIT-legacy.txt"
 
 # The one-line answer to "what license is it under?" (the About box's License row and its footer).
-APP_LICENSE = f"{LICENSE_NAME} for its own code; GNU AGPL v3 for the app as a whole, with PyMuPDF"
+APP_LICENSE = f"{LICENSE_NAME} (AGPL-3.0-only)"
 
 # Plain words for the About box. Not legal advice: the license texts below are what count.
 LICENSE_SUMMARY: List[str] = [
-    "Spec Surgeon's own code is under the MIT License: free to use, copy, change and share, for any purpose, "
-    "including commercially, keeping the copyright notice and the license text with it.",
+    "Spec Surgeon, including its own code, is under the GNU Affero General Public License v3 only "
+    "(AGPL-3.0-only). You may use it, including commercially, change it and share it under those terms.",
     "It uses PyMuPDF and MuPDF by Artifex Software, which are under the GNU Affero General Public License v3 "
     "(AGPL). No commercial license for them is held, so the app as a whole, with PyMuPDF inside it, is "
     "distributed under the AGPL v3.",
     "Under the AGPL you may use the app, change it and share it; whoever shares it, changed or not, passes it on "
     "under the AGPL v3 together with its complete source code.",
+    "If you modify the program and let users interact with it over a network, your version must prominently "
+    "offer those users its Corresponding Source, as required by AGPL section 13.",
     "The complete source of every version (Spec Surgeon's code and build scripts, and the PyMuPDF and MuPDF "
     f"source the Windows app was built with) is on that version's release page: {RELEASES_URL}",
-    "Provided as is, without warranty of any kind: the author is not liable for anything that happens through "
-    "its use. Check every delivered file yourself.",
+    "Earlier MIT grants remain valid for the code originally released under them; they do not cover subsequent "
+    "AGPL-only changes. Third-party components retain their own licenses and notices.",
+    "Provided as is, without warranty, with liability excluded to the extent permitted by applicable law "
+    "under AGPL sections 15 and 16. Check every delivered file yourself.",
 ]
 
-LICENSE_TEXT = f"""MIT License
+
+@lru_cache(maxsize=1)
+def agpl_text() -> str:
+    return resources.files("spec_surgeon").joinpath(AGPL_FILE).read_text(encoding="utf-8")
+
+
+LICENSE_TEXT = f"""Spec Surgeon
 
 {COPYRIGHT}
 
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
+SPDX-License-Identifier: AGPL-3.0-only
 
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
+This program is free software: you can redistribute it and/or modify it
+under the terms of the GNU Affero General Public License as published by
+the Free Software Foundation, version 3 only.
 
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
-"""
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU Affero
+General Public License below for more details, including the limitation
+of liability in section 16, to the extent permitted by applicable law.
+
+Earlier MIT grants remain valid for portions originally released under MIT.
+Their notice is preserved in src/spec_surgeon/legal/MIT-legacy.txt; it does
+not grant MIT permissions for subsequent AGPL-only changes. Third-party
+components retain their own licenses and notices.
+
+""" + agpl_text()
 
 # What the installed app ships or loads, with each component's own license (the About box lists them).
 THIRD_PARTY: List[Tuple[str, str, str]] = [
@@ -118,11 +128,6 @@ def source_assets(pymupdf_version: str, mupdf_version: str) -> Tuple[str, str]:
     return f"pymupdf-{pymupdf_version}.tar.gz", f"mupdf-{mupdf_version}-source.tar.gz"
 
 
-@lru_cache(maxsize=1)
-def agpl_text() -> str:
-    return resources.files("spec_surgeon").joinpath(AGPL_FILE).read_text(encoding="utf-8")
-
-
 def distribution_notice(pymupdf_version: Optional[str] = None, mupdf_version: Optional[str] = None) -> str:
     """How the program is licensed as distributed, and where its Corresponding Source is (AGPL section 6(d))."""
     if pymupdf_version and mupdf_version:
@@ -136,20 +141,27 @@ def distribution_notice(pymupdf_version: Optional[str] = None, mupdf_version: Op
 
 {COPYRIGHT}
 
-Spec Surgeon's own code is licensed under the MIT License (part 1 below).
+Spec Surgeon, including its own code, is licensed under the GNU Affero
+General Public License version 3 only (AGPL-3.0-only; part 1 below).
 
 Spec Surgeon uses PyMuPDF and the MuPDF library, Copyright (c) Artifex Software,
 Inc., which are licensed under the GNU Affero General Public License version 3
-(part 2 below) or under a commercial license from Artifex. No commercial license
+(part 1 below) or under a commercial license from Artifex. No commercial license
 from Artifex is held for Spec Surgeon. The Windows app bundles PyMuPDF, so the
 app as a whole, a combined work that includes PyMuPDF, is distributed under the
-terms of the GNU Affero General Public License version 3. The MIT License still
-applies to Spec Surgeon's own code taken by itself.
+terms of the GNU Affero General Public License version 3.
+
+Earlier MIT grants remain valid for portions originally released under MIT.
+Part 2 preserves that notice; it does not license subsequent AGPL-only changes
+under MIT. Other third-party components retain their own licenses and notices.
 
 This program comes with ABSOLUTELY NO WARRANTY, to the extent permitted by
-applicable law (sections 15 and 16 of the AGPL, and the MIT License's own
-disclaimer). You may redistribute it, changed or not, under the terms of the
-GNU Affero General Public License version 3.
+applicable law (sections 15 and 16 of the AGPL). You may redistribute it,
+changed or not, under the GNU Affero General Public License version 3.
+
+If you modify the program and let users interact with it over a network, your
+version must prominently offer those users its Corresponding Source, as required
+by AGPL section 13.
 
 Corresponding Source: the complete source code of each released version is
 published on that version's release page, under
@@ -163,11 +175,12 @@ its own license; their source is published by their projects.
 
 
 def license_text(pymupdf_version: Optional[str] = None, mupdf_version: Optional[str] = None) -> str:
-    """The whole of it: the notice, the MIT License (Spec Surgeon's code) and the AGPL v3 (PyMuPDF, MuPDF, the app)."""
+    """The distribution notice, the AGPL v3 grant and terms, and the preserved legacy MIT notice."""
     rule = "=" * 79
+    legacy = resources.files("spec_surgeon").joinpath(LEGACY_MIT_FILE).read_text(encoding="utf-8")
     return (f"{distribution_notice(pymupdf_version, mupdf_version)}\n{rule}\n"
-            f"Part 1. {LICENSE_NAME} (Spec Surgeon's own code)\n{rule}\n\n{LICENSE_TEXT}\n{rule}\n"
-            f"Part 2. {AGPL_NAME} (PyMuPDF, MuPDF, and the app as a whole)\n{rule}\n\n{agpl_text()}")
+            f"Part 1. {LICENSE_NAME} (Spec Surgeon, PyMuPDF and MuPDF)\n{rule}\n\n{LICENSE_TEXT}\n{rule}\n"
+            f"Part 2. Legacy MIT notice (previously MIT-licensed portions only)\n{rule}\n\n{legacy}")
 
 
 def about_lines(version: str) -> List[str]:

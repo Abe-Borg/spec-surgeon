@@ -759,20 +759,30 @@ recorded for the requests that follow.
 
 ## License
 
-Spec Surgeon's own code is free software under the [MIT License](LICENSE), Copyright © 2026 Abraham Borg. It
-uses [PyMuPDF](https://github.com/pymupdf/PyMuPDF) and MuPDF by Artifex Software, which are licensed under the
-[GNU Affero General Public License v3](src/spec_surgeon/legal/AGPL-3.0.txt) (AGPL) or a commercial license from
-Artifex. No commercial license is held, so the Windows app, which bundles PyMuPDF, is distributed as a whole under
-the AGPL v3: you may use, change and share it, and whoever shares it passes it on under the AGPL v3 with its
-complete source. The MIT License still applies to Spec Surgeon's own code taken by itself.
+Spec Surgeon, including its own code, is free software under the
+[GNU Affero General Public License version 3 only](LICENSE) (`AGPL-3.0-only`), Copyright © 2026 Abraham Borg.
+It uses [PyMuPDF](https://github.com/pymupdf/PyMuPDF) and MuPDF by Artifex Software, which are licensed under
+AGPL v3 or a commercial license from Artifex; no commercial license is held. You may use the app, including
+commercially, change it and share it under the AGPL. Distributing a combined or modified version requires
+complying with the AGPL, including providing its Corresponding Source. If you modify the program and let users
+interact with it over a network, your version must prominently offer those users its Corresponding Source under
+section 13. The AGPL does not permit adding restrictions such as a ban on commercial use.
 
-The installer shows the full terms (the app's `LICENSE.txt`: the notice, the MIT License and the AGPL v3) and
-installs them with the app; an in-app update runs the installer silently, so its pages are skipped, and the same
-text is under **About** → **Licenses**. Each release page carries the Corresponding Source: the tag's source
+Earlier MIT grants remain valid for portions originally released under MIT, including releases through v1.19.0;
+their [original notice is preserved](src/spec_surgeon/legal/MIT-legacy.txt). Those grants do not cover subsequent
+AGPL-only changes. Third-party components retain their own licenses and notices.
+
+The installer shows the full terms (the app's `LICENSE.txt`: the distribution notice, AGPL v3 and legacy MIT
+notice) and installs them with the app; an in-app update runs the installer silently, so its pages are skipped, and the same
+text is under **About** → **Licenses**. Before downloading or restarting to update, the update banner and About's
+update controls show the AGPL license and warranty/liability notice, with links to the offered version's full
+license and source. The banner repeats the notice after an update. Each release page carries the Corresponding Source: the tag's source
 archives (this repository, with the build scripts in `packaging/windows`) and the source of the exact PyMuPDF and
 MuPDF the installer was built with (`pymupdf-<version>.tar.gz`, `mupdf-<version>-source.tar.gz`, fetched by
 `packaging/windows/license_notices.py` and listed in `SHA256SUMS`).
 
-It comes as is, without warranty of any kind, so check every delivered file yourself. The installed app bundles
-other open-source components under their own licenses; the About box lists them. Contact: abrahamborg@gmail.com ·
+It comes as is, without warranty, with liability excluded to the extent permitted by applicable law under
+AGPL sections 15 and 16. A license cannot guarantee immunity from liability. Check every delivered file yourself.
+The installed app bundles other open-source components under their own licenses; the About box lists them.
+Contact: abrahamborg@gmail.com ·
 [GitHub](https://github.com/Abe-Borg/spec-surgeon) · [LinkedIn](https://www.linkedin.com/in/abrahamborg/).
