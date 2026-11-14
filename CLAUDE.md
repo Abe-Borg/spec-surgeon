@@ -534,9 +534,10 @@ jobs). Details: `docs/CONVERSATIONAL_DESKTOP.md`.
 - `docs/` — `BACKLOG.md` (the open work), design notes (`BUILTIN_OPS_BATCH*_DESIGN.md`), `releases/`;
   `TRUST_CLAIMS.md` (the ledger behind the trust surfaces).
 - `packaging/` — PyInstaller spec, Inno Setup script, installed-app smoke tests, `license_notices.py` (the app's
-  LICENSE.txt and its AGPL Corresponding Source). Two licenses, never one: Spec Surgeon's own code is MIT; the
-  Windows app bundles PyMuPDF (AGPL-3.0, no commercial license held), so the app as a whole is AGPL v3
-  (`about.py`). Never describe the distributed app as MIT-only.
+  LICENSE.txt and its AGPL Corresponding Source). Spec Surgeon's own code and the app as a whole are
+  AGPL-3.0-only (`about.py`); the Windows app bundles PyMuPDF (AGPL-3.0, no commercial license held).
+  Preserve earlier MIT grants and their notice (`legal/MIT-legacy.txt`) for previously MIT-licensed portions.
+  Third-party components retain their own licenses. Never describe current project code as MIT-licensed.
 
 ## How to run
 

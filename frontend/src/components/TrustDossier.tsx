@@ -70,7 +70,7 @@ export const FURTHER_READING: { href: string; label: string; what: string }[] = 
   {
     href: `https://${F.githubHost}/${F.repo}`,
     label: "Spec Surgeon source code",
-    what: "everything this document describes. Its own code is under the MIT License; with PyMuPDF the app as a whole is under the GNU Affero General Public License (AGPL), and each release page carries its complete source. docs/TRUST_CLAIMS.md is the ledger behind it.",
+    what: "everything this document describes. Its code and the app as a whole are under the GNU Affero General Public License version three only (AGPL), and each release page carries its complete source. docs/TRUST_CLAIMS.md is the ledger behind it.",
   },
 ];
 
@@ -866,7 +866,7 @@ function Dossier() {
             ],
             [
               "Read the code.",
-              "It is open source: its own code under the MIT License, the app as a whole, with PyMuPDF, under the GNU Affero General Public License (AGPL). docs/TRUST_CLAIMS.md lists every claim in this document with the code that makes it true and the test that checks it.",
+              "It is open source: its code and the app as a whole under the GNU Affero General Public License version three only (AGPL). docs/TRUST_CLAIMS.md lists every claim in this document with the code that makes it true and the test that checks it.",
             ],
           ].map(([title, body], i) => (
             <li key={title as string} className="flex gap-3">

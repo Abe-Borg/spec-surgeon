@@ -636,13 +636,13 @@ export const TOUR: readonly TourChapter[] = [
       },
       {
         id: "about",
-        capabilities: ["about.updates", "about.diagnostics", "update.banner", "window.reload"],
+        capabilities: ["about.updates", "about.diagnostics", "update.banner", "update.license", "window.reload"],
         mode: "optional",
         anchor: "help-nav",
         placement: "bottom",
         title: "About: updates and diagnostics",
         body:
-          `About shows the version, the model, the release notes and the licenses. Check for updates asks GitHub for a new version (the app also checks on its own at most once every ${F.updateCheckHours} hours, carrying nothing about your documents); a new one shows as a banner above the panes with Download, and Not now hides it. Open diagnostic logs and Save a diagnostic bundle are what to send when something went wrong; nothing is ever uploaded. If the page ever fails to draw, Reload the window redraws it while the work behind it carries on.`,
+          `About shows the version, model, release notes and licenses. Check for updates asks GitHub (also checked at most once every ${F.updateCheckHours} hours, without your documents); a banner offers Download, and Not now hides it. Before updating, the banner and About show the AGPL license and warranty notice, with links to that release’s full license and source. The banner repeats the notice after updating. Open diagnostic logs and Save a diagnostic bundle save information locally; nothing is uploaded. Reload the window redraws a broken page while its work carries on.`,
         optionalReason: "Downloading an update closes the app to install it.",
       },
       {

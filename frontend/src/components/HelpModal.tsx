@@ -28,6 +28,7 @@ import {
 } from "../lib/typicalOperations";
 import { primaryBtn, quietBtn } from "./ModalShell";
 import Tip from "./Tip";
+import UpdateLicenseNotice from "./UpdateLicenseNotice";
 import { Guide, Lead, Points, Recipe, Steps, Tag } from "./helpParts";
 import WhyTrustIt from "./WhyTrustIt";
 import TrustDossier from "./TrustDossier";
@@ -643,7 +644,7 @@ function AboutTopic({
         </div>
         <div className="flex gap-3">
           <dt className="w-28 flex-none text-ink-faint">License</dt>
-          <dd className="text-ink">{about?.license_name || "MIT License and GNU AGPL v3"}</dd>
+          <dd className="text-ink">{about?.license_name || "GNU AGPL v3 only"}</dd>
         </div>
       </dl>
 
@@ -696,6 +697,9 @@ function AboutTopic({
                 <span style={{ width: `${status.progress}%` }} />
               </div>
             )}
+            {(status.action === "download" || status.action === "install") && (
+              <UpdateLicenseNotice version={update?.version || ""} />
+            )}
             {status.action === "download" && (
               <>
                 <Tip tip={busy ? "Finish or stop the current work first — the installer closes the app" : "Download and install the update"} className="mt-3">
@@ -705,8 +709,7 @@ function AboutTopic({
                 </Tip>
                 <p className="mt-2 text-xs text-ink-faint">
                   Downloads the installer, checks it against the release’s SHA-256 checksums, and only then runs it.
-                  The app closes so the installer can replace it, and reopens when it is done. The installer runs
-                  without its pages, so its license page is not shown: the update comes under the licenses below.
+                  The app closes so the installer can replace it, and reopens when it is done.
                 </p>
               </>
             )}
@@ -794,7 +797,7 @@ function AboutTopic({
 
       <div className="space-y-1.5 border-t border-edge pt-4 text-xs text-ink-faint">
         <p>
-          {about?.copyright || "© 2026 Abraham Borg"}. {about?.license_name || "MIT License and GNU AGPL v3"}.
+          {about?.copyright || "© 2026 Abraham Borg"}. {about?.license_name || "GNU AGPL v3 only"}.
           {about?.email && (
             <>
               {" "}

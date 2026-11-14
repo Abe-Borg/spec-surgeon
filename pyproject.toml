@@ -8,8 +8,8 @@ version = "1.19.0"
 description = "Surgical edits to Word (.docx) specifications with independent verification records."
 readme = "README.md"
 requires-python = ">=3.10"
-license = "MIT"
-license-files = ["LICENSE"]
+license = "AGPL-3.0-only"
+license-files = ["LICENSE", "src/spec_surgeon/legal/MIT-legacy.txt"]
 authors = [{ name = "Abraham Borg", email = "abrahamborg@gmail.com" }]
 # PyMuPDF 2.0 requires onnxruntime, numpy and networkx and loads a layout-analysis model whenever pymupdf is imported:
 # 75 MB more memory, 13 more threads and about 160 MB more installer for a feature Spec Surgeon never calls.

@@ -30,9 +30,9 @@ $uninstaller = Join-Path $installDir "unins000.exe"
 foreach ($file in @($gui, $uninstaller)) {
     if (-not (Test-Path $file)) { throw "Installer did not create $file" }
 }
-# The app is AGPL-3.0 as a whole (it bundles PyMuPDF): its LICENSE.txt carries both licenses and the source's place.
+# The app and its own code are AGPL-3.0-only; LICENSE.txt also preserves the legacy MIT notice and source's place.
 $license = Get-Content (Join-Path $installDir "LICENSE.txt") -Raw
-foreach ($text in @("MIT License", "GNU AFFERO GENERAL PUBLIC LICENSE", "Corresponding Source")) {
+foreach ($text in @("AGPL-3.0-only", "Part 2. Legacy MIT notice", "GNU AFFERO GENERAL PUBLIC LICENSE", "Corresponding Source")) {
     if (-not $license.Contains($text)) { throw "The installed LICENSE.txt does not say: $text" }
 }
 $shortcut = Join-Path ([Environment]::GetFolderPath("Programs")) "Spec Surgeon\Spec Surgeon.lnk"

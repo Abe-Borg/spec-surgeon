@@ -61,7 +61,7 @@ def sha256(path):
 
 
 def write_license(app_dir, pymupdf_version, mupdf_version):
-    """The installer's license page and the installed LICENSE.txt: the notice, the MIT License and the AGPL v3.
+    """The installer's license page and installed LICENSE.txt: the notice, AGPL v3 and preserved legacy MIT notice.
     CRLF, for Notepad and the installer's page."""
     path = Path(app_dir) / "LICENSE.txt"
     with open(path, "w", encoding="utf-8", newline="\r\n") as out:

@@ -1,5 +1,5 @@
 """The Windows app's license and Corresponding Source (``packaging/windows/license_notices.py``) on scripted
-downloads: the bundle's LICENSE.txt carries both licenses, and the PyMuPDF and MuPDF source beside the installer is
+downloads: the bundle's LICENSE.txt carries the AGPL and legacy MIT notice, and the PyMuPDF and MuPDF source is
 exactly what PyPI publishes and what that PyMuPDF builds from. No network."""
 from __future__ import annotations
 
@@ -80,11 +80,12 @@ def test_an_sdist_that_names_no_mupdf_version_is_still_published(tmp_path):
     assert len(notices.fetch_sources(tmp_path, "1.28.2", "1.28.1", fetch=fetch)) == 2
 
 
-def test_the_bundle_s_license_names_both_licenses_with_windows_line_endings(tmp_path):
+def test_the_bundle_s_license_preserves_the_agpl_and_legacy_notice_with_windows_line_endings(tmp_path):
     path = notices.write_license(tmp_path, "1.28.2", "1.28.1")
     data = path.read_bytes()
     assert path.name == "LICENSE.txt" and b"\r\n" in data and b"\n" not in data.replace(b"\r\n", b"")
     text = data.decode("utf-8").replace("\r\n", "\n")
     assert text == about.license_text("1.28.2", "1.28.1")
     assert "MIT License" in text and "GNU AFFERO GENERAL PUBLIC LICENSE" in text
+    assert "AGPL-3.0-only" in text and "Part 2. Legacy MIT notice" in text
     assert "pymupdf-1.28.2.tar.gz and mupdf-1.28.1-source.tar.gz" in text

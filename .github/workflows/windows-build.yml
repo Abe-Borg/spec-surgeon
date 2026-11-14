@@ -83,7 +83,7 @@ jobs:
           Copy-Item README.md dist/SpecSurgeon/README.md
       - name: Write the license and fetch the PyMuPDF and MuPDF source
         # The app bundles PyMuPDF (AGPL-3.0, no commercial license held), so it is distributed as a whole under the
-        # AGPL v3: LICENSE.txt (the installer's license page) names both licenses, and the source of the exact
+        # AGPL v3: LICENSE.txt includes the AGPL and legacy MIT notice, and the source of the exact
         # PyMuPDF and MuPDF in the bundle is published beside the installer as its Corresponding Source.
         run: python packaging/windows/license_notices.py --app dist/SpecSurgeon --sources dist/installer
       - name: Build the installer

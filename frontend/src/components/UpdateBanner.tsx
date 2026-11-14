@@ -1,6 +1,7 @@
 import type { Update } from "../types";
 import { primaryBtn, quietBtn } from "./ModalShell";
 import Tip from "./Tip";
+import UpdateLicenseNotice from "./UpdateLicenseNotice";
 
 interface Props {
   update: Update;
@@ -78,6 +79,9 @@ export default function UpdateBanner({ update, busy, onDownload, onInstall, onDi
             The update was not installed.
             {update.error && <span className="ml-2 text-err/80">{update.error}</span>}
           </p>
+        )}
+        {(update.state === "available" || update.state === "ready" || update.state === "updated") && (
+          <UpdateLicenseNotice version={update.version} />
         )}
       </div>
       {update.state === "available" && (

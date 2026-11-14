@@ -20,9 +20,9 @@ AppSupportURL=https://github.com/Abe-Borg/spec-surgeon
 AppUpdatesURL=https://github.com/Abe-Borg/spec-surgeon/releases
 AppContact=abrahamborg@gmail.com
 AppCopyright=Copyright (c) 2026 Abraham Borg
-; The licenses the app is distributed under: Spec Surgeon's own code is MIT, and with PyMuPDF (AGPL-3.0; no
-; commercial license is held) the app as a whole is under the GNU AGPL v3. packaging/windows/license_notices.py
-; writes the bundle's LICENSE.txt: the notice, where the Corresponding Source is, the MIT License and the AGPL.
+; Spec Surgeon's own code and the app as a whole are AGPL-3.0-only. PyMuPDF is under AGPL v3; no commercial
+; license is held. packaging/windows/license_notices.py writes the bundle's LICENSE.txt: the notice,
+; where the Corresponding Source is, the AGPL v3 and the preserved legacy MIT notice.
 ; The wizard shows it before installing. The AGPL asks no one to accept it to receive or run the program, so it
 ; is shown, not agreed to. An in-app update (/SILENT) skips the wizard's pages: the window's About box shows the
 ; same text.
@@ -63,11 +63,11 @@ Name: "desktopicon"; Description: "Create a &desktop shortcut"; GroupDescription
 Type: filesandordirs; Name: "{app}\_internal"
 
 [Messages]
-WelcomeLabel2=This will install [name/ver] on your computer.%n%nSpec Surgeon is free, open-source software by Abraham Borg. Its own code is under the MIT License. It includes PyMuPDF, which is under the GNU AGPL v3, so the app as a whole is distributed under the AGPL v3, with its complete source on the release page. It comes as is, without warranty. The full terms are on the next page.%n%nIt is recommended that you close all other applications before continuing.
-BeveledLabel=Spec Surgeon  -  Copyright (c) 2026 Abraham Borg  -  MIT License (own code), GNU AGPL v3 (as a whole)
+WelcomeLabel2=This will install [name/ver] on your computer.%n%nSpec Surgeon is free, open-source software by Abraham Borg. Its own code and the app as a whole are under the GNU AGPL v3 only (AGPL-3.0-only). It includes PyMuPDF under the AGPL v3, with complete source on the release page. It comes as is, without warranty, with liability excluded to the extent permitted by applicable law. The full terms and the legacy MIT notice are on the next page.%n%nIt is recommended that you close all other applications before continuing.
+BeveledLabel=Spec Surgeon  -  Copyright (c) 2026 Abraham Borg  -  GNU AGPL v3 only (AGPL-3.0-only)
 
 [Files]
-; Everything in the bundle, LICENSE.txt among it (the notice, the MIT License and the AGPL v3).
+; Everything in the bundle, LICENSE.txt among it (the notice, AGPL v3 and legacy MIT notice).
 Source: "*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
